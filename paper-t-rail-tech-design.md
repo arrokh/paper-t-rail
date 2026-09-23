@@ -57,7 +57,7 @@ Cited Paper
 Candidate Evidence Passage
 ```
 
-The system is intentionally **not** a generic LLM reviewer. It is an evidence-processing pipeline with explicit provenance:
+The system is intentionally **not** a generic LLM reviewer. It is an evidence-processing pipeline with explicit provenance. The primary V1 user is a researcher auditing their own draft. The Evidence Coverage Report is a triage aid that points to evidence and gaps; it is not a certification of truth, an academic grade, or an assessment of the paper as a whole.
 
 ```text
 claim
@@ -94,7 +94,7 @@ The architecture intentionally uses:
 - **Immutable Analysis Runs** so the same document can be re-analyzed with different providers/models.
 - **Human reviews** stored separately from model results to preserve ground truth.
 
-The system should be simple enough for one developer to understand end-to-end, but modular enough to replace Laya with Jev, local embeddings with Google embeddings, heuristic claim extraction with LLM extraction, or PostgreSQL retrieval with a different implementation later.
+The system should be simple enough for one developer to understand end-to-end, but modular enough to replace Laya with Jev, local embeddings with Google embeddings, heuristic claim extraction with LLM extraction, or PostgreSQL retrieval with a different implementation later. External or unclassified provider implementations remain disabled until their data boundary/retention terms are reviewed and any required per-run consent is in place.
 
 ---
 
@@ -113,13 +113,14 @@ V1 supports:
   - theses/dissertations,
   - academic manuscripts.
 - Verification only for claims that have citations.
-- Cited reference types:
+- Cited Reference types:
   - journal papers,
   - conference papers,
   - preprints,
   - similar resolvable scholarly papers.
 - Open/full-text evidence retrieval where legally accessible.
-- Conservative abstract-only assessment.
+- English cited full text only; accessible non-English cited full text is not semantically verified and receives `INSUFFICIENT_EVIDENCE` with `LANGUAGE_UNSUPPORTED`.
+- Conservative abstention when only an abstract is available; V1 does not run a semantic assessment on abstract-only access.
 - Human review of machine verification.
 - Multiple immutable analysis runs for the same source document.
 - Pluggable providers selected through configuration.
@@ -143,7 +144,7 @@ Do **not** implement the following unless the core V1 is already complete:
 - Complex workflow engine.
 - Kafka.
 - Exactly-once messaging.
-- Automated rewriting of the source paper.
+- Automated rewriting of the Source Document.
 - Automated academic grading.
 - Large autonomous agents.
 - Complex multi-model routing.
@@ -168,7 +169,7 @@ Do **not** implement the following unless the core V1 is already complete:
 12. Deterministic aggregation produces a final verification status
 13. Evidence graph/provenance is persisted
 14. User receives an Evidence Coverage Report
-15. User may agree, disagree, or override a machine result
+15. User may record a separate Human Review that agrees, disagrees, or records a human override assessment; this never changes the machine result
 ```
 
 ---
@@ -205,7 +206,7 @@ Other styles may look like:
 
 ## 4.3 Citation Context
 
-The surrounding sentence or local text around a citation marker.
+The smallest citation-bearing clause around one or more citation markers. If clause boundaries cannot be identified reliably, use the containing sentence. Do not pool citation targets across separate clause contexts merely because they occur in the same sentence.
 
 Example:
 
@@ -253,7 +254,7 @@ Multiple representations or URLs may still correspond to one canonical paper.
 
 ## 4.7 Atomic Claim
 
-A single proposition that can be independently verified.
+A single proposition that can be independently verified. Split independent predicates into separate claims, while preserving meaning-bearing qualifiers such as population, scope, conditions, comparisons, negation, uncertainty, and causal language in each resulting claim.
 
 Input:
 
@@ -285,9 +286,9 @@ Example:
 Analysis Run A
 - claim extractor: heuristic
 - embedding: local/e5-small
-- system one: laya
+- system one: mock
 
-Analysis Run B
+Analysis Run B (only after provider review and matching per-run consent)
 - claim extractor: llm/google
 - embedding: google/embedding-x
 - system one: jev
@@ -325,10 +326,10 @@ Evidence supports only part of the atomic claim or supports it with materially n
 Accessible full-text evidence materially conflicts with the atomic claim.
 
 **INSUFFICIENT_EVIDENCE**  
-The cited paper is accessible enough to inspect, but no sufficiently strong full-text evidence was found; also used conservatively when only abstract-level evidence is available.
+No sufficiently strong qualifying full-text evidence was assessed. This is the required final status for abstract-only access and for accessible cited full text in a language unsupported by V1; V1 does not run a semantic verifier on either case.
 
 **INACCESSIBLE**  
-The reference is resolved, but usable full text cannot legally be obtained.
+The reference is resolved, but neither legally accessible full text nor an abstract is available. If only an abstract is available, use `INSUFFICIENT_EVIDENCE` without a semantic-verifier call.
 
 **UNRESOLVED**  
 The bibliography entry cannot be confidently mapped to a canonical academic paper.
@@ -352,20 +353,15 @@ INSUFFICIENT
 
 ## 5.3 Abstract-Only Policy
 
-V1 is conservative.
+V1 is conservative. If only an abstract is accessible, do not call the semantic verifier; persist access metadata only and set the final status to `INSUFFICIENT_EVIDENCE`.
 
-If only an abstract is accessible:
-
-- the system may calculate and persist a **limited abstract assessment**,
-- but it must **not** promote the final status to `SUPPORTED` or `PARTIALLY_SUPPORTED`,
-- final status should remain `INSUFFICIENT_EVIDENCE`,
-- UI must clearly show:
+The UI must clearly show:
 
 ```text
 Verification scope: ABSTRACT_ONLY
 ```
 
-This avoids overstating verification confidence.
+This avoids overstating verification confidence and avoids sending abstract content to a provider for a non-final assessment.
 
 ---
 
@@ -374,10 +370,10 @@ This avoids overstating verification confidence.
 The primary machine-verification record should be:
 
 ```text
-Atomic Claim × Cited Paper
+Atomic Claim × Cited Reference
 ```
 
-supported by one or more evidence-passage judgements.
+A Cited Reference resolves to a Canonical Paper when possible; keeping the reference as the verification target allows `UNRESOLVED` and `UNSUPPORTED_REFERENCE_TYPE` to be represented without inventing a paper identity. Resolved references are verified against their Cited Paper using one or more evidence-passage judgements.
 
 This matters because one citation occurrence may reference multiple papers:
 
@@ -385,7 +381,7 @@ This matters because one citation occurrence may reference multiple papers:
 "... improves performance [12, 13, 14]."
 ```
 
-Each cited paper should be verified independently.
+Each Cited Reference should be verified independently. Within one bounded Citation Context, link every extracted Atomic Claim to every Citation Target in that context. Separate clause contexts never share targets. Deduplicate claims by source span within the same Analysis Run. These links are inferred, provisional associations—not a claim about which source the author intended for each proposition—and the report must label them accordingly.
 
 Likewise, one sentence may contain multiple atomic claims.
 
@@ -398,10 +394,11 @@ Atomic Claims
     ↓
 Claim ↔ Citation Reference links
     ↓
-Claim × Canonical Paper verification
+Claim × Cited Reference verification
+    (resolved to a Canonical Paper when possible)
 ```
 
-The Evidence Coverage Report may later show a claim-level rollup, but the underlying auditable record remains the claim-cited-paper pair.
+The Evidence Coverage Report may later show a claim-level rollup, but the underlying auditable record remains the claim-cited-reference pair (and claim-cited-paper pair when resolved).
 
 ---
 
@@ -635,14 +632,21 @@ sequenceDiagram
     loop Each resolved cited paper
         Redis-->>Worker: PaperAcquisitionRequested
         Worker->>Scholarly: Find legal full text
-        alt full text available
+        alt legal full text available
             Worker->>Obj: Store cited PDF/fulltext
-            Worker->>GROBID: Parse cited paper
-            Worker->>Emb: Embed chunks
-            Worker->>DB: Save chunks + embeddings
-            Worker->>Redis: EvidenceRetrievalRequested
-        else abstract only / inaccessible
-            Worker->>DB: Persist limited/terminal access state
+            Worker->>GROBID: Parse locally with external consolidation disabled
+            Worker->>Worker: Detect full-text language
+            alt English
+                Worker->>Emb: Embed chunks (subject to provider consent)
+                Worker->>DB: Save chunks + embeddings
+                Worker->>Redis: EvidenceRetrievalRequested
+            else unsupported language
+                Worker->>DB: Persist language, NONE scope, INSUFFICIENT_EVIDENCE, LANGUAGE_UNSUPPORTED
+            end
+        else abstract only
+            Worker->>DB: Persist ABSTRACT_ONLY scope + INSUFFICIENT_EVIDENCE; no semantic judgement
+        else no legal full text or abstract
+            Worker->>DB: Persist INACCESSIBLE
         end
     end
 
@@ -668,6 +672,8 @@ sequenceDiagram
 # 10. Async Architecture: Redis Streams
 
 ## 10.1 V1 Design
+
+Require Redis 6.2 or later when using [`XAUTOCLAIM`](https://redis.io/docs/latest/commands/xautoclaim/) for pending-message recovery. If an older Redis version must be supported, use and test an explicit `XPENDING`/`XCLAIM` recovery path instead.
 
 Keep Redis messaging simple:
 
@@ -867,7 +873,7 @@ published_at nullable
 
 Redis Streams pending entries must be reclaimed.
 
-Worker behavior:
+For the recommended `XAUTOCLAIM` path, require Redis 6.2 or later. Worker behavior:
 
 - `XREADGROUP` for new work.
 - periodically inspect/claim stale pending messages,
@@ -992,7 +998,10 @@ Suggested request:
 
 ```kotlin
 data class ClaimExtractionRequest(
+    val citationContextId: UUID,
     val contextText: String,
+    // Zero-based, end-exclusive offsets in normalized source-document text.
+    val contextStartOffset: Int,
     val citationMarkers: List<CitationMarkerInput>,
     val language: String = "en"
 )
@@ -1003,9 +1012,9 @@ Suggested output:
 ```kotlin
 data class AtomicClaimCandidate(
     val text: String,
-    val sourceStartOffset: Int?,
-    val sourceEndOffset: Int?,
-    val citedReferenceIds: Set<String>,
+    // Zero-based, end-exclusive absolute offsets in normalized source-document text.
+    val sourceStartOffset: Int,
+    val sourceEndOffset: Int,
     val confidence: Double?
 )
 ```
@@ -1146,9 +1155,9 @@ Different models may return different dimensions.
 For V1:
 
 - each Analysis Run selects one embedding profile,
-- retrieval only compares vectors produced by the same embedding profile,
-- use an unconstrained `vector` column if needed for variable dimensions,
-- prefer exact vector search for small V1 corpora,
+- retrieval queries must filter to one embedding profile/dimension before comparing vectors,
+- use an unconstrained `vector` column if needed for variable dimensions; vectors of different dimensions cannot be compared,
+- prefer exact vector search for small V1 corpora; pgvector uses exact search by default, while approximate indexes trade recall for speed. If approximate indexes are later added, create indexes scoped to one model/dimension. See the [pgvector README](https://github.com/pgvector/pgvector) for supported types and indexing behavior,
 - do not introduce complex ANN indexing until real scale requires it.
 
 If later ANN indexes are added, use model/dimension-specific partitions or indexes.
@@ -1286,7 +1295,7 @@ Expected extracted structure:
 - in-text citation markers,
 - links between citation markers and bibliography targets.
 
-Do not ask GROBID to decide scientific claims.
+Do not ask GROBID to decide scientific claims. The adapter consumes GROBID's TEI REST output; verify citation-callout/reference linking against the deployed version's [service API](https://grobid.readthedocs.io/en/latest/Grobid-service/) and [TEI model](https://grobid.readthedocs.io/en/latest/training/fulltext/). Set `consolidateHeader=0` and `consolidateCitations=0` by default so parsing cannot silently send bibliographic data to GROBID's external Crossref/biblio-glutton consolidation. Reference lookups instead go through the consent-controlled scholarly provider port. Any future GROBID consolidation must be separately disclosed and consent-gated.
 
 ---
 
@@ -1302,7 +1311,7 @@ interface AcademicGraphProvider
 interface OpenAccessProvider
 ```
 
-V1 defaults:
+Preferred V1 implementations (not enabled by default until their trust boundary and retention/deletion terms are reviewed, and then only with matching per-run consent):
 
 ```text
 ScholarlyMetadataProvider
@@ -1321,7 +1330,7 @@ OpenAccessProvider
 flowchart TD
     BIB["Bibliography Entry"]
 
-    DOI{"DOI already present?"}
+    DOI{"DOI supplied and validated?"}
 
     CROSSREF["Crossref search"]
     MATCH{"Confident match?"}
@@ -1345,7 +1354,7 @@ flowchart TD
     S2 --> OA
 ```
 
-Crossref is the primary identity-resolution mechanism.
+Crossref is the primary identity-resolution mechanism. A DOI printed in a bibliography entry must be normalized and validated against scholarly metadata before it is treated as a confirmed identity; an invalid or unconfirmed DOI falls back to conservative metadata matching. For non-DOI matches, use a deterministic score over title, author, and year, and require a configurable confidence threshold; do not choose a merely top-ranked candidate when it falls below the threshold or remains ambiguous. Mark that reference `UNRESOLVED` instead. Calibrate the numeric threshold on a human-labeled fixture containing confirmed matches and near-miss decoys, prioritizing precision over recall, and set it before release. Version the score policy and threshold with each Analysis Run.
 
 Semantic Scholar is enrichment/graph context, not a competing canonical-identity authority in V1.
 
@@ -1388,7 +1397,7 @@ No verification attempt should continue.
 
 # 23. Full-Text Acquisition
 
-Only fetch legally accessible resources.
+Only fetch legally accessible resources through the configured open-access discovery/acquisition flow. V1 does not support manually uploading a cited paper as an acquisition fallback. Semantic verification in V1 supports English cited full text only. Detect language before chunking or embedding; if the full text is accessible but non-English, set `verification_scope=NONE`, final status `INSUFFICIENT_EVIDENCE`, and terminal reason `LANGUAGE_UNSUPPORTED`; do not send its content to embedding or verification providers.
 
 Never bypass a paywall.
 
@@ -1409,7 +1418,9 @@ Canonical paper
 OpenAccessProvider
     ↓
 legal full text location?
-    ├── yes → fetch/store/parse/index
+    ├── yes → fetch/store/parse → detect language
+    │          ├── English → chunk/index/verify
+    │          └── other → INSUFFICIENT_EVIDENCE (LANGUAGE_UNSUPPORTED), no embedding/verification call
     └── no
         ├── abstract exists → ABSTRACT_ONLY
         └── otherwise → INACCESSIBLE
@@ -1570,6 +1581,8 @@ Is this passage relevant to the claim?
 
 Do not send the entire paper to System One.
 
+Evidence passages from any section may be considered, but persist and show their evidentiary role: the cited paper's own findings, the authors' synthesis (for example, in a review), or a secondary report of another work. A paper's synthesis may support a claim about the literature when that is what the claim asserts; a secondary mention alone must not be presented as direct evidence for the underlying primary study's result. The report must expose section and role so the user can judge the context.
+
 ---
 
 # 27. Deterministic Aggregation
@@ -1581,37 +1594,44 @@ Code decides the final status.
 Example conceptual policy:
 
 ```text
-IF reference unresolved
-    → UNRESOLVED
-
-ELSE IF unsupported reference type
+IF unsupported reference type
     → UNSUPPORTED_REFERENCE_TYPE
 
-ELSE IF no legal full text
-    → INACCESSIBLE
+ELSE IF reference unresolved
+    → UNRESOLVED
 
 ELSE IF verification scope == ABSTRACT_ONLY
     → INSUFFICIENT_EVIDENCE
-      + persist limited abstract assessment
+
+ELSE IF terminal reason == LANGUAGE_UNSUPPORTED
+    → INSUFFICIENT_EVIDENCE
+
+ELSE IF no legally accessible full text and no abstract is available
+    → INACCESSIBLE
+
+ELSE IF credible support and material contradiction are comparable in strength and scope
+    → INSUFFICIENT_EVIDENCE
+      + persist an evidence-conflict indicator and show both sides
 
 ELSE IF strong direct support exists
-    AND no stronger contradiction exists
+    AND no comparable or stronger contradiction exists
     → SUPPORTED
 
-ELSE IF partial support exists
-    → PARTIALLY_SUPPORTED
-
 ELSE IF strong contradiction exists
-    AND no credible support exists
+    AND no comparable or stronger support exists
     → CONTRADICTED
+
+ELSE IF partial support exists
+    AND no comparable or stronger contradiction exists
+    → PARTIALLY_SUPPORTED
 
 ELSE
     → INSUFFICIENT_EVIDENCE
 ```
 
-Thresholds must be configuration values, not magic numbers.
+Assess strength using evidence role, directness, claim-scope match (including population, conditions, and outcome), study design, relevance, and calibrated judgement scores. Raw model confidence alone is not decisive. Support and contradiction are comparable when neither side clearly outweighs the other under this rubric. Calibrate the rubric and status thresholds on a human-labeled evidence fixture before release.
 
-Example:
+Thresholds must be configuration values, not magic numbers. The following values are illustrative only and must not ship without benchmark calibration:
 
 ```yaml
 verification:
@@ -1620,7 +1640,7 @@ verification:
   contradiction-threshold: 0.80
 ```
 
-Keep thresholds versioned in the Analysis Run configuration snapshot.
+Keep thresholds and the aggregation-policy version in the Analysis Run configuration snapshot. Reference matching uses the same principle: its confidence threshold is configurable and snapshotted, with below-threshold or ambiguous matches remaining `UNRESOLVED` rather than being guessed.
 
 ---
 
@@ -1628,7 +1648,9 @@ Keep thresholds versioned in the Analysis Run configuration snapshot.
 
 `AnalysisRun` is append-only/immutable after processing begins.
 
-It captures a full configuration snapshot:
+It captures a full configuration snapshot, including the reference-resolution score-policy version and confidence threshold, aggregation-policy version and thresholds, and per-run external-provider consent/data categories.
+
+Example shape (symbolic placeholders must be replaced with the actual run values). This is an opted-in external-provider run; the default local configuration uses `mock`.
 
 ```json
 {
@@ -1650,13 +1672,29 @@ It captures a full configuration snapshot:
     "lexicalK": 10,
     "finalK": 5
   },
-  "verificationPolicyVersion": "v1"
+  "referenceResolution": {
+    "scorePolicyVersion": "v1",
+    "confidenceThreshold": "configured-value"
+  },
+  "aggregationThresholds": {
+    "directSupport": "calibrated-value",
+    "partialSupport": "calibrated-value",
+    "contradiction": "calibrated-value"
+  },
+  "externalProviderConsents": [
+    {
+      "providerId": "laya",
+      "dataCategories": ["atomic_claims", "evidence_passages"]
+    }
+  ],
+  "verificationPolicyVersion": "v1",
+  "aggregationPolicyVersion": "v1"
 }
 ```
 
 Never rerun by mutating the old run.
 
-Create a new Analysis Run.
+Create a new Analysis Run. For reproducibility, each run must retain the source document hash and parser identity/version, and each verification must point to the exact cited-paper asset used, including that asset's content hash, parser identity/version, and language-detector version where language gating was applied. Chunks inherit their asset identity; reusing an identical content hash and embedding profile across runs is allowed, but a newer global asset must never silently replace the asset used by an older run. Record per-run external-provider consent and the data categories authorized in the run snapshot.
 
 ---
 
@@ -1698,10 +1736,13 @@ providers:
       model: example-embedding-model
 
   system-one:
-    default: laya
+    default: mock
+
+    mock:
+      enabled: true
 
     laya:
-      enabled: true
+      enabled: false  # enable only after trust boundary and retention terms are reviewed
 
     jev:
       enabled: false
@@ -1711,7 +1752,9 @@ Rules:
 
 - disabled providers cannot be selected,
 - provider list endpoint exposes only enabled providers,
-- Analysis Run stores selected provider/model snapshot,
+- every provider must have a documented trust boundary (`LOCAL` or `EXTERNAL`) and data-retention review before enablement; unclassified providers stay disabled,
+- external providers are disabled by default and cannot receive document/claim/evidence content unless the user explicitly consents to that provider and those data categories for the specific Analysis Run; consent is never inferred from a configured default,
+- Analysis Run stores selected provider/model snapshot, reference-resolution threshold, and external-provider consent/data-category snapshot,
 - application logic never branches on vendor names outside adapter/configuration code.
 
 ---
@@ -1738,11 +1781,12 @@ terminalReferences
 totalClaimCitationPairs
 verifiedClaimCitationPairs
 terminalClaimCitationPairs
+incompleteClaimCitationPairs
 ```
 
 Do not derive completion only from Redis.
 
-Persist progress in PostgreSQL.
+Persist progress in PostgreSQL, including incomplete/failed claim-paper pairs separately from domain verification statuses.
 
 ---
 
@@ -1854,10 +1898,12 @@ claim
 ```mermaid
 erDiagram
     DOCUMENT ||--o{ ANALYSIS_RUN : analyzed_by
-    DOCUMENT ||--o{ CITATION_OCCURRENCE : contains
+    DOCUMENT ||--o{ CITATION_CONTEXT : contains
+    CITATION_CONTEXT ||--o{ CITATION_OCCURRENCE : groups
     DOCUMENT ||--o{ BIBLIOGRAPHY_REFERENCE : contains
 
     ANALYSIS_RUN ||--o{ ATOMIC_CLAIM : extracts
+    CITATION_CONTEXT ||--o{ ATOMIC_CLAIM : source_context
     ANALYSIS_RUN ||--o{ CLAIM_CITATION_LINK : contains
 
     CITATION_OCCURRENCE ||--o{ CITATION_TARGET : targets
@@ -1865,14 +1911,15 @@ erDiagram
 
     BIBLIOGRAPHY_REFERENCE }o--o| CANONICAL_PAPER : resolves_to
 
-    ATOMIC_CLAIM ||--o{ CLAIM_CITATION_LINK : linked_to
-    BIBLIOGRAPHY_REFERENCE ||--o{ CLAIM_CITATION_LINK : cited_by
+    ATOMIC_CLAIM ||--o{ CLAIM_CITATION_LINK : has_inferred_link
+    CITATION_TARGET ||--o{ CLAIM_CITATION_LINK : association_source
 
     CANONICAL_PAPER ||--o{ PAPER_ASSET : has
     CANONICAL_PAPER ||--o{ PAPER_CHUNK : contains
 
     ATOMIC_CLAIM ||--o{ CLAIM_PAPER_VERIFICATION : verified_against
-    CANONICAL_PAPER ||--o{ CLAIM_PAPER_VERIFICATION : evidence_source
+    BIBLIOGRAPHY_REFERENCE ||--o{ CLAIM_PAPER_VERIFICATION : verified_reference
+    CANONICAL_PAPER o|--o{ CLAIM_PAPER_VERIFICATION : resolved_evidence_source
 
     CLAIM_PAPER_VERIFICATION ||--o{ EVIDENCE_CANDIDATE : uses
     PAPER_CHUNK ||--o{ EVIDENCE_CANDIDATE : candidate
@@ -1958,8 +2005,9 @@ A reasonable starting plan is:
 ```text
 extensions
 core_documents
+document_deletion_tombstones
 analysis_runs
-citations_and_references
+citation_contexts_occurrences_and_references
 canonical_papers
 paper_assets
 claims
@@ -1995,7 +2043,7 @@ embedding profile uniqueness exists
 
 The coding agent may adjust naming, but preserve responsibilities.
 
-## 34.1 documents
+## 35.1 documents
 
 ```text
 id UUID PK
@@ -2010,20 +2058,23 @@ created_at
 
 Use SHA-256 for duplicate upload detection.
 
-## 34.2 analysis_runs
+## 35.2 analysis_runs
 
 ```text
 id UUID PK
 document_id FK
+source_content_sha256
+source_parser_provider
+source_parser_version
 status
-config_snapshot JSONB
+config_snapshot JSONB  -- includes reference-resolution threshold and per-run provider consents/data categories
 started_at
 completed_at
 failure_reason nullable
 created_at
 ```
 
-## 34.3 parsed_document_sections
+## 35.3 parsed_document_sections
 
 ```text
 id UUID PK
@@ -2034,20 +2085,38 @@ text
 source_metadata JSONB
 ```
 
-## 34.4 citation_occurrences
+## 35.4 citation_contexts
+
+A bounded clause-level group of text containing one or more citation markers. Fall back to the containing sentence when clause boundaries cannot be identified reliably.
 
 ```text
 id UUID PK
 document_id FK
 section_id FK nullable
-marker_text
 context_text
-start_offset nullable
-end_offset nullable
+boundary_kind  -- CLAUSE | SENTENCE_FALLBACK
+start_offset
+end_offset
+created_at
+UNIQUE(document_id, start_offset, end_offset)
+```
+
+All source offsets are zero-based, end-exclusive offsets into the normalized source-document text.
+
+## 35.5 citation_occurrences
+
+```text
+id UUID PK
+document_id FK
+citation_context_id FK
+section_id FK nullable
+marker_text
+start_offset
+end_offset
 created_at
 ```
 
-## 34.5 bibliography_references
+## 35.6 bibliography_references
 
 ```text
 id UUID PK
@@ -2070,43 +2139,46 @@ Unique:
 (document_id, local_reference_key)
 ```
 
-## 34.6 citation_targets
+## 35.7 citation_targets
 
 Maps one citation occurrence to one or multiple bibliography references.
 
 ```text
-citation_occurrence_id
-bibliography_reference_id
-PRIMARY KEY (...)
+id UUID PK
+citation_occurrence_id FK
+bibliography_reference_id FK
+UNIQUE(citation_occurrence_id, bibliography_reference_id)
 ```
 
-## 34.7 atomic_claims
+## 35.8 atomic_claims
 
 ```text
 id UUID PK
 analysis_run_id FK
-citation_occurrence_id FK
+citation_context_id FK
 text
-source_start_offset nullable
-source_end_offset nullable
+source_start_offset
+source_end_offset
 extractor_provider
 extractor_version
 extractor_confidence nullable
 created_at
+UNIQUE(analysis_run_id, citation_context_id, source_start_offset, source_end_offset)
 ```
 
-## 34.8 claim_citation_links
+## 35.9 claim_citation_links
 
-Maps claims to the references believed to support them.
+Maps each extracted claim to the citation targets in its context. This records the exact citation occurrence and bibliography entry while preserving that the association is inferred, not author-confirmed.
 
 ```text
-claim_id
-bibliography_reference_id
+claim_id FK
+citation_target_id FK
+association_method  -- e.g. CONTEXT_ALL_TO_ALL_V1
 link_confidence nullable
-PRIMARY KEY (...)
+PRIMARY KEY (claim_id, citation_target_id)
 ```
 
-## 34.9 canonical_papers
+## 35.10 canonical_papers
 
 ```text
 id UUID PK
@@ -2130,7 +2202,7 @@ UNIQUE(semantic_scholar_id)
 
 Use normalized DOI.
 
-## 34.10 paper_assets
+## 35.11 paper_assets
 
 ```text
 id UUID PK
@@ -2139,6 +2211,11 @@ asset_type
 access_status
 source_url nullable
 object_key nullable
+content_sha256 nullable
+parser_provider nullable
+parser_version nullable
+language nullable
+language_detector_version nullable
 license_info JSONB nullable
 discovered_at
 created_at
@@ -2152,7 +2229,7 @@ HTML_FULLTEXT
 ABSTRACT
 ```
 
-## 34.11 paper_chunks
+## 35.12 paper_chunks
 
 ```text
 id UUID PK
@@ -2166,7 +2243,7 @@ text_search TSVECTOR
 created_at
 ```
 
-## 34.12 paper_chunk_embeddings
+## 35.13 paper_chunk_embeddings
 
 ```text
 id UUID PK
@@ -2187,14 +2264,14 @@ Unique:
 
 For V1, exact vector search is acceptable.
 
-## 34.13 claim_paper_verifications
+## 35.14 claim_paper_verifications
 
 One row per:
 
 ```text
 analysis_run
 × atomic claim
-× cited canonical paper/reference
+× cited bibliography reference
 ```
 
 Suggested:
@@ -2205,9 +2282,13 @@ analysis_run_id FK
 claim_id FK
 bibliography_reference_id FK
 canonical_paper_id nullable
-verification_scope
-final_status
-aggregator_version
+paper_asset_id nullable FK
+processing_status  -- PENDING | COMPLETED | FAILED
+processing_failure_reason nullable
+verification_scope  -- FULL_TEXT | ABSTRACT_ONLY | NONE
+terminal_reason nullable  -- e.g. LANGUAGE_UNSUPPORTED
+final_status nullable  -- one of the seven domain statuses when processing_status=COMPLETED
+aggregator_version nullable
 machine_confidence nullable
 created_at
 updated_at
@@ -2219,7 +2300,7 @@ Unique:
 (analysis_run_id, claim_id, bibliography_reference_id)
 ```
 
-## 34.14 evidence_candidates
+## 35.15 evidence_candidates
 
 ```text
 id UUID PK
@@ -2231,7 +2312,7 @@ fused_rank
 created_at
 ```
 
-## 34.15 evidence_judgements
+## 35.16 evidence_judgements
 
 ```text
 id UUID PK
@@ -2239,12 +2320,13 @@ evidence_candidate_id FK
 system_one_provider
 system_one_model
 judgement
+evidence_role  -- PRIMARY_FINDING | AUTHOR_SYNTHESIS | SECONDARY_REPORT
 confidence
 raw_scores JSONB
 created_at
 ```
 
-## 34.16 human_reviews
+## 35.17 human_reviews
 
 ```text
 id UUID PK
@@ -2255,7 +2337,7 @@ note nullable
 created_at
 ```
 
-## 34.17 inbox_events
+## 35.18 inbox_events
 
 ```text
 event_id VARCHAR PK
@@ -2263,7 +2345,7 @@ handler_name
 processed_at
 ```
 
-## 34.18 outbox_events
+## 35.19 outbox_events
 
 ```text
 id UUID PK
@@ -2276,6 +2358,17 @@ payload JSONB
 created_at
 published_at nullable
 ```
+
+## 35.20 document_deletion_tombstones
+
+Content-free records used to prevent pending work from recreating data after explicit deletion.
+
+```text
+document_id UUID PK  -- intentionally no FK so it survives document deletion
+deleted_at timestamptz not null
+```
+
+Insert the tombstone before deleting document-scoped rows. Workers must check it before starting new provider calls and before committing any result for that document.
 
 ---
 
@@ -2314,10 +2407,10 @@ If reference or access is terminal:
 ```text
 UNRESOLVED
 UNSUPPORTED_REFERENCE_TYPE
-INACCESSIBLE
+INACCESSIBLE  -- neither legally accessible full text nor an abstract is available
 ```
 
-create the final verification directly without retrieval.
+create the final verification directly without retrieval. If access is `ABSTRACT_ONLY`, skip full-text retrieval and semantic judging, then create the final `INSUFFICIENT_EVIDENCE` verification with scope `ABSTRACT_ONLY`.
 
 This hybrid approach is easier to reason about than pure choreography.
 
@@ -2482,7 +2575,7 @@ Avoid running heavy background consumers in the API runtime.
 
 # 40. Suggested HTTP API
 
-## 39.1 Documents
+## 40.1 Documents
 
 ### Upload
 
@@ -2506,9 +2599,18 @@ Validation:
 - PDF only.
 - Reject obvious scanned/non-text PDF if detectable.
 - English-only.
-- configurable size limit.
+- Enforce configurable limits for upload bytes, page count, and claim-citation pair count.
+- Set initial numeric limits after benchmarking a representative journal article and thesis/dissertation against the processing budget; make the caps configurable and reject over-limit documents with a clear explanation rather than silently truncating them.
 
-## 39.2 Analysis Runs
+### Delete document and derived data
+
+```http
+DELETE /api/v1/documents/{id}
+```
+
+Deletion first tombstones the document and invalidates pending work, then removes all document-scoped content and derived data, including per-run provider-consent/configuration snapshots and content-bearing logs. Workers check the tombstone before starting new provider calls and before committing results; an already in-flight provider call cannot be retracted. Local data remains until explicit deletion (no automatic expiry). Shared cited-paper assets may remain only while referenced by another non-deleted document/run; otherwise they are purged. At most a content-free tombstone remains; deletion is an explicit privacy exception to the normal append-only/immutable analysis history.
+
+## 40.2 Analysis Runs
 
 ### Create run
 
@@ -2524,10 +2626,13 @@ Request:
   "providers": {
     "claimExtractor": "heuristic",
     "embedding": "local",
-    "systemOne": "laya"
-  }
+    "systemOne": "mock"
+  },
+  "externalProviderConsents": []
 }
 ```
+
+The example selects only local/mock providers, so it carries no external-provider consent. Add a provider-specific consent entry only when selecting an audited external provider.
 
 Returns:
 
@@ -2564,7 +2669,7 @@ referenceStatus
 humanReviewed
 ```
 
-## 39.3 Human Review
+## 40.3 Human Review
 
 ```http
 POST /api/v1/verifications/{verificationId}/reviews
@@ -2580,7 +2685,7 @@ Request:
 }
 ```
 
-## 39.4 Providers
+## 40.4 Providers
 
 ```http
 GET /api/v1/providers
@@ -2594,13 +2699,16 @@ Returns enabled providers only.
 
 Minimum screens:
 
-## 40.1 Upload
+## 41.1 Upload
 
 - PDF picker.
-- validation errors.
+- validation errors, including configured byte/page/pair limits.
 - create analysis run using default providers.
+- identify the researcher auditing their own draft as the primary V1 use case; state that results are triage, not certification or grading.
+- before a run uses an external provider, disclose the provider and actual data categories and obtain per-run, per-provider consent.
+- provide a document deletion control with confirmation explaining local deletion scope, shared cited-paper asset reuse, and the limit on retracting data already sent externally.
 
-## 40.2 Analysis Progress
+## 41.2 Analysis Progress
 
 Show persisted progress:
 
@@ -2623,11 +2731,11 @@ every few seconds.
 
 SSE can be added later.
 
-## 40.3 Coverage Report
+## 41.3 Coverage Report
 
-Summary counts by final status.
+Summary counts by final status. Display a persistent note that the report is a triage aid, not certification or grading. If processing ended with warnings, show incomplete verification pairs separately from counts for the seven domain statuses.
 
-## 40.4 Verification Detail
+## 41.4 Verification Detail
 
 Display:
 
@@ -2636,10 +2744,11 @@ Display:
 - citation marker,
 - bibliography entry,
 - canonical paper metadata,
-- access status,
-- exact evidence passages,
+- access status and terminal reason (including `LANGUAGE_UNSUPPORTED`),
+- exact evidence passages and their section/evidentiary role,
+- inferred/provisional claim-to-citation associations,
 - machine judgement/confidence,
-- final aggregated status,
+- final aggregated status and any evidence-conflict indicator,
 - human review history.
 
 Traceability is more important than visual complexity.
@@ -2683,24 +2792,16 @@ Several studies report improved engagement [12, 13, 14].
 
 GROBID may identify multiple targets.
 
-Claim extraction output should ideally include:
+Create one Citation Context per citation-bearing clause; group markers in the same clause, and fall back to the containing sentence when clause boundaries are unclear. Never pool targets across distinct clause contexts in the same sentence. Claim extraction outputs claim text and required source spans, not an inferred bibliography mapping. The deterministic association step is:
 
 ```text
-claim text
-+
-linked bibliography IDs
+all atomic claims in the Citation Context
+→ all citation targets in that context
 ```
 
-For heuristic extraction, a simple V1 fallback is:
+Extract once per context and deduplicate claims by source span within the Analysis Run. Persist each link through `citation_target_id` so the report can show the exact marker/reference pair behind the inferred association.
 
-```text
-all atomic claims in the sentence
-→ all citation targets in that sentence
-```
-
-Then verify each independently.
-
-This may over-associate claims and citations, but verification will expose unrelated citations and the implementation remains understandable.
+This may over-associate claims and citations, but verification will expose unrelated citations and the implementation remains understandable. The report must label these links as inferred/provisional so users do not mistake them for author-confirmed attribution.
 
 LLM-based extraction may later infer narrower claim-to-citation scope.
 
@@ -2721,10 +2822,12 @@ Both should reuse:
 
 ```text
 canonical_papers row for DOI X
-paper asset
-parsed chunks
-embedding index where compatible
+paper asset with the same content hash
+parsed chunks for that exact asset/parser version
+embedding index where the profile hash is compatible
 ```
+
+Canonical identity is global, but analysis provenance is version-pinned. New or changed assets create a distinct asset version; existing verifications continue to reference the exact asset and chunks they used.
 
 Use:
 
@@ -2799,7 +2902,7 @@ Avoid unnecessary metadata.
 
 Do not send:
 
-- entire source paper,
+- entire Source Document,
 - entire cited paper,
 - unrelated citations,
 - huge conversation history.
@@ -2954,13 +3057,7 @@ INTERNAL
 
 Do not classify expected domain terminal states as infrastructure failures.
 
-For example:
-
-```text
-no legal full text
-```
-
-is normally:
+For example, no legally accessible full text and no abstract is normally:
 
 ```text
 INACCESSIBLE
@@ -2978,9 +3075,9 @@ An Analysis Run can complete with warnings even if many references are inaccessi
 
 # 51. Analysis Completion Rules
 
-An analysis is complete when every expected claim-citation pair has reached a terminal verification state.
+`COMPLETED` means every expected claim-citation pair has reached a terminal domain verification status. Processing state is separate from the seven final statuses: provider or infrastructure exhaustion must not be disguised as `INSUFFICIENT_EVIDENCE`.
 
-Terminal states:
+Terminal domain statuses:
 
 ```text
 SUPPORTED
@@ -3006,7 +3103,7 @@ Use:
 COMPLETED_WITH_WARNINGS
 ```
 
-for recoverable/provider failures that left some work incomplete for non-domain reasons.
+when the pipeline has stopped after retry/exhaustion but some pairs have no domain verification status because of provider or infrastructure failure. The report must label these pairs as incomplete, show the failure reason, and distinguish them from the seven final statuses.
 
 Use:
 
@@ -3026,13 +3123,20 @@ V1 is single-user/no-auth, but still:
 - sanitize filenames,
 - never trust PDF paths,
 - store generated object keys instead of using user filenames as paths,
-- limit upload size,
+- enforce configurable upload-byte, page-count, and claim-citation-pair limits; choose initial values after benchmarking a representative article and thesis/dissertation against the processing budget, and never silently truncate,
 - limit parsed document size,
 - set timeouts for GROBID and external APIs,
 - limit downloaded cited-paper size,
 - block non-HTTP(S) external locations,
 - do not bypass publisher authentication/paywalls,
 - store provenance for acquired full text,
+- require explicit consent per external provider and Analysis Run; use stable data-category identifiers (`source_document_text`, `bibliographic_metadata`, `citation_context`, `cited_paper_chunks`, `atomic_claims`, `evidence_passages`, `embedding_input`), disclose the categories each provider receives, and send only the minimum necessary content; any newly introduced payload category requires matching consent,
+- default payload mapping: Crossref/Semantic Scholar/OA discovery → `bibliographic_metadata`; LLM claim extraction → `citation_context`; embedding services → `cited_paper_chunks` + `embedding_input`; System One → `atomic_claims` + `evidence_passages`; GROBID consolidation → `bibliographic_metadata` and remains disabled by default,
+- make clear that deleting local data cannot retract content already transmitted to an external provider; verify and disclose each provider's retention/deletion terms before enabling it,
+- because V1 has no authentication, bind the web/API to localhost or a trusted private network; do not expose it to an untrusted/public network until authentication and authorization are added,
+- provide a document deletion action that first tombstones the document and cancels/invalidates pending work, then removes the source file, document-scoped acquired assets, parsed text/chunks, embeddings, analysis results, Human Reviews, per-run provider-consent/configuration snapshots, and content-bearing logs; workers must check the tombstone before starting new provider calls and before committing results so pending events cannot resurrect deleted data. A provider call already in flight cannot be retracted. Retain shared cited-paper assets only while another non-deleted document/run references them; retain otherwise only a content-free deletion tombstone where needed for operational audit. This explicit deletion is the privacy exception to normal AnalysisRun immutability,
+- retain documents and their content-bearing derived data until the user explicitly deletes them; V1 has no automatic expiry, and this retention policy must be disclosed,
+- do not put document, claim, or evidence text in logs by default,
 - avoid exposing provider secrets to the web app,
 - use environment variables/secrets for API keys.
 
@@ -3086,7 +3190,7 @@ local-embedding-runtime
 local-llm-runtime
 ```
 
-The system should boot even when optional disabled provider containers are absent.
+The system should boot even when optional disabled provider containers are absent. Pin tested versions for all service images and record the compatible runtime matrix; do not rely on floating `latest` tags.
 
 Provider initialization must respect:
 
@@ -3108,22 +3212,19 @@ embedding:
 local
 
 system one:
-laya
+mock
 
 retrieval:
 postgres hybrid
 
-metadata:
-crossref
-
-graph enrichment:
-semantic scholar
+metadata, graph, and OA providers:
+recorded fixtures by default; remote adapters disabled until trust-boundary/retention review and per-run consent
 
 storage:
 minio
 ```
 
-If Laya is unavailable during early implementation, start with:
+Keep Laya disabled until its trust boundary and retention/deletion terms are reviewed. For early implementation, start with:
 
 ```text
 MockSystemOneProvider
@@ -3135,21 +3236,24 @@ to complete the vertical pipeline before integrating the real runtime.
 
 # 56. Testing Strategy
 
-## 55.1 Unit Tests
+## 56.1 Unit Tests
 
 Focus on:
 
-- claim decomposition helpers,
-- DOI normalization,
+- claim decomposition helpers and source-span deduplication,
+- Citation Context clause segmentation and sentence fallback,
+- DOI normalization and threshold calibration against confirmed/near-miss fixture records,
 - reference type classification,
-- aggregation policy,
+- unsupported-reference precedence over unresolved identity,
+- non-English cited full-text handling without a verifier call,
+- aggregation policy including comparable/conflicting evidence and partial support,
 - provider config selection,
 - status transitions,
 - event serialization,
 - idempotency checks,
 - hybrid-rank merge.
 
-## 55.2 Contract Tests
+## 56.2 Contract Tests
 
 For each provider adapter:
 
@@ -3163,9 +3267,9 @@ Jev adapter
 Embedding adapters
 ```
 
-Use recorded/mock responses.
+Use recorded/mock responses. The GROBID adapter contract must assert that external consolidation is disabled unless a matching, per-run consent is present.
 
-## 55.3 Integration Tests
+## 56.3 Integration Tests
 
 Use Testcontainers where practical:
 
@@ -3182,9 +3286,12 @@ Important scenarios:
 - outbox publish after restart,
 - duplicate DOI resolution,
 - two analysis runs sharing one cited paper,
-- disabled provider rejection.
+- disabled and unclassified provider rejection,
+- abstract-only reference creates `INSUFFICIENT_EVIDENCE` without semantic judging,
+- separated clause contexts do not cross-link their citation targets; same-context claims/targets follow the all-to-all policy,
+- deleting a document while jobs are pending without allowing those jobs to recreate content.
 
-## 55.4 End-to-End Fixture
+## 56.4 End-to-End Fixture
 
 Keep one small English paper fixture with:
 
@@ -3195,7 +3302,7 @@ Keep one small English paper fixture with:
 - one unsupported reference type if possible,
 - several multi-claim citation sentences.
 
-Expected output should be asserted at a structural level, not exact AI confidence values.
+Expected output should be asserted at a structural level, not exact AI confidence values. Separately benchmark a representative journal article and thesis/dissertation to choose and record byte, page, and claim-citation-pair caps within the processing budget; keep the numeric caps configurable.
 
 ---
 
@@ -3223,13 +3330,31 @@ A coding agent should consider V1 usable when all of the following work:
 18. Coverage report shows summary and drilldown.
 19. Human review is stored separately from machine result.
 20. Re-running the same document with another enabled provider creates a new Analysis Run.
-21. Duplicate events do not corrupt data.
-22. Worker restart can reclaim pending Redis work.
-23. Outbox prevents DB-success/message-loss inconsistency.
-24. Redis locks reduce duplicate expensive paper acquisition/indexing.
-25. API and worker run as separate processes from the same backend codebase.
-26. Web and backend are separate applications.
-27. Database schema is created and verified through Sqitch; ORM schema generation is disabled or validation-only.
+21. Provider consent is collected per run and provider, data categories are disclosed and persisted, and unconsented providers do not receive document content.
+22. Claim-to-citation fallback associations are labeled inferred/provisional in the report.
+23. Analysis provenance pins source/cited-paper hashes, parser versions, language-detector version where used, reference-resolution and aggregation policies; verifications refer to the exact cited-paper asset used.
+24. Conflicting evidence of comparable strength/scope yields `INSUFFICIENT_EVIDENCE` with both sides exposed.
+25. User can delete a document and all content-bearing derived data, leaving at most a content-free tombstone.
+26. Over-limit documents are rejected clearly and never silently truncated.
+27. Duplicate events do not corrupt data.
+28. Worker restart can reclaim pending Redis work.
+29. Outbox prevents DB-success/message-loss inconsistency.
+30. Redis locks reduce duplicate expensive paper acquisition/indexing.
+31. API and worker run as separate processes from the same backend codebase.
+32. Web and backend are separate applications.
+33. Database schema is created and verified through Sqitch; ORM schema generation is disabled or validation-only.
+34. Below-threshold or ambiguous reference matches remain `UNRESOLVED` rather than being guessed.
+35. Atomic claim extraction preserves meaning-bearing qualifiers, and evidence role/section are visible in verification drilldown.
+36. Unauthenticated V1 deployment is restricted to localhost or a trusted private network.
+37. Deletion invalidates pending work so workers cannot recreate deleted content.
+38. Provider retention/deletion limitations are disclosed; local deletion does not claim to erase copies already sent externally.
+39. Each Citation Context is a citation-bearing clause, with sentence fallback; separate clause contexts do not share targets and claims are deduplicated by source span per run.
+40. Abstract-only papers receive `INSUFFICIENT_EVIDENCE` without semantic-verifier calls; accessible non-English cited full text receives `INSUFFICIENT_EVIDENCE` with `LANGUAGE_UNSUPPORTED`, without embedding or verification-provider calls.
+41. Comparable credible support and contradiction yield `INSUFFICIENT_EVIDENCE`; clearly stronger evidence may determine `SUPPORTED` or `CONTRADICTED`, while partial support without stronger contradiction yields `PARTIALLY_SUPPORTED`.
+42. Evidence-strength rubric and aggregation thresholds are calibrated on a human-labeled fixture, versioned, and pinned to each run before release.
+43. Reference-resolution score policy and threshold are calibrated on confirmed matches and near-miss decoys and pinned before release.
+44. Byte, page, and claim-citation-pair caps are selected from benchmark results for a representative article and thesis/dissertation before release.
+45. The compatibility matrix pins tested versions for services/providers, including Redis 6.2+ where `XAUTOCLAIM` is used.
 
 ---
 
@@ -3258,7 +3383,7 @@ GROBID
 
 Initialize Sqitch under `api/db/`, create the first migration for PostgreSQL extensions and core tables, and configure Spring/JPA to validate rather than own the schema.
 
-Add health checks.
+Add health checks. Since V1 has no authentication, bind local development services to localhost; any non-local deployment must remain on a trusted private network until authentication is implemented.
 
 ## Phase 1 — Document Ingestion
 
@@ -3266,18 +3391,19 @@ Implement:
 
 ```text
 POST /documents
+DELETE /documents/{id} with tombstone, pending-work invalidation, and scoped data deletion
 object storage
 document table
-PDF validation
+PDF validation and configured limits
 ```
 
 Then:
 
 ```text
-POST /analysis-runs
+POST /analysis-runs with per-provider/per-run consent for every external data category
 ```
 
-Publish `DocumentAnalysisRequested`.
+Persist the consent snapshot, then publish `DocumentAnalysisRequested`.
 
 ## Phase 2 — Redis Reliability Skeleton
 
@@ -3399,12 +3525,14 @@ Jev can be added after Laya works.
 Implement:
 
 ```text
-coverage report
-verification drilldown
+coverage report with triage disclaimer and incomplete-pair presentation
+verification drilldown with inferred citation links and evidence roles
 human reviews
 ```
 
 ## Phase 11 — Provider Exploration
+
+Before enabling an external provider, verify and disclose its data-retention/deletion terms and require per-run consent for the data categories it receives.
 
 Add:
 
@@ -3456,7 +3584,7 @@ Prove one full trace first.
 
 The coding agent should preserve these rules.
 
-## 59.1 Domain First
+## 60.1 Domain First
 
 Vendor-specific DTOs must not leak into domain/application logic.
 
@@ -3474,7 +3602,7 @@ Google adapter
 → EvidenceService
 ```
 
-## 59.2 Deterministic Code Owns Control Flow
+## 60.2 Deterministic Code Owns Control Flow
 
 Models provide:
 
@@ -3495,11 +3623,11 @@ retries
 terminal-state decisions
 ```
 
-## 59.3 Evidence Must Be Traceable
+## 60.3 Evidence Must Be Traceable
 
 Every final status must be explainable through stored provenance.
 
-## 59.4 Async by Default for Heavy Work
+## 60.4 Async by Default for Heavy Work
 
 HTTP requests should not wait for:
 
@@ -3511,21 +3639,21 @@ embedding
 verification
 ```
 
-## 59.5 Correctness Does Not Depend on Redis Locks
+## 60.5 Correctness Does Not Depend on Redis Locks
 
 Locks save duplicate compute.
 
 PostgreSQL constraints + idempotency protect correctness.
 
-## 59.6 Immutable Analyses
+## 60.6 Immutable Analyses
 
 Re-analysis creates a new run.
 
-## 59.7 Human Feedback Never Rewrites Machine History
+## 60.7 Human Feedback Never Rewrites Machine History
 
 Store both.
 
-## 59.8 Keep V1 Understandable
+## 60.8 Keep V1 Understandable
 
 Prefer:
 
@@ -3543,20 +3671,23 @@ over adding infrastructure without demonstrated need.
 
 # 61. Important Design Decisions / ADR Candidates
 
-Create ADRs for:
+Accepted V1 decisions are recorded in:
+
+- [ADR-0001 — Evidence Coverage is Conservative Triage](./docs/adr/0001-conservative-evidence-triage.md)
+- [ADR-0002 — Pin Analysis Provenance While Reusing Shared Paper Assets](./docs/adr/0002-version-pinned-analysis-provenance.md)
+- [ADR-0003 — Require Per-Run Provider Consent and Explicit Deletion](./docs/adr/0003-explicit-provider-consent-and-data-retention.md)
+
+Other architecture decisions remain ADR candidates; create records when their trade-offs are confirmed:
 
 ```text
-ADR-001 Redis Streams instead of Kafka for V1
-ADR-002 PostgreSQL + pgvector instead of dedicated vector DB
-ADR-003 API and worker use same Spring Boot codebase
-ADR-004 AnalysisRun is immutable
-ADR-005 System One exposed through generic provider port
-ADR-006 Human review does not overwrite machine result
-ADR-007 Redis locks are optimization only
-ADR-008 Full-text-only final positive verification
-ADR-009 Single workspace, no auth in V1
-ADR-010 Claim-cited-paper pair is primary verification unit
-ADR-011 Sqitch owns PostgreSQL schema migrations
+Redis Streams instead of Kafka for V1
+PostgreSQL + pgvector instead of a dedicated vector database
+API and worker use the same Spring Boot codebase
+System One is exposed through a generic provider port
+Redis locks are an optimization only
+Full-text evidence is required for a positive final status
+Single workspace with no authentication in V1
+Sqitch owns PostgreSQL schema migrations
 ```
 
 ---

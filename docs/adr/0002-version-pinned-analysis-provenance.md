@@ -1,0 +1,3 @@
+# Pin Analysis Provenance While Reusing Shared Paper Assets
+
+An `Analysis Run` is immutable, and re-analysis creates a new run. Each run pins its claim-extraction, reference-resolution score-policy and threshold, aggregation-policy and thresholds, provider configuration/consents, and source parser identity/version. Each verification points to the exact cited-paper asset used, with content hash, parser version, and language-detector version when language gating applies, while identical assets and compatible embeddings may be reused across runs. This preserves explainability of historical results without duplicating every shared scholarly source; explicit user deletion is the privacy exception to normal immutability.
