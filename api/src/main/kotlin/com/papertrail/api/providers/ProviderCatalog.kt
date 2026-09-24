@@ -1,8 +1,7 @@
 package com.papertrail.api.providers
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.runs.AnalysisConfigurationSnapshot
-import com.papertrail.api.runs.ExternalProviderConsentSnapshot
-import com.papertrail.api.runs.ProviderSelection
 
 const val CLAIM_EXTRACTOR_ROLE = "claimExtractor"
 const val EMBEDDING_ROLE = "embedding"
@@ -60,7 +59,7 @@ data class DataCategoryDisclosure(
 )
 
 data class ProviderDirectoryResponse(
-    val providers: List<ProviderOption>,
+    val providers: Map<String, List<ProviderOption>>,
     val dataCategories: List<DataCategoryDisclosure>,
 )
 
@@ -93,19 +92,22 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
 
     fun directory(): ProviderDirectoryResponse = ProviderDirectoryResponse(
         providers = registrationsByRoleAndId.values
-            .filter { it.enabled }
-            .sortedWith(compareBy(ProviderRegistration::role, ProviderRegistration::displayName))
-            .map { registration ->
-                ProviderOption(
-                    role = registration.role,
-                    providerId = registration.providerId,
-                    displayName = registration.displayName,
-                    version = registration.version,
-                    model = registration.model,
-                    trustBoundary = registration.trustBoundary.id,
-                    dataCategories = registration.dataCategories.sortedBy { it.id }.map { it.id },
-                    retentionDisclosure = registration.retentionDisclosure,
-                )
+            .filter(ProviderRegistration::enabled)
+            .groupBy(ProviderRegistration::role)
+            .toSortedMap()
+            .mapValues { (_, registrations) ->
+                registrations.sortedBy(ProviderRegistration::displayName).map { registration ->
+                    ProviderOption(
+                        role = registration.role,
+                        providerId = registration.providerId,
+                        displayName = registration.displayName,
+                        version = registration.version,
+                        model = registration.model,
+                        trustBoundary = registration.trustBoundary.id,
+                        dataCategories = registration.dataCategories.sortedBy { it.id }.map { it.id },
+                        retentionDisclosure = registration.retentionDisclosure,
+                    )
+                }
             },
         dataCategories = DataCategory.entries.map { DataCategoryDisclosure(it.id, it.label, it.description) },
     )
@@ -121,8 +123,6 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
         }
         return registration
     }
-
-    fun requireCallable(role: String, providerId: String): ProviderRegistration = requireSelectable(role, providerId)
 
     companion object {
         fun safeDefaults(): ProviderCatalog = ProviderCatalog(
@@ -194,17 +194,23 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
 
 class ProviderCallRejectedException(message: String) : IllegalStateException(message)
 
-/** The adapter must supply categories derived from the request it is about to send. */
+/** Provider-bound content grouped by the stable category used to disclose and authorize it. */
+class ProviderCallPayload(contentByCategory: Map<DataCategory, JsonNode>) {
+    val contentByCategory: Map<DataCategory, JsonNode> = contentByCategory.mapValues { (_, content) -> content.deepCopy() }
+    val dataCategories: Set<DataCategory> = this.contentByCategory.keys
+}
+
+/** The adapter serializes only this categorized payload after the gate approves it. */
 class ProviderCallGate(private val catalog: ProviderCatalog) {
     fun <T> call(
         role: String,
         providerId: String,
-        actualPayloadCategories: Set<DataCategory>,
+        payload: ProviderCallPayload,
         configuration: AnalysisConfigurationSnapshot,
-        sendRequest: () -> T,
+        sendRequest: (ProviderCallPayload) -> T,
     ): T {
         val registration = try {
-            catalog.requireCallable(role, providerId)
+            catalog.requireSelectable(role, providerId)
         } catch (exception: ProviderNotSelectableException) {
             throw ProviderCallRejectedException(exception.message ?: "Provider is not selectable.")
         }
@@ -223,6 +229,7 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
         ) {
             throw ProviderCallRejectedException("Provider '$providerId' configuration or payload mapping changed after this Analysis Run was created.")
         }
+        val actualPayloadCategories = payload.dataCategories
         if (actualPayloadCategories.any { it !in registration.dataCategories }) {
             throw ProviderCallRejectedException("Provider '$providerId' request contains an unclassified data category.")
         }
@@ -242,6 +249,6 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
                 throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent for: $categories.")
             }
         }
-        return sendRequest()
+        return sendRequest(payload)
     }
 }

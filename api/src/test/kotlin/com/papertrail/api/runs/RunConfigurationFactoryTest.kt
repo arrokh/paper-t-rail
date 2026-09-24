@@ -3,13 +3,14 @@ package com.papertrail.api.runs
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.providers.DataCategory
-import com.papertrail.api.providers.EMBEDDING_ROLE
 import com.papertrail.api.providers.ProviderCallGate
+import com.papertrail.api.providers.ProviderCallPayload
 import com.papertrail.api.providers.ProviderCallRejectedException
 import com.papertrail.api.providers.ProviderCatalog
 import com.papertrail.api.providers.ProviderRegistration
 import com.papertrail.api.providers.ProviderTrustBoundary
 import com.papertrail.api.providers.SYSTEM_ONE_ROLE
+import com.papertrail.api.providers.reviewedExternalProviderCatalog
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -159,42 +160,55 @@ class RunConfigurationFactoryTest {
                 ),
             ),
         )
-        val gate = ProviderCallGate(externalCatalog())
+        val gate = ProviderCallGate(reviewedExternalProviderCatalog())
         var outboundCallStarted = false
 
         assertThrows(ProviderCallRejectedException::class.java) {
             gate.call(
                 CLAIM_EXTRACTOR_ROLE,
                 "reviewed-llm",
-                setOf(DataCategory.CITATION_CONTEXT, DataCategory.SOURCE_DOCUMENT_TEXT),
+                providerCallPayload(DataCategory.CITATION_CONTEXT, DataCategory.SOURCE_DOCUMENT_TEXT),
                 snapshot,
-            ) { outboundCallStarted = true }
+            ) { _ -> outboundCallStarted = true }
         }
         assertFalse(outboundCallStarted)
         assertThrows(ProviderCallRejectedException::class.java) {
             gate.call(
                 CLAIM_EXTRACTOR_ROLE,
                 "reviewed-llm",
-                setOf(DataCategory.CITATION_CONTEXT),
+                providerCallPayload(DataCategory.CITATION_CONTEXT),
                 snapshot.copy(externalProviderConsents = emptyList()),
-            ) { outboundCallStarted = true }
+            ) { _ -> outboundCallStarted = true }
         }
         assertThrows(ProviderCallRejectedException::class.java) {
             gate.call(
                 CLAIM_EXTRACTOR_ROLE,
                 "reviewed-llm",
-                setOf(DataCategory.CITATION_CONTEXT),
+                providerCallPayload(DataCategory.CITATION_CONTEXT),
                 snapshot.copy(claimExtractor = snapshot.claimExtractor.copy(dataCategories = listOf("source_document_text"))),
-            ) { outboundCallStarted = true }
+            ) { _ -> outboundCallStarted = true }
+        }
+        assertThrows(ProviderCallRejectedException::class.java) {
+            gate.call(
+                CLAIM_EXTRACTOR_ROLE,
+                "reviewed-llm",
+                ProviderCallPayload(emptyMap()),
+                snapshot,
+            ) { _ -> outboundCallStarted = true }
         }
         assertFalse(outboundCallStarted)
 
         assertEquals("response", gate.call(
             CLAIM_EXTRACTOR_ROLE,
             "reviewed-llm",
-            setOf(DataCategory.CITATION_CONTEXT),
+            providerCallPayload(DataCategory.CITATION_CONTEXT),
             snapshot,
-        ) { outboundCallStarted = true; "response" })
+        ) { payload ->
+            outboundCallStarted = true
+            assertEquals(setOf(DataCategory.CITATION_CONTEXT), payload.dataCategories)
+            assertEquals("citation_context content", payload.contentByCategory.getValue(DataCategory.CITATION_CONTEXT).asText())
+            "response"
+        })
         assertTrue(outboundCallStarted)
     }
 
@@ -202,55 +216,38 @@ class RunConfigurationFactoryTest {
     fun `disabled and unclassified providers are rejected before an outbound action`() {
         val snapshot = factory.from(RunConfigurationRequest())
         val disabledGate = ProviderCallGate(ProviderCatalog.safeDefaults())
-        val unreviewedGate = ProviderCallGate(externalCatalog())
+        val unreviewedGate = ProviderCallGate(reviewedExternalProviderCatalog())
         var outboundCallStarted = false
 
         assertThrows(ProviderCallRejectedException::class.java) {
             disabledGate.call(
                 CLAIM_EXTRACTOR_ROLE,
                 "google-gemini-api",
-                setOf(DataCategory.CITATION_CONTEXT),
+                providerCallPayload(DataCategory.CITATION_CONTEXT),
                 snapshot,
-            ) { outboundCallStarted = true }
+            ) { _ -> outboundCallStarted = true }
         }
         assertThrows(ProviderCallRejectedException::class.java) {
             unreviewedGate.call(
                 SYSTEM_ONE_ROLE,
                 "unreviewed-provider",
-                setOf(DataCategory.ATOMIC_CLAIMS),
+                providerCallPayload(DataCategory.ATOMIC_CLAIMS),
                 snapshot,
-            ) { outboundCallStarted = true }
+            ) { _ -> outboundCallStarted = true }
         }
         assertFalse(outboundCallStarted)
     }
 
+    private fun providerCallPayload(vararg categories: DataCategory): ProviderCallPayload = ProviderCallPayload(
+        categories.associateWith { jacksonObjectMapper().readTree("\"${it.id} content\"") },
+    )
+
     private fun factoryFor(): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
-        providerCatalog = externalCatalog(),
+        providerCatalog = reviewedExternalProviderCatalog(),
         parserVersion = "3.0.5",
         languageDetectorVersion = "0.6",
         limits = ValidationLimitsSnapshot(52_428_800, 500, 5_000_000, 100_000, 100, 0.65),
-    )
-
-    private fun externalCatalog(): ProviderCatalog = ProviderCatalog(
-        buildList {
-            add(ProviderRegistration(CLAIM_EXTRACTOR_ROLE, "heuristic", "Heuristic", "v1", null, ProviderTrustBoundary.LOCAL, true, setOf(DataCategory.CITATION_CONTEXT)))
-            add(ProviderRegistration(
-                CLAIM_EXTRACTOR_ROLE,
-                "reviewed-llm",
-                "Reviewed LLM",
-                "v1",
-                "model-1",
-                ProviderTrustBoundary.EXTERNAL,
-                true,
-                setOf(DataCategory.CITATION_CONTEXT),
-                retentionDisclosure = "Reviewed retention and deletion terms for this test deployment.",
-                enablementReviewed = true,
-            ))
-            add(ProviderRegistration(EMBEDDING_ROLE, "local", "Local embeddings", "v1", "e5-small-v2", ProviderTrustBoundary.LOCAL, true, setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.EMBEDDING_INPUT)))
-            add(ProviderRegistration(SYSTEM_ONE_ROLE, "mock", "Mock", "v1", "mock-v1", ProviderTrustBoundary.LOCAL, true, setOf(DataCategory.ATOMIC_CLAIMS, DataCategory.EVIDENCE_PASSAGES)))
-            add(ProviderRegistration(SYSTEM_ONE_ROLE, "unreviewed-provider", "Unreviewed provider fixture", "unknown", null, ProviderTrustBoundary.UNREVIEWED, false, setOf(DataCategory.ATOMIC_CLAIMS, DataCategory.EVIDENCE_PASSAGES)))
-        },
     )
 
     @Test

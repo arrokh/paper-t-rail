@@ -7,13 +7,8 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.documents.OptimaizeDocumentLanguageDetector
 import com.papertrail.api.documents.PdfDocumentValidator
-import com.papertrail.api.providers.CLAIM_EXTRACTOR_ROLE
-import com.papertrail.api.providers.DataCategory
-import com.papertrail.api.providers.EMBEDDING_ROLE
 import com.papertrail.api.providers.ProviderCatalog
-import com.papertrail.api.providers.ProviderRegistration
-import com.papertrail.api.providers.ProviderTrustBoundary
-import com.papertrail.api.providers.SYSTEM_ONE_ROLE
+import com.papertrail.api.providers.reviewedExternalProviderCatalog
 import com.papertrail.api.runs.AnalysisRunService
 import com.papertrail.api.runs.RunConfigurationFactory
 import com.papertrail.api.runs.RunConfigurationRequest
@@ -154,7 +149,7 @@ class AnalysisRunQueueIntegrationTest {
             "reviewed-llm",
             listOf("citation_context"),
         )
-        val created = analysisRunService(providerCatalog = providerCatalogWithReviewedExternalProvider()).createFromUpload(
+        val created = analysisRunService(providerCatalog = reviewedExternalProviderCatalog()).createFromUpload(
             "paper.pdf",
             "application/pdf",
             englishPdf(),
@@ -441,26 +436,6 @@ class AnalysisRunQueueIntegrationTest {
         )
         return CreatedRunIds(documentId, runId, eventId, hash)
     }
-
-    private fun providerCatalogWithReviewedExternalProvider(): ProviderCatalog = ProviderCatalog(
-        listOf(
-            ProviderRegistration(CLAIM_EXTRACTOR_ROLE, "heuristic", "Heuristic", "v1", null, ProviderTrustBoundary.LOCAL, true, setOf(DataCategory.CITATION_CONTEXT)),
-            ProviderRegistration(
-                CLAIM_EXTRACTOR_ROLE,
-                "reviewed-llm",
-                "Reviewed LLM",
-                "v1",
-                "model-1",
-                ProviderTrustBoundary.EXTERNAL,
-                true,
-                setOf(DataCategory.CITATION_CONTEXT),
-                retentionDisclosure = "Reviewed retention and deletion terms for this test deployment.",
-                enablementReviewed = true,
-            ),
-            ProviderRegistration(EMBEDDING_ROLE, "local", "Local embeddings", "v1", "e5-small-v2", ProviderTrustBoundary.LOCAL, true, setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.EMBEDDING_INPUT)),
-            ProviderRegistration(SYSTEM_ONE_ROLE, "mock", "Mock", "v1", "mock-v1", ProviderTrustBoundary.LOCAL, true, setOf(DataCategory.ATOMIC_CLAIMS, DataCategory.EVIDENCE_PASSAGES)),
-        ),
-    )
 
     private fun analysisRunService(
         transactionTemplate: TransactionTemplate = TransactionTemplate(

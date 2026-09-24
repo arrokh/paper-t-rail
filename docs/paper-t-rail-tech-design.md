@@ -2720,7 +2720,7 @@ Request:
 GET /api/v1/providers
 ```
 
-Returns enabled, classified provider choices only, grouped by role, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The default runtime exposes only local/mock providers.
+Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, and `systemOne`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The default runtime exposes only local/mock providers.
 
 ## 40.5 OpenAPI and Swagger UI
 

@@ -24,7 +24,7 @@ export type DataCategoryDisclosure = {
 };
 
 export type ProviderDirectory = {
-  providers: ProviderOption[];
+  providers: Partial<Record<ProviderRole, ProviderOption[]>>;
   dataCategories: DataCategoryDisclosure[];
 };
 
@@ -46,18 +46,20 @@ export function consentRequirements(
   };
   const grouped = new Map<string, ProviderConsentRequirement>();
 
-  for (const option of directory.providers) {
-    if (option.providerId !== selectionByRole[option.role] || option.trustBoundary !== "EXTERNAL") continue;
-    const existing = grouped.get(option.providerId);
-    if (existing) {
-      existing.dataCategories = [...new Set([...existing.dataCategories, ...option.dataCategories])].sort();
-    } else {
-      grouped.set(option.providerId, {
-        providerId: option.providerId,
-        displayName: option.displayName,
-        dataCategories: [...new Set(option.dataCategories)].sort(),
-        retentionDisclosure: option.retentionDisclosure,
-      });
+  for (const role of ["claimExtractor", "embedding", "systemOne"] as const) {
+    for (const option of directory.providers[role] ?? []) {
+      if (option.providerId !== selectionByRole[role] || option.trustBoundary !== "EXTERNAL") continue;
+      const existing = grouped.get(option.providerId);
+      if (existing) {
+        existing.dataCategories = [...new Set([...existing.dataCategories, ...option.dataCategories])].sort();
+      } else {
+        grouped.set(option.providerId, {
+          providerId: option.providerId,
+          displayName: option.displayName,
+          dataCategories: [...new Set(option.dataCategories)].sort(),
+          retentionDisclosure: option.retentionDisclosure,
+        });
+      }
     }
   }
 

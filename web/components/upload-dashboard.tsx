@@ -68,12 +68,12 @@ export function UploadDashboard() {
         if (!response.ok) throw new Error(await readError(response));
         const directory = (await response.json()) as ProviderDirectory;
         const roles: ProviderRole[] = ["claimExtractor", "embedding", "systemOne"];
-        if (roles.some((role) => !directory.providers.some((provider) => provider.role === role))) {
+        if (roles.some((role) => !directory.providers[role]?.length)) {
           throw new Error("The API has no enabled provider for one or more Analysis Run stages.");
         }
         const selectAvailable = (role: ProviderRole, current: string) =>
-          directory.providers.find((provider) => provider.role === role && provider.providerId === current)?.providerId
-          ?? directory.providers.find((provider) => provider.role === role)?.providerId
+          directory.providers[role]?.find((provider) => provider.providerId === current)?.providerId
+          ?? directory.providers[role]?.[0]?.providerId
           ?? current;
         setProviderDirectory(directory);
         setProviderSelections((current) => ({
@@ -126,7 +126,7 @@ export function UploadDashboard() {
   }
 
   function providerOptions(role: ProviderRole) {
-    return providerDirectory?.providers.filter((provider) => provider.role === role) ?? [];
+    return providerDirectory?.providers[role] ?? [];
   }
 
   async function startRun(event: FormEvent<HTMLFormElement>) {

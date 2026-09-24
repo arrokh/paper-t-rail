@@ -45,7 +45,7 @@ Scanned PDFs without enough selectable text, unsupported languages, invalid PDFs
 The Next.js server proxies same-origin `/api/v1/*` calls to the private API; browser code never needs a public API binding.
 
 - `POST /api/v1/analysis-runs` — multipart `file` plus optional JSON `configuration`; validates, stores the Source Document, creates a `QUEUED` immutable Analysis Run, and commits its outbox event atomically.
-- `GET /api/v1/providers` — enabled and classified provider choices plus stable data-category descriptions; disabled and unclassified providers are omitted.
+- `GET /api/v1/providers` — enabled and classified provider choices grouped by role, plus stable data-category descriptions; disabled and unclassified providers are omitted.
 - `GET /api/v1/analysis-runs` — list recent persisted runs.
 - `GET /api/v1/analysis-runs/{id}` — persisted status, progress, source hash, and configuration snapshot.
 - `POST /api/v1/documents/{id}/analysis-runs` — re-analyze the same stored Source Document as a new run.

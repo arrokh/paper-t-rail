@@ -122,9 +122,17 @@ class OpenApiDocumentationTest {
             .contentAsString
         val directory = objectMapper.readTree(response)
         val providers = directory.path("providers")
-        assertEquals(3, providers.size())
-        assertTrue(providers.all { it.path("trustBoundary").asText() == "LOCAL" })
-        assertFalse(providers.any { it.path("providerId").asText() in setOf("jev", "google-gemini-api", "unreviewed-provider") })
+        val claimExtractorOptions = providers.path("claimExtractor")
+        val embeddingOptions = providers.path("embedding")
+        val systemOneOptions = providers.path("systemOne")
+        assertEquals(setOf("claimExtractor", "embedding", "systemOne"), providers.fieldNames().asSequence().toSet())
+        assertEquals(1, claimExtractorOptions.size())
+        assertEquals(1, embeddingOptions.size())
+        assertEquals(1, systemOneOptions.size())
+        val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions).flatMap { it.toList() }
+        assertEquals(3, providerOptions.size)
+        assertTrue(providerOptions.all { it.path("trustBoundary").asText() == "LOCAL" })
+        assertFalse(providerOptions.any { it.path("providerId").asText() in setOf("jev", "google-gemini-api", "unreviewed-provider") })
         val disclosedCategoryIds = directory.path("dataCategories").map { it.path("id").asText() }.toSet()
         assertTrue(disclosedCategoryIds.containsAll(setOf(
             "source_document_text",
