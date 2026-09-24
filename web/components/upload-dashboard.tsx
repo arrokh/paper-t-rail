@@ -42,7 +42,6 @@ import {
   FieldLegend,
   FieldSet,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -856,6 +855,48 @@ export function UploadDashboard() {
                                     <span>{context.startOffset}–{context.endOffset}</span>
                                   </div>
                                   <p className="break-words text-sm leading-relaxed">{context.text}</p>
+                                  <section className="space-y-2" aria-label="Atomic Claims from this Citation Context">
+                                    <h5 className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Atomic Claims</h5>
+                                    {context.atomicClaims.length === 0 ? (
+                                      <p className="text-sm text-muted-foreground">No Atomic Claims were extracted from this Citation Context.</p>
+                                    ) : (
+                                      <ol className="space-y-2">
+                                        {context.atomicClaims.map((claim) => (
+                                          <li key={claim.id}>
+                                            <article className="space-y-2 rounded-md border border-border bg-card p-3">
+                                              <div className="flex flex-wrap items-start justify-between gap-2">
+                                                <p className="min-w-0 flex-1 break-words text-sm leading-relaxed">{claim.text}</p>
+                                                <Badge variant="outline" className="shrink-0">
+                                                  {claim.citationTargets.length > 0 ? "Inferred · provisional" : "No Citation Targets"}
+                                                </Badge>
+                                              </div>
+                                              <p className="font-mono text-xs text-muted-foreground">
+                                                Source span {claim.sourceStartOffset}–{claim.sourceEndOffset} in the Citation Context above
+                                              </p>
+                                              {claim.citationTargets.length === 0 ? (
+                                                <p className="text-xs text-muted-foreground">No Citation Targets were resolved in this Citation Context.</p>
+                                              ) : (
+                                                <ul className="flex flex-wrap gap-x-3 gap-y-1 border-t border-border pt-2" aria-label="Inferred Citation Targets">
+                                                  {claim.citationTargets.map((target) => (
+                                                    <li key={target.id}>
+                                                      <a
+                                                        className="max-w-full break-words text-xs text-primary underline underline-offset-4 hover:text-primary/80"
+                                                        href={`#bibliography-${target.bibliographyReferenceKey}`}
+                                                        onClick={scrollToParsedDocumentTarget}
+                                                      >
+                                                        <code className="font-mono">{target.markerText}</code>
+                                                        <span className="ml-1">{target.bibliographyTitle || target.bibliographyReferenceKey}</span>
+                                                      </a>
+                                                    </li>
+                                                  ))}
+                                                </ul>
+                                              )}
+                                            </article>
+                                          </li>
+                                        ))}
+                                      </ol>
+                                    )}
+                                  </section>
                                   <ul className="space-y-2 border-l-2 border-primary/20 pl-4">
                                     {context.occurrences.map((occurrence) => (
                                       <li key={occurrence.id} className="break-words text-sm">

@@ -49,6 +49,19 @@ export type ParsedDocument = {
       endOffset: number;
       bibliographyReferenceKeys: string[];
     }>;
+    atomicClaims: Array<{
+      id: string;
+      text: string;
+      sourceStartOffset: number;
+      sourceEndOffset: number;
+      citationTargets: Array<{
+        id: string;
+        markerText: string;
+        bibliographyReferenceKey: string;
+        bibliographyTitle: string | null;
+        associationKind: "INFERRED_PROVISIONAL";
+      }>;
+    }>;
   }>;
   bibliographyEntries: Array<{
     entryOrder: number;

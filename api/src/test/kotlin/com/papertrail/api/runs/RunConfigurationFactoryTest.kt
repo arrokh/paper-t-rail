@@ -33,6 +33,7 @@ class RunConfigurationFactoryTest {
         val snapshot = factory.from(request)
 
         assertEquals("heuristic", snapshot.claimExtractor.provider)
+        assertEquals("v1", snapshot.claimExtractor.version)
         assertEquals("LOCAL", snapshot.claimExtractor.trustBoundary)
         assertEquals(listOf("citation_context"), snapshot.claimExtractor.dataCategories)
         assertEquals("local", snapshot.embedding.provider)

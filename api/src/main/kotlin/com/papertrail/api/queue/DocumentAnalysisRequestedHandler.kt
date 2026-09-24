@@ -2,6 +2,7 @@ package com.papertrail.api.queue
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.papertrail.api.claims.ClaimExtractionService
 import com.papertrail.api.documents.sha256Hex
 import com.papertrail.api.parsing.ParsedDocumentRepository
 import com.papertrail.api.parsing.ScientificDocumentParser
@@ -21,6 +22,7 @@ class DocumentAnalysisRequestedHandler(
     private val objectStore: SourceDocumentObjectStore,
     private val scientificDocumentParser: ScientificDocumentParser,
     private val parsedDocumentRepository: ParsedDocumentRepository,
+    private val claimExtractionService: ClaimExtractionService,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
@@ -40,7 +42,9 @@ class DocumentAnalysisRequestedHandler(
         ).firstOrNull() ?: throw IllegalStateException("Queued Source Document is missing.")
         val run = jdbc.query(
             """
-            SELECT document_id, source_content_sha256, source_parser_id, source_parser_version
+            SELECT document_id, source_content_sha256, source_parser_id, source_parser_version,
+                   configuration_snapshot #>> '{claimExtractor,provider}' AS claim_extractor_provider,
+                   configuration_snapshot #>> '{claimExtractor,version}' AS claim_extractor_version
               FROM analysis_runs WHERE id = ?
             """.trimIndent(),
             { rs, _ ->
@@ -49,6 +53,8 @@ class DocumentAnalysisRequestedHandler(
                     rs.getString("source_content_sha256"),
                     rs.getString("source_parser_id"),
                     rs.getString("source_parser_version"),
+                    rs.getString("claim_extractor_provider") ?: throw IllegalStateException("Analysis Run has no pinned claim extractor provider."),
+                    rs.getString("claim_extractor_version") ?: throw IllegalStateException("Analysis Run has no pinned claim extractor version."),
                 )
             },
             event.analysisRunId,
@@ -93,6 +99,20 @@ class DocumentAnalysisRequestedHandler(
             throw IllegalStateException("The scientific parser identity does not match the Analysis Run provenance.")
         }
         require(parsed.rawParserOutput.isNotEmpty()) { "The scientific parser returned no raw parser output." }
+        val extractedClaims = claimExtractionService.extract(
+            run.claimExtractorProvider,
+            run.claimExtractorVersion,
+            parsed.citationContexts,
+        )
+        val bibliographyReferenceKeys = parsed.bibliographyEntries.mapTo(mutableSetOf()) { it.localReferenceKey }
+        val targetCountByContextSpan = parsed.citationContexts.associate { context ->
+            (context.startOffset to context.endOffset) to context.occurrences.sumOf { occurrence ->
+                occurrence.bibliographyReferenceKeys.distinct().count { it in bibliographyReferenceKeys }
+            }
+        }
+        val inferredClaimTargetLinkCount = extractedClaims.sumOf { contextClaims ->
+            contextClaims.claims.size * targetCountByContextSpan.getValue(contextClaims.contextStartOffset to contextClaims.contextEndOffset)
+        }
         val rawTeiObjectKey =
             "source/${event.payload.documentId}/analysis-runs/${event.analysisRunId}/grobid-${sha256Hex(parsed.rawParserOutput)}.xml"
         objectStore.put(rawTeiObjectKey, parsed.rawParserOutput, "application/xml")
@@ -107,7 +127,7 @@ class DocumentAnalysisRequestedHandler(
                 )
                 if (inserted == 0) return@executeWithoutResult
 
-                parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey)
+                parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, extractedClaims)
                 val completed = jdbc.update(
                     """
                     UPDATE analysis_runs
@@ -115,11 +135,13 @@ class DocumentAnalysisRequestedHandler(
                            progress = jsonb_build_object(
                                'stage', 'PARSED',
                                'percent', 100,
-                               'message', 'Sections, citation contexts, citation markers, and bibliography entries were saved; claim and evidence analysis has not run.',
+                               'message', 'Sections, citation contexts, Atomic Claims, inferred reference links, and bibliography entries were saved; evidence analysis has not run.',
                                'sectionCount', ?,
                                'citationContextCount', ?,
                                'citationOccurrenceCount', ?,
-                               'bibliographyEntryCount', ?
+                               'bibliographyEntryCount', ?,
+                               'atomicClaimCount', ?,
+                               'inferredClaimTargetLinkCount', ?
                            ),
                            updated_at = now()
                      WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
@@ -129,6 +151,8 @@ class DocumentAnalysisRequestedHandler(
                     parsed.citationContexts.size,
                     parsed.citationContexts.sumOf { it.occurrences.size },
                     parsed.bibliographyEntries.size,
+                    extractedClaims.sumOf { it.claims.size },
+                    inferredClaimTargetLinkCount,
                     event.analysisRunId,
                     event.payload.documentId,
                     run.sourceHash,
@@ -194,6 +218,8 @@ class DocumentAnalysisRequestedHandler(
         val sourceHash: String,
         val parserId: String,
         val parserVersion: String,
+        val claimExtractorProvider: String,
+        val claimExtractorVersion: String,
     )
 
     companion object {

@@ -1019,6 +1019,8 @@ data class AtomicClaimCandidate(
 )
 ```
 
+Claim source spans are absolute offsets into the normalized Source Document. When a shared subject or qualifier is copied into a decomposed claim, the span identifies the source predicate phrase and the containing Citation Context remains visible as its broader provenance; claim text is not guaranteed to be an exact substring of that span.
+
 ## 14.2 V1 Implementations
 
 ```text
@@ -1029,9 +1031,9 @@ ClaimExtractorProvider
 
 ### Heuristic provider
 
-Useful for experimentation and zero-LLM mode.
+Useful for experimentation and zero-LLM mode. The current runtime uses a local, version-pinned baseline: it removes citation markers, splits coordinated `and` predicates only when a known finite verb pattern supports the split, copies shared subject/qualifier text into the resulting claim, and leaves ambiguous or negation-scoped coordination together instead of guessing. The bounded verb vocabulary means unfamiliar constructions can remain unsplit; this limitation is visible in the selected `heuristic` provider and source Citation Context, not represented as a claim-confidence score.
 
-Possible building blocks:
+Possible future building blocks:
 
 - sentence segmentation,
 - dependency parsing,
@@ -1700,7 +1702,7 @@ Create a new Analysis Run. For reproducibility, each run must retain the source 
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the intended safe-default provider contract for the complete V1 pipeline. The issue #5 runtime extends the issue #3 ingestion/queue slice with self-hosted GROBID parsing and persists run-scoped sections, Citation Contexts, Citation Occurrences, Bibliography Entries, and citation-target links. Recorded-fixture ports, embeddings, claim extraction, reference resolution, and System One are not invoked; their local/mock selections must not be represented as though those stages ran. The immutable configuration snapshot records reference resolution and aggregation as `NOT_RUN` (with no uncalibrated policy thresholds) and records an empty external-provider consent list. A stage that was not executed must not be represented as though it used a default policy.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the intended safe-default provider contract for the complete V1 pipeline. The issue #6 runtime extends the issue #3 ingestion/queue and issue #5 parsing slices with a version-pinned local heuristic claim extractor, persisting run-scoped Atomic Claims with source spans and all-to-all links to Citation Targets in their own Citation Context. Embeddings, reference resolution, and System One are not invoked; their local/mock selections must not be represented as though those stages ran. The immutable configuration snapshot records reference resolution and aggregation as `NOT_RUN` (with no uncalibrated policy thresholds) and records an empty external-provider consent list. A stage that was not executed must not be represented as though it used a default policy.
 
 Safe default example:
 
@@ -1804,7 +1806,7 @@ COMPLETED_WITH_WARNINGS
 FAILED
 ```
 
-`PARSED` means the source structure is persisted but claim and evidence analysis has not run; it is an intermediate run state, not a completed report.
+`PARSED` means the immutable source structure, extracted Atomic Claims, and inferred/provisional Claim–Citation Target links are persisted; Evidence Passage retrieval and verification have not run. It is an intermediate run state, not a completed report.
 
 Optional progress counters:
 
@@ -1812,6 +1814,9 @@ Optional progress counters:
 totalReferences
 resolvedReferences
 terminalReferences
+
+extractedAtomicClaims
+inferredClaimCitationLinks
 
 totalClaimCitationPairs
 verifiedClaimCitationPairs
@@ -2190,15 +2195,17 @@ Unique:
 
 ## 35.7 citation_targets
 
-Maps one citation occurrence to one or multiple bibliography entries, preserving GROBID's target order.
+Maps one citation occurrence to one or multiple Bibliography Entries, preserving GROBID's target order. `citation_context_id` is stored on each target; a composite foreign key requires it to match the occurrence's context, and the composite key prevents a claim link from crossing Citation Contexts.
 
 ```text
 id UUID PK
 analysis_run_id FK
+citation_context_id FK
 citation_occurrence_id FK
 bibliography_entry_id FK
 target_order
 UNIQUE(analysis_run_id, citation_occurrence_id, bibliography_entry_id)
+UNIQUE(analysis_run_id, id, citation_context_id)
 ```
 
 ## 35.8 atomic_claims
@@ -2207,26 +2214,29 @@ UNIQUE(analysis_run_id, citation_occurrence_id, bibliography_entry_id)
 id UUID PK
 analysis_run_id FK
 citation_context_id FK
-text
+claim_text
 source_start_offset
 source_end_offset
-extractor_provider
-extractor_version
-extractor_confidence nullable
 created_at
 UNIQUE(analysis_run_id, citation_context_id, source_start_offset, source_end_offset)
 ```
 
-## 35.9 claim_citation_links
+Claim-extractor provider/version are pinned in the immutable Analysis Run configuration snapshot. Source spans are zero-based, end-exclusive UTF-16 offsets into the normalized Source Document text and must remain inside their Citation Context.
 
-Maps each extracted claim to the citation targets in its context. This records the exact citation occurrence and bibliography entry while preserving that the association is inferred, not author-confirmed.
+## 35.9 atomic_claim_citation_targets
+
+Maps each extracted claim to every Citation Target in its own context. The association is inferred/provisional, not author-confirmed. Composite foreign keys carry the context ID on both sides, so PostgreSQL rejects cross-context links.
 
 ```text
-claim_id FK
+id UUID PK
+analysis_run_id FK
+citation_context_id FK
+atomic_claim_id FK
 citation_target_id FK
-association_method  -- e.g. CONTEXT_ALL_TO_ALL_V1
-link_confidence nullable
-PRIMARY KEY (claim_id, citation_target_id)
+association_kind = INFERRED_PROVISIONAL
+UNIQUE(analysis_run_id, atomic_claim_id, citation_target_id)
+FOREIGN KEY(analysis_run_id, atomic_claim_id, citation_context_id)
+FOREIGN KEY(analysis_run_id, citation_target_id, citation_context_id)
 ```
 
 ## 35.10 canonical_papers
@@ -2711,7 +2721,7 @@ GET /api/v1/analysis-runs/{id}
 GET /api/v1/analysis-runs/{id}/parsed-document
 ```
 
-Returns the run's pinned parser provenance, normalized source text, sections, Citation Contexts, Citation Occurrences and target links, and Bibliography Entries. Offsets are zero-based, end-exclusive UTF-16 code-unit indexes into the returned normalized text. The endpoint returns `409` until the parse is committed; a run with status `PARSED` has no claim/evidence analysis yet and is not a completed report.
+Returns the run's pinned parser provenance, normalized source text, sections, Citation Contexts, Citation Occurrences and target links, Bibliography Entries, and each context's extracted Atomic Claims, source spans, and inferred/provisional all-to-all Claim–Citation Target links. Offsets are zero-based, end-exclusive UTF-16 code-unit indexes into the returned normalized text. The endpoint returns `409` until parsed structure and claims are committed; a run with status `PARSED` has no Evidence Passage assessment yet and is not a completed report.
 
 ### Coverage report
 
@@ -2782,7 +2792,7 @@ Minimum screens:
 
 The current workspace uses three cards: **01 Source Document** on the left and **02 Persisted Progress** on the right, with **03 Parsed Document** full-width below them; narrow screens stack the cards. The run list uses cursor pagination with 25 runs per page in `created_at DESC, id DESC` order. Selecting a run scrolls to its details. The details card has tabs for Run Progress and Parsed Document plus a next/previous arrow control; the Parsed Document tab and forward arrow are unavailable until the run is parsed.
 
-Render only the Analysis Run's actual persisted status and current progress snapshot. The current schema stores one progress snapshot, not a history of stage events, so do not synthesize past progress or present future stages as completed. The sequence below describes the intended later pipeline, not work performed by the current parser-only slice:
+Render only the Analysis Run's actual persisted status and current progress snapshot. The current schema stores one progress snapshot, not a history of stage events, so do not synthesize past progress or present future stages as completed. The current slice performs source parsing, heuristic claim extraction, and context-scoped inferred target linking; the sequence below describes the intended later evidence pipeline, not work performed by this slice:
 
 ```text
 Parsing document
@@ -2802,6 +2812,8 @@ GET /analysis-runs/{id}
 every few seconds.
 
 SSE can be added later.
+
+The Parsed Document view shows each Citation Context as source context, its Atomic Claims with source spans, and links to every Citation Target in that context. Label these associations **inferred/provisional**; they are not author-confirmed. Each target link navigates to its Bibliography Entry.
 
 ## 41.3 Coverage Report
 
@@ -3176,7 +3188,7 @@ Use:
 PARSED
 ```
 
-when the source has been parsed and its immutable structure is persisted, but claim/evidence stages have not run yet. `PARSED` is not a complete Evidence Coverage Report; a later pipeline stage may transition it back to `PROCESSING`.
+when the immutable source structure, extracted Atomic Claims, and inferred/provisional Citation Target links are persisted, but Evidence Passage retrieval and verification have not run. `PARSED` is not a complete Evidence Coverage Report; a later evidence pipeline stage may transition it back to `PROCESSING`.
 
 Use:
 
@@ -3291,7 +3303,7 @@ enabled: false
 
 # 55. Local Development Defaults
 
-The following is the target local configuration for the full pipeline (see [the provider matrix](./agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The issue #5 runtime performs PDFBox preflight validation, source-hash verification, and self-hosted GROBID parsing with external consolidation explicitly disabled; it does not invoke fixture providers, embeddings, claim extraction, reference resolution, or System One.
+The following is the target local configuration for the full pipeline (see [the provider matrix](./agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The current runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, and version-pinned local heuristic claim extraction with context-scoped target linking. It does not invoke fixture providers, embeddings, reference resolution, or System One.
 
 ```text
 claim extractor:
@@ -3332,7 +3344,7 @@ to complete the vertical pipeline before integrating the real runtime.
 
 Focus on:
 
-- claim decomposition helpers and source-span deduplication,
+- claim decomposition helpers, meaning-bearing qualifier preservation, and source-span validation/deduplication,
 - Citation Context clause segmentation and sentence fallback,
 - DOI normalization and threshold calibration against confirmed/near-miss fixture records,
 - reference type classification,
@@ -3359,7 +3371,7 @@ Jev adapter
 Embedding adapters
 ```
 
-Use recorded/mock responses. In the issue #5 private-GROBID implementation, the adapter contract asserts that both external consolidation options are explicitly disabled on every request. A future consent-enabled external-consolidation path must be a separate, explicitly reviewed change with its own consent and contract tests.
+Use recorded/mock responses. In the private-GROBID implementation, the adapter contract asserts that both external consolidation options are explicitly disabled on every request. Claim-extraction behavior tests cover qualifier preservation, source spans, and conservative handling of ambiguous negation; database integration tests enforce same-context target links and source-span uniqueness. A future consent-enabled external-consolidation path must be a separate, explicitly reviewed change with its own consent and contract tests.
 
 ## 56.3 Integration Tests
 
@@ -3380,6 +3392,7 @@ Important scenarios:
 - two analysis runs sharing one cited paper,
 - disabled and unclassified provider rejection,
 - abstract-only reference creates `INSUFFICIENT_EVIDENCE` without semantic judging,
+- Atomic Claims persist once per run/context/source span; each claim links to every Citation Target in its own context, and database constraints reject cross-context links,
 - separated clause contexts do not cross-link their citation targets; same-context claims/targets follow the all-to-all policy,
 - deleting a document while jobs are pending without allowing those jobs to recreate content.
 
@@ -3532,6 +3545,8 @@ UI can already display parsed citations.
 
 ## Phase 4 — Claim Extraction
 
+The current slice implements the version-pinned local heuristic and persists source-spanned claims plus same-context inferred/provisional target links. Extend the extractor only through separately reviewed behavior/provider changes.
+
 Implement:
 
 ```text
@@ -3646,7 +3661,7 @@ Only after the primary path is stable.
 
 # 59. Suggested First Full-Pipeline Demonstration
 
-The issue #5 implementation demonstrates upload, queued source-hash verification, GROBID parsing, and display of Citation Contexts and Bibliography Entries. Continue the full-pipeline demonstration from that persisted parse:
+The issue #6 implementation demonstrates upload, queued source-hash verification, GROBID parsing, heuristic Atomic Claim extraction, context-scoped inferred/provisional target links, and display of claims with their Citation Contexts. Continue the full-pipeline demonstration from that persisted parse:
 
 ```text
 Parsed Source Document

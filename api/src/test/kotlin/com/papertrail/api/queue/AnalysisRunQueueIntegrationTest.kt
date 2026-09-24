@@ -6,6 +6,8 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.documents.OptimaizeDocumentLanguageDetector
+import com.papertrail.api.claims.ClaimExtractionService
+import com.papertrail.api.claims.HeuristicClaimExtractor
 import com.papertrail.api.documents.PdfDocumentValidator
 import com.papertrail.api.parsing.ParsedBibliographyEntry
 import com.papertrail.api.parsing.ParsedCitationContext
@@ -291,6 +293,9 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM parsed_document_sections WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
         assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM citation_contexts WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
         assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM citation_targets WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM atomic_claims WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(3, jdbc.queryForObject("SELECT (progress ->> 'atomicClaimCount')::integer FROM analysis_runs WHERE id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(5, jdbc.queryForObject("SELECT count(*) FROM atomic_claim_citation_targets WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
         assertThrows(org.springframework.dao.DataAccessException::class.java) {
             jdbc.update("UPDATE parsed_document_parses SET parser_version = 'changed' WHERE analysis_run_id = ?", created.analysisRunId)
         }
@@ -298,15 +303,73 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("grobid", parsed.parser.provider)
         assertEquals("0.9.1-crf", parsed.parser.version)
         assertEquals(created.hash, parsed.sourceContentSha256)
-        assertEquals("Prior results support the method [1, 2]; however, later work disputes it [3].", parsed.normalizedSourceText)
+        assertEquals("Prior results support the method and reproduce it [1, 2]; however, later work disputes it [3].", parsed.normalizedSourceText)
         assertEquals(2, parsed.citationContexts.size)
-        assertEquals("Prior results support the method [1, 2]", parsed.citationContexts[0].text)
+        assertEquals("Prior results support the method and reproduce it [1, 2]", parsed.citationContexts[0].text)
         assertEquals("[1, 2]", parsed.citationContexts[0].occurrences.single().markerText)
         assertEquals(listOf("ref2", "ref1"), parsed.citationContexts[0].occurrences.single().bibliographyReferenceKeys)
         assertEquals("however, later work disputes it [3].", parsed.citationContexts[1].text)
         assertEquals("[3]", parsed.citationContexts[1].occurrences.single().markerText)
         assertEquals(listOf("ref3"), parsed.citationContexts[1].occurrences.single().bibliographyReferenceKeys)
         assertEquals(listOf("ref1", "ref2", "ref3"), parsed.bibliographyEntries.map { it.localReferenceKey })
+        assertEquals(listOf("Prior results support the method", "Prior results reproduce it"), parsed.citationContexts[0].atomicClaims.map { it.text })
+        assertEquals("later work disputes it", parsed.citationContexts[1].atomicClaims.single().text)
+        assertEquals(listOf("reproduce it"), parsed.citationContexts[0].atomicClaims.drop(1).map { parsed.normalizedSourceText.substring(it.sourceStartOffset, it.sourceEndOffset) })
+        assertTrue(parsed.citationContexts.flatMap { it.atomicClaims }.flatMap { it.citationTargets }
+            .all { it.associationKind == "INFERRED_PROVISIONAL" })
+        parsed.citationContexts[0].atomicClaims.forEach { claim ->
+            assertEquals(listOf("ref2", "ref1"), claim.citationTargets.map { it.bibliographyReferenceKey })
+        }
+        assertEquals(listOf("ref3"), parsed.citationContexts[1].atomicClaims.single().citationTargets.map { it.bibliographyReferenceKey })
+        assertThrows(org.springframework.dao.DataAccessException::class.java) {
+            jdbc.update("UPDATE atomic_claims SET claim_text = 'changed' WHERE id = ?", parsed.citationContexts[0].atomicClaims.first().id)
+        }
+        assertThrows(org.springframework.dao.DataAccessException::class.java) {
+            jdbc.update(
+                "UPDATE atomic_claim_citation_targets SET created_at = now() WHERE atomic_claim_id = ?",
+                parsed.citationContexts[0].atomicClaims.first().id,
+            )
+        }
+        val firstReferenceId = jdbc.queryForObject(
+            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? AND local_reference_key = 'ref1'",
+            UUID::class.java,
+            created.analysisRunId,
+        )!!
+        assertThrows(org.springframework.dao.DataAccessException::class.java) {
+            jdbc.update(
+                """INSERT INTO citation_targets (id, analysis_run_id, citation_context_id, citation_occurrence_id, bibliography_entry_id, target_order)
+                   VALUES (?, ?, ?, ?, ?, 1)""",
+                UUID.randomUUID(),
+                created.analysisRunId,
+                parsed.citationContexts[0].id,
+                parsed.citationContexts[1].occurrences.single().id,
+                firstReferenceId,
+            )
+        }
+        val duplicateClaim = parsed.citationContexts[0].atomicClaims.first()
+        assertThrows(org.springframework.dao.DataAccessException::class.java) {
+            jdbc.update(
+                """INSERT INTO atomic_claims (id, analysis_run_id, citation_context_id, claim_text, source_start_offset, source_end_offset)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                UUID.randomUUID(),
+                created.analysisRunId,
+                parsed.citationContexts[0].id,
+                duplicateClaim.text,
+                duplicateClaim.sourceStartOffset,
+                duplicateClaim.sourceEndOffset,
+            )
+        }
+        assertThrows(org.springframework.dao.DataAccessException::class.java) {
+            jdbc.update(
+                """INSERT INTO atomic_claim_citation_targets (id, analysis_run_id, citation_context_id, atomic_claim_id, citation_target_id, association_kind)
+                   VALUES (?, ?, ?, ?, ?, 'INFERRED_PROVISIONAL')""",
+                UUID.randomUUID(),
+                created.analysisRunId,
+                parsed.citationContexts[0].id,
+                parsed.citationContexts[0].atomicClaims.first().id,
+                parsed.citationContexts[1].atomicClaims.single().citationTargets.single().id,
+            )
+        }
         val persistedTargetLinks = jdbc.query(
             """
             SELECT o.marker_text, b.local_reference_key
@@ -481,7 +544,7 @@ class AnalysisRunQueueIntegrationTest {
 
     private object TestScientificDocumentParser : ScientificDocumentParser {
         override fun parse(pdf: ByteArray): ParsedScientificDocument {
-            val firstContext = "Prior results support the method [1, 2]"
+            val firstContext = "Prior results support the method and reproduce it [1, 2]"
             val secondContext = "however, later work disputes it [3]."
             val secondContextStart = firstContext.length + 2
             val text = "$firstContext; $secondContext"
@@ -536,7 +599,7 @@ class AnalysisRunQueueIntegrationTest {
         )
         jdbc.update(
             """INSERT INTO analysis_runs (id, document_id, source_content_sha256, source_parser_id, source_parser_version, configuration_snapshot, status, progress, created_at)
-               VALUES (?, ?, ?, 'grobid', '0.9.1-crf', '{"claimExtractor":{"provider":"heuristic"}}'::jsonb, 'QUEUED', '{"stage":"QUEUED"}'::jsonb, ?)""",
+               VALUES (?, ?, ?, 'grobid', '0.9.1-crf', '{"claimExtractor":{"provider":"heuristic","version":"v1"}}'::jsonb, 'QUEUED', '{"stage":"QUEUED"}'::jsonb, ?)""",
             runId, documentId, hash, java.sql.Timestamp.from(createdAt),
         )
         val event = PipelineEvent(
@@ -607,6 +670,7 @@ class AnalysisRunQueueIntegrationTest {
         objectStore,
         TestScientificDocumentParser,
         ParsedDocumentRepository(jdbc, objectMapper),
+        ClaimExtractionService(ProviderCatalog.safeDefaults(), listOf(HeuristicClaimExtractor())),
     )
 
     private fun englishPdf(): ByteArray {
@@ -682,11 +746,15 @@ class AnalysisRunQueueIntegrationTest {
             jdbc = JdbcTemplate(dataSource)
             val migrationDirectory = listOf(Path.of("db/deploy"), Path.of("api/db/deploy"))
                 .firstOrNull(Files::isDirectory) ?: error("Could not locate Sqitch deployment directory")
-            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql").forEach { filename ->
+            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql").forEach { filename ->
                 val migration = migrationDirectory.resolve(filename)
                 dataSource.connection.use { connection ->
                     connection.createStatement().use { statement -> statement.execute(Files.readString(migration)) }
                 }
+            }
+            val claimMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("atomic_claims.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(claimMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))
