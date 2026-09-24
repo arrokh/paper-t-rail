@@ -1700,60 +1700,91 @@ Create a new Analysis Run. For reproducibility, each run must retain the source 
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./docs/agents/provider-matrix.md). This branch contains the system design but no application runtime or deployable provider configuration; treat this YAML as the implementation's safe-default configuration contract.
 
-Example:
+Safe default example:
 
 ```yaml
 providers:
   claim-extractor:
     default: heuristic
-
     heuristic:
       enabled: true
-
     llm:
       enabled: false
-      llm-provider: google
+      provider: local
 
   llm:
-    google:
+    local:
+      enabled: false
+      model: example-local-model
+    google-gemini-api:
+      enabled: false
+      model: example-model
+    google-vertex-ai:
       enabled: false
       model: example-model
 
-    local:
-      enabled: false
-
   embedding:
     default: local
-
     local:
       enabled: true
       model: e5-small-v2
-
-    google:
+    google-gemini-api:
+      enabled: false
+      model: example-embedding-model
+    google-vertex-ai:
       enabled: false
       model: example-embedding-model
 
+  scholarly-metadata:
+    default: recorded-fixtures
+    recorded-fixtures:
+      enabled: true
+    crossref:
+      enabled: false
+
+  academic-graph:
+    default: recorded-fixtures
+    recorded-fixtures:
+      enabled: true
+    semantic-scholar:
+      enabled: false
+
+  open-access:
+    default: recorded-fixtures
+    recorded-fixtures:
+      enabled: true
+    unreviewed-remote:
+      enabled: false
+
+  grobid:
+    parser:
+      provider: self-hosted
+      enabled: true
+    consolidation:
+      consolidateHeader: "0"
+      consolidateCitations: "0"
+
   system-one:
     default: mock
-
     mock:
       enabled: true
-
     laya:
-      enabled: false  # enable only after trust boundary and retention terms are reviewed
-
+      enabled: false  # self-hosted only; keep mock default until runtime review and calibration
     jev:
-      enabled: false
+      enabled: false  # external; enable only after review and per-run consent
 ```
+
+In this profile, `recorded-fixtures` is a required fixture-provider contract: when implemented, it must use deterministic, checked-in provider/parser responses and representative paper assets, and must not make remote requests. It is the intended way to keep metadata resolution, OA discovery/acquisition, parsing, and verification testable without remote credentials or an approved remote provider. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. This profile's local embedding provider and mock System One let the vertical pipeline run without external LLM, embedding, metadata, graph, OA, consolidation, or Jev services.
 
 Rules:
 
 - disabled providers cannot be selected,
 - provider list endpoint exposes only enabled providers,
-- every provider must have a documented trust boundary (`LOCAL` or `EXTERNAL`) and data-retention review before enablement; unclassified providers stay disabled,
-- external providers are disabled by default and cannot receive document/claim/evidence content unless the user explicitly consents to that provider and those data categories for the specific Analysis Run; consent is never inferred from a configured default,
+- classify each exact provider/deployment as `LOCAL`, `EXTERNAL`, or `UNREVIEWED`; document actual payload categories and retention/deletion terms before considering enablement, and keep `UNREVIEWED` providers disabled,
+- every external provider remains disabled in the safe default; even after administrative enablement, it cannot receive content unless the user explicitly consents to that provider and those exact data categories for the specific Analysis Run; consent is never inferred from readiness, configuration, or a previous run,
+- explicitly pass GROBID consolidation values of `0`; do not rely on service defaults,
 - Analysis Run stores selected provider/model snapshot, reference-resolution threshold, and external-provider consent/data-category snapshot,
 - application logic never branches on vendor names outside adapter/configuration code.
 
@@ -3130,8 +3161,8 @@ V1 is single-user/no-auth, but still:
 - block non-HTTP(S) external locations,
 - do not bypass publisher authentication/paywalls,
 - store provenance for acquired full text,
-- require explicit consent per external provider and Analysis Run; use stable data-category identifiers (`source_document_text`, `bibliographic_metadata`, `citation_context`, `cited_paper_chunks`, `atomic_claims`, `evidence_passages`, `embedding_input`), disclose the categories each provider receives, and send only the minimum necessary content; any newly introduced payload category requires matching consent,
-- default payload mapping: Crossref/Semantic Scholar/OA discovery → `bibliographic_metadata`; LLM claim extraction → `citation_context`; embedding services → `cited_paper_chunks` + `embedding_input`; System One → `atomic_claims` + `evidence_passages`; GROBID consolidation → `bibliographic_metadata` and remains disabled by default,
+- require explicit consent per external provider and Analysis Run; use stable data-category identifiers (`source_document_text`, `bibliographic_metadata`, `citation_context`, `cited_paper_chunks`, `atomic_claims`, `evidence_passages`, `embedding_input`, `provider_contact_email`), disclose the categories each provider receives, and send only the minimum necessary content; `provider_contact_email` covers provider-required or configured contact email fields (for example, polite-pool identification); any newly introduced payload category requires matching consent,
+- default payload mapping: Crossref/Semantic Scholar/OA discovery → `bibliographic_metadata`; provider-required/configured contact email → `provider_contact_email`; LLM claim extraction → `citation_context`; embedding services → `cited_paper_chunks` + `embedding_input`; System One → `atomic_claims` + `evidence_passages`; GROBID consolidation → `bibliographic_metadata` and remains disabled by default,
 - make clear that deleting local data cannot retract content already transmitted to an external provider; verify and disclose each provider's retention/deletion terms before enabling it,
 - because V1 has no authentication, bind the web/API to localhost or a trusted private network; do not expose it to an untrusted/public network until authentication and authorization are added,
 - provide a document deletion action that first tombstones the document and cancels/invalidates pending work, then removes the source file, document-scoped acquired assets, parsed text/chunks, embeddings, analysis results, Human Reviews, per-run provider-consent/configuration snapshots, and content-bearing logs; workers must check the tombstone before starting new provider calls and before committing results so pending events cannot resurrect deleted data. A provider call already in flight cannot be retracted. Retain shared cited-paper assets only while another non-deleted document/run references them; retain otherwise only a content-free deletion tombstone where needed for operational audit. This explicit deletion is the privacy exception to normal AnalysisRun immutability,
@@ -3202,17 +3233,20 @@ enabled: false
 
 # 55. Local Development Defaults
 
-Recommended simplest local configuration:
+Recommended simplest local configuration (see [the provider matrix](./docs/agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)):
 
 ```text
 claim extractor:
 heuristic
 
 embedding:
-local
+local (enabled, pinned model)
 
 system one:
 mock
+
+GROBID:
+self-hosted parser; consolidateHeader=0, consolidateCitations=0
 
 retrieval:
 postgres hybrid
@@ -3224,7 +3258,7 @@ storage:
 minio
 ```
 
-Keep Laya disabled until its trust boundary and retention/deletion terms are reviewed. For early implementation, start with:
+Fixture mode must use recorded provider responses, parser outputs, and representative source/cited-paper assets without making remote calls; it is intended to remain usable when no remote provider is approved. Keep Laya disabled until its model/runtime boundary, provenance, and calibration are reviewed. For early implementation, start with:
 
 ```text
 MockSystemOneProvider
