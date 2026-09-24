@@ -45,6 +45,7 @@ Scanned PDFs without enough selectable text, unsupported languages, invalid PDFs
 The Next.js server proxies same-origin `/api/v1/*` calls to the private API; browser code never needs a public API binding.
 
 - `POST /api/v1/analysis-runs` — multipart `file` plus optional JSON `configuration`; validates, stores the Source Document, creates a `QUEUED` immutable Analysis Run, and commits its outbox event atomically.
+- `GET /api/v1/providers` — enabled and classified provider choices plus stable data-category descriptions; disabled and unclassified providers are omitted.
 - `GET /api/v1/analysis-runs` — list recent persisted runs.
 - `GET /api/v1/analysis-runs/{id}` — persisted status, progress, source hash, and configuration snapshot.
 - `POST /api/v1/documents/{id}/analysis-runs` — re-analyze the same stored Source Document as a new run.
@@ -52,7 +53,7 @@ The Next.js server proxies same-origin `/api/v1/*` calls to the private API; bro
 
 The OpenAPI 3 document is available at <http://127.0.0.1:8080/v3/api-docs> (YAML at `/v3/api-docs.yaml`) and Swagger UI at <http://127.0.0.1:8080/swagger-ui/index.html>. The API host port defaults to `8080`; configure `API_HOST_PORT` in `.env` if that loopback port is unavailable. Compose binds this published port only to `127.0.0.1`; do not expose it publicly. Swagger/OpenAPI endpoints are disabled in the worker process.
 
-Only configured local providers (`heuristic`, `local`, `mock`) can be selected. Unavailable/external providers and unknown configuration fields are rejected rather than ignored.
+The upload form loads provider choices from `GET /api/v1/providers`; only enabled, classified providers are listed. Heuristic extraction, local embeddings, and mock System One are selected by default. External integrations remain disabled in the safe profile. If a reviewed external provider is enabled in a future profile, the form discloses its exact payload categories and requires fresh per-run approval for each; the immutable run snapshot records that provider/category consent. The outbound provider-call gate rejects disabled, unclassified, unselected, or unconsented requests before invoking the adapter's send action. The current upload-to-run slice has no external provider adapter, and local/mock runs send no document content externally.
 
 ## Structured logs and request correlation
 

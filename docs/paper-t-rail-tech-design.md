@@ -1784,6 +1784,7 @@ Rules:
 - provider list endpoint exposes only enabled providers,
 - classify each exact provider/deployment as `LOCAL`, `EXTERNAL`, or `UNREVIEWED`; document actual payload categories and retention/deletion terms before considering enablement, and keep `UNREVIEWED` providers disabled,
 - every external provider remains disabled in the safe default; even after administrative enablement, it cannot receive content unless the user explicitly consents to that provider and those exact data categories for the specific Analysis Run; consent is never inferred from readiness, configuration, or a previous run,
+- the provider-call gate checks current classification/enablement, Analysis Run provider selection, declared-versus-actual request categories, and per-run consent before invoking any outbound send action; adapters must derive categories from the request they are about to send,
 - explicitly pass GROBID consolidation values of `0`; do not rely on service defaults,
 - Analysis Run stores selected provider/model snapshot, reference-resolution threshold, and external-provider consent/data-category snapshot,
 - application logic never branches on vendor names outside adapter/configuration code.
@@ -2649,21 +2650,18 @@ Deletion first tombstones the document and invalidates pending work, then remove
 POST /api/v1/analysis-runs
 ```
 
-Request:
+The multipart `configuration` field and re-analysis JSON body use the same configuration shape:
 
 ```json
 {
-  "documentId": "uuid",
-  "providers": {
-    "claimExtractor": "heuristic",
-    "embedding": "local",
-    "systemOne": "mock"
-  },
+  "claimExtractorProvider": "heuristic",
+  "embeddingProvider": "local",
+  "systemOneProvider": "mock",
   "externalProviderConsents": []
 }
 ```
 
-The example selects only local/mock providers, so it carries no external-provider consent. Add a provider-specific consent entry only when selecting an audited external provider.
+The example selects only local/mock providers, so it carries no external-provider consent. For an enabled, classified external provider, include one consent entry per selected provider with exactly its disclosed categories, for example `{"providerId":"jev","dataCategories":["atomic_claims","evidence_passages"]}`. The server rejects disabled, unclassified, unknown, and unconsented selections before creating the Analysis Run. The immutable run snapshot records selected-provider classification/category mappings and the per-run consent. Every external adapter must pass the actual request categories and run snapshot through the provider-call gate before its send action.
 
 Returns:
 
@@ -2722,7 +2720,7 @@ Request:
 GET /api/v1/providers
 ```
 
-Returns enabled providers only.
+Returns enabled, classified provider choices only, grouped by role, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The default runtime exposes only local/mock providers.
 
 ## 40.5 OpenAPI and Swagger UI
 

@@ -18,7 +18,7 @@ export default function Home() {
       </section>
       <UploadDashboard />
       <footer className="footer-note">
-        <span>Private by default · No external providers are enabled</span>
+        <span>Private by default · Provider sharing requires per-run consent</span>
         <span>Paper T-Rail reports are research triage, not certification or grading.</span>
       </footer>
     </main>
