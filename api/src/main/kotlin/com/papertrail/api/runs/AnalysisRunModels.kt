@@ -96,6 +96,7 @@ data class AnalysisRunSummary(
     val documentId: UUID,
     val filename: String,
     val sourceContentSha256: String,
+    @field:Schema(description = "PARSED means citation structure is ready; claim and evidence analysis has not run.")
     val status: String,
     @field:Schema(implementation = AnalysisRunProgress::class, description = "Persisted run progress.")
     val progress: JsonNode,
@@ -104,6 +105,14 @@ data class AnalysisRunSummary(
     val createdAt: Instant,
     val startedAt: Instant?,
     val failureReason: String?,
+)
+
+@Schema(description = "One page of Analysis Runs ordered by creation time descending, then ID descending.")
+data class AnalysisRunPage(
+    @field:Schema(description = "Analysis Runs in this page.")
+    val items: List<AnalysisRunSummary>,
+    @field:Schema(description = "Opaque cursor for the next, older page; null when there are no more runs.")
+    val nextCursor: String?,
 )
 
 data class CreatedAnalysisRunResponse(
@@ -118,6 +127,7 @@ data class CreatedAnalysisRunResponse(
 class RunConfigurationFactory(
     private val objectMapper: ObjectMapper,
     private val providerCatalog: ProviderCatalog,
+    private val parserId: String,
     private val parserVersion: String,
     private val languageDetectorVersion: String,
     private val limits: ValidationLimitsSnapshot,
@@ -195,7 +205,7 @@ class RunConfigurationFactory(
             claimExtractor = selected[0].toSelection(),
             embedding = selected[1].toSelection(),
             systemOne = selected[2].toSelection(),
-            sourceParser = ProviderSelection("pdfbox", parserVersion),
+            sourceParser = ProviderSelection(parserId, parserVersion),
             languageDetector = ProviderSelection("optimaize", languageDetectorVersion),
             validationLimits = limits,
             referenceResolution = ReferenceResolutionSnapshot(

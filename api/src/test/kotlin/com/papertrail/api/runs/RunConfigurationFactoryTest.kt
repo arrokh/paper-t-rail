@@ -21,7 +21,8 @@ class RunConfigurationFactoryTest {
     private val factory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
         providerCatalog = ProviderCatalog.safeDefaults(),
-        parserVersion = "3.0.5",
+        parserId = "grobid",
+        parserVersion = "0.9.1-crf",
         languageDetectorVersion = "0.6",
         limits = ValidationLimitsSnapshot(52_428_800, 500, 5_000_000, 100_000, 100, 0.65),
     )
@@ -38,8 +39,8 @@ class RunConfigurationFactoryTest {
         assertEquals(listOf("cited_paper_chunks", "embedding_input"), snapshot.embedding.dataCategories)
         assertEquals("mock", snapshot.systemOne.provider)
         assertEquals(listOf("atomic_claims", "evidence_passages"), snapshot.systemOne.dataCategories)
-        assertEquals("pdfbox", snapshot.sourceParser.provider)
-        assertEquals("3.0.5", snapshot.sourceParser.version)
+        assertEquals("grobid", snapshot.sourceParser.provider)
+        assertEquals("0.9.1-crf", snapshot.sourceParser.version)
         assertEquals(52_428_800, snapshot.validationLimits.maxUploadBytes)
         assertEquals(100_000, snapshot.validationLimits.maxExtractedCharactersPerPage)
         assertEquals(100, snapshot.validationLimits.minimumExtractedCharacters)
@@ -245,7 +246,8 @@ class RunConfigurationFactoryTest {
     private fun factoryFor(): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
         providerCatalog = reviewedExternalProviderCatalog(),
-        parserVersion = "3.0.5",
+        parserId = "grobid",
+        parserVersion = "0.9.1-crf",
         languageDetectorVersion = "0.6",
         limits = ValidationLimitsSnapshot(52_428_800, 500, 5_000_000, 100_000, 100, 0.65),
     )

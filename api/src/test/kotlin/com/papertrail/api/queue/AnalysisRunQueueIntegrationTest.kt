@@ -7,6 +7,13 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.documents.OptimaizeDocumentLanguageDetector
 import com.papertrail.api.documents.PdfDocumentValidator
+import com.papertrail.api.parsing.ParsedBibliographyEntry
+import com.papertrail.api.parsing.ParsedCitationContext
+import com.papertrail.api.parsing.ParsedCitationOccurrence
+import com.papertrail.api.parsing.ParsedDocumentRepository
+import com.papertrail.api.parsing.ParsedScientificDocument
+import com.papertrail.api.parsing.ParsedSection
+import com.papertrail.api.parsing.ScientificDocumentParser
 import com.papertrail.api.providers.ProviderCatalog
 import com.papertrail.api.providers.reviewedExternalProviderCatalog
 import com.papertrail.api.runs.AnalysisRunService
@@ -25,6 +32,7 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
@@ -75,6 +83,9 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("QUEUED", created.status)
         assertEquals(expectedHash, created.sourceContentSha256)
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM source_documents WHERE id = ?", Int::class.java, created.documentId))
+        assertEquals("pdfbox", jdbc.queryForObject("SELECT parser_id FROM source_documents WHERE id = ?", String::class.java, created.documentId))
+        assertEquals("grobid", jdbc.queryForObject("SELECT source_parser_id FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals("0.9.1-crf", jdbc.queryForObject("SELECT source_parser_version FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM analysis_runs WHERE id = ? AND status = 'QUEUED'", Int::class.java, created.analysisRunId))
         assertEquals(
             created.sourceContentSha256,
@@ -141,6 +152,36 @@ class AnalysisRunQueueIntegrationTest {
         assertThrows(org.springframework.dao.DataAccessException::class.java) {
             jdbc.update("UPDATE analysis_runs SET status = 'COMPLETED' WHERE id = ?", secondRun.analysisRunId)
         }
+    }
+
+    @Test
+    fun `analysis run listing uses a stable cursor ordered by creation time and ID`() {
+        val timestamps = listOf(
+            Instant.parse("2025-01-03T00:00:00Z"),
+            Instant.parse("2025-01-02T00:00:00Z"),
+            Instant.parse("2025-01-02T00:00:00Z"),
+            Instant.parse("2025-01-01T00:00:00Z"),
+        )
+        val createdRuns = timestamps.map(::createQueuedRun)
+        val expectedIds = createdRuns
+            .zip(timestamps)
+            .sortedWith(compareByDescending<Pair<CreatedRunIds, Instant>> { it.second }.thenByDescending { it.first.analysisRunId.toString() })
+            .map { it.first.analysisRunId }
+        val service = analysisRunService()
+
+        val firstPage = service.list(limit = 2)
+        assertEquals(expectedIds.take(2), firstPage.items.map { it.id })
+        assertTrue(firstPage.nextCursor != null)
+
+        val secondPage = service.list(limit = 2, cursorToken = firstPage.nextCursor!!)
+        assertEquals(expectedIds.drop(2), secondPage.items.map { it.id })
+        assertNull(secondPage.nextCursor)
+        assertEquals(expectedIds, (firstPage.items + secondPage.items).map { it.id })
+
+        val invalidCursor = assertThrows(IllegalArgumentException::class.java) {
+            service.list(limit = 2, cursorToken = "not-a-cursor")
+        }
+        assertEquals("Analysis Run cursor is invalid.", invalidCursor.message)
     }
 
     @Test
@@ -241,15 +282,60 @@ class AnalysisRunQueueIntegrationTest {
         }
 
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = (SELECT event_id FROM outbox_events WHERE analysis_run_id = ?)", Int::class.java, created.analysisRunId))
-        assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertNull(jdbc.queryForObject("SELECT completed_at FROM analysis_runs WHERE id = ?", java.sql.Timestamp::class.java, created.analysisRunId))
         assertEquals(
-            "SOURCE_DOCUMENT_VERIFIED",
+            "PARSED",
             jdbc.queryForObject("SELECT progress ->> 'stage' FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId),
         )
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM parsed_document_sections WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM citation_contexts WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM citation_targets WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertThrows(org.springframework.dao.DataAccessException::class.java) {
+            jdbc.update("UPDATE parsed_document_parses SET parser_version = 'changed' WHERE analysis_run_id = ?", created.analysisRunId)
+        }
+        val parsed = ParsedDocumentRepository(jdbc, objectMapper).find(created.analysisRunId)!!
+        assertEquals("grobid", parsed.parser.provider)
+        assertEquals("0.9.1-crf", parsed.parser.version)
+        assertEquals(created.hash, parsed.sourceContentSha256)
+        assertEquals("Prior results support the method [1, 2]; however, later work disputes it [3].", parsed.normalizedSourceText)
+        assertEquals(2, parsed.citationContexts.size)
+        assertEquals("Prior results support the method [1, 2]", parsed.citationContexts[0].text)
+        assertEquals("[1, 2]", parsed.citationContexts[0].occurrences.single().markerText)
+        assertEquals(listOf("ref2", "ref1"), parsed.citationContexts[0].occurrences.single().bibliographyReferenceKeys)
+        assertEquals("however, later work disputes it [3].", parsed.citationContexts[1].text)
+        assertEquals("[3]", parsed.citationContexts[1].occurrences.single().markerText)
+        assertEquals(listOf("ref3"), parsed.citationContexts[1].occurrences.single().bibliographyReferenceKeys)
+        assertEquals(listOf("ref1", "ref2", "ref3"), parsed.bibliographyEntries.map { it.localReferenceKey })
+        val persistedTargetLinks = jdbc.query(
+            """
+            SELECT o.marker_text, b.local_reference_key
+              FROM citation_occurrences o
+              JOIN citation_targets t ON t.analysis_run_id = o.analysis_run_id AND t.citation_occurrence_id = o.id
+              JOIN bibliography_entries b ON b.analysis_run_id = t.analysis_run_id AND b.id = t.bibliography_entry_id
+             WHERE o.analysis_run_id = ?
+             ORDER BY o.start_offset, t.target_order
+            """.trimIndent(),
+            { rs, _ -> "${rs.getString("marker_text")} -> ${rs.getString("local_reference_key")}" },
+            created.analysisRunId,
+        )
+        assertEquals(listOf("[1, 2] -> ref2", "[1, 2] -> ref1", "[3] -> ref3"), persistedTargetLinks)
+        parsed.citationContexts.flatMap { it.occurrences }.forEach { occurrence ->
+            assertEquals(occurrence.markerText, parsed.normalizedSourceText.substring(occurrence.startOffset, occurrence.endOffset))
+        }
+        val rawTeiObjectKey = jdbc.queryForObject(
+            "SELECT raw_tei_object_key FROM parsed_document_parses WHERE analysis_run_id = ?",
+            String::class.java,
+            created.analysisRunId,
+        )!!
+        assertTrue(rawTeiObjectKey.startsWith("source/${created.documentId}/analysis-runs/${created.analysisRunId}/grobid-"))
+        assertTrue(rawTeiObjectKey.endsWith(".xml"))
+        assertArrayEquals("<TEI>test GROBID output</TEI>".toByteArray(), objectStore.get(rawTeiObjectKey))
+        assertEquals("application/xml", objectStore.contentType(rawTeiObjectKey))
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
         val processedEvent: PipelineEvent<DocumentAnalysisRequestedPayload> = objectMapper.readValue(envelope)
         handler.markFailed(processedEvent, "A stale retry must not overwrite a committed success.")
-        assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         assertTrue(jdbc.queryForObject("SELECT failure_reason IS NULL FROM analysis_runs WHERE id = ?", Boolean::class.java, created.analysisRunId) == true)
     }
 
@@ -292,7 +378,7 @@ class AnalysisRunQueueIntegrationTest {
             workerLogger.detachAppender(appender)
         }
 
-        assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         val processedEvent = objectMapper.readTree(abandoned.value.getValue("event"))
         val workerLog = appender.list.single { it.message == "Pipeline event processed" }
         val mdc = workerLog.mdcPropertyMap
@@ -393,7 +479,48 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
     }
 
-    private fun createQueuedRun(): CreatedRunIds {
+    private object TestScientificDocumentParser : ScientificDocumentParser {
+        override fun parse(pdf: ByteArray): ParsedScientificDocument {
+            val firstContext = "Prior results support the method [1, 2]"
+            val secondContext = "however, later work disputes it [3]."
+            val secondContextStart = firstContext.length + 2
+            val text = "$firstContext; $secondContext"
+            val firstMarkerStart = text.indexOf("[1, 2]")
+            val secondMarkerStart = text.indexOf("[3]")
+            return ParsedScientificDocument(
+                parserId = "grobid",
+                parserVersion = "0.9.1-crf",
+                normalizedSourceText = text,
+                sections = listOf(ParsedSection(0, "Introduction", text, 0, text.length)),
+                citationContexts = listOf(
+                    ParsedCitationContext(
+                        sectionOrder = 0,
+                        boundaryKind = "CLAUSE",
+                        text = firstContext,
+                        startOffset = 0,
+                        endOffset = firstContext.length,
+                        occurrences = listOf(ParsedCitationOccurrence("[1, 2]", firstMarkerStart, firstMarkerStart + 6, listOf("ref2", "ref1"))),
+                    ),
+                    ParsedCitationContext(
+                        sectionOrder = 0,
+                        boundaryKind = "CLAUSE",
+                        text = secondContext,
+                        startOffset = secondContextStart,
+                        endOffset = text.length,
+                        occurrences = listOf(ParsedCitationOccurrence("[3]", secondMarkerStart, secondMarkerStart + 3, listOf("ref3"))),
+                    ),
+                ),
+                bibliographyEntries = listOf(
+                    ParsedBibliographyEntry(0, "ref1", "Reference one", "Reference one", emptyList(), 2020, null, "OTHER"),
+                    ParsedBibliographyEntry(1, "ref2", "Reference two", "Reference two", emptyList(), 2019, null, "OTHER"),
+                    ParsedBibliographyEntry(2, "ref3", "Reference three", "Reference three", emptyList(), 2018, null, "OTHER"),
+                ),
+                rawParserOutput = "<TEI>test GROBID output</TEI>".toByteArray(),
+            )
+        }
+    }
+
+    private fun createQueuedRun(createdAt: Instant = Instant.now()): CreatedRunIds {
         val bytes = "integration pdf bytes".toByteArray()
         val hash = expectedSha256(bytes)
         val documentId = UUID.randomUUID()
@@ -402,7 +529,6 @@ class AnalysisRunQueueIntegrationTest {
         val correlationId = UUID.randomUUID()
         val objectKey = "source/$documentId/$hash.pdf"
         objectStore.put(objectKey, bytes)
-        val createdAt = Instant.now()
         jdbc.update(
             """INSERT INTO source_documents (id, filename, content_type, object_key, sha256, language, page_count, extracted_character_count, parser_id, parser_version, created_at)
                VALUES (?, 'paper.pdf', 'application/pdf', ?, ?, 'en', 1, 1000, 'pdfbox', '3.0.5', ?)""",
@@ -410,7 +536,7 @@ class AnalysisRunQueueIntegrationTest {
         )
         jdbc.update(
             """INSERT INTO analysis_runs (id, document_id, source_content_sha256, source_parser_id, source_parser_version, configuration_snapshot, status, progress, created_at)
-               VALUES (?, ?, ?, 'pdfbox', '3.0.5', '{"claimExtractor":{"provider":"heuristic"}}'::jsonb, 'QUEUED', '{"stage":"QUEUED"}'::jsonb, ?)""",
+               VALUES (?, ?, ?, 'grobid', '0.9.1-crf', '{"claimExtractor":{"provider":"heuristic"}}'::jsonb, 'QUEUED', '{"stage":"QUEUED"}'::jsonb, ?)""",
             runId, documentId, hash, java.sql.Timestamp.from(createdAt),
         )
         val event = PipelineEvent(
@@ -455,11 +581,12 @@ class AnalysisRunQueueIntegrationTest {
             parserVersion = "3.0.5",
         )
         val factory = RunConfigurationFactory(
-            objectMapper,
-            providerCatalog,
-            "3.0.5",
-            "0.6",
-            ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
+            objectMapper = objectMapper,
+            providerCatalog = providerCatalog,
+            parserId = "grobid",
+            parserVersion = "0.9.1-crf",
+            languageDetectorVersion = "0.6",
+            limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
         )
         return AnalysisRunService(
             jdbc,
@@ -468,8 +595,8 @@ class AnalysisRunQueueIntegrationTest {
             objectStore,
             factory,
             objectMapper,
-            "pdfbox",
-            "3.0.5",
+            "grobid",
+            "0.9.1-crf",
         )
     }
 
@@ -478,6 +605,8 @@ class AnalysisRunQueueIntegrationTest {
         TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource)),
         objectMapper,
         objectStore,
+        TestScientificDocumentParser,
+        ParsedDocumentRepository(jdbc, objectMapper),
     )
 
     private fun englishPdf(): ByteArray {
@@ -506,10 +635,15 @@ class AnalysisRunQueueIntegrationTest {
 
     private class MemoryObjectStore : SourceDocumentObjectStore {
         private val content = mutableMapOf<String, ByteArray>()
-        override fun put(objectKey: String, content: ByteArray) { this.content[objectKey] = content.copyOf() }
+        private val contentTypes = mutableMapOf<String, String>()
+        override fun put(objectKey: String, content: ByteArray, contentType: String) {
+            this.content[objectKey] = content.copyOf()
+            contentTypes[objectKey] = contentType
+        }
         override fun get(objectKey: String): ByteArray = content[objectKey]?.copyOf() ?: error("Source object missing")
-        override fun delete(objectKey: String) { content.remove(objectKey) }
-        fun clear() { content.clear() }
+        override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey) }
+        fun contentType(objectKey: String): String? = contentTypes[objectKey]
+        fun clear() { content.clear(); contentTypes.clear() }
     }
 
     @BeforeEach
@@ -548,7 +682,7 @@ class AnalysisRunQueueIntegrationTest {
             jdbc = JdbcTemplate(dataSource)
             val migrationDirectory = listOf(Path.of("db/deploy"), Path.of("api/db/deploy"))
                 .firstOrNull(Files::isDirectory) ?: error("Could not locate Sqitch deployment directory")
-            listOf("extensions.sql", "core_documents.sql").forEach { filename ->
+            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql").forEach { filename ->
                 val migration = migrationDirectory.resolve(filename)
                 dataSource.connection.use { connection ->
                     connection.createStatement().use { statement -> statement.execute(Files.readString(migration)) }

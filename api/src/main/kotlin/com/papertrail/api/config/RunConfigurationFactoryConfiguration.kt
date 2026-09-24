@@ -23,11 +23,13 @@ class RunConfigurationFactoryConfiguration {
         objectMapper: ObjectMapper,
         providerCatalog: ProviderCatalog,
         validator: PdfDocumentValidator,
-        @Value("\${paper-trail.validation.parser-version}") parserVersion: String,
+        @Value("\${paper-trail.analysis.parser-id}") parserId: String,
+        @Value("\${paper-trail.analysis.parser-version}") parserVersion: String,
         @Value("\${paper-trail.validation.language-detector-version}") languageDetectorVersion: String,
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = objectMapper,
         providerCatalog = providerCatalog,
+        parserId = parserId,
         parserVersion = parserVersion,
         languageDetectorVersion = languageDetectorVersion,
         limits = ValidationLimitsSnapshot(

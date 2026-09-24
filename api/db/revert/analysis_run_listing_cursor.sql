@@ -1,0 +1,1 @@
+DROP INDEX analysis_runs_created_at_id_idx;
