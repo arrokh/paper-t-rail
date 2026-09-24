@@ -2,8 +2,16 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { AnalysisRun, ApiError, CreatedRun } from "@/lib/types";
+import {
+  consentRequirements,
+  createRunConfiguration,
+  missingConsents,
+  type ProviderDirectory,
+  type ProviderRole,
+  type ProviderSelections,
+} from "@/lib/provider-configuration";
 
-const DEFAULT_CONFIGURATION = {
+const DEFAULT_SELECTIONS: ProviderSelections = {
   claimExtractorProvider: "heuristic",
   embeddingProvider: "local",
   systemOneProvider: "mock",
@@ -24,12 +32,20 @@ function statusLabel(status: AnalysisRun["status"]): string {
 
 export function UploadDashboard() {
   const [runs, setRuns] = useState<AnalysisRun[]>([]);
+  const [providerDirectory, setProviderDirectory] = useState<ProviderDirectory | null>(null);
+  const [providerSelections, setProviderSelections] = useState<ProviderSelections>(DEFAULT_SELECTIONS);
+  const [approvedCategories, setApprovedCategories] = useState<Record<string, string[]>>({});
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [providerError, setProviderError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const selectedRun = useMemo(() => runs.find((run) => run.id === selectedRunId) ?? null, [runs, selectedRunId]);
+  const consentRequirementsForRun = useMemo(
+    () => providerDirectory ? consentRequirements(providerDirectory, providerSelections) : [],
+    [providerDirectory, providerSelections],
+  );
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -46,6 +62,35 @@ export function UploadDashboard() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    void fetch("/api/v1/providers", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await readError(response));
+        const directory = (await response.json()) as ProviderDirectory;
+        const roles: ProviderRole[] = ["claimExtractor", "embedding", "systemOne"];
+        if (roles.some((role) => !directory.providers[role]?.length)) {
+          throw new Error("The API has no enabled provider for one or more Analysis Run stages.");
+        }
+        const selectAvailable = (role: ProviderRole, current: string) =>
+          directory.providers[role]?.find((provider) => provider.providerId === current)?.providerId
+          ?? directory.providers[role]?.[0]?.providerId
+          ?? current;
+        setProviderDirectory(directory);
+        setProviderSelections((current) => ({
+          claimExtractorProvider: selectAvailable("claimExtractor", current.claimExtractorProvider),
+          embeddingProvider: selectAvailable("embedding", current.embeddingProvider),
+          systemOneProvider: selectAvailable("systemOne", current.systemOneProvider),
+        }));
+        setProviderError(null);
+      })
+      .catch((cause: unknown) => {
+        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        setProviderError(cause instanceof Error ? cause.message : "Could not load available providers.");
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     const initialLoad = window.setTimeout(() => void refreshRuns(), 0);
     const interval = window.setInterval(() => void refreshRuns(), 2500);
     return () => {
@@ -53,6 +98,36 @@ export function UploadDashboard() {
       window.clearInterval(interval);
     };
   }, [refreshRuns]);
+
+  function runConfiguration() {
+    if (!providerDirectory) throw new Error("Available providers have not loaded yet.");
+    if (missingConsents(consentRequirementsForRun, approvedCategories).length > 0) {
+      throw new Error("Approve every disclosed data category for each selected external provider, or choose a local provider.");
+    }
+    return createRunConfiguration(providerSelections, consentRequirementsForRun, approvedCategories);
+  }
+
+  function selectProvider(role: ProviderRole, providerId: string) {
+    setProviderSelections((current) => ({
+      ...current,
+      claimExtractorProvider: role === "claimExtractor" ? providerId : current.claimExtractorProvider,
+      embeddingProvider: role === "embedding" ? providerId : current.embeddingProvider,
+      systemOneProvider: role === "systemOne" ? providerId : current.systemOneProvider,
+    }));
+  }
+
+  function approveCategory(providerId: string, category: string, approved: boolean) {
+    setApprovedCategories((current) => {
+      const existing = new Set(current[providerId] ?? []);
+      if (approved) existing.add(category);
+      else existing.delete(category);
+      return { ...current, [providerId]: [...existing] };
+    });
+  }
+
+  function providerOptions(role: ProviderRole) {
+    return providerDirectory?.providers[role] ?? [];
+  }
 
   async function startRun(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -63,9 +138,16 @@ export function UploadDashboard() {
       return;
     }
 
+    let configuration;
+    try {
+      configuration = runConfiguration();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Review provider consent before continuing.");
+      return;
+    }
     const data = new FormData();
     data.append("file", fileInput.files[0]);
-    data.append("configuration", JSON.stringify(DEFAULT_CONFIGURATION));
+    data.append("configuration", JSON.stringify(configuration));
     setBusy(true);
     setError(null);
     try {
@@ -78,6 +160,7 @@ export function UploadDashboard() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The upload could not be processed.");
     } finally {
+      setApprovedCategories({});
       setBusy(false);
     }
   }
@@ -87,10 +170,11 @@ export function UploadDashboard() {
     setBusy(true);
     setError(null);
     try {
+      const configuration = runConfiguration();
       const response = await fetch(`/api/v1/documents/${encodeURIComponent(selectedRun.documentId)}/analysis-runs`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(DEFAULT_CONFIGURATION),
+        body: JSON.stringify(configuration),
       });
       if (!response.ok) throw new Error(await readError(response));
       const created = (await response.json()) as CreatedRun;
@@ -99,6 +183,7 @@ export function UploadDashboard() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "A new Analysis Run could not be created.");
     } finally {
+      setApprovedCategories({});
       setBusy(false);
     }
   }
@@ -111,22 +196,80 @@ export function UploadDashboard() {
           <h2 id="upload-heading">Start with your PDF</h2>
           <p className="muted">Upload an English academic document with selectable text. Scanned PDFs and other languages are rejected with a reason.</p>
           <form onSubmit={startRun} className="upload-form">
+            <div className="provider-selection-grid" aria-label="Analysis provider selection">
+              {([
+                ["claimExtractor", "Claim extraction", "claimExtractorProvider"],
+                ["embedding", "Embeddings", "embeddingProvider"],
+                ["systemOne", "Evidence assessment", "systemOneProvider"],
+              ] as const).map(([role, label, selectionField]) => (
+                <label className="provider-select" key={role}>
+                  <span>{label}</span>
+                  <select
+                    value={providerSelections[selectionField]}
+                    disabled={busy || !providerDirectory}
+                    onChange={(event) => selectProvider(role, event.target.value)}
+                  >
+                    {providerOptions(role).map((provider) => (
+                      <option key={provider.providerId} value={provider.providerId}>{provider.displayName}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+            {consentRequirementsForRun.length === 0 ? (
+              <div className="provider-consent local-only" aria-live="polite">
+                <strong>Local/mock providers selected</strong>
+                <p>This run needs no external consent and sends no document content to an external provider.</p>
+              </div>
+            ) : consentRequirementsForRun.map((provider) => (
+              <section className="provider-consent" key={provider.providerId} aria-labelledby={`consent-${provider.providerId}`}>
+                <h3 id={`consent-${provider.providerId}`}>{provider.displayName} data access</h3>
+                <p>This external provider may receive only the following request categories for this run:</p>
+                {provider.retentionDisclosure && <p className="retention-disclosure">{provider.retentionDisclosure}</p>}
+                <fieldset>
+                  <legend>Approve each category to continue</legend>
+                  {provider.dataCategories.map((categoryId) => {
+                    const category = providerDirectory?.dataCategories.find((item) => item.id === categoryId);
+                    return (
+                      <label className="consent-category" key={categoryId}>
+                        <input
+                          type="checkbox"
+                          disabled={busy}
+                          checked={approvedCategories[provider.providerId]?.includes(categoryId) ?? false}
+                          onChange={(event) => approveCategory(provider.providerId, categoryId, event.target.checked)}
+                        />
+                        <span><strong>{category?.label ?? categoryId}</strong><small><code>{categoryId}</code> · {category?.description}</small></span>
+                      </label>
+                    );
+                  })}
+                </fieldset>
+                <p className="consent-note">Consent applies only to this Analysis Run. It does not change previous runs or authorize additional categories.</p>
+              </section>
+            ))}
+            <details className="data-category-reference">
+              <summary>All stable data categories</summary>
+              <ul>
+                {providerDirectory?.dataCategories.map((category) => (
+                  <li key={category.id}><strong>{category.id}</strong> — {category.description}</li>
+                ))}
+              </ul>
+            </details>
             <label className="file-drop" htmlFor="source-file">
               <span className="upload-icon" aria-hidden="true">↑</span>
               <span className="file-drop-title">Choose a PDF</span>
               <span className="file-drop-caption">PDF only · content is checked before storage</span>
             </label>
             <input id="source-file" name="file" type="file" accept="application/pdf,.pdf" required />
-            <button className="primary-button" type="submit" disabled={busy}>
+            <button className="primary-button" type="submit" disabled={busy || !providerDirectory}>
               {busy ? "Starting run…" : "Upload & start Analysis Run"}
               <span aria-hidden="true">↗</span>
             </button>
           </form>
           <div className="privacy-callout">
             <span className="lock-icon" aria-hidden="true">▣</span>
-            <p><strong>Local and private by default.</strong> The selected configuration uses heuristic extraction, local embeddings, and a mock verifier. Upload limits are configurable; over-limit files are rejected, never trimmed.</p>
+            <p><strong>Local/mock providers are the default.</strong> Disabled or unclassified providers are not offered for selection. External providers require explicit approval of every disclosed category for each run. Upload limits are configurable; over-limit files are rejected, never trimmed.</p>
           </div>
-          {error && <div className="error-banner" role="alert"><strong>Could not continue</strong><span>{error}</span></div>}
+          {(error || providerError) && <div className="error-banner" role="alert"><strong>Could not continue</strong><span>{error ?? providerError}</span></div>}
         </section>
 
         <section className="runs-card" aria-labelledby="runs-heading">
@@ -172,7 +315,7 @@ export function UploadDashboard() {
                 <div><dt>Worker stage</dt><dd>{selectedRun.progress.stage?.replaceAll("_", " ").toLowerCase() ?? "queued"}</dd></div>
               </dl>
               {selectedRun.status === "FAILED" && selectedRun.failureReason && <p className="error-detail">{selectedRun.failureReason}</p>}
-              <button type="button" className="secondary-button" disabled={busy} onClick={reanalyze}>Create a new run from this document <span aria-hidden="true">↗</span></button>
+              <button type="button" className="secondary-button" disabled={busy || !providerDirectory} onClick={reanalyze}>Create a new run from this document <span aria-hidden="true">↗</span></button>
             </div>
           )}
         </section>

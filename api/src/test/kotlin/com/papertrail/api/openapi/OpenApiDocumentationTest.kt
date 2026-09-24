@@ -64,6 +64,9 @@ class OpenApiDocumentationTest {
         assertEquals("0.1.0", document.path("info").path("version").asText())
         val paths = document.path("paths")
 
+        assertTrue(paths.has("/api/v1/providers"))
+        val providerListing = paths.path("/api/v1/providers").path("get")
+        assertTrue(providerListing.path("responses").path("200").path("content").has("application/json"))
         assertTrue(paths.has("/api/v1/analysis-runs"))
         val analysisRuns = paths.path("/api/v1/analysis-runs")
         assertTrue(analysisRuns.path("get").path("responses").path("200").path("content").has("application/json"))
@@ -104,9 +107,42 @@ class OpenApiDocumentationTest {
         assertTrue(configProperties.has("claimExtractorProvider"))
         assertTrue(configProperties.has("embeddingProvider"))
         assertTrue(configProperties.has("systemOneProvider"))
+        assertTrue(configProperties.has("externalProviderConsents"))
         assertTrue(reanalysis.path("responses").has("201"))
         assertTrue(reanalysis.path("responses").has("404"))
         assertTrue(paths.path("/api/v1/health").path("get").path("responses").path("200").path("content").has("application/json"))
+    }
+
+    @Test
+    fun `provider directory exposes only enabled local choices and stable category descriptions`() {
+        val response = mockMvc.perform(get("/api/v1/providers"))
+            .andExpect(status().isOk)
+            .andReturn()
+            .response
+            .contentAsString
+        val directory = objectMapper.readTree(response)
+        val providers = directory.path("providers")
+        val claimExtractorOptions = providers.path("claimExtractor")
+        val embeddingOptions = providers.path("embedding")
+        val systemOneOptions = providers.path("systemOne")
+        assertEquals(setOf("claimExtractor", "embedding", "systemOne"), providers.fieldNames().asSequence().toSet())
+        assertEquals(1, claimExtractorOptions.size())
+        assertEquals(1, embeddingOptions.size())
+        assertEquals(1, systemOneOptions.size())
+        val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions).flatMap { it.toList() }
+        assertEquals(3, providerOptions.size)
+        assertTrue(providerOptions.all { it.path("trustBoundary").asText() == "LOCAL" })
+        assertFalse(providerOptions.any { it.path("providerId").asText() in setOf("jev", "google-gemini-api", "unreviewed-provider") })
+        val disclosedCategoryIds = directory.path("dataCategories").map { it.path("id").asText() }.toSet()
+        assertTrue(disclosedCategoryIds.containsAll(setOf(
+            "source_document_text",
+            "bibliographic_metadata",
+            "citation_context",
+            "cited_paper_chunks",
+            "atomic_claims",
+            "evidence_passages",
+            "embedding_input",
+        )))
     }
 
     @Test

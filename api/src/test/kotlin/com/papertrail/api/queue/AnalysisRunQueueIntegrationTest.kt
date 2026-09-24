@@ -7,6 +7,8 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.documents.OptimaizeDocumentLanguageDetector
 import com.papertrail.api.documents.PdfDocumentValidator
+import com.papertrail.api.providers.ProviderCatalog
+import com.papertrail.api.providers.reviewedExternalProviderCatalog
 import com.papertrail.api.runs.AnalysisRunService
 import com.papertrail.api.runs.RunConfigurationFactory
 import com.papertrail.api.runs.RunConfigurationRequest
@@ -87,6 +89,22 @@ class AnalysisRunQueueIntegrationTest {
             ),
         )
         assertEquals(
+            "LOCAL",
+            jdbc.queryForObject(
+                "SELECT configuration_snapshot #>> '{claimExtractor,trustBoundary}' FROM analysis_runs WHERE id = ?",
+                String::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertEquals(
+            "citation_context",
+            jdbc.queryForObject(
+                "SELECT configuration_snapshot #>> '{claimExtractor,dataCategories,0}' FROM analysis_runs WHERE id = ?",
+                String::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertEquals(
             "NOT_RUN",
             jdbc.queryForObject(
                 "SELECT configuration_snapshot #>> '{referenceResolution,executionStatus}' FROM analysis_runs WHERE id = ?",
@@ -122,6 +140,48 @@ class AnalysisRunQueueIntegrationTest {
         }
         assertThrows(org.springframework.dao.DataAccessException::class.java) {
             jdbc.update("UPDATE analysis_runs SET status = 'COMPLETED' WHERE id = ?", secondRun.analysisRunId)
+        }
+    }
+
+    @Test
+    fun `persists exact external provider consent in the immutable run snapshot`() {
+        val consent = com.papertrail.api.runs.ExternalProviderConsentSnapshot(
+            "reviewed-llm",
+            listOf("citation_context"),
+        )
+        val created = analysisRunService(providerCatalog = reviewedExternalProviderCatalog()).createFromUpload(
+            "paper.pdf",
+            "application/pdf",
+            englishPdf(),
+            RunConfigurationRequest(claimExtractorProvider = "reviewed-llm", externalProviderConsents = listOf(consent)),
+        )
+
+        assertEquals(
+            "EXTERNAL",
+            jdbc.queryForObject(
+                "SELECT configuration_snapshot #>> '{claimExtractor,trustBoundary}' FROM analysis_runs WHERE id = ?",
+                String::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertEquals(
+            "citation_context",
+            jdbc.queryForObject(
+                "SELECT configuration_snapshot #>> '{externalProviderConsents,0,dataCategories,0}' FROM analysis_runs WHERE id = ?",
+                String::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertEquals(
+            "reviewed-llm",
+            jdbc.queryForObject(
+                "SELECT configuration_snapshot #>> '{externalProviderConsents,0,providerId}' FROM analysis_runs WHERE id = ?",
+                String::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertThrows(org.springframework.dao.DataAccessException::class.java) {
+            jdbc.update("UPDATE analysis_runs SET configuration_snapshot = '{}'::jsonb WHERE id = ?", created.analysisRunId)
         }
     }
 
@@ -381,6 +441,7 @@ class AnalysisRunQueueIntegrationTest {
         transactionTemplate: TransactionTemplate = TransactionTemplate(
             org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource),
         ),
+        providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
     ): AnalysisRunService {
         val validator = PdfDocumentValidator(
             languageDetector = OptimaizeDocumentLanguageDetector(),
@@ -395,6 +456,7 @@ class AnalysisRunQueueIntegrationTest {
         )
         val factory = RunConfigurationFactory(
             objectMapper,
+            providerCatalog,
             "3.0.5",
             "0.6",
             ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),

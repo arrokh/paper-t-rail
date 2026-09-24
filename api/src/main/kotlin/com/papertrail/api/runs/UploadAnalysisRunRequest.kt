@@ -9,7 +9,7 @@ data class UploadAnalysisRunRequest(
     val file: MultipartFile,
     @field:Schema(
         type = "string",
-        description = "JSON-encoded local provider configuration.",
+        description = "JSON-encoded provider selections and provider-specific consent for the exact external payload categories in this Analysis Run.",
     )
     val configuration: String? = null,
 )

@@ -6,11 +6,12 @@ export type AnalysisRun = {
   status: "QUEUED" | "PROCESSING" | "COMPLETED" | "COMPLETED_WITH_WARNINGS" | "FAILED";
   progress: { stage?: string; message?: string };
   configuration: {
-    claimExtractor: { provider: string; version: string };
-    embedding: { provider: string; model?: string; version: string };
-    systemOne: { provider: string; model?: string; version: string };
+    claimExtractor: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
+    embedding: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
+    systemOne: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     sourceParser: { provider: string; version: string };
     languageDetector: { provider: string; version: string };
+    externalProviderConsents?: { providerId: string; dataCategories: string[] }[];
   };
   createdAt: string;
   startedAt: string | null;
