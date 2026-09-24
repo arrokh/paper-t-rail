@@ -69,13 +69,23 @@ Logs include request method, route/path, status, duration, and safe error type a
 
 ## Development and verification
 
-Tool versions are pinned in `mise.toml` (Java 21, Gradle 8.14.3, Node 22.19). Use `mise exec -- ...` or the Make targets so local commands use those versions.
+Tool versions are pinned in `mise.toml` (Java 21, Gradle 8.14.3, Node.js 24.11.0, and pnpm 12.6.0). After `mise install`, install the web dependencies from the canonical frozen lockfile and run local web development with the pinned toolchain:
 
 ```sh
-make validate   # Kotlin/queue tests + web proxy tests, lint, typecheck, and production build
-make test-web   # run the web proxy behavior tests only
-make migrate    # deploy the Sqitch plan into the local Compose PostgreSQL service
-make clean      # destructive: remove all local application volumes
+mise exec -- pnpm --dir web install --frozen-lockfile
+mise exec -- pnpm --dir web dev
+```
+
+The web container also uses Node.js 24.11.0 and installs with `pnpm install --frozen-lockfile`. Docker bootstraps the exact pnpm version declared in `web/package.json` using Node's bundled npm because Node 24.11's Corepack cannot load pnpm 12's `.mjs` entry point; dependency installation and scripts still run through pnpm. `web/pnpm-workspace.yaml` preserves pnpm's default release-age check, exempting only the exact `hono@4.13.9` and `lucide-react@1.48.0` versions already pinned in the lockfile. It also explicitly keeps `unrs-resolver`'s install build script disabled, matching the prior install behavior. Use the repository Make targets for validation; each web target runs through the mise-pinned Node.js and pnpm versions.
+
+```sh
+make validate       # Kotlin/queue tests + web proxy tests, lint, typecheck, and production build
+make test-web       # run the web proxy behavior tests only
+make lint-web       # run web lint
+make typecheck-web  # run web typecheck
+make build-web      # create the web production build
+make migrate        # deploy the Sqitch plan into the local Compose PostgreSQL service
+make clean          # destructive: remove all local application volumes
 ```
 
 `make validate` requires a Docker-compatible container runtime for its PostgreSQL/Redis integration tests. The tests execute the same schema migrations and exercise upload/run provenance, GROBID consolidation settings, parsing and source spans, citation-clause grouping and sentence fallback, re-analysis, duplicate stream delivery, inbox idempotency, and reclaiming pending work with a replacement worker.
