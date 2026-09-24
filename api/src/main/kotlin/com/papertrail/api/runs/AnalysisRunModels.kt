@@ -2,11 +2,18 @@ package com.papertrail.api.runs
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.providers.CLAIM_EXTRACTOR_ROLE
+import com.papertrail.api.providers.DataCategory
+import com.papertrail.api.providers.EMBEDDING_ROLE
+import com.papertrail.api.providers.ProviderCatalog
+import com.papertrail.api.providers.ProviderRegistration
+import com.papertrail.api.providers.ProviderTrustBoundary
+import com.papertrail.api.providers.SYSTEM_ONE_ROLE
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.Instant
 import java.util.UUID
 
-@Schema(description = "Optional selection of local analysis providers.")
+@Schema(description = "Provider selections and explicit per-run external-provider consent.")
 data class RunConfigurationRequest(
     @field:Schema(description = "Claim extractor provider.", defaultValue = "heuristic", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val claimExtractorProvider: String = "heuristic",
@@ -14,12 +21,16 @@ data class RunConfigurationRequest(
     val embeddingProvider: String = "local",
     @field:Schema(description = "System One verification provider.", defaultValue = "mock", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val systemOneProvider: String = "mock",
+    @field:Schema(description = "Provider-specific data categories explicitly approved for this run.", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+    val externalProviderConsents: List<ExternalProviderConsentSnapshot> = emptyList(),
 )
 
 data class ProviderSelection(
     val provider: String,
     val version: String,
     val model: String? = null,
+    val trustBoundary: String = ProviderTrustBoundary.LOCAL.id,
+    val dataCategories: List<String> = emptyList(),
 )
 
 data class ValidationLimitsSnapshot(
@@ -107,6 +118,7 @@ data class CreatedAnalysisRunResponse(
 
 class RunConfigurationFactory(
     private val objectMapper: ObjectMapper,
+    private val providerCatalog: ProviderCatalog,
     private val parserId: String,
     private val parserVersion: String,
     private val languageDetectorVersion: String,
@@ -115,7 +127,7 @@ class RunConfigurationFactory(
     fun parseRequest(node: JsonNode?): RunConfigurationRequest {
         if (node == null || node.isNull) return RunConfigurationRequest()
         require(node.isObject) { "Analysis configuration must be a JSON object." }
-        val allowed = setOf("claimExtractorProvider", "embeddingProvider", "systemOneProvider")
+        val allowed = setOf("claimExtractorProvider", "embeddingProvider", "systemOneProvider", "externalProviderConsents")
         val supplied = node.fieldNames().asSequence().toSet()
         require(supplied.all { it in allowed }) { "Analysis configuration contains unsupported fields." }
         fun provider(name: String, default: String): String {
@@ -123,27 +135,68 @@ class RunConfigurationFactory(
             require(value.isTextual && value.asText().isNotBlank()) { "Analysis configuration field '$name' must be a non-empty string." }
             return value.asText()
         }
+        val providerConsents = node.get("externalProviderConsents")?.let { consents ->
+            require(consents.isArray) { "Analysis configuration field 'externalProviderConsents' must be an array." }
+            consents.map { consent ->
+                require(consent.isObject) { "Each external provider consent must be an object." }
+                val consentFields = consent.fieldNames().asSequence().toSet()
+                require(consentFields == setOf("providerId", "dataCategories")) {
+                    "External provider consent must contain only providerId and dataCategories."
+                }
+                val providerId = consent.get("providerId")
+                require(providerId.isTextual && providerId.asText().isNotBlank()) {
+                    "External provider consent providerId must be a non-empty string."
+                }
+                val categories = consent.get("dataCategories")
+                require(categories.isArray && categories.all { it.isTextual && it.asText().isNotBlank() }) {
+                    "External provider consent dataCategories must be an array of non-empty strings."
+                }
+                ExternalProviderConsentSnapshot(providerId.asText(), categories.map { it.asText() })
+            }
+        } ?: emptyList()
         return RunConfigurationRequest(
             claimExtractorProvider = provider("claimExtractorProvider", "heuristic"),
             embeddingProvider = provider("embeddingProvider", "local"),
             systemOneProvider = provider("systemOneProvider", "mock"),
+            externalProviderConsents = providerConsents,
         )
     }
 
     fun from(request: RunConfigurationRequest): AnalysisConfigurationSnapshot {
-        require(request.claimExtractorProvider == "heuristic") {
-            "Claim extractor '${request.claimExtractorProvider}' is unavailable; select heuristic."
+        val selected = listOf(
+            providerCatalog.requireSelectable(CLAIM_EXTRACTOR_ROLE, request.claimExtractorProvider),
+            providerCatalog.requireSelectable(EMBEDDING_ROLE, request.embeddingProvider),
+            providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, request.systemOneProvider),
+        )
+        val requiredConsents = selected
+            .filter { it.trustBoundary == ProviderTrustBoundary.EXTERNAL }
+            .groupBy(ProviderRegistration::providerId)
+            .mapValues { (_, providers) -> providers.flatMap(ProviderRegistration::dataCategories).toSet() }
+        val suppliedConsents = request.externalProviderConsents.associateBy { it.providerId }
+        require(suppliedConsents.size == request.externalProviderConsents.size) {
+            "External provider consent must be listed once per provider."
         }
-        require(request.embeddingProvider == "local") {
-            "Embedding provider '${request.embeddingProvider}' is unavailable; select local."
+        require(suppliedConsents.keys == requiredConsents.keys) {
+            "External provider consent must match the external providers selected for this Analysis Run."
         }
-        require(request.systemOneProvider == "mock") {
-            "System One provider '${request.systemOneProvider}' is unavailable; select mock."
-        }
+        val consentSnapshots = requiredConsents.map { (providerId, requiredCategories) ->
+            val consent = suppliedConsents.getValue(providerId)
+            val suppliedCategories = consent.dataCategories.map { id ->
+                DataCategory.fromId(id)
+                    ?: throw IllegalArgumentException("Unknown data category '$id' in provider consent.")
+            }
+            require(suppliedCategories.distinct().size == suppliedCategories.size) {
+                "Provider consent data categories must not contain duplicates."
+            }
+            require(suppliedCategories.toSet() == requiredCategories) {
+                "Provider '$providerId' consent must exactly match its declared payload categories."
+            }
+            ExternalProviderConsentSnapshot(providerId, requiredCategories.map(DataCategory::id).sorted())
+        }.sortedBy(ExternalProviderConsentSnapshot::providerId)
         return AnalysisConfigurationSnapshot(
-            claimExtractor = ProviderSelection("heuristic", "v1"),
-            embedding = ProviderSelection("local", "v1", "e5-small-v2"),
-            systemOne = ProviderSelection("mock", "v1", "mock-v1"),
+            claimExtractor = selected[0].toSelection(),
+            embedding = selected[1].toSelection(),
+            systemOne = selected[2].toSelection(),
             sourceParser = ProviderSelection(parserId, parserVersion),
             languageDetector = ProviderSelection("optimaize", languageDetectorVersion),
             validationLimits = limits,
@@ -158,9 +211,17 @@ class RunConfigurationFactory(
                 aggregationPolicyVersion = null,
                 thresholds = null,
             ),
-            externalProviderConsents = emptyList(),
+            externalProviderConsents = consentSnapshots,
         )
     }
+
+    private fun ProviderRegistration.toSelection(): ProviderSelection = ProviderSelection(
+        provider = providerId,
+        version = version,
+        model = model,
+        trustBoundary = trustBoundary.id,
+        dataCategories = dataCategories.map(DataCategory::id).sorted(),
+    )
 
     fun toJson(snapshot: AnalysisConfigurationSnapshot): String = objectMapper.writeValueAsString(snapshot)
 }

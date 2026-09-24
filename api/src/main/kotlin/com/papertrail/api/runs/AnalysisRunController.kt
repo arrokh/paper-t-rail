@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.documents.ApiError
 import com.papertrail.api.parsing.ParsedDocumentRepository
 import com.papertrail.api.parsing.ParsedDocumentView
+import com.papertrail.api.providers.ProviderCatalog
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.media.Content
@@ -37,6 +38,7 @@ class AnalysisRunController(
     private val objectMapper: ObjectMapper,
     private val jdbc: JdbcTemplate,
     private val parsedDocumentRepository: ParsedDocumentRepository,
+    private val providerCatalog: ProviderCatalog,
 ) {
     @Operation(
         summary = "Upload a PDF and create an Analysis Run",
@@ -106,6 +108,10 @@ class AnalysisRunController(
     ): ResponseEntity<CreatedAnalysisRunResponse> = ResponseEntity.status(HttpStatus.CREATED).body(
         analysisRunService.createReanalysis(documentId, configuration),
     )
+
+    @Operation(summary = "List providers available for Analysis Run selection")
+    @GetMapping("/providers", produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun providers() = providerCatalog.directory()
 
     @Operation(summary = "List recent Analysis Runs")
     @GetMapping("/analysis-runs", produces = [MediaType.APPLICATION_JSON_VALUE])
