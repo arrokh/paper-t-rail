@@ -1,0 +1,13 @@
+# Keep local secrets and generated/dependency trees out of the root API build context.
+.env
+.env.*
+**/.env
+**/.env.*
+.git
+.pi
+.piwt
+**/node_modules
+**/.next
+**/.gradle
+**/build
+**/tsconfig.tsbuildinfo

@@ -1700,7 +1700,7 @@ Create a new Analysis Run. For reproducibility, each run must retain the source 
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./docs/agents/provider-matrix.md). This branch contains the system design but no application runtime or deployable provider configuration; treat this YAML as the implementation's safe-default configuration contract.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./docs/agents/provider-matrix.md). The YAML below defines the intended safe-default provider contract for the complete V1 pipeline. The issue #3 runtime is a narrower ingestion/queue slice: it validates selectable text with PDFBox, persists an immutable run, and verifies the stored hash. It does not yet run GROBID, recorded-fixture ports, embeddings, or System One; its local/mock selections are persisted as run configuration but those pipeline stages are not invoked. Its immutable configuration snapshot records reference resolution and aggregation as `NOT_RUN` (with no uncalibrated policy thresholds) and records an empty external-provider consent list. A stage that was not executed must not be represented as though it used a default policy.
 
 Safe default example:
 
@@ -3233,7 +3233,7 @@ enabled: false
 
 # 55. Local Development Defaults
 
-Recommended simplest local configuration (see [the provider matrix](./docs/agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)):
+The following is the target local configuration for the full pipeline (see [the provider matrix](./docs/agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The current issue #3 runtime only performs PDFBox preflight validation and source-hash verification; it does not invoke GROBID, fixture providers, embeddings, or System One.
 
 ```text
 claim extractor:
@@ -3582,9 +3582,9 @@ Only after the primary path is stable.
 
 ---
 
-# 59. Suggested First Vertical Slice
+# 59. Suggested First Full-Pipeline Demonstration
 
-The first meaningful demonstration should be:
+After the narrower issue #3 ingestion/queue slice, the first full-pipeline demonstration should be:
 
 ```text
 Upload PDF
