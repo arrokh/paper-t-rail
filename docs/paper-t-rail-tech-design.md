@@ -1700,7 +1700,7 @@ Create a new Analysis Run. For reproducibility, each run must retain the source 
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./docs/agents/provider-matrix.md). This branch contains the system design but no application runtime or deployable provider configuration; treat this YAML as the implementation's safe-default configuration contract.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the intended safe-default provider contract for the complete V1 pipeline. The issue #3 runtime is a narrower ingestion/queue slice: it validates selectable text with PDFBox, persists an immutable run, and verifies the stored hash. It does not yet run GROBID, recorded-fixture ports, embeddings, or System One; its local/mock selections are persisted as run configuration but those pipeline stages are not invoked. Its immutable configuration snapshot records reference resolution and aggregation as `NOT_RUN` (with no uncalibrated policy thresholds) and records an empty external-provider consent list. A stage that was not executed must not be represented as though it used a default policy.
 
 Safe default example:
 
@@ -2724,6 +2724,10 @@ GET /api/v1/providers
 
 Returns enabled providers only.
 
+## 40.5 OpenAPI and Swagger UI
+
+The Spring API publishes an OpenAPI 3 contract at `/v3/api-docs` (YAML at `/v3/api-docs.yaml`) and its interactive Swagger UI at `/swagger-ui/index.html`. The contract is generated from the implemented Spring controllers and their request/response annotations; it documents only routes that exist in that runtime, not the full future-state API in this design. In local Compose, host access to the API and docs is published on a configurable port bound only to `127.0.0.1`; the worker disables the docs endpoints. Do not expose unauthenticated Swagger UI or API endpoints to public/untrusted networks.
+
 ---
 
 # 41. Web UI V1
@@ -3021,9 +3025,9 @@ processing time per document
 
 # 49. Observability
 
-Use structured logs from the start.
+Spring Boot API/worker logs use Spring Boot's ECS-compatible structured JSON console format. The web API proxy emits one ECS-shaped JSON record per proxied request. Keep the same request ID across web and API logs for a request; include `service.name`, timestamp, severity, event/message, HTTP method/path/status, and duration where applicable. The API accepts a safe `X-Request-ID` (1–128 ASCII letters, digits, `.`, `_`, `:`, or `-`), returns it in the response, and generates a UUID when the header is missing or invalid. The web proxy performs the same validation/generation, forwards the ID to the API, and returns it to the caller.
 
-Every log line should include where relevant:
+Worker records carry the parsed event's `analysisRunId`, `documentId`, `eventId`, `correlationId`, and `eventType`. The outbox publisher includes the available `analysisRunId`, `eventId`, and `correlationId` from its row. Include other domain IDs where the operation makes them available:
 
 ```text
 analysisRunId
@@ -3034,7 +3038,10 @@ claimId
 paperId
 verificationId
 providerId
+requestId
 ```
+
+Request and proxy logs omit query strings and bodies. Application logs must not include Source Document, claim, or evidence text; on caught failures, log a safe error type rather than dumping exception messages or request content.
 
 Recommended metrics:
 
@@ -3233,7 +3240,7 @@ enabled: false
 
 # 55. Local Development Defaults
 
-Recommended simplest local configuration (see [the provider matrix](./docs/agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)):
+The following is the target local configuration for the full pipeline (see [the provider matrix](./agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The current issue #3 runtime only performs PDFBox preflight validation and source-hash verification; it does not invoke GROBID, fixture providers, embeddings, or System One.
 
 ```text
 claim extractor:
@@ -3337,6 +3344,10 @@ Keep one small English paper fixture with:
 - several multi-claim citation sentences.
 
 Expected output should be asserted at a structural level, not exact AI confidence values. Separately benchmark a representative journal article and thesis/dissertation to choose and record byte, page, and claim-citation-pair caps within the processing budget; keep the numeric caps configurable.
+
+## 56.5 TDD and Test Quality
+
+For test-first implementation, agree on public behavior seams and work in vertical red-green slices. Follow root `AGENTS.md` for the test-quality guardrails: tautological tests and change-detector tests are harmful, and bug-fix regression tests require a genuine gap in existing behavior coverage.
 
 ---
 
@@ -3582,9 +3593,9 @@ Only after the primary path is stable.
 
 ---
 
-# 59. Suggested First Vertical Slice
+# 59. Suggested First Full-Pipeline Demonstration
 
-The first meaningful demonstration should be:
+After the narrower issue #3 ingestion/queue slice, the first full-pipeline demonstration should be:
 
 ```text
 Upload PDF
@@ -3707,9 +3718,9 @@ over adding infrastructure without demonstrated need.
 
 Accepted V1 decisions are recorded in:
 
-- [ADR-0001 — Evidence Coverage is Conservative Triage](./docs/adr/0001-conservative-evidence-triage.md)
-- [ADR-0002 — Pin Analysis Provenance While Reusing Shared Paper Assets](./docs/adr/0002-version-pinned-analysis-provenance.md)
-- [ADR-0003 — Require Per-Run Provider Consent and Explicit Deletion](./docs/adr/0003-explicit-provider-consent-and-data-retention.md)
+- [ADR-0001 — Evidence Coverage is Conservative Triage](./adr/0001-conservative-evidence-triage.md)
+- [ADR-0002 — Pin Analysis Provenance While Reusing Shared Paper Assets](./adr/0002-version-pinned-analysis-provenance.md)
+- [ADR-0003 — Require Per-Run Provider Consent and Explicit Deletion](./adr/0003-explicit-provider-consent-and-data-retention.md)
 
 Other architecture decisions remain ADR candidates; create records when their trade-offs are confirmed:
 

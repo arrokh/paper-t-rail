@@ -1,0 +1,29 @@
+{
+  "name": "paper-t-rail-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "dev:container": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "start:container": "next start --hostname 0.0.0.0",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "next": "16.3.6",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@eslint/compat": "2.1.1",
+    "@types/node": "22.15.30",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.1.6",
+    "eslint": "^10.11.0",
+    "eslint-config-next": "16.3.6",
+    "typescript": "5.8.3"
+  }
+}

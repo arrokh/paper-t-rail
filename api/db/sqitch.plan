@@ -1,0 +1,6 @@
+%syntax-version=1.0.0
+%project=paper-t-rail
+%uri=https://github.com/arrokh/paper-t-rail
+
+extensions 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Enable required PostgreSQL extensions
+core_documents [extensions] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist source documents, immutable runs, and message inbox/outbox
