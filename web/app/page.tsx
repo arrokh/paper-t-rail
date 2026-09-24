@@ -18,14 +18,10 @@ export default function Home() {
         </Badge>
       </header>
 
-      <section className="max-w-3xl py-10 sm:py-14" aria-labelledby="page-heading">
-        <p className="font-mono text-xs tracking-[0.16em] text-muted-foreground uppercase">Academic Evidence Engine</p>
-        <h1 id="page-heading" className="mt-3 font-serif text-4xl font-semibold tracking-tight sm:text-5xl lg:text-6xl">
-          Put your paper on a <span className="text-primary italic">traceable track.</span>
+      <section className="py-5 sm:py-6" aria-labelledby="page-heading">
+        <h1 id="page-heading" className="font-serif text-2xl font-semibold tracking-tight sm:text-3xl">
+          Trace a research paper.
         </h1>
-        <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted-foreground">
-          Start an Analysis Run from an English, text-based academic PDF. Your source file stays in this local workspace.
-        </p>
       </section>
 
       <UploadDashboard />

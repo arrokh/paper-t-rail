@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -25,7 +25,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -110,6 +109,55 @@ function scrollToDetails(element: HTMLElement | null) {
     behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
     block: "start",
   });
+}
+
+function scrollToParsedDocumentTarget(event: MouseEvent<HTMLAnchorElement>) {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+  const targetId = decodeURIComponent(event.currentTarget.hash.slice(1));
+  const target = document.getElementById(targetId);
+  if (!target) return;
+
+  event.preventDefault();
+  const hash = event.currentTarget.hash;
+  if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let didScroll = false;
+  let finished = false;
+  let settleTimer: number | null = null;
+  let noScrollTimer: number | null = null;
+
+  const highlightTarget = () => {
+    target.classList.remove("citation-target-highlight");
+    void target.offsetWidth;
+    target.classList.add("citation-target-highlight");
+    window.setTimeout(() => target.classList.remove("citation-target-highlight"), 1_500);
+  };
+  const finishAfterScroll = () => {
+    if (finished) return;
+    finished = true;
+    if (settleTimer !== null) window.clearTimeout(settleTimer);
+    if (noScrollTimer !== null) window.clearTimeout(noScrollTimer);
+    window.removeEventListener("scroll", handleScroll);
+    document.removeEventListener("scrollend", finishAfterScroll);
+    window.removeEventListener("scrollend", finishAfterScroll);
+    highlightTarget();
+  };
+  const handleScroll = () => {
+    didScroll = true;
+    if (noScrollTimer !== null) window.clearTimeout(noScrollTimer);
+    if (settleTimer !== null) window.clearTimeout(settleTimer);
+    settleTimer = window.setTimeout(finishAfterScroll, 500);
+  };
+
+  window.addEventListener("scroll", handleScroll, { passive: true });
+  document.addEventListener("scrollend", finishAfterScroll, { once: true });
+  window.addEventListener("scrollend", finishAfterScroll, { once: true });
+  target.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
+  noScrollTimer = window.setTimeout(() => {
+    if (!didScroll) finishAfterScroll();
+  }, 120);
 }
 
 export function UploadDashboard() {
@@ -393,9 +441,6 @@ export function UploadDashboard() {
             <CardTitle id="upload-heading" role="heading" aria-level={2} className="text-xl tracking-tight">
               Start with your PDF
             </CardTitle>
-            <CardDescription className="max-w-prose leading-relaxed">
-              Upload an English academic document with selectable text. Scanned PDFs and other languages are rejected with a reason.
-            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
             <form onSubmit={startRun} className="space-y-5">
@@ -441,7 +486,7 @@ export function UploadDashboard() {
                   <div className="space-y-1">
                     <p className="font-medium text-foreground">Local/mock providers selected</p>
                     <p className="text-sm leading-relaxed text-muted-foreground">
-                      This run needs no external consent and sends no document content to an external provider.
+                      No external provider receives document content for this run.
                     </p>
                   </div>
                 </div>
@@ -456,7 +501,7 @@ export function UploadDashboard() {
                       {provider.displayName} data access
                     </h3>
                     <p className="text-sm leading-relaxed text-muted-foreground">
-                      This external provider may receive only the following request categories for this run:
+                      May receive in this run:
                     </p>
                     {provider.retentionDisclosure && (
                       <p className="text-sm text-warning-foreground">{provider.retentionDisclosure}</p>
@@ -491,29 +536,10 @@ export function UploadDashboard() {
                     })}
                   </FieldSet>
                   <p className="text-xs leading-relaxed text-warning-foreground">
-                    Consent applies only to this Analysis Run. It does not change previous runs or authorize additional categories.
+                    Consent applies only to this run and these categories.
                   </p>
                 </section>
               ))}
-
-              {providerDirectory && providerDirectory.dataCategories.length > 0 && (
-                <Collapsible className="group/collapsible border-t border-border pt-3">
-                  <CollapsibleTrigger className="flex min-h-11 w-full items-center justify-between gap-3 rounded-md text-left text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
-                    All stable data categories
-                    <ChevronDown className="size-4 shrink-0 transition-transform group-data-[open]/collapsible:rotate-180" aria-hidden="true" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="pt-3">
-                    <ul className="space-y-3 pl-4 text-sm text-muted-foreground">
-                      {providerDirectory.dataCategories.map((category) => (
-                        <li key={category.id} className="leading-relaxed">
-                          <strong className="font-mono text-xs text-foreground">{category.id}</strong>
-                          <span> — {category.description}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </CollapsibleContent>
-                </Collapsible>
-              )}
 
               <Field>
                 <FieldLabel htmlFor="source-file-trigger">Choose a PDF</FieldLabel>
@@ -546,7 +572,7 @@ export function UploadDashboard() {
                   />
                 </div>
                 <FieldDescription id="source-file-description">
-                  PDF only. Selectable text is verified before storage; scanned PDFs are not processed.
+                  English PDFs with selectable text only.
                 </FieldDescription>
               </Field>
 
@@ -558,14 +584,6 @@ export function UploadDashboard() {
                 {!busy && <ArrowUpRight className="size-4" aria-hidden="true" />}
               </Button>
             </form>
-
-            <div className="flex gap-3 rounded-lg bg-muted/60 p-4 text-sm" role="note">
-              <LockKeyhole className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-              <p className="leading-relaxed text-muted-foreground">
-                <strong className="font-medium text-foreground">Local/mock providers are the default.</strong>{" "}
-                Disabled or unclassified providers are not offered for selection. External providers require explicit approval of every disclosed category for each run. Upload limits are configurable; over-limit files are rejected, never trimmed.
-              </p>
-            </div>
 
             {activeError && (
               <Alert variant="destructive">
@@ -660,9 +678,6 @@ export function UploadDashboard() {
                 <CardTitle id="parsed-document-heading" role="heading" aria-level={2} className="break-words text-xl tracking-tight">
                   {selectedRun?.filename ?? "Analysis Run details"}
                 </CardTitle>
-                <CardDescription className="max-w-prose leading-relaxed">
-                  Inspect persisted progress, parser provenance, Citation Contexts, and Bibliography Entries.
-                </CardDescription>
               </div>
               {selectedRun && <RunStatusBadge status={selectedRun.status} />}
             </div>
@@ -852,7 +867,7 @@ export function UploadDashboard() {
                                           <span className="ml-2 inline-flex flex-wrap gap-x-2">
                                             <span className="sr-only">Bibliography entries:</span>
                                             {occurrence.bibliographyReferenceKeys.map((key) => (
-                                              <a key={key} className="text-primary underline underline-offset-4 hover:text-primary/80" href={`#bibliography-${key}`}>
+                                              <a key={key} className="text-primary underline underline-offset-4 hover:text-primary/80" href={`#bibliography-${key}`} onClick={scrollToParsedDocumentTarget}>
                                                 {key}
                                               </a>
                                             ))}
@@ -903,6 +918,7 @@ export function UploadDashboard() {
                                           key={context.id}
                                           className="text-xs text-primary underline underline-offset-4 hover:text-primary/80"
                                           href={`#citation-context-${context.id}`}
+                                          onClick={scrollToParsedDocumentTarget}
                                         >
                                           {context.label}
                                         </a>

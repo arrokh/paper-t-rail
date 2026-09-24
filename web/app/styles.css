@@ -120,21 +120,24 @@
 
 @keyframes citation-target-arrival {
   0%,
-  35% {
-    outline: 2px solid var(--ring);
-    outline-offset: 3px;
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ring) 18%, transparent);
+  25% {
+    background-color: color-mix(in srgb, var(--accent) 85%, transparent);
+    outline-color: var(--ring);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ring) 20%, transparent);
   }
 
   100% {
+    background-color: transparent;
     outline-color: transparent;
-    box-shadow: 0 0 0 8px transparent;
+    box-shadow: 0 0 0 9px transparent;
   }
 }
 
-.citation-context-anchor:target > article,
-.bibliography-entry-anchor:target {
-  animation: citation-target-arrival 1.1s ease-out 120ms both;
+.citation-context-anchor.citation-target-highlight > article,
+.bibliography-entry-anchor.citation-target-highlight {
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  animation: citation-target-arrival 1.2s ease-out both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -147,9 +150,10 @@
     transition-duration: 0.01ms !important;
   }
 
-  .citation-context-anchor:target > article,
-  .bibliography-entry-anchor:target {
+  .citation-context-anchor.citation-target-highlight > article,
+  .bibliography-entry-anchor.citation-target-highlight {
     animation: none !important;
+    background-color: color-mix(in srgb, var(--accent) 55%, transparent);
     outline: 2px solid var(--ring);
     outline-offset: 3px;
   }
