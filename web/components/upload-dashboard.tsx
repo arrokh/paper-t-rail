@@ -125,10 +125,12 @@ export function UploadDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [providerError, setProviderError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [parsedDocumentResult, setParsedDocumentResult] = useState<
     { runId: string; document: ParsedDocument } | { runId: string; error: string } | null
   >(null);
   const detailsCardRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingDetailsScroll = useRef(false);
   const listRequestSequence = useRef(0);
   const pageCursor = pageCursors[pageIndex] ?? null;
@@ -342,6 +344,7 @@ export function UploadDashboard() {
       setActiveDetailTab("progress");
       setSelectedRunId(created.analysisRunId);
       form.reset();
+      setSelectedFileName(null);
       await refreshRuns(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The upload could not be processed.");
@@ -513,17 +516,35 @@ export function UploadDashboard() {
               )}
 
               <Field>
-                <FieldLabel htmlFor="source-file">Choose a PDF</FieldLabel>
-                <Input
-                  id="source-file"
-                  name="file"
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  required
-                  disabled={busy}
-                  aria-describedby="source-file-description"
-                  className="h-11 cursor-pointer file:mr-3 file:h-7 file:rounded-md file:border-0 file:bg-secondary file:px-2 file:py-0 file:text-xs file:leading-none file:font-medium file:text-secondary-foreground hover:file:bg-accent"
-                />
+                <FieldLabel htmlFor="source-file-trigger">Choose a PDF</FieldLabel>
+                <div className="flex min-h-11 items-center gap-3 rounded-lg border border-input bg-background px-2.5 py-1">
+                  <Button
+                    id="source-file-trigger"
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy}
+                    aria-describedby="source-file-description"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    Choose File
+                  </Button>
+                  <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground" aria-live="polite">
+                    {selectedFileName ?? "No file chosen"}
+                  </span>
+                  <input
+                    ref={fileInputRef}
+                    id="source-file"
+                    name="file"
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    disabled={busy}
+                    aria-hidden="true"
+                    tabIndex={-1}
+                    className="sr-only"
+                    onChange={(event) => setSelectedFileName(event.currentTarget.files?.[0]?.name ?? null)}
+                  />
+                </div>
                 <FieldDescription id="source-file-description">
                   PDF only. Selectable text is verified before storage; scanned PDFs are not processed.
                 </FieldDescription>
@@ -612,15 +633,19 @@ export function UploadDashboard() {
 
             <Separator />
             <nav className="flex items-center justify-between gap-3" aria-label="Analysis Run pages">
-              <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={goToPreviousRunPage} disabled={pageIndex === 0 || loading}>
-                <ArrowLeft aria-hidden="true" /> Previous
-              </Button>
               <span className="font-mono text-xs text-muted-foreground" aria-live="polite">
                 Page {pageIndex + 1}
               </span>
-              <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={goToNextRunPage} disabled={!runPage.nextCursor || loading}>
-                Next <ArrowRight aria-hidden="true" />
-              </Button>
+              <div className="flex items-center gap-2">
+                {pageIndex > 0 && (
+                  <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={goToPreviousRunPage} disabled={loading}>
+                    <ArrowLeft aria-hidden="true" /> Previous
+                  </Button>
+                )}
+                <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={goToNextRunPage} disabled={!runPage.nextCursor || loading}>
+                  Next <ArrowRight aria-hidden="true" />
+                </Button>
+              </div>
             </nav>
           </CardContent>
         </Card>
@@ -807,7 +832,7 @@ export function UploadDashboard() {
                         ) : (
                           <ol className="space-y-3">
                             {parsedDocument.citationContexts.map((context) => (
-                              <li key={context.id} id={`citation-context-${context.id}`} className="scroll-mt-5">
+                              <li key={context.id} id={`citation-context-${context.id}`} className="citation-context-anchor scroll-mt-5">
                                 <article className="space-y-3 rounded-lg border border-border bg-muted/20 p-4">
                                   <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-muted-foreground">
                                     <Badge variant="secondary" className="text-[0.65rem] uppercase">
@@ -856,7 +881,7 @@ export function UploadDashboard() {
                             {parsedDocument.bibliographyEntries.map((entry) => {
                               const citingContexts = citationContextAnchorsByReferenceKey.get(entry.localReferenceKey) ?? [];
                               return (
-                                <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`} className="scroll-mt-5 rounded-lg border border-border bg-card p-4">
+                                <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`} className="bibliography-entry-anchor scroll-mt-5 rounded-lg border border-border bg-card p-4">
                                   <h5 className="break-words font-medium leading-relaxed">
                                     {entry.title || entry.localReferenceKey}
                                   </h5>

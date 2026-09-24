@@ -47,9 +47,9 @@ V1 ships a light theme. Keep components semantic-token based so a separately des
 
 The upload workspace keeps three task-oriented cards: **01 Source Document** and **02 Persisted Progress** share the desktop row; **03 Parsed Document** spans the full width below. At narrow widths, cards stack in that reading order. Use a centered, readable content width and preserve generous space for source text and references.
 
-- **Source Document:** provider choices, exact per-run external-data disclosure and consent, file selection, upload action, and concise privacy/error feedback.
-- **Persisted Progress:** cursor-paginated Analysis Runs, explicit selection, current status, and loading/empty states.
-- **Parsed Document:** selected run status, current persisted progress and provenance, then the parsed sections, Citation Contexts, and Bibliography Entries. Citation markers link to their bibliography entries, and each entry links back to every citing Citation Context. Tabs and arrow controls expose only states supported by the selected run; do not imply stage history that is not stored.
+- **Source Document:** provider choices, exact per-run external-data disclosure and consent, file selection, upload action, and concise privacy/error feedback. Use a project-owned shadcn Button to activate the native file input and display its selected filename in a consistently aligned field.
+- **Persisted Progress:** cursor-paginated Analysis Runs, explicit selection, current status, and loading/empty states. Keep the page indicator at the lower left and navigation controls at the lower right; omit Previous on the first page.
+- **Parsed Document:** selected run status, current persisted progress and provenance, then the parsed sections, Citation Contexts, and Bibliography Entries. Citation markers link to their bibliography entries, and each entry links back to every citing Citation Context. Briefly highlight anchor destinations after navigation, respecting `prefers-reduced-motion`. Tabs and arrow controls expose only states supported by the selected run; do not imply stage history that is not stored.
 
 Keep product copy factual and non-alarmist. Distinguish privacy/consent decisions from ordinary validation. Error, loading, empty, disabled, and success states are first-class designs, not afterthoughts.
 

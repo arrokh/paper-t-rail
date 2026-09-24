@@ -118,6 +118,25 @@
   }
 }
 
+@keyframes citation-target-arrival {
+  0%,
+  35% {
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--ring) 18%, transparent);
+  }
+
+  100% {
+    outline-color: transparent;
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
+.citation-context-anchor:target > article,
+.bibliography-entry-anchor:target {
+  animation: citation-target-arrival 1.1s ease-out 120ms both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -126,5 +145,12 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .citation-context-anchor:target > article,
+  .bibliography-entry-anchor:target {
+    animation: none !important;
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
   }
 }
