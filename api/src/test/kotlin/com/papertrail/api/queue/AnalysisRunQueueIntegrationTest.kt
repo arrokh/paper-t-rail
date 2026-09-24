@@ -313,7 +313,7 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(listOf("ref3"), parsed.citationContexts[1].occurrences.single().bibliographyReferenceKeys)
         assertEquals(listOf("ref1", "ref2", "ref3"), parsed.bibliographyEntries.map { it.localReferenceKey })
         assertEquals(listOf("Prior results support the method", "Prior results reproduce it"), parsed.citationContexts[0].atomicClaims.map { it.text })
-        assertEquals("later work disputes it", parsed.citationContexts[1].atomicClaims.single().text)
+        assertEquals("however, later work disputes it", parsed.citationContexts[1].atomicClaims.single().text)
         assertEquals(listOf("reproduce it"), parsed.citationContexts[0].atomicClaims.drop(1).map { parsed.normalizedSourceText.substring(it.sourceStartOffset, it.sourceEndOffset) })
         assertTrue(parsed.citationContexts.flatMap { it.atomicClaims }.flatMap { it.citationTargets }
             .all { it.associationKind == "INFERRED_PROVISIONAL" })

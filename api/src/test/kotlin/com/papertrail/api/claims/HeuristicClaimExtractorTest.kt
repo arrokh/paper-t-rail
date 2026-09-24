@@ -81,4 +81,39 @@ class HeuristicClaimExtractorTest {
         assertEquals("Treatment did not improve symptoms and reduce dropout", context.substring(claims.single().sourceStartOffset, claims.single().sourceEndOffset))
     }
 
+    @Test
+    fun `preserves concessive qualification in the extracted claim`() {
+        val context = "Although treatment improved mobility [1]."
+        val markerStart = context.indexOf("[1]")
+
+        val claims = extractor.extract(
+            ClaimExtractionRequest(
+                contextText = context,
+                contextStartOffset = 0,
+                occurrences = listOf(ParsedCitationOccurrence("[1]", markerStart, markerStart + 3, listOf("ref1"))),
+            ),
+        )
+
+        assertEquals("Although treatment improved mobility", claims.single().text)
+        assertEquals("Although treatment improved mobility", context.substring(claims.single().sourceStartOffset, claims.single().sourceEndOffset))
+    }
+
+    @Test
+    fun `keeps coordination intact when a trailing population qualifier has ambiguous scope`() {
+        val context = "Treatment reduced pain in older adults and improved mobility [1]."
+        val markerStart = context.indexOf("[1]")
+
+        val claims = extractor.extract(
+            ClaimExtractionRequest(
+                contextText = context,
+                contextStartOffset = 0,
+                occurrences = listOf(ParsedCitationOccurrence("[1]", markerStart, markerStart + 3, listOf("ref1"))),
+            ),
+        )
+
+        assertEquals(1, claims.size)
+        assertEquals("Treatment reduced pain in older adults and improved mobility", claims.single().text)
+        assertEquals("Treatment reduced pain in older adults and improved mobility", context.substring(claims.single().sourceStartOffset, claims.single().sourceEndOffset))
+    }
+
 }

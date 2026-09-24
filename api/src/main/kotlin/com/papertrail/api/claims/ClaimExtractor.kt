@@ -112,26 +112,50 @@ class HeuristicClaimExtractor : ClaimExtractorProvider {
             for (index in start until end) masked[index] = ' '
         }
         val source = String(masked)
+        val verbs = finiteVerbs(source)
+        val negationOffsets = matchStartOffsets(NEGATION, source)
+        val qualifierOffsets = matchStartOffsets(TRAILING_SCOPE_QUALIFIER, source)
         val result = mutableListOf<AtomicClaimCandidate>()
         var segmentStart = 0
         var inheritedSubjectPrefix: String? = null
+        var prefixCacheSegmentStart = -1
+        var sharedPrefixWasComputed = false
+        var cachedSharedPrefix: String? = null
 
         COORDINATION.findAll(source).forEach { conjunction ->
             if (!conjunction.value.equals("and", ignoreCase = true)) return@forEach
-            val left = source.substring(segmentStart, conjunction.range.first)
             val rightStart = skipWhitespace(source, conjunction.range.last + 1)
-            val rightVerb = firstVerb(source, rightStart, source.length) ?: return@forEach
+            val rightVerb = firstVerb(verbs, rightStart, source.length) ?: return@forEach
+            val leftVerb = firstVerb(verbs, segmentStart, conjunction.range.first)
             val startsWithVerb = rightVerb.start == rightStart
-            val prefix = if (startsWithVerb) {
-                inheritedSubjectPrefix ?: sharedSubjectPrefix(left)
+            val sharedPrefix = if (startsWithVerb && inheritedSubjectPrefix == null && leftVerb != null) {
+                if (prefixCacheSegmentStart != segmentStart) {
+                    prefixCacheSegmentStart = segmentStart
+                    sharedPrefixWasComputed = false
+                    cachedSharedPrefix = null
+                }
+                if (!sharedPrefixWasComputed) {
+                    val candidatePrefix = source.substring(segmentStart, leftVerb.start).trim()
+                    cachedSharedPrefix = candidatePrefix.takeIf {
+                        it.isNotEmpty() && !NEGATION.containsMatchIn(it)
+                    }
+                    sharedPrefixWasComputed = true
+                }
+                cachedSharedPrefix
             } else {
                 null
             }
-            val leftHasVerb = firstVerb(source, segmentStart, conjunction.range.first) != null
+            val prefix = if (startsWithVerb) inheritedSubjectPrefix ?: sharedPrefix else null
+            val leftHasVerb = leftVerb != null
             val isIndependentClause = !startsWithVerb && leftHasVerb && rightVerb.start > rightStart
             val subjectPrefix = prefix?.takeIf { it.isNotBlank() }
-            val negationScopeIsAmbiguous = NEGATION.containsMatchIn(left)
-            if (negationScopeIsAmbiguous || (subjectPrefix == null && !isIndependentClause)) return@forEach
+            val negationScopeIsAmbiguous = containsOffsetInRange(negationOffsets, segmentStart, conjunction.range.first)
+            val trailingQualifierScopeIsAmbiguous = startsWithVerb && leftVerb != null && containsOffsetInRange(
+                qualifierOffsets,
+                leftVerb.start + leftVerb.text.length,
+                conjunction.range.first,
+            )
+            if (negationScopeIsAmbiguous || trailingQualifierScopeIsAmbiguous || (subjectPrefix == null && !isIndependentClause)) return@forEach
 
             makeCandidate(
                 request.contextStartOffset,
@@ -142,6 +166,9 @@ class HeuristicClaimExtractor : ClaimExtractorProvider {
             )?.let(result::add)
             segmentStart = rightStart
             inheritedSubjectPrefix = subjectPrefix
+            prefixCacheSegmentStart = -1
+            sharedPrefixWasComputed = false
+            cachedSharedPrefix = null
         }
 
         makeCandidate(
@@ -152,12 +179,6 @@ class HeuristicClaimExtractor : ClaimExtractorProvider {
             inheritedSubjectPrefix,
         )?.let(result::add)
         return result.distinctBy { it.sourceStartOffset to it.sourceEndOffset }
-    }
-
-    private fun sharedSubjectPrefix(left: String): String? {
-        val firstVerb = firstVerb(left, 0, left.length) ?: return null
-        val prefix = left.substring(0, firstVerb.start).trim()
-        return prefix.takeIf { it.isNotEmpty() && !NEGATION.containsMatchIn(it) }
     }
 
     private fun makeCandidate(
@@ -173,42 +194,42 @@ class HeuristicClaimExtractor : ClaimExtractorProvider {
         while (contentEnd > contentStart && (source[contentEnd - 1].isWhitespace() || source[contentEnd - 1] in TRIMMABLE_ENDING)) contentEnd--
         if (contentStart >= contentEnd) return null
         val phrase = normalizeWhitespace(source.substring(contentStart, contentEnd))
-        val cleanedPhrase = phrase.replace(LEADING_DISCOURSE_MARKER, "").trim()
-        if (cleanedPhrase.isBlank()) return null
+        if (phrase.isBlank()) return null
         return AtomicClaimCandidate(
-            text = listOfNotNull(prefix?.trim()?.takeIf(String::isNotBlank), cleanedPhrase).joinToString(" "),
+            text = listOfNotNull(prefix?.trim()?.takeIf(String::isNotBlank), phrase).joinToString(" "),
             sourceStartOffset = contextStartOffset + contentStart,
             sourceEndOffset = contextStartOffset + contentEnd,
         )
     }
 
-    private fun firstVerb(source: String, start: Int, end: Int): Word? = WORD.findAll(source.substring(start, end))
-        .map { Word(it.value, start + it.range.first) }
-        .firstOrNull { isFiniteVerb(it.text) }
-
-    private fun isFiniteVerb(word: String): Boolean {
-        val normalized = word.lowercase().trimEnd('’', '\'')
-        if (normalized in IRREGULAR_VERBS) return true
-        return VERB_BASES.any { base ->
-            normalized == base || normalized in inflections(base)
+    private fun finiteVerbs(source: String): List<Word> = WORD.findAll(source)
+        .mapNotNull { match ->
+            val word = match.value
+            if (word.lowercase().trimEnd('’', '\'') in VERB_FORMS) Word(word, match.range.first) else null
         }
+        .toList()
+
+    private fun firstVerb(verbs: List<Word>, start: Int, end: Int): Word? {
+        var low = 0
+        var high = verbs.size
+        while (low < high) {
+            val middle = (low + high) ushr 1
+            if (verbs[middle].start < start) low = middle + 1 else high = middle
+        }
+        return verbs.getOrNull(low)?.takeIf { it.start < end }
     }
 
-    private fun inflections(base: String): Set<String> = buildSet {
-        add("${base}s")
-        add("${base}ed")
-        add("${base}ing")
-        if (base.endsWith("e")) {
-            add("${base}d")
-            add("${base.dropLast(1)}ing")
+    private fun matchStartOffsets(pattern: Regex, source: String): List<Int> =
+        pattern.findAll(source).map { it.range.first }.toList()
+
+    private fun containsOffsetInRange(offsets: List<Int>, start: Int, end: Int): Boolean {
+        var low = 0
+        var high = offsets.size
+        while (low < high) {
+            val middle = (low + high) ushr 1
+            if (offsets[middle] < start) low = middle + 1 else high = middle
         }
-        if (base.endsWith("y")) {
-            add("${base.dropLast(1)}ies")
-            add("${base.dropLast(1)}ied")
-        }
-        if (base.endsWith("s") || base.endsWith("sh") || base.endsWith("ch") || base.endsWith("x") || base.endsWith("z") || base.endsWith("o")) {
-            add("${base}es")
-        }
+        return offsets.getOrNull(low)?.let { it < end } == true
     }
 
     private fun skipWhitespace(source: String, from: Int): Int {
@@ -225,7 +246,10 @@ class HeuristicClaimExtractor : ClaimExtractorProvider {
         private val COORDINATION = Regex("\\b(?:and|or|but)\\b", RegexOption.IGNORE_CASE)
         private val WORD = Regex("[\\p{L}][\\p{L}'’\\-]*")
         private val WHITESPACE = Regex("[\\s\\p{Z}]+")
-        private val LEADING_DISCOURSE_MARKER = Regex("^(?:however|therefore|moreover|nevertheless|although|though),?\\s+", RegexOption.IGNORE_CASE)
+        private val TRAILING_SCOPE_QUALIFIER = Regex(
+            "\\b(?:in|among|for|under|with|during|after|before|within|at|by|on|over|across|between|through|without|despite|following|significantly|substantially|slightly|only|primarily|mostly|partially|consistently|statistically|clinically|possibly|probably|likely|unlikely)\\b",
+            RegexOption.IGNORE_CASE,
+        )
         private val NEGATION = Regex("\\b(?:not|never|no|without|neither|nor)\\b", RegexOption.IGNORE_CASE)
         private val TRIMMABLE_ENDING = setOf(',', ';', ':', '.', '!', '?')
         private val VERB_BASES = setOf(
@@ -242,5 +266,29 @@ class HeuristicClaimExtractor : ClaimExtractorProvider {
             "thought", "underwent", "went", "won", "wrote", "rose", "grew", "fell", "became", "built", "held",
             "result", "resulted", "resulting",
         )
+        private val VERB_FORMS = buildSet {
+            addAll(IRREGULAR_VERBS)
+            VERB_BASES.forEach { base ->
+                add(base)
+                addAll(inflections(base))
+            }
+        }
+
+        private fun inflections(base: String): Set<String> = buildSet {
+            add("${base}s")
+            add("${base}ed")
+            add("${base}ing")
+            if (base.endsWith("e")) {
+                add("${base}d")
+                add("${base.dropLast(1)}ing")
+            }
+            if (base.endsWith("y")) {
+                add("${base.dropLast(1)}ies")
+                add("${base.dropLast(1)}ied")
+            }
+            if (base.endsWith("s") || base.endsWith("sh") || base.endsWith("ch") || base.endsWith("x") || base.endsWith("z") || base.endsWith("o")) {
+                add("${base}es")
+            }
+        }
     }
 }
