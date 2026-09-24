@@ -148,6 +148,23 @@ export function UploadDashboard() {
   const parsedDocumentError = parsedDocumentResultForSelection && "error" in parsedDocumentResultForSelection
     ? parsedDocumentResultForSelection.error
     : null;
+  const citationContextAnchorsByReferenceKey = useMemo(() => {
+    const anchorsByReferenceKey = new Map<string, Array<{ id: string; label: string }>>();
+    if (!parsedDocument) return anchorsByReferenceKey;
+
+    parsedDocument.citationContexts.forEach((context, contextIndex) => {
+      const referenceKeys = new Set(
+        context.occurrences.flatMap((occurrence) => occurrence.bibliographyReferenceKeys),
+      );
+      for (const referenceKey of referenceKeys) {
+        const anchors = anchorsByReferenceKey.get(referenceKey) ?? [];
+        anchors.push({ id: context.id, label: `Citation Context ${contextIndex + 1}` });
+        anchorsByReferenceKey.set(referenceKey, anchors);
+      }
+    });
+
+    return anchorsByReferenceKey;
+  }, [parsedDocument]);
   const parsedDocumentLoading = Boolean(
     selectedRun && isParsedDocumentReady(selectedRunStatus) && !parsedDocumentResultForSelection,
   );
@@ -505,7 +522,7 @@ export function UploadDashboard() {
                   required
                   disabled={busy}
                   aria-describedby="source-file-description"
-                  className="h-11 cursor-pointer file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-secondary-foreground hover:file:bg-accent"
+                  className="h-11 cursor-pointer file:mr-3 file:h-7 file:rounded-md file:border-0 file:bg-secondary file:px-2 file:py-0 file:text-xs file:leading-none file:font-medium file:text-secondary-foreground hover:file:bg-accent"
                 />
                 <FieldDescription id="source-file-description">
                   PDF only. Selectable text is verified before storage; scanned PDFs are not processed.
@@ -790,7 +807,7 @@ export function UploadDashboard() {
                         ) : (
                           <ol className="space-y-3">
                             {parsedDocument.citationContexts.map((context) => (
-                              <li key={context.id}>
+                              <li key={context.id} id={`citation-context-${context.id}`} className="scroll-mt-5">
                                 <article className="space-y-3 rounded-lg border border-border bg-muted/20 p-4">
                                   <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-muted-foreground">
                                     <Badge variant="secondary" className="text-[0.65rem] uppercase">
@@ -836,23 +853,40 @@ export function UploadDashboard() {
                           <p className="text-sm text-muted-foreground">No bibliography entries were detected.</p>
                         ) : (
                           <ol className="space-y-3">
-                            {parsedDocument.bibliographyEntries.map((entry) => (
-                              <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`} className="scroll-mt-5 rounded-lg border border-border bg-card p-4">
-                                <h5 className="break-words font-medium leading-relaxed">
-                                  {entry.title || entry.localReferenceKey}
-                                </h5>
-                                <p className="mt-1 font-mono text-xs text-muted-foreground uppercase">
-                                  {entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}
-                                </p>
-                                {entry.authors.length > 0 && (
-                                  <p className="mt-2 break-words text-sm text-muted-foreground">{entry.authors.join(", ")}</p>
-                                )}
-                                <p className="mt-3 break-words text-sm leading-relaxed">{entry.rawText}</p>
-                                {entry.doi && (
-                                  <p className="mt-2 break-all font-mono text-xs text-muted-foreground">DOI: {entry.doi}</p>
-                                )}
-                              </li>
-                            ))}
+                            {parsedDocument.bibliographyEntries.map((entry) => {
+                              const citingContexts = citationContextAnchorsByReferenceKey.get(entry.localReferenceKey) ?? [];
+                              return (
+                                <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`} className="scroll-mt-5 rounded-lg border border-border bg-card p-4">
+                                  <h5 className="break-words font-medium leading-relaxed">
+                                    {entry.title || entry.localReferenceKey}
+                                  </h5>
+                                  <p className="mt-1 font-mono text-xs text-muted-foreground uppercase">
+                                    {entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}
+                                  </p>
+                                  {entry.authors.length > 0 && (
+                                    <p className="mt-2 break-words text-sm text-muted-foreground">{entry.authors.join(", ")}</p>
+                                  )}
+                                  <p className="mt-3 break-words text-sm leading-relaxed">{entry.rawText}</p>
+                                  {entry.doi && (
+                                    <p className="mt-2 break-all font-mono text-xs text-muted-foreground">DOI: {entry.doi}</p>
+                                  )}
+                                  {citingContexts.length > 0 && (
+                                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-3">
+                                      <span className="text-xs text-muted-foreground">Cited in:</span>
+                                      {citingContexts.map((context) => (
+                                        <a
+                                          key={context.id}
+                                          className="text-xs text-primary underline underline-offset-4 hover:text-primary/80"
+                                          href={`#citation-context-${context.id}`}
+                                        >
+                                          {context.label}
+                                        </a>
+                                      ))}
+                                    </div>
+                                  )}
+                                </li>
+                              );
+                            })}
                           </ol>
                         )}
                       </section>

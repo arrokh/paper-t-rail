@@ -49,7 +49,7 @@ The upload workspace keeps three task-oriented cards: **01 Source Document** and
 
 - **Source Document:** provider choices, exact per-run external-data disclosure and consent, file selection, upload action, and concise privacy/error feedback.
 - **Persisted Progress:** cursor-paginated Analysis Runs, explicit selection, current status, and loading/empty states.
-- **Parsed Document:** selected run status, current persisted progress and provenance, then the parsed sections, Citation Contexts, and Bibliography Entries. Tabs and arrow controls expose only states supported by the selected run; do not imply stage history that is not stored.
+- **Parsed Document:** selected run status, current persisted progress and provenance, then the parsed sections, Citation Contexts, and Bibliography Entries. Citation markers link to their bibliography entries, and each entry links back to every citing Citation Context. Tabs and arrow controls expose only states supported by the selected run; do not imply stage history that is not stored.
 
 Keep product copy factual and non-alarmist. Distinguish privacy/consent decisions from ordinary validation. Error, loading, empty, disabled, and success states are first-class designs, not afterthoughts.
 
