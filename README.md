@@ -18,6 +18,8 @@ Open <http://127.0.0.1:3000>. `make dev` starts PostgreSQL + pgvector, Redis, Mi
 
 The UI pins heuristic extraction, local embeddings, and mock System One. Its workspace places Source Document upload and cursor-paginated persisted runs side by side, with the selected run's progress and parsed structure in a full-width card below. The worker verifies the stored source hash, calls self-hosted GROBID with both external consolidation options explicitly set to `0`, retains the exact raw TEI response in private run-scoped object storage, then persists parser provenance, sections, Citation Contexts, Citation Occurrences, Bibliography Entries, and citation-target links. No external provider receives document content. Claim extraction and verification are not executed in this slice.
 
+The web app uses project-owned shadcn/ui primitives, Tailwind CSS v4, and the Paper T-Rail semantic theme. See the [Web UI Design System](docs/ui-design-system.md) for component, accessibility, and responsive-layout guidance; `web/AGENTS.md` applies those rules to frontend changes.
+
 The default `grobid/grobid:0.9.1-crf` image includes native linux/arm64 and linux/amd64 builds. Compose waits for GROBID's `/api/isalive` endpoint before starting the worker. Override `GROBID_IMAGE` and `GROBID_PARSER_VERSION` together when selecting a different self-hosted build. To use an externally managed private service instead, set `GROBID_BASE_URL` to an address reachable from the worker and set `GROBID_PARSER_VERSION` to the deployed version; public destinations are rejected. For example, Docker Desktop can use `http://host.docker.internal:8070` when GROBID runs on the host.
 
 ### Local network and data safety

@@ -1,6 +1,14 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpRight,
+  ChevronDown,
+  FileText,
+  LockKeyhole,
+} from "lucide-react";
 import type { AnalysisRun, AnalysisRunPage, ApiError, CreatedRun, ParsedDocument } from "@/lib/types";
 import {
   consentRequirements,
@@ -10,6 +18,45 @@ import {
   type ProviderRole,
   type ProviderSelections,
 } from "@/lib/provider-configuration";
+import { cn } from "@/lib/utils";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 
 const RUN_PAGE_SIZE = 25;
 
@@ -19,6 +66,15 @@ const DEFAULT_SELECTIONS: ProviderSelections = {
   claimExtractorProvider: "heuristic",
   embeddingProvider: "local",
   systemOneProvider: "mock",
+};
+
+const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
+  QUEUED: "border-border bg-muted text-muted-foreground",
+  PROCESSING: "border-primary/25 bg-primary/10 text-primary",
+  PARSED: "border-primary/20 bg-primary/5 text-primary",
+  COMPLETED: "border-primary/20 bg-primary/5 text-primary",
+  COMPLETED_WITH_WARNINGS: "border-warning/40 bg-warning/10 text-warning-foreground",
+  FAILED: "border-destructive/25 bg-destructive/10 text-destructive",
 };
 
 async function readError(response: Response): Promise<string> {
@@ -34,8 +90,26 @@ function statusLabel(status: AnalysisRun["status"]): string {
   return status.replaceAll("_", " ").toLowerCase();
 }
 
+function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn("shrink-0 capitalize", STATUS_CLASS_NAMES[status])}
+    >
+      {statusLabel(status)}
+    </Badge>
+  );
+}
+
 function isParsedDocumentReady(status: AnalysisRun["status"] | undefined): boolean {
   return status === "PARSED" || status === "COMPLETED" || status === "COMPLETED_WITH_WARNINGS";
+}
+
+function scrollToDetails(element: HTMLElement | null) {
+  element?.scrollIntoView({
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    block: "start",
+  });
 }
 
 export function UploadDashboard() {
@@ -54,15 +128,20 @@ export function UploadDashboard() {
   const [parsedDocumentResult, setParsedDocumentResult] = useState<
     { runId: string; document: ParsedDocument } | { runId: string; error: string } | null
   >(null);
-  const detailsCardRef = useRef<HTMLElement>(null);
+  const detailsCardRef = useRef<HTMLDivElement>(null);
   const pendingDetailsScroll = useRef(false);
   const listRequestSequence = useRef(0);
   const pageCursor = pageCursors[pageIndex] ?? null;
   const runs = runPage.items;
 
-  const selectedRun = useMemo(() => runs.find((run) => run.id === selectedRunId) ?? null, [runs, selectedRunId]);
+  const selectedRun = useMemo(
+    () => runs.find((run) => run.id === selectedRunId) ?? null,
+    [runs, selectedRunId],
+  );
   const selectedRunStatus = selectedRun?.status;
-  const parsedDocumentResultForSelection = parsedDocumentResult?.runId === selectedRunId ? parsedDocumentResult : null;
+  const parsedDocumentResultForSelection = parsedDocumentResult?.runId === selectedRunId
+    ? parsedDocumentResult
+    : null;
   const parsedDocument = parsedDocumentResultForSelection && "document" in parsedDocumentResultForSelection
     ? parsedDocumentResultForSelection.document
     : null;
@@ -139,7 +218,7 @@ export function UploadDashboard() {
 
   useEffect(() => {
     if (!pendingDetailsScroll.current || !selectedRunId) return;
-    detailsCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    scrollToDetails(detailsCardRef.current);
     pendingDetailsScroll.current = false;
   }, [selectedRunId]);
 
@@ -196,7 +275,7 @@ export function UploadDashboard() {
   function selectRun(runId: string) {
     setSelectedRunId(runId);
     setActiveDetailTab("progress");
-    detailsCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    scrollToDetails(detailsCardRef.current);
   }
 
   function goToNextRunPage() {
@@ -281,299 +360,509 @@ export function UploadDashboard() {
     }
   }
 
+  const activeError = error ?? providerError;
+
   return (
-    <section className="workspace" aria-label="Source Document workspace">
-      <div className="workspace-grid">
-        <section className="upload-card" aria-labelledby="upload-heading">
-          <div className="card-kicker"><span className="kicker-number">01</span> SOURCE DOCUMENT</div>
-          <h2 id="upload-heading">Start with your PDF</h2>
-          <p className="muted">Upload an English academic document with selectable text. Scanned PDFs and other languages are rejected with a reason.</p>
-          <form onSubmit={startRun} className="upload-form">
-            <div className="provider-selection-grid" role="group" aria-label="Analysis provider selection">
-              {([
-                ["claimExtractor", "Claim extraction", "claimExtractorProvider"],
-                ["embedding", "Embeddings", "embeddingProvider"],
-                ["systemOne", "Evidence assessment", "systemOneProvider"],
-              ] as const).map(([role, label, selectionField]) => (
-                <label className="provider-select" key={role}>
-                  <span>{label}</span>
-                  <select
-                    value={providerSelections[selectionField]}
-                    disabled={busy || !providerDirectory}
-                    onChange={(event) => selectProvider(role, event.target.value)}
-                  >
-                    {providerOptions(role).map((provider) => (
-                      <option key={provider.providerId} value={provider.providerId}>{provider.displayName}</option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            </div>
-            {consentRequirementsForRun.length === 0 ? (
-              <div className="provider-consent local-only" aria-live="polite">
-                <strong>Local/mock providers selected</strong>
-                <p>This run needs no external consent and sends no document content to an external provider.</p>
-              </div>
-            ) : consentRequirementsForRun.map((provider) => (
-              <section className="provider-consent" key={provider.providerId} aria-labelledby={`consent-${provider.providerId}`}>
-                <h3 id={`consent-${provider.providerId}`}>{provider.displayName} data access</h3>
-                <p>This external provider may receive only the following request categories for this run:</p>
-                {provider.retentionDisclosure && <p className="retention-disclosure">{provider.retentionDisclosure}</p>}
-                <fieldset>
-                  <legend>Approve each category to continue</legend>
-                  {provider.dataCategories.map((categoryId) => {
-                    const category = providerDirectory?.dataCategories.find((item) => item.id === categoryId);
-                    return (
-                      <label className="consent-category" key={categoryId}>
-                        <input
-                          type="checkbox"
-                          disabled={busy}
-                          checked={approvedCategories[provider.providerId]?.includes(categoryId) ?? false}
-                          onChange={(event) => approveCategory(provider.providerId, categoryId, event.target.checked)}
-                        />
-                        <span><strong>{category?.label ?? categoryId}</strong><small><code>{categoryId}</code> · {category?.description}</small></span>
-                      </label>
-                    );
-                  })}
-                </fieldset>
-                <p className="consent-note">Consent applies only to this Analysis Run. It does not change previous runs or authorize additional categories.</p>
-              </section>
-            ))}
-            <details className="data-category-reference">
-              <summary>All stable data categories</summary>
-              <ul>
-                {providerDirectory?.dataCategories.map((category) => (
-                  <li key={category.id}><strong>{category.id}</strong> — {category.description}</li>
-                ))}
-              </ul>
-            </details>
-            <label className="file-drop" htmlFor="source-file">
-              <span className="upload-icon" aria-hidden="true">↑</span>
-              <span className="file-drop-title">Choose a PDF</span>
-              <span className="file-drop-caption">PDF only · content is checked before storage</span>
-            </label>
-            <input id="source-file" name="file" type="file" accept="application/pdf,.pdf" required />
-            <button className="primary-button" type="submit" disabled={busy || !providerDirectory}>
-              {busy ? "Starting run…" : "Upload & start Analysis Run"}
-              <span aria-hidden="true">↗</span>
-            </button>
-          </form>
-          <div className="privacy-callout">
-            <span className="lock-icon" aria-hidden="true">▣</span>
-            <p><strong>Local/mock providers are the default.</strong> Disabled or unclassified providers are not offered for selection. External providers require explicit approval of every disclosed category for each run. Upload limits are configurable; over-limit files are rejected, never trimmed.</p>
-          </div>
-          {(error || providerError) && <div className="error-banner" role="alert"><strong>Could not continue</strong><span>{error ?? providerError}</span></div>}
-        </section>
+    <section className="space-y-6" aria-label="Source Document workspace">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <Card className="shadow-sm">
+          <CardHeader className="gap-2 border-b border-border/70 pb-5">
+            <p className="flex items-center gap-2 font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
+              <span className="font-semibold text-warning-foreground">01</span> Source Document
+            </p>
+            <CardTitle id="upload-heading" role="heading" aria-level={2} className="text-xl tracking-tight">
+              Start with your PDF
+            </CardTitle>
+            <CardDescription className="max-w-prose leading-relaxed">
+              Upload an English academic document with selectable text. Scanned PDFs and other languages are rejected with a reason.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <form onSubmit={startRun} className="space-y-5">
+              <FieldGroup className="gap-4">
+                {([
+                  ["claimExtractor", "Claim extraction", "claimExtractorProvider"],
+                  ["embedding", "Embeddings", "embeddingProvider"],
+                  ["systemOne", "Evidence assessment", "systemOneProvider"],
+                ] as const).map(([role, label, selectionField]) => {
+                  const selectId = `provider-${role}`;
+                  return (
+                    <Field key={role}>
+                      <FieldLabel htmlFor={selectId} className="text-xs font-medium text-foreground">
+                        {label}
+                      </FieldLabel>
+                      <NativeSelect
+                        id={selectId}
+                        className="w-full [&_[data-slot=native-select]]:h-11"
+                        value={providerSelections[selectionField]}
+                        disabled={busy || !providerDirectory}
+                        onChange={(event) => selectProvider(role, event.target.value)}
+                      >
+                        {providerDirectory ? providerOptions(role).map((provider) => (
+                          <NativeSelectOption key={provider.providerId} value={provider.providerId}>
+                            {provider.displayName}
+                          </NativeSelectOption>
+                        )) : (
+                          <NativeSelectOption value={providerSelections[selectionField]}>
+                            Loading provider choices…
+                          </NativeSelectOption>
+                        )}
+                      </NativeSelect>
+                    </Field>
+                  );
+                })}
+              </FieldGroup>
 
-        <section className="runs-card" aria-labelledby="runs-heading">
-          <div className="runs-heading-row">
-            <div>
-              <div className="card-kicker"><span className="kicker-number">02</span> PERSISTED PROGRESS</div>
-              <h2 id="runs-heading">Analysis Runs</h2>
-            </div>
-            <span className="run-count">{runs.length.toString().padStart(2, "0")}</span>
-          </div>
-          {loading ? (
-            <p className="empty-state">Loading saved runs…</p>
-          ) : runs.length === 0 ? (
-            <div className="empty-state"><span className="empty-track" aria-hidden="true">— — —</span><p>Your first Analysis Run will appear here.</p></div>
-          ) : (
-            <div className="run-list" role="list" aria-label="Saved Analysis Runs">
-              {runs.map((run) => (
-                <div role="listitem" key={run.id}>
-                  <button
-                    type="button"
-                    className={`run-row ${run.id === selectedRunId ? "selected" : ""}`}
-                    aria-current={run.id === selectedRunId ? "true" : undefined}
-                    onClick={() => selectRun(run.id)}
-                  >
-                    <span className={`run-status-dot ${run.status.toLowerCase()}`} aria-hidden="true" />
-                    <span className="run-row-main"><strong>{run.filename}</strong><small>{new Date(run.createdAt).toLocaleString()}</small></span>
-                    <span className={`status-pill ${run.status.toLowerCase()}`}>{statusLabel(run.status)}</span>
-                  </button>
+              {!providerDirectory ? (
+                <p className="text-sm text-muted-foreground" role="status">Loading provider disclosures…</p>
+              ) : consentRequirementsForRun.length === 0 ? (
+                <div className="flex gap-3 rounded-lg border border-primary/15 bg-primary/5 p-4 text-sm" role="note" aria-live="polite">
+                  <LockKeyhole className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+                  <div className="space-y-1">
+                    <p className="font-medium text-foreground">Local/mock providers selected</p>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      This run needs no external consent and sends no document content to an external provider.
+                    </p>
+                  </div>
                 </div>
+              ) : consentRequirementsForRun.map((provider) => (
+                <section
+                  className="space-y-4 rounded-lg border border-border bg-muted/20 p-4"
+                  key={provider.providerId}
+                  aria-labelledby={`consent-${provider.providerId}`}
+                >
+                  <div className="space-y-1">
+                    <h3 id={`consent-${provider.providerId}`} className="font-medium">
+                      {provider.displayName} data access
+                    </h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      This external provider may receive only the following request categories for this run:
+                    </p>
+                    {provider.retentionDisclosure && (
+                      <p className="text-sm text-warning-foreground">{provider.retentionDisclosure}</p>
+                    )}
+                  </div>
+                  <FieldSet className="min-w-0 gap-3 border-0 p-0">
+                    <FieldLegend variant="label" className="text-sm">
+                      Approve each category to continue
+                    </FieldLegend>
+                    {provider.dataCategories.map((categoryId) => {
+                      const category = providerDirectory?.dataCategories.find((item) => item.id === categoryId);
+                      const checkboxId = `consent-${provider.providerId}-${categoryId}`;
+                      return (
+                        <Field orientation="horizontal" key={categoryId} className="items-start gap-3">
+                          <Checkbox
+                            id={checkboxId}
+                            disabled={busy}
+                            checked={approvedCategories[provider.providerId]?.includes(categoryId) ?? false}
+                            onCheckedChange={(checked) => approveCategory(provider.providerId, categoryId, checked === true)}
+                          />
+                          <div className="min-w-0 space-y-1">
+                            <FieldLabel htmlFor={checkboxId} className="text-sm font-medium">
+                              {category?.label ?? categoryId}
+                            </FieldLabel>
+                            <FieldDescription className="text-xs leading-relaxed">
+                              <code className="font-mono text-[0.7rem]">{categoryId}</code>
+                              {category?.description ? ` · ${category.description}` : ""}
+                            </FieldDescription>
+                          </div>
+                        </Field>
+                      );
+                    })}
+                  </FieldSet>
+                  <p className="text-xs leading-relaxed text-warning-foreground">
+                    Consent applies only to this Analysis Run. It does not change previous runs or authorize additional categories.
+                  </p>
+                </section>
               ))}
-            </div>
-          )}
-          <nav className="run-pagination" aria-label="Analysis Run pages">
-            <button type="button" className="page-button" onClick={goToPreviousRunPage} disabled={pageIndex === 0 || loading}>
-              <span aria-hidden="true">←</span> Previous
-            </button>
-            <span className="page-indicator" aria-live="polite">Page {pageIndex + 1}</span>
-            <button type="button" className="page-button" onClick={goToNextRunPage} disabled={!runPage.nextCursor || loading}>
-              Next <span aria-hidden="true">→</span>
-            </button>
-          </nav>
-        </section>
 
-        <section className="parsed-card" aria-labelledby="parsed-document-heading" ref={detailsCardRef}>
-          <div className="parsed-card-heading">
-            <div>
-              <div className="card-kicker"><span className="kicker-number">03</span> PARSED DOCUMENT</div>
-              <h2 id="parsed-document-heading">{selectedRun?.filename ?? "Analysis Run details"}</h2>
-              <p className="muted">Inspect persisted progress, parser provenance, Citation Contexts, and Bibliography Entries.</p>
+              {providerDirectory && providerDirectory.dataCategories.length > 0 && (
+                <Collapsible className="group/collapsible border-t border-border pt-3">
+                  <CollapsibleTrigger className="flex min-h-11 w-full items-center justify-between gap-3 rounded-md text-left text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                    All stable data categories
+                    <ChevronDown className="size-4 shrink-0 transition-transform group-data-[open]/collapsible:rotate-180" aria-hidden="true" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-3">
+                    <ul className="space-y-3 pl-4 text-sm text-muted-foreground">
+                      {providerDirectory.dataCategories.map((category) => (
+                        <li key={category.id} className="leading-relaxed">
+                          <strong className="font-mono text-xs text-foreground">{category.id}</strong>
+                          <span> — {category.description}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+
+              <Field>
+                <FieldLabel htmlFor="source-file">Choose a PDF</FieldLabel>
+                <Input
+                  id="source-file"
+                  name="file"
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  required
+                  disabled={busy}
+                  aria-describedby="source-file-description"
+                  className="h-11 cursor-pointer file:mr-3 file:rounded-md file:border-0 file:bg-secondary file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-secondary-foreground hover:file:bg-accent"
+                />
+                <FieldDescription id="source-file-description">
+                  PDF only. Selectable text is verified before storage; scanned PDFs are not processed.
+                </FieldDescription>
+              </Field>
+
+              <Button type="submit" size="lg" className="min-h-11 w-full justify-between" disabled={busy || !providerDirectory}>
+                <span className="inline-flex items-center gap-2">
+                  {busy && <Spinner aria-hidden="true" />}
+                  {busy ? "Starting run…" : "Upload & start Analysis Run"}
+                </span>
+                {!busy && <ArrowUpRight className="size-4" aria-hidden="true" />}
+              </Button>
+            </form>
+
+            <div className="flex gap-3 rounded-lg bg-muted/60 p-4 text-sm" role="note">
+              <LockKeyhole className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+              <p className="leading-relaxed text-muted-foreground">
+                <strong className="font-medium text-foreground">Local/mock providers are the default.</strong>{" "}
+                Disabled or unclassified providers are not offered for selection. External providers require explicit approval of every disclosed category for each run. Upload limits are configurable; over-limit files are rejected, never trimmed.
+              </p>
             </div>
-            {selectedRun && <span className={`status-pill ${selectedRun.status.toLowerCase()}`}>{statusLabel(selectedRun.status)}</span>}
-          </div>
+
+            {activeError && (
+              <Alert variant="destructive">
+                <AlertTitle>Could not continue</AlertTitle>
+                <AlertDescription>{activeError}</AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm">
+          <CardHeader className="gap-2 border-b border-border/70 pb-5">
+            <p className="flex items-center gap-2 font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
+              <span className="font-semibold text-warning-foreground">02</span> Persisted Progress
+            </p>
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle id="runs-heading" role="heading" aria-level={2} className="text-xl tracking-tight">
+                Analysis Runs
+              </CardTitle>
+              <Badge variant="secondary" className="font-mono text-xs">
+                {runs.length.toString().padStart(2, "0")}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {loading ? (
+              <div className="space-y-3" role="status" aria-label="Loading saved Analysis Runs">
+                <span className="sr-only">Loading saved Analysis Runs</span>
+                <Skeleton className="h-14 w-full" aria-hidden="true" />
+                <Skeleton className="h-14 w-full" aria-hidden="true" />
+                <Skeleton className="h-14 w-4/5" aria-hidden="true" />
+              </div>
+            ) : runs.length === 0 ? (
+              <div className="grid min-h-40 place-items-center rounded-lg border border-dashed border-border bg-muted/20 p-6 text-center">
+                <div className="space-y-2">
+                  <FileText className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
+                  <p className="text-sm font-medium">Your first Analysis Run will appear here.</p>
+                  <p className="text-xs text-muted-foreground">Upload an academic PDF to begin.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="max-h-[26rem] space-y-2 overflow-y-auto pr-1" role="list" aria-label="Saved Analysis Runs">
+                {runs.map((run) => (
+                  <div role="listitem" key={run.id}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      aria-current={run.id === selectedRunId ? "true" : undefined}
+                      className={cn(
+                        "h-auto min-h-14 w-full justify-between gap-3 rounded-lg border border-transparent px-3 py-3 text-left",
+                        run.id === selectedRunId && "border-primary/20 bg-accent hover:bg-accent",
+                      )}
+                      onClick={() => selectRun(run.id)}
+                    >
+                      <span className="min-w-0 flex-1 space-y-1">
+                        <span className="block truncate text-sm font-medium text-foreground">{run.filename}</span>
+                        <span className="block font-mono text-xs text-muted-foreground">{new Date(run.createdAt).toLocaleString()}</span>
+                      </span>
+                      <RunStatusBadge status={run.status} />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <Separator />
+            <nav className="flex items-center justify-between gap-3" aria-label="Analysis Run pages">
+              <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={goToPreviousRunPage} disabled={pageIndex === 0 || loading}>
+                <ArrowLeft aria-hidden="true" /> Previous
+              </Button>
+              <span className="font-mono text-xs text-muted-foreground" aria-live="polite">
+                Page {pageIndex + 1}
+              </span>
+              <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={goToNextRunPage} disabled={!runPage.nextCursor || loading}>
+                Next <ArrowRight aria-hidden="true" />
+              </Button>
+            </nav>
+          </CardContent>
+        </Card>
+
+        <Card className="scroll-mt-5 shadow-sm lg:col-span-2" ref={detailsCardRef}>
+          <CardHeader className="gap-3 border-b border-border/70 pb-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0 space-y-2">
+                <p className="flex items-center gap-2 font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
+                  <span className="font-semibold text-warning-foreground">03</span> Parsed Document
+                </p>
+                <CardTitle id="parsed-document-heading" role="heading" aria-level={2} className="break-words text-xl tracking-tight">
+                  {selectedRun?.filename ?? "Analysis Run details"}
+                </CardTitle>
+                <CardDescription className="max-w-prose leading-relaxed">
+                  Inspect persisted progress, parser provenance, Citation Contexts, and Bibliography Entries.
+                </CardDescription>
+              </div>
+              {selectedRun && <RunStatusBadge status={selectedRun.status} />}
+            </div>
+          </CardHeader>
 
           {!selectedRun ? (
-            <div className="empty-state detail-empty-state"><span className="empty-track" aria-hidden="true">— — —</span><p>Select an Analysis Run to inspect its progress and parsed document.</p></div>
-          ) : (
-            <>
-              <div className="detail-step-tabs" role="tablist" aria-label="Analysis Run details">
-                <button
-                  type="button"
-                  id="run-progress-tab"
-                  className={`detail-step-tab ${activeDetailTab === "progress" ? "active" : ""}`}
-                  role="tab"
-                  aria-selected={activeDetailTab === "progress"}
-                  aria-controls="run-progress-panel"
-                  tabIndex={activeDetailTab === "progress" ? 0 : -1}
-                  onClick={() => setActiveDetailTab("progress")}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowRight" && isParsedDocumentReady(selectedRunStatus)) {
-                      event.preventDefault();
-                      setActiveDetailTab("parsed");
-                      document.getElementById("parsed-document-tab")?.focus();
-                    }
-                  }}
-                >
-                  <span className="detail-step-number">01</span> RUN PROGRESS
-                </button>
-                <span className="detail-step-arrow" aria-hidden="true">→</span>
-                <button
-                  type="button"
-                  id="parsed-document-tab"
-                  className={`detail-step-tab ${activeDetailTab === "parsed" ? "active" : ""}`}
-                  role="tab"
-                  aria-selected={activeDetailTab === "parsed"}
-                  aria-controls="parsed-document-panel"
-                  tabIndex={activeDetailTab === "parsed" ? 0 : -1}
-                  disabled={!isParsedDocumentReady(selectedRunStatus)}
-                  onClick={() => setActiveDetailTab("parsed")}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowLeft") {
-                      event.preventDefault();
-                      setActiveDetailTab("progress");
-                      document.getElementById("run-progress-tab")?.focus();
-                    }
-                  }}
-                >
-                  <span className="detail-step-number">02</span> PARSED DOCUMENT
-                </button>
-              </div>
-              <div className="detail-step-actions">
-                <button
-                  type="button"
-                  className="page-button detail-step-next"
-                  disabled={activeDetailTab === "progress" && !isParsedDocumentReady(selectedRunStatus)}
-                  onClick={() => setActiveDetailTab(activeDetailTab === "progress" ? "parsed" : "progress")}
-                >
-                  {activeDetailTab === "progress" ? <>Next: Parsed Document <span aria-hidden="true">→</span></> : <><span aria-hidden="true">←</span> Run Progress</>}
-                </button>
-              </div>
-
-              <div id="run-progress-panel" className="detail-tab-panel" role="tabpanel" aria-labelledby="run-progress-tab" hidden={activeDetailTab !== "progress"}>
-                <div className="run-detail" aria-live="polite">
-                  <div className="detail-topline">
-                    <span>RUN PROGRESS</span>
-                    <span className={`status-pill ${selectedRun.status.toLowerCase()}`}>{statusLabel(selectedRun.status)}</span>
-                  </div>
-                  <p className="progress-message">{selectedRun.progress.message ?? (selectedRun.status === "QUEUED" ? "Waiting for a worker." : "Progress saved.")}</p>
-                  <dl className="provenance-list">
-                    <div><dt>Source SHA-256</dt><dd><code>{selectedRun.sourceContentSha256}</code></dd></div>
-                    <div><dt>Configuration</dt><dd>{selectedRun.configuration.claimExtractor.provider} · {selectedRun.configuration.embedding.provider} · {selectedRun.configuration.systemOne.provider}</dd></div>
-                    <div><dt>Worker stage</dt><dd>{selectedRun.progress.stage?.replaceAll("_", " ").toLowerCase() ?? "queued"}</dd></div>
-                  </dl>
-                  {selectedRun.status === "FAILED" && selectedRun.failureReason && <p className="error-detail">{selectedRun.failureReason}</p>}
-                  <button type="button" className="secondary-button" disabled={busy || !providerDirectory} onClick={reanalyze}>Create a new run from this document <span aria-hidden="true">↗</span></button>
+            <CardContent>
+              <div className="grid min-h-44 place-items-center p-6 text-center">
+                <div className="space-y-2">
+                  <FileText className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
+                  <p className="text-sm font-medium">Select an Analysis Run to inspect its progress and parsed document.</p>
                 </div>
               </div>
+            </CardContent>
+          ) : (
+            <CardContent className="space-y-5">
+              <Tabs
+                value={activeDetailTab}
+                onValueChange={(value) => {
+                  if (value === "progress" || value === "parsed") setActiveDetailTab(value);
+                }}
+                className="gap-4"
+              >
+                <TabsList variant="line" className="h-auto w-full min-w-0 justify-start gap-1 rounded-none border-b border-border bg-transparent p-0 sm:gap-3">
+                  <TabsTrigger
+                    value="progress"
+                    aria-label="Run Progress"
+                    className="min-h-11 min-w-0 justify-start rounded-none px-1.5 text-[0.65rem] text-muted-foreground uppercase tracking-normal data-active:text-primary disabled:opacity-100 aria-disabled:opacity-100 sm:flex-none sm:px-2 sm:text-xs sm:tracking-[0.08em]"
+                  >
+                    <span className="font-mono text-warning-foreground">01</span>
+                    <span className="sm:hidden">Progress</span>
+                    <span className="hidden sm:inline">Run Progress</span>
+                  </TabsTrigger>
+                  <ArrowRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" aria-hidden="true" />
+                  <TabsTrigger
+                    value="parsed"
+                    aria-label="Parsed Document"
+                    disabled={!isParsedDocumentReady(selectedRunStatus)}
+                    className="min-h-11 min-w-0 justify-start rounded-none px-1.5 text-[0.65rem] text-muted-foreground uppercase tracking-normal data-active:text-primary disabled:opacity-100 aria-disabled:opacity-100 sm:flex-none sm:px-2 sm:text-xs sm:tracking-[0.08em]"
+                  >
+                    <span className="font-mono text-warning-foreground">02</span>
+                    <span className="sm:hidden">Parsed</span>
+                    <span className="hidden sm:inline">Parsed Document</span>
+                  </TabsTrigger>
+                </TabsList>
 
-              <div id="parsed-document-panel" className="detail-tab-panel" role="tabpanel" aria-labelledby="parsed-document-tab" hidden={activeDetailTab !== "parsed"}>
-                {!isParsedDocumentReady(selectedRunStatus) && <p className="parsed-state">The parsed document becomes available when this run reaches PARSED.</p>}
-                {selectedRun && parsedDocumentLoading && <p className="parsed-state" role="status">Loading parsed document structure…</p>}
-                {selectedRun && parsedDocumentError && <p className="error-detail" role="alert">{parsedDocumentError}</p>}
-                {selectedRun && parsedDocument && (
-                  <div className="parsed-document">
-                    <div className="parsed-heading-row">
-                      <div>
-                        <div className="card-kicker">PARSED DOCUMENT</div>
-                        <h3>Sections and references</h3>
-                      </div>
-                      <span className="parser-badge">{parsedDocument.parser.provider} {parsedDocument.parser.version}</span>
-                    </div>
-                    <p className="parsed-offset-note">Source offsets are zero-based and end-exclusive UTF-16 indexes in the normalized source text.</p>
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="min-h-11"
+                    disabled={activeDetailTab === "progress" && !isParsedDocumentReady(selectedRunStatus)}
+                    onClick={() => setActiveDetailTab(activeDetailTab === "progress" ? "parsed" : "progress")}
+                  >
+                    {activeDetailTab === "progress" ? (
+                      <>Next: Parsed Document <ArrowRight aria-hidden="true" /></>
+                    ) : (
+                      <><ArrowLeft aria-hidden="true" /> Run Progress</>
+                    )}
+                  </Button>
+                </div>
 
-                    <section className="parsed-group" aria-labelledby="sections-heading">
-                      <h4 id="sections-heading">Sections <span>{parsedDocument.sections.length}</span></h4>
-                      {parsedDocument.sections.length === 0 ? <p className="parsed-empty">No sections were returned by the parser.</p> : (
-                        <ol className="parsed-sections">
-                          {parsedDocument.sections.map((section) => (
-                            <li key={section.id}>
-                              <details>
-                                <summary>
-                                  <strong>{section.heading || `Section ${section.sectionOrder + 1}`}</strong>
-                                  <span>{section.startOffset}–{section.endOffset}</span>
-                                </summary>
-                                <p className="parsed-section-text">{section.text}</p>
-                              </details>
-                            </li>
-                          ))}
-                        </ol>
-                      )}
-                    </section>
-
-                    <section className="parsed-group" aria-labelledby="contexts-heading">
-                      <h4 id="contexts-heading">Citation Contexts <span>{parsedDocument.citationContexts.length}</span></h4>
-                      {parsedDocument.citationContexts.length === 0 ? <p className="parsed-empty">No citation markers were detected.</p> : (
-                        <ol className="parsed-contexts">
-                          {parsedDocument.citationContexts.map((context) => (
-                            <li key={context.id}>
-                              <article>
-                                <div className="context-meta"><span>{context.boundaryKind.replaceAll("_", " ").toLowerCase()}</span><span>{context.startOffset}–{context.endOffset}</span></div>
-                                <p>{context.text}</p>
-                                <ul className="parsed-markers">
-                                  {context.occurrences.map((occurrence) => (
-                                    <li key={occurrence.id}>
-                                      <code>{occurrence.markerText}</code> <span>{occurrence.startOffset}–{occurrence.endOffset}</span>
-                                      {occurrence.bibliographyReferenceKeys.length > 0 && (
-                                        <span className="citation-targets"> → {occurrence.bibliographyReferenceKeys.map((key) => (
-                                          <a key={key} href={`#bibliography-${key}`}>{key}</a>
-                                        ))}</span>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </article>
-                            </li>
-                          ))}
-                        </ol>
-                      )}
-                    </section>
-
-                    <section className="parsed-group" aria-labelledby="bibliography-heading">
-                      <h4 id="bibliography-heading">Bibliography Entries <span>{parsedDocument.bibliographyEntries.length}</span></h4>
-                      {parsedDocument.bibliographyEntries.length === 0 ? <p className="parsed-empty">No bibliography entries were detected.</p> : (
-                        <ol className="parsed-bibliography">
-                          {parsedDocument.bibliographyEntries.map((entry) => (
-                            <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`}>
-                              <strong>{entry.title || entry.localReferenceKey}</strong>
-                              <span className="reference-key">{entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}</span>
-                              {entry.authors.length > 0 && <span className="reference-authors">{entry.authors.join(", ")}</span>}
-                              <p>{entry.rawText}</p>
-                              {entry.doi && <small>DOI: {entry.doi}</small>}
-                            </li>
-                          ))}
-                        </ol>
-                      )}
-                    </section>
+                <TabsContent value="progress" className="space-y-5 outline-none">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="font-mono text-xs tracking-[0.1em] text-muted-foreground uppercase">Current run progress</p>
+                    <RunStatusBadge status={selectedRun.status} />
                   </div>
-                )}
-              </div>
-            </>
+                  <p className="text-sm leading-relaxed text-foreground" aria-live="polite">
+                    {selectedRun.progress.message ?? (selectedRun.status === "QUEUED" ? "Waiting for a worker." : "Progress saved.")}
+                  </p>
+                  <Separator />
+                  <dl className="grid gap-4 sm:grid-cols-[minmax(9rem,0.35fr)_minmax(0,1fr)]">
+                    <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Source SHA-256</dt>
+                    <dd className="m-0 break-all font-mono text-xs leading-relaxed text-foreground">{selectedRun.sourceContentSha256}</dd>
+                    <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Configuration</dt>
+                    <dd className="m-0 break-words text-sm text-foreground">
+                      {selectedRun.configuration.claimExtractor.provider} · {selectedRun.configuration.embedding.provider} · {selectedRun.configuration.systemOne.provider}
+                    </dd>
+                    <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Worker stage</dt>
+                    <dd className="m-0 text-sm capitalize text-foreground">
+                      {selectedRun.progress.stage?.replaceAll("_", " ").toLowerCase() ?? "queued"}
+                    </dd>
+                  </dl>
+                  {selectedRun.status === "FAILED" && selectedRun.failureReason && (
+                    <Alert variant="destructive">
+                      <AlertTitle>Analysis Run failed</AlertTitle>
+                      <AlertDescription>{selectedRun.failureReason}</AlertDescription>
+                    </Alert>
+                  )}
+                  <Button type="button" variant="outline" className="min-h-11 w-full justify-between sm:w-auto" disabled={busy || !providerDirectory} onClick={reanalyze}>
+                    Create a new run from this document <ArrowUpRight aria-hidden="true" />
+                  </Button>
+                </TabsContent>
+
+                <TabsContent value="parsed" className="space-y-5 outline-none">
+                  {!isParsedDocumentReady(selectedRunStatus) && (
+                    <p className="rounded-lg border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+                      The parsed document becomes available when this run reaches PARSED.
+                    </p>
+                  )}
+                  {parsedDocumentLoading && (
+                    <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+                      <Spinner aria-hidden="true" /> Loading parsed document structure…
+                    </p>
+                  )}
+                  {parsedDocumentError && (
+                    <Alert variant="destructive">
+                      <AlertTitle>Parsed document unavailable</AlertTitle>
+                      <AlertDescription>{parsedDocumentError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {parsedDocument && (
+                    <div className="space-y-6 pt-1">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Parsed document</p>
+                          <h3 className="font-heading text-lg font-semibold tracking-tight">Sections and references</h3>
+                        </div>
+                        <Badge variant="secondary" className="font-mono text-xs">
+                          {parsedDocument.parser.provider} {parsedDocument.parser.version}
+                        </Badge>
+                      </div>
+                      <p className="rounded-md bg-muted/50 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                        Source offsets are zero-based and end-exclusive UTF-16 indexes in the normalized source text.
+                      </p>
+
+                      <section className="space-y-3" aria-labelledby="sections-heading">
+                        <div className="flex items-center justify-between gap-3">
+                          <h4 id="sections-heading" className="font-heading text-base font-semibold">Sections</h4>
+                          <Badge variant="outline">{parsedDocument.sections.length}</Badge>
+                        </div>
+                        {parsedDocument.sections.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No sections were returned by the parser.</p>
+                        ) : (
+                          <ol className="space-y-2">
+                            {parsedDocument.sections.map((section) => (
+                              <li key={section.id}>
+                                <Collapsible className="group/section rounded-lg border border-border bg-card">
+                                  <CollapsibleTrigger className="flex min-h-12 w-full items-center justify-between gap-4 px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                                      {section.heading || `Section ${section.sectionOrder + 1}`}
+                                    </span>
+                                    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                                      {section.startOffset}–{section.endOffset}
+                                    </span>
+                                    <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[open]/section:rotate-180" aria-hidden="true" />
+                                  </CollapsibleTrigger>
+                                  <CollapsibleContent className="border-t border-border px-4 py-3">
+                                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">{section.text}</p>
+                                  </CollapsibleContent>
+                                </Collapsible>
+                              </li>
+                            ))}
+                          </ol>
+                        )}
+                      </section>
+
+                      <Separator />
+                      <section className="space-y-3" aria-labelledby="contexts-heading">
+                        <div className="flex items-center justify-between gap-3">
+                          <h4 id="contexts-heading" className="font-heading text-base font-semibold">Citation Contexts</h4>
+                          <Badge variant="outline">{parsedDocument.citationContexts.length}</Badge>
+                        </div>
+                        {parsedDocument.citationContexts.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No citation markers were detected.</p>
+                        ) : (
+                          <ol className="space-y-3">
+                            {parsedDocument.citationContexts.map((context) => (
+                              <li key={context.id}>
+                                <article className="space-y-3 rounded-lg border border-border bg-muted/20 p-4">
+                                  <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-muted-foreground">
+                                    <Badge variant="secondary" className="text-[0.65rem] uppercase">
+                                      {context.boundaryKind.replaceAll("_", " ").toLowerCase()}
+                                    </Badge>
+                                    <span>{context.startOffset}–{context.endOffset}</span>
+                                  </div>
+                                  <p className="break-words text-sm leading-relaxed">{context.text}</p>
+                                  <ul className="space-y-2 border-l-2 border-primary/20 pl-4">
+                                    {context.occurrences.map((occurrence) => (
+                                      <li key={occurrence.id} className="break-words text-sm">
+                                        <code className="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-primary">{occurrence.markerText}</code>
+                                        <span className="ml-2 font-mono text-xs text-muted-foreground">
+                                          {occurrence.startOffset}–{occurrence.endOffset}
+                                        </span>
+                                        {occurrence.bibliographyReferenceKeys.length > 0 && (
+                                          <span className="ml-2 inline-flex flex-wrap gap-x-2">
+                                            <span className="sr-only">Bibliography entries:</span>
+                                            {occurrence.bibliographyReferenceKeys.map((key) => (
+                                              <a key={key} className="text-primary underline underline-offset-4 hover:text-primary/80" href={`#bibliography-${key}`}>
+                                                {key}
+                                              </a>
+                                            ))}
+                                          </span>
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </article>
+                              </li>
+                            ))}
+                          </ol>
+                        )}
+                      </section>
+
+                      <Separator />
+                      <section className="space-y-3" aria-labelledby="bibliography-heading">
+                        <div className="flex items-center justify-between gap-3">
+                          <h4 id="bibliography-heading" className="font-heading text-base font-semibold">Bibliography Entries</h4>
+                          <Badge variant="outline">{parsedDocument.bibliographyEntries.length}</Badge>
+                        </div>
+                        {parsedDocument.bibliographyEntries.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No bibliography entries were detected.</p>
+                        ) : (
+                          <ol className="space-y-3">
+                            {parsedDocument.bibliographyEntries.map((entry) => (
+                              <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`} className="scroll-mt-5 rounded-lg border border-border bg-card p-4">
+                                <h5 className="break-words font-medium leading-relaxed">
+                                  {entry.title || entry.localReferenceKey}
+                                </h5>
+                                <p className="mt-1 font-mono text-xs text-muted-foreground uppercase">
+                                  {entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}
+                                </p>
+                                {entry.authors.length > 0 && (
+                                  <p className="mt-2 break-words text-sm text-muted-foreground">{entry.authors.join(", ")}</p>
+                                )}
+                                <p className="mt-3 break-words text-sm leading-relaxed">{entry.rawText}</p>
+                                {entry.doi && (
+                                  <p className="mt-2 break-all font-mono text-xs text-muted-foreground">DOI: {entry.doi}</p>
+                                )}
+                              </li>
+                            ))}
+                          </ol>
+                        )}
+                      </section>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
           )}
-        </section>
+        </Card>
       </div>
     </section>
   );

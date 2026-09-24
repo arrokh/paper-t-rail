@@ -25,3 +25,7 @@ When implementing with TDD, agree on the public behavior seam before writing tes
 - Bug fixes do not automatically need regression tests. Add one only when existing behavior tests have a genuine, identified coverage gap.
 
 See `docs/paper-t-rail-tech-design.md` §56 for the repository testing strategy.
+
+### Web UI
+
+For changes under `web/`, follow `web/AGENTS.md` and `docs/ui-design-system.md`; shadcn/ui is the default component system for interactive primitives.

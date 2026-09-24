@@ -2765,6 +2765,8 @@ The Spring API publishes an OpenAPI 3 contract at `/v3/api-docs` (YAML at `/v3/a
 
 # 41. Web UI V1
 
+**UI foundation:** Next.js App Router, React, strict TypeScript, Tailwind CSS v4, and project-owned shadcn/ui components using Base UI primitives. Theme values are semantic CSS tokens; product-specific layouts compose the local primitives. The accepted decision is recorded in [ADR 0005](adr/0005-shadcn-web-ui-system.md), with visual tokens, interaction rules, accessibility expectations, and contribution guidance in the [Web UI Design System](ui-design-system.md).
+
 Minimum screens:
 
 ## 41.1 Upload
@@ -2822,6 +2824,12 @@ Display:
 - human review history.
 
 Traceability is more important than visual complexity.
+
+## 41.5 UI System and Component Architecture
+
+Use `web/components/ui/` for project-owned shadcn primitives and `web/components/` for product composition. Generate a missing primitive with the shadcn CLI, then review and commit the resulting source. `web/app/styles.css` owns semantic theme tokens and Tailwind v4 setup; `web/lib/utils.ts` provides shared class composition. Use semantic HTML for document structure and native behavior that has no shadcn replacement, while keeping its styling inside the design tokens.
+
+The UI targets WCAG 2.2 AA, works with keyboard and touch, preserves visible focus, and uses text as well as color for status. Keep the App Router server-rendered by default and isolate client interaction. Follow `web/AGENTS.md` and `docs/ui-design-system.md` for the complete implementation and verification rules.
 
 ---
 
