@@ -121,7 +121,6 @@ class DocumentAnalysisRequestedHandler(
                                'citationOccurrenceCount', ?,
                                'bibliographyEntryCount', ?
                            ),
-                           completed_at = now(),
                            updated_at = now()
                      WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
                        AND status = 'PROCESSING'
@@ -134,7 +133,7 @@ class DocumentAnalysisRequestedHandler(
                     event.payload.documentId,
                     run.sourceHash,
                 )
-                if (completed != 1) throw IllegalStateException("Analysis Run could not be completed after parsing.")
+                if (completed != 1) throw IllegalStateException("Analysis Run could not be marked PARSED after parsing.")
                 transactionBodyCompleted = true
             }
             if (!transactionBodyCompleted) cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
