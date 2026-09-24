@@ -2663,6 +2663,14 @@ Deletion first tombstones the document and invalidates pending work, then remove
 
 ## 40.2 Analysis Runs
 
+### List runs
+
+```http
+GET /api/v1/analysis-runs?limit=25&cursor={nextCursor}
+```
+
+Returns an `items` array and an opaque `nextCursor`; omit `cursor` for the newest page, then pass the returned cursor to retrieve the next older page. `limit` defaults to 25 and is clamped to 1–100. Pages use keyset pagination ordered by `created_at DESC, id DESC`; do not replace this with offset pagination. A matching composite PostgreSQL index backs the range query. The composite ordering and cursor avoid page shifts when newer runs are inserted.
+
 ### Create run
 
 ```http
@@ -2770,7 +2778,9 @@ Minimum screens:
 
 ## 41.2 Analysis Progress
 
-Show persisted progress:
+The current workspace uses three cards: **01 Source Document** on the left and **02 Persisted Progress** on the right, with **03 Parsed Document** full-width below them; narrow screens stack the cards. The run list uses cursor pagination with 25 runs per page in `created_at DESC, id DESC` order. Selecting a run scrolls to its details. The details card has tabs for Run Progress and Parsed Document plus a next/previous arrow control; the Parsed Document tab and forward arrow are unavailable until the run is parsed.
+
+Render only the Analysis Run's actual persisted status and current progress snapshot. The current schema stores one progress snapshot, not a history of stage events, so do not synthesize past progress or present future stages as completed. The sequence below describes the intended later pipeline, not work performed by the current parser-only slice:
 
 ```text
 Parsing document

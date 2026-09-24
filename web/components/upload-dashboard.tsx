@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import type { AnalysisRun, ApiError, CreatedRun, ParsedDocument } from "@/lib/types";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AnalysisRun, AnalysisRunPage, ApiError, CreatedRun, ParsedDocument } from "@/lib/types";
 import {
   consentRequirements,
   createRunConfiguration,
@@ -10,6 +10,10 @@ import {
   type ProviderRole,
   type ProviderSelections,
 } from "@/lib/provider-configuration";
+
+const RUN_PAGE_SIZE = 25;
+
+type AnalysisRunDetailTab = "progress" | "parsed";
 
 const DEFAULT_SELECTIONS: ProviderSelections = {
   claimExtractorProvider: "heuristic",
@@ -35,7 +39,10 @@ function isParsedDocumentReady(status: AnalysisRun["status"] | undefined): boole
 }
 
 export function UploadDashboard() {
-  const [runs, setRuns] = useState<AnalysisRun[]>([]);
+  const [runPage, setRunPage] = useState<AnalysisRunPage>({ items: [], nextCursor: null });
+  const [pageCursors, setPageCursors] = useState<Array<string | null>>([null]);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [activeDetailTab, setActiveDetailTab] = useState<AnalysisRunDetailTab>("progress");
   const [providerDirectory, setProviderDirectory] = useState<ProviderDirectory | null>(null);
   const [providerSelections, setProviderSelections] = useState<ProviderSelections>(DEFAULT_SELECTIONS);
   const [approvedCategories, setApprovedCategories] = useState<Record<string, string[]>>({});
@@ -47,6 +54,11 @@ export function UploadDashboard() {
   const [parsedDocumentResult, setParsedDocumentResult] = useState<
     { runId: string; document: ParsedDocument } | { runId: string; error: string } | null
   >(null);
+  const detailsCardRef = useRef<HTMLElement>(null);
+  const pendingDetailsScroll = useRef(false);
+  const listRequestSequence = useRef(0);
+  const pageCursor = pageCursors[pageIndex] ?? null;
+  const runs = runPage.items;
 
   const selectedRun = useMemo(() => runs.find((run) => run.id === selectedRunId) ?? null, [runs, selectedRunId]);
   const selectedRunStatus = selectedRun?.status;
@@ -65,19 +77,27 @@ export function UploadDashboard() {
     [providerDirectory, providerSelections],
   );
 
-  const refreshRuns = useCallback(async () => {
+  const refreshRuns = useCallback(async (cursor: string | null = pageCursor) => {
+    const requestSequenceNumber = ++listRequestSequence.current;
     try {
-      const response = await fetch("/api/v1/analysis-runs?limit=25", { cache: "no-store" });
+      const query = new URLSearchParams({ limit: String(RUN_PAGE_SIZE) });
+      if (cursor) query.set("cursor", cursor);
+      const response = await fetch(`/api/v1/analysis-runs?${query.toString()}`, { cache: "no-store" });
       if (!response.ok) throw new Error(await readError(response));
-      const currentRuns = (await response.json()) as AnalysisRun[];
-      setRuns(currentRuns);
+      const currentPage = (await response.json()) as AnalysisRunPage;
+      if (requestSequenceNumber !== listRequestSequence.current) return;
+      setRunPage(currentPage);
+      setSelectedRunId((currentId) => currentId && currentPage.items.some((run) => run.id === currentId)
+        ? currentId
+        : currentPage.items[0]?.id ?? null);
       setError(null);
     } catch (cause) {
+      if (requestSequenceNumber !== listRequestSequence.current) return;
       setError(cause instanceof Error ? cause.message : "Could not load saved Analysis Runs.");
     } finally {
-      setLoading(false);
+      if (requestSequenceNumber === listRequestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [pageCursor]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -116,6 +136,12 @@ export function UploadDashboard() {
       window.clearInterval(interval);
     };
   }, [refreshRuns]);
+
+  useEffect(() => {
+    if (!pendingDetailsScroll.current || !selectedRunId) return;
+    detailsCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    pendingDetailsScroll.current = false;
+  }, [selectedRunId]);
 
   useEffect(() => {
     if (!selectedRunId || !isParsedDocumentReady(selectedRunStatus)) return;
@@ -167,6 +193,29 @@ export function UploadDashboard() {
     return providerDirectory?.providers[role] ?? [];
   }
 
+  function selectRun(runId: string) {
+    setSelectedRunId(runId);
+    setActiveDetailTab("progress");
+    detailsCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function goToNextRunPage() {
+    if (!runPage.nextCursor || loading) return;
+    pendingDetailsScroll.current = true;
+    setLoading(true);
+    setActiveDetailTab("progress");
+    setPageCursors((current) => [...current.slice(0, pageIndex + 1), runPage.nextCursor!]);
+    setPageIndex(pageIndex + 1);
+  }
+
+  function goToPreviousRunPage() {
+    if (pageIndex === 0 || loading) return;
+    pendingDetailsScroll.current = true;
+    setLoading(true);
+    setActiveDetailTab("progress");
+    setPageIndex(pageIndex - 1);
+  }
+
   async function startRun(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -192,9 +241,12 @@ export function UploadDashboard() {
       const response = await fetch("/api/v1/analysis-runs", { method: "POST", body: data });
       if (!response.ok) throw new Error(await readError(response));
       const created = (await response.json()) as CreatedRun;
+      setPageCursors([null]);
+      setPageIndex(0);
+      setActiveDetailTab("progress");
       setSelectedRunId(created.analysisRunId);
       form.reset();
-      await refreshRuns();
+      await refreshRuns(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The upload could not be processed.");
     } finally {
@@ -216,8 +268,11 @@ export function UploadDashboard() {
       });
       if (!response.ok) throw new Error(await readError(response));
       const created = (await response.json()) as CreatedRun;
+      setPageCursors([null]);
+      setPageIndex(0);
+      setActiveDetailTab("progress");
       setSelectedRunId(created.analysisRunId);
-      await refreshRuns();
+      await refreshRuns(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "A new Analysis Run could not be created.");
     } finally {
@@ -234,7 +289,7 @@ export function UploadDashboard() {
           <h2 id="upload-heading">Start with your PDF</h2>
           <p className="muted">Upload an English academic document with selectable text. Scanned PDFs and other languages are rejected with a reason.</p>
           <form onSubmit={startRun} className="upload-form">
-            <div className="provider-selection-grid" aria-label="Analysis provider selection">
+            <div className="provider-selection-grid" role="group" aria-label="Analysis provider selection">
               {([
                 ["claimExtractor", "Claim extraction", "claimExtractorProvider"],
                 ["embedding", "Embeddings", "embeddingProvider"],
@@ -329,7 +384,8 @@ export function UploadDashboard() {
                   <button
                     type="button"
                     className={`run-row ${run.id === selectedRunId ? "selected" : ""}`}
-                    onClick={() => setSelectedRunId(run.id)}
+                    aria-current={run.id === selectedRunId ? "true" : undefined}
+                    onClick={() => selectRun(run.id)}
                   >
                     <span className={`run-status-dot ${run.status.toLowerCase()}`} aria-hidden="true" />
                     <span className="run-row-main"><strong>{run.filename}</strong><small>{new Date(run.createdAt).toLocaleString()}</small></span>
@@ -339,100 +395,183 @@ export function UploadDashboard() {
               ))}
             </div>
           )}
+          <nav className="run-pagination" aria-label="Analysis Run pages">
+            <button type="button" className="page-button" onClick={goToPreviousRunPage} disabled={pageIndex === 0 || loading}>
+              <span aria-hidden="true">←</span> Previous
+            </button>
+            <span className="page-indicator" aria-live="polite">Page {pageIndex + 1}</span>
+            <button type="button" className="page-button" onClick={goToNextRunPage} disabled={!runPage.nextCursor || loading}>
+              Next <span aria-hidden="true">→</span>
+            </button>
+          </nav>
+        </section>
 
-          {selectedRun && (
-            <div className="run-detail" aria-live="polite">
-              <div className="detail-topline">
-                <span>RUN PROGRESS</span>
-                <span className={`status-pill ${selectedRun.status.toLowerCase()}`}>{statusLabel(selectedRun.status)}</span>
-              </div>
-              <p className="progress-message">{selectedRun.progress.message ?? (selectedRun.status === "QUEUED" ? "Waiting for a worker." : "Progress saved.")}</p>
-              <dl className="provenance-list">
-                <div><dt>Source SHA-256</dt><dd><code>{selectedRun.sourceContentSha256}</code></dd></div>
-                <div><dt>Configuration</dt><dd>{selectedRun.configuration.claimExtractor.provider} · {selectedRun.configuration.embedding.provider} · {selectedRun.configuration.systemOne.provider}</dd></div>
-                <div><dt>Worker stage</dt><dd>{selectedRun.progress.stage?.replaceAll("_", " ").toLowerCase() ?? "queued"}</dd></div>
-              </dl>
-              {selectedRun.status === "FAILED" && selectedRun.failureReason && <p className="error-detail">{selectedRun.failureReason}</p>}
-              <button type="button" className="secondary-button" disabled={busy || !providerDirectory} onClick={reanalyze}>Create a new run from this document <span aria-hidden="true">↗</span></button>
+        <section className="parsed-card" aria-labelledby="parsed-document-heading" ref={detailsCardRef}>
+          <div className="parsed-card-heading">
+            <div>
+              <div className="card-kicker"><span className="kicker-number">03</span> PARSED DOCUMENT</div>
+              <h2 id="parsed-document-heading">{selectedRun?.filename ?? "Analysis Run details"}</h2>
+              <p className="muted">Inspect persisted progress, parser provenance, Citation Contexts, and Bibliography Entries.</p>
             </div>
-          )}
-          {selectedRun && parsedDocumentLoading && <p className="parsed-state" role="status">Loading parsed document structure…</p>}
-          {selectedRun && parsedDocumentError && <p className="error-detail" role="alert">{parsedDocumentError}</p>}
-          {selectedRun && parsedDocument && (
-            <section className="parsed-document" aria-labelledby="parsed-document-heading">
-              <div className="parsed-heading-row">
-                <div>
-                  <div className="card-kicker">PARSED DOCUMENT</div>
-                  <h3 id="parsed-document-heading">Sections and references</h3>
-                </div>
-                <span className="parser-badge">{parsedDocument.parser.provider} {parsedDocument.parser.version}</span>
+            {selectedRun && <span className={`status-pill ${selectedRun.status.toLowerCase()}`}>{statusLabel(selectedRun.status)}</span>}
+          </div>
+
+          {!selectedRun ? (
+            <div className="empty-state detail-empty-state"><span className="empty-track" aria-hidden="true">— — —</span><p>Select an Analysis Run to inspect its progress and parsed document.</p></div>
+          ) : (
+            <>
+              <div className="detail-step-tabs" role="tablist" aria-label="Analysis Run details">
+                <button
+                  type="button"
+                  id="run-progress-tab"
+                  className={`detail-step-tab ${activeDetailTab === "progress" ? "active" : ""}`}
+                  role="tab"
+                  aria-selected={activeDetailTab === "progress"}
+                  aria-controls="run-progress-panel"
+                  tabIndex={activeDetailTab === "progress" ? 0 : -1}
+                  onClick={() => setActiveDetailTab("progress")}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowRight" && isParsedDocumentReady(selectedRunStatus)) {
+                      event.preventDefault();
+                      setActiveDetailTab("parsed");
+                      document.getElementById("parsed-document-tab")?.focus();
+                    }
+                  }}
+                >
+                  <span className="detail-step-number">01</span> RUN PROGRESS
+                </button>
+                <span className="detail-step-arrow" aria-hidden="true">→</span>
+                <button
+                  type="button"
+                  id="parsed-document-tab"
+                  className={`detail-step-tab ${activeDetailTab === "parsed" ? "active" : ""}`}
+                  role="tab"
+                  aria-selected={activeDetailTab === "parsed"}
+                  aria-controls="parsed-document-panel"
+                  tabIndex={activeDetailTab === "parsed" ? 0 : -1}
+                  disabled={!isParsedDocumentReady(selectedRunStatus)}
+                  onClick={() => setActiveDetailTab("parsed")}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowLeft") {
+                      event.preventDefault();
+                      setActiveDetailTab("progress");
+                      document.getElementById("run-progress-tab")?.focus();
+                    }
+                  }}
+                >
+                  <span className="detail-step-number">02</span> PARSED DOCUMENT
+                </button>
               </div>
-              <p className="parsed-offset-note">Source offsets are zero-based and end-exclusive UTF-16 indexes in the normalized source text.</p>
+              <div className="detail-step-actions">
+                <button
+                  type="button"
+                  className="page-button detail-step-next"
+                  disabled={activeDetailTab === "progress" && !isParsedDocumentReady(selectedRunStatus)}
+                  onClick={() => setActiveDetailTab(activeDetailTab === "progress" ? "parsed" : "progress")}
+                >
+                  {activeDetailTab === "progress" ? <>Next: Parsed Document <span aria-hidden="true">→</span></> : <><span aria-hidden="true">←</span> Run Progress</>}
+                </button>
+              </div>
 
-              <section className="parsed-group" aria-labelledby="sections-heading">
-                <h4 id="sections-heading">Sections <span>{parsedDocument.sections.length}</span></h4>
-                {parsedDocument.sections.length === 0 ? <p className="parsed-empty">No sections were returned by the parser.</p> : (
-                  <ol className="parsed-sections">
-                    {parsedDocument.sections.map((section) => (
-                      <li key={section.id}>
-                        <details>
-                          <summary>
-                            <strong>{section.heading || `Section ${section.sectionOrder + 1}`}</strong>
-                            <span>{section.startOffset}–{section.endOffset}</span>
-                          </summary>
-                          <p className="parsed-section-text">{section.text}</p>
-                        </details>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </section>
+              <div id="run-progress-panel" className="detail-tab-panel" role="tabpanel" aria-labelledby="run-progress-tab" hidden={activeDetailTab !== "progress"}>
+                <div className="run-detail" aria-live="polite">
+                  <div className="detail-topline">
+                    <span>RUN PROGRESS</span>
+                    <span className={`status-pill ${selectedRun.status.toLowerCase()}`}>{statusLabel(selectedRun.status)}</span>
+                  </div>
+                  <p className="progress-message">{selectedRun.progress.message ?? (selectedRun.status === "QUEUED" ? "Waiting for a worker." : "Progress saved.")}</p>
+                  <dl className="provenance-list">
+                    <div><dt>Source SHA-256</dt><dd><code>{selectedRun.sourceContentSha256}</code></dd></div>
+                    <div><dt>Configuration</dt><dd>{selectedRun.configuration.claimExtractor.provider} · {selectedRun.configuration.embedding.provider} · {selectedRun.configuration.systemOne.provider}</dd></div>
+                    <div><dt>Worker stage</dt><dd>{selectedRun.progress.stage?.replaceAll("_", " ").toLowerCase() ?? "queued"}</dd></div>
+                  </dl>
+                  {selectedRun.status === "FAILED" && selectedRun.failureReason && <p className="error-detail">{selectedRun.failureReason}</p>}
+                  <button type="button" className="secondary-button" disabled={busy || !providerDirectory} onClick={reanalyze}>Create a new run from this document <span aria-hidden="true">↗</span></button>
+                </div>
+              </div>
 
-              <section className="parsed-group" aria-labelledby="contexts-heading">
-                <h4 id="contexts-heading">Citation Contexts <span>{parsedDocument.citationContexts.length}</span></h4>
-                {parsedDocument.citationContexts.length === 0 ? <p className="parsed-empty">No citation markers were detected.</p> : (
-                  <ol className="parsed-contexts">
-                    {parsedDocument.citationContexts.map((context) => (
-                      <li key={context.id}>
-                        <article>
-                          <div className="context-meta"><span>{context.boundaryKind.replaceAll("_", " ").toLowerCase()}</span><span>{context.startOffset}–{context.endOffset}</span></div>
-                          <p>{context.text}</p>
-                          <ul className="parsed-markers">
-                            {context.occurrences.map((occurrence) => (
-                              <li key={occurrence.id}>
-                                <code>{occurrence.markerText}</code> <span>{occurrence.startOffset}–{occurrence.endOffset}</span>
-                                {occurrence.bibliographyReferenceKeys.length > 0 && (
-                                  <span className="citation-targets"> → {occurrence.bibliographyReferenceKeys.map((key) => (
-                                    <a key={key} href={`#bibliography-${key}`}>{key}</a>
-                                  ))}</span>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
-                        </article>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </section>
+              <div id="parsed-document-panel" className="detail-tab-panel" role="tabpanel" aria-labelledby="parsed-document-tab" hidden={activeDetailTab !== "parsed"}>
+                {!isParsedDocumentReady(selectedRunStatus) && <p className="parsed-state">The parsed document becomes available when this run reaches PARSED.</p>}
+                {selectedRun && parsedDocumentLoading && <p className="parsed-state" role="status">Loading parsed document structure…</p>}
+                {selectedRun && parsedDocumentError && <p className="error-detail" role="alert">{parsedDocumentError}</p>}
+                {selectedRun && parsedDocument && (
+                  <div className="parsed-document">
+                    <div className="parsed-heading-row">
+                      <div>
+                        <div className="card-kicker">PARSED DOCUMENT</div>
+                        <h3>Sections and references</h3>
+                      </div>
+                      <span className="parser-badge">{parsedDocument.parser.provider} {parsedDocument.parser.version}</span>
+                    </div>
+                    <p className="parsed-offset-note">Source offsets are zero-based and end-exclusive UTF-16 indexes in the normalized source text.</p>
 
-              <section className="parsed-group" aria-labelledby="bibliography-heading">
-                <h4 id="bibliography-heading">Bibliography Entries <span>{parsedDocument.bibliographyEntries.length}</span></h4>
-                {parsedDocument.bibliographyEntries.length === 0 ? <p className="parsed-empty">No bibliography entries were detected.</p> : (
-                  <ol className="parsed-bibliography">
-                    {parsedDocument.bibliographyEntries.map((entry) => (
-                      <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`}>
-                        <strong>{entry.title || entry.localReferenceKey}</strong>
-                        <span className="reference-key">{entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}</span>
-                        {entry.authors.length > 0 && <span className="reference-authors">{entry.authors.join(", ")}</span>}
-                        <p>{entry.rawText}</p>
-                        {entry.doi && <small>DOI: {entry.doi}</small>}
-                      </li>
-                    ))}
-                  </ol>
+                    <section className="parsed-group" aria-labelledby="sections-heading">
+                      <h4 id="sections-heading">Sections <span>{parsedDocument.sections.length}</span></h4>
+                      {parsedDocument.sections.length === 0 ? <p className="parsed-empty">No sections were returned by the parser.</p> : (
+                        <ol className="parsed-sections">
+                          {parsedDocument.sections.map((section) => (
+                            <li key={section.id}>
+                              <details>
+                                <summary>
+                                  <strong>{section.heading || `Section ${section.sectionOrder + 1}`}</strong>
+                                  <span>{section.startOffset}–{section.endOffset}</span>
+                                </summary>
+                                <p className="parsed-section-text">{section.text}</p>
+                              </details>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </section>
+
+                    <section className="parsed-group" aria-labelledby="contexts-heading">
+                      <h4 id="contexts-heading">Citation Contexts <span>{parsedDocument.citationContexts.length}</span></h4>
+                      {parsedDocument.citationContexts.length === 0 ? <p className="parsed-empty">No citation markers were detected.</p> : (
+                        <ol className="parsed-contexts">
+                          {parsedDocument.citationContexts.map((context) => (
+                            <li key={context.id}>
+                              <article>
+                                <div className="context-meta"><span>{context.boundaryKind.replaceAll("_", " ").toLowerCase()}</span><span>{context.startOffset}–{context.endOffset}</span></div>
+                                <p>{context.text}</p>
+                                <ul className="parsed-markers">
+                                  {context.occurrences.map((occurrence) => (
+                                    <li key={occurrence.id}>
+                                      <code>{occurrence.markerText}</code> <span>{occurrence.startOffset}–{occurrence.endOffset}</span>
+                                      {occurrence.bibliographyReferenceKeys.length > 0 && (
+                                        <span className="citation-targets"> → {occurrence.bibliographyReferenceKeys.map((key) => (
+                                          <a key={key} href={`#bibliography-${key}`}>{key}</a>
+                                        ))}</span>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </article>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </section>
+
+                    <section className="parsed-group" aria-labelledby="bibliography-heading">
+                      <h4 id="bibliography-heading">Bibliography Entries <span>{parsedDocument.bibliographyEntries.length}</span></h4>
+                      {parsedDocument.bibliographyEntries.length === 0 ? <p className="parsed-empty">No bibliography entries were detected.</p> : (
+                        <ol className="parsed-bibliography">
+                          {parsedDocument.bibliographyEntries.map((entry) => (
+                            <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`}>
+                              <strong>{entry.title || entry.localReferenceKey}</strong>
+                              <span className="reference-key">{entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}</span>
+                              {entry.authors.length > 0 && <span className="reference-authors">{entry.authors.join(", ")}</span>}
+                              <p>{entry.rawText}</p>
+                              {entry.doi && <small>DOI: {entry.doi}</small>}
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                    </section>
+                  </div>
                 )}
-              </section>
-            </section>
+              </div>
+            </>
           )}
         </section>
       </div>

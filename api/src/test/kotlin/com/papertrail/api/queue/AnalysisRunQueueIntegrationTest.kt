@@ -155,6 +155,36 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `analysis run listing uses a stable cursor ordered by creation time and ID`() {
+        val timestamps = listOf(
+            Instant.parse("2025-01-03T00:00:00Z"),
+            Instant.parse("2025-01-02T00:00:00Z"),
+            Instant.parse("2025-01-02T00:00:00Z"),
+            Instant.parse("2025-01-01T00:00:00Z"),
+        )
+        val createdRuns = timestamps.map(::createQueuedRun)
+        val expectedIds = createdRuns
+            .zip(timestamps)
+            .sortedWith(compareByDescending<Pair<CreatedRunIds, Instant>> { it.second }.thenByDescending { it.first.analysisRunId.toString() })
+            .map { it.first.analysisRunId }
+        val service = analysisRunService()
+
+        val firstPage = service.list(limit = 2)
+        assertEquals(expectedIds.take(2), firstPage.items.map { it.id })
+        assertTrue(firstPage.nextCursor != null)
+
+        val secondPage = service.list(limit = 2, cursorToken = firstPage.nextCursor!!)
+        assertEquals(expectedIds.drop(2), secondPage.items.map { it.id })
+        assertNull(secondPage.nextCursor)
+        assertEquals(expectedIds, (firstPage.items + secondPage.items).map { it.id })
+
+        val invalidCursor = assertThrows(IllegalArgumentException::class.java) {
+            service.list(limit = 2, cursorToken = "not-a-cursor")
+        }
+        assertEquals("Analysis Run cursor is invalid.", invalidCursor.message)
+    }
+
+    @Test
     fun `persists exact external provider consent in the immutable run snapshot`() {
         val consent = com.papertrail.api.runs.ExternalProviderConsentSnapshot(
             "reviewed-llm",
@@ -490,7 +520,7 @@ class AnalysisRunQueueIntegrationTest {
         }
     }
 
-    private fun createQueuedRun(): CreatedRunIds {
+    private fun createQueuedRun(createdAt: Instant = Instant.now()): CreatedRunIds {
         val bytes = "integration pdf bytes".toByteArray()
         val hash = expectedSha256(bytes)
         val documentId = UUID.randomUUID()
@@ -499,7 +529,6 @@ class AnalysisRunQueueIntegrationTest {
         val correlationId = UUID.randomUUID()
         val objectKey = "source/$documentId/$hash.pdf"
         objectStore.put(objectKey, bytes)
-        val createdAt = Instant.now()
         jdbc.update(
             """INSERT INTO source_documents (id, filename, content_type, object_key, sha256, language, page_count, extracted_character_count, parser_id, parser_version, created_at)
                VALUES (?, 'paper.pdf', 'application/pdf', ?, ?, 'en', 1, 1000, 'pdfbox', '3.0.5', ?)""",
@@ -653,7 +682,7 @@ class AnalysisRunQueueIntegrationTest {
             jdbc = JdbcTemplate(dataSource)
             val migrationDirectory = listOf(Path.of("db/deploy"), Path.of("api/db/deploy"))
                 .firstOrNull(Files::isDirectory) ?: error("Could not locate Sqitch deployment directory")
-            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql").forEach { filename ->
+            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql").forEach { filename ->
                 val migration = migrationDirectory.resolve(filename)
                 dataSource.connection.use { connection ->
                     connection.createStatement().use { statement -> statement.execute(Files.readString(migration)) }

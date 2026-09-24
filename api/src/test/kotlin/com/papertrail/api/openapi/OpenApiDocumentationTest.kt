@@ -5,6 +5,7 @@ import com.papertrail.api.logging.RequestCorrelationFilter
 import com.papertrail.api.parsing.ParsedDocumentRepository
 import com.papertrail.api.parsing.ParsedDocumentView
 import com.papertrail.api.parsing.ParsedParserProvenance
+import com.papertrail.api.runs.AnalysisRunPage
 import com.papertrail.api.runs.AnalysisRunSummary
 import com.papertrail.api.queue.OutboxPublisher
 import com.papertrail.api.runs.AnalysisRunService
@@ -80,7 +81,13 @@ class OpenApiDocumentationTest {
         assertTrue(providerListing.path("responses").path("200").path("content").has("application/json"))
         assertTrue(paths.has("/api/v1/analysis-runs"))
         val analysisRuns = paths.path("/api/v1/analysis-runs")
-        assertTrue(analysisRuns.path("get").path("responses").path("200").path("content").has("application/json"))
+        val listRuns = analysisRuns.path("get")
+        assertTrue(listRuns.path("responses").path("200").path("content").has("application/json"))
+        val pageSchemaName = listRuns.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val pageProperties = document.path("components").path("schemas").path(pageSchemaName).path("properties")
+        assertTrue(pageProperties.has("items"))
+        assertTrue(pageProperties.has("nextCursor"))
+        assertTrue(listRuns.path("parameters").any { it.path("name").asText() == "cursor" })
         val upload = analysisRuns.path("post")
         assertEquals("Upload a PDF and create an Analysis Run", upload.path("summary").asText())
         assertTrue(upload.path("responses").path("201").path("content").has("application/json"))
@@ -128,6 +135,23 @@ class OpenApiDocumentationTest {
         assertTrue(reanalysis.path("responses").has("201"))
         assertTrue(reanalysis.path("responses").has("404"))
         assertTrue(paths.path("/api/v1/health").path("get").path("responses").path("200").path("content").has("application/json"))
+    }
+
+    @Test
+    fun `analysis run listing returns a page envelope and forwards the cursor`() {
+        Mockito.`when`(analysisRunService.list(2, "cursor-token"))
+            .thenReturn(AnalysisRunPage(emptyList(), null))
+
+        val response = mockMvc.perform(get("/api/v1/analysis-runs").param("limit", "2").param("cursor", "cursor-token"))
+            .andExpect(status().isOk)
+            .andReturn()
+            .response
+        val page = objectMapper.readTree(response.contentAsString)
+
+        assertTrue(page.path("items").isArray)
+        assertEquals(0, page.path("items").size())
+        assertTrue(page.path("nextCursor").isNull)
+        Mockito.verify(analysisRunService).list(2, "cursor-token")
     }
 
     @Test

@@ -18,6 +18,11 @@ export type AnalysisRun = {
   failureReason: string | null;
 };
 
+export type AnalysisRunPage = {
+  items: AnalysisRun[];
+  nextCursor: string | null;
+};
+
 export type ParsedDocument = {
   parser: { provider: string; version: string };
   sourceContentSha256: string;

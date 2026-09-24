@@ -170,19 +170,51 @@ class AnalysisRunService(
         runId,
     ).firstOrNull()
 
-    fun list(limit: Int = 25): List<AnalysisRunSummary> = jdbc.query(
-        """
-        SELECT r.id, r.document_id, d.filename, r.source_content_sha256, r.status,
-               r.progress::text AS progress, r.configuration_snapshot::text AS configuration,
-               r.created_at, r.started_at, r.failure_reason
-          FROM analysis_runs r
-          JOIN source_documents d ON d.id = r.document_id
-         ORDER BY r.created_at DESC, r.id DESC
-         LIMIT ?
-        """.trimIndent(),
-        { resultSet, _ -> resultSet.toRunSummary() },
-        limit.coerceIn(1, 100),
-    )
+    fun list(limit: Int = 25, cursorToken: String? = null): AnalysisRunPage {
+        val pageSize = limit.coerceIn(1, 100)
+        val cursor = cursorToken?.let(AnalysisRunCursorCodec::decode)
+        val queryLimit = pageSize + 1
+        val mapper = { resultSet: ResultSet, _: Int -> resultSet.toRunSummary() }
+        val rows = if (cursor == null) {
+            jdbc.query(
+                """
+                SELECT r.id, r.document_id, d.filename, r.source_content_sha256, r.status,
+                       r.progress::text AS progress, r.configuration_snapshot::text AS configuration,
+                       r.created_at, r.started_at, r.failure_reason
+                  FROM analysis_runs r
+                  JOIN source_documents d ON d.id = r.document_id
+                 ORDER BY r.created_at DESC, r.id DESC
+                 LIMIT ?
+                """.trimIndent(),
+                mapper,
+                queryLimit,
+            )
+        } else {
+            jdbc.query(
+                """
+                SELECT r.id, r.document_id, d.filename, r.source_content_sha256, r.status,
+                       r.progress::text AS progress, r.configuration_snapshot::text AS configuration,
+                       r.created_at, r.started_at, r.failure_reason
+                  FROM analysis_runs r
+                  JOIN source_documents d ON d.id = r.document_id
+                 WHERE (r.created_at, r.id) < (?, ?)
+                 ORDER BY r.created_at DESC, r.id DESC
+                 LIMIT ?
+                """.trimIndent(),
+                mapper,
+                Timestamp.from(cursor.createdAt),
+                cursor.id,
+                queryLimit,
+            )
+        }
+        val items = rows.take(pageSize)
+        val nextCursor = if (rows.size > pageSize) {
+            items.lastOrNull()?.let { AnalysisRunCursorCodec.encode(it.createdAt, it.id) }
+        } else {
+            null
+        }
+        return AnalysisRunPage(items, nextCursor)
+    }
 
     private fun insertRunAndOutbox(
         documentId: UUID,

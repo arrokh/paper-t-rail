@@ -107,6 +107,14 @@ data class AnalysisRunSummary(
     val failureReason: String?,
 )
 
+@Schema(description = "One page of Analysis Runs ordered by creation time descending, then ID descending.")
+data class AnalysisRunPage(
+    @field:Schema(description = "Analysis Runs in this page.")
+    val items: List<AnalysisRunSummary>,
+    @field:Schema(description = "Opaque cursor for the next, older page; null when there are no more runs.")
+    val nextCursor: String?,
+)
+
 data class CreatedAnalysisRunResponse(
     val documentId: UUID,
     val analysisRunId: UUID,

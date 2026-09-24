@@ -113,12 +113,23 @@ class AnalysisRunController(
     @GetMapping("/providers", produces = [MediaType.APPLICATION_JSON_VALUE])
     fun providers() = providerCatalog.directory()
 
-    @Operation(summary = "List recent Analysis Runs")
+    @Operation(
+        summary = "List recent Analysis Runs",
+        description = "Returns a cursor-paginated page in createdAt descending, then ID descending order. Pass nextCursor as cursor to fetch the next older page.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Cursor-paginated Analysis Runs", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = AnalysisRunPage::class))]),
+            ApiResponse(responseCode = "400", description = "The pagination cursor is invalid", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
     @GetMapping("/analysis-runs", produces = [MediaType.APPLICATION_JSON_VALUE])
     fun list(
         @Parameter(description = "Maximum runs to return; values are clamped to 1–100.")
         @RequestParam(defaultValue = "25") limit: Int,
-    ): List<AnalysisRunSummary> = analysisRunService.list(limit)
+        @Parameter(description = "Opaque cursor from the previous page; omit to list the newest runs.")
+        @RequestParam(required = false) cursor: String?,
+    ): AnalysisRunPage = analysisRunService.list(limit, cursor)
 
     @Operation(summary = "Get an Analysis Run and its persisted progress")
     @ApiResponses(
