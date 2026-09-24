@@ -52,6 +52,11 @@ paper-trail:
     parser-version: 3.0.5
     language-detector-id: optimaize
     language-detector-version: 0.6
+  analysis:
+    parser-id: grobid
+    parser-version: ${GROBID_PARSER_VERSION:0.9.1-crf}
+    parser-response-max-bytes: ${PAPER_MAX_GROBID_RESPONSE_BYTES:67108864}
+    grobid-base-url: ${GROBID_BASE_URL:http://127.0.0.1:8070}
 
 springdoc:
   api-docs:

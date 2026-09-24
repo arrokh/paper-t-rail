@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import type { AnalysisRun, ApiError, CreatedRun } from "@/lib/types";
+import type { AnalysisRun, ApiError, CreatedRun, ParsedDocument } from "@/lib/types";
 
 const DEFAULT_CONFIGURATION = {
   claimExtractorProvider: "heuristic",
@@ -22,14 +22,32 @@ function statusLabel(status: AnalysisRun["status"]): string {
   return status.replaceAll("_", " ").toLowerCase();
 }
 
+function isParsedDocumentReady(status: AnalysisRun["status"] | undefined): boolean {
+  return status === "PARSED" || status === "COMPLETED" || status === "COMPLETED_WITH_WARNINGS";
+}
+
 export function UploadDashboard() {
   const [runs, setRuns] = useState<AnalysisRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [parsedDocumentResult, setParsedDocumentResult] = useState<
+    { runId: string; document: ParsedDocument } | { runId: string; error: string } | null
+  >(null);
 
   const selectedRun = useMemo(() => runs.find((run) => run.id === selectedRunId) ?? null, [runs, selectedRunId]);
+  const selectedRunStatus = selectedRun?.status;
+  const parsedDocumentResultForSelection = parsedDocumentResult?.runId === selectedRunId ? parsedDocumentResult : null;
+  const parsedDocument = parsedDocumentResultForSelection && "document" in parsedDocumentResultForSelection
+    ? parsedDocumentResultForSelection.document
+    : null;
+  const parsedDocumentError = parsedDocumentResultForSelection && "error" in parsedDocumentResultForSelection
+    ? parsedDocumentResultForSelection.error
+    : null;
+  const parsedDocumentLoading = Boolean(
+    selectedRun && isParsedDocumentReady(selectedRunStatus) && !parsedDocumentResultForSelection,
+  );
 
   const refreshRuns = useCallback(async () => {
     try {
@@ -53,6 +71,26 @@ export function UploadDashboard() {
       window.clearInterval(interval);
     };
   }, [refreshRuns]);
+
+  useEffect(() => {
+    if (!selectedRunId || !isParsedDocumentReady(selectedRunStatus)) return;
+
+    let active = true;
+    void fetch(`/api/v1/analysis-runs/${encodeURIComponent(selectedRunId)}/parsed-document`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await readError(response));
+        return (await response.json()) as ParsedDocument;
+      })
+      .then((document) => { if (active) setParsedDocumentResult({ runId: selectedRunId, document }); })
+      .catch((cause: unknown) => {
+        if (active) setParsedDocumentResult({
+          runId: selectedRunId,
+          error: cause instanceof Error ? cause.message : "Could not load the parsed document.",
+        });
+      });
+
+    return () => { active = false; };
+  }, [selectedRunId, selectedRunStatus]);
 
   async function startRun(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -144,17 +182,17 @@ export function UploadDashboard() {
           ) : (
             <div className="run-list" role="list" aria-label="Saved Analysis Runs">
               {runs.map((run) => (
-                <button
-                  type="button"
-                  className={`run-row ${run.id === selectedRunId ? "selected" : ""}`}
-                  key={run.id}
-                  onClick={() => setSelectedRunId(run.id)}
-                  role="listitem"
-                >
-                  <span className={`run-status-dot ${run.status.toLowerCase()}`} aria-hidden="true" />
-                  <span className="run-row-main"><strong>{run.filename}</strong><small>{new Date(run.createdAt).toLocaleString()}</small></span>
-                  <span className={`status-pill ${run.status.toLowerCase()}`}>{statusLabel(run.status)}</span>
-                </button>
+                <div role="listitem" key={run.id}>
+                  <button
+                    type="button"
+                    className={`run-row ${run.id === selectedRunId ? "selected" : ""}`}
+                    onClick={() => setSelectedRunId(run.id)}
+                  >
+                    <span className={`run-status-dot ${run.status.toLowerCase()}`} aria-hidden="true" />
+                    <span className="run-row-main"><strong>{run.filename}</strong><small>{new Date(run.createdAt).toLocaleString()}</small></span>
+                    <span className={`status-pill ${run.status.toLowerCase()}`}>{statusLabel(run.status)}</span>
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -174,6 +212,84 @@ export function UploadDashboard() {
               {selectedRun.status === "FAILED" && selectedRun.failureReason && <p className="error-detail">{selectedRun.failureReason}</p>}
               <button type="button" className="secondary-button" disabled={busy} onClick={reanalyze}>Create a new run from this document <span aria-hidden="true">↗</span></button>
             </div>
+          )}
+          {selectedRun && parsedDocumentLoading && <p className="parsed-state" role="status">Loading parsed document structure…</p>}
+          {selectedRun && parsedDocumentError && <p className="error-detail" role="alert">{parsedDocumentError}</p>}
+          {selectedRun && parsedDocument && (
+            <section className="parsed-document" aria-labelledby="parsed-document-heading">
+              <div className="parsed-heading-row">
+                <div>
+                  <div className="card-kicker">PARSED DOCUMENT</div>
+                  <h3 id="parsed-document-heading">Sections and references</h3>
+                </div>
+                <span className="parser-badge">{parsedDocument.parser.provider} {parsedDocument.parser.version}</span>
+              </div>
+              <p className="parsed-offset-note">Source offsets are zero-based and end-exclusive UTF-16 indexes in the normalized source text.</p>
+
+              <section className="parsed-group" aria-labelledby="sections-heading">
+                <h4 id="sections-heading">Sections <span>{parsedDocument.sections.length}</span></h4>
+                {parsedDocument.sections.length === 0 ? <p className="parsed-empty">No sections were returned by the parser.</p> : (
+                  <ol className="parsed-sections">
+                    {parsedDocument.sections.map((section) => (
+                      <li key={section.id}>
+                        <details>
+                          <summary>
+                            <strong>{section.heading || `Section ${section.sectionOrder + 1}`}</strong>
+                            <span>{section.startOffset}–{section.endOffset}</span>
+                          </summary>
+                          <p className="parsed-section-text">{section.text}</p>
+                        </details>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+
+              <section className="parsed-group" aria-labelledby="contexts-heading">
+                <h4 id="contexts-heading">Citation Contexts <span>{parsedDocument.citationContexts.length}</span></h4>
+                {parsedDocument.citationContexts.length === 0 ? <p className="parsed-empty">No citation markers were detected.</p> : (
+                  <ol className="parsed-contexts">
+                    {parsedDocument.citationContexts.map((context) => (
+                      <li key={context.id}>
+                        <article>
+                          <div className="context-meta"><span>{context.boundaryKind.replaceAll("_", " ").toLowerCase()}</span><span>{context.startOffset}–{context.endOffset}</span></div>
+                          <p>{context.text}</p>
+                          <ul className="parsed-markers">
+                            {context.occurrences.map((occurrence) => (
+                              <li key={occurrence.id}>
+                                <code>{occurrence.markerText}</code> <span>{occurrence.startOffset}–{occurrence.endOffset}</span>
+                                {occurrence.bibliographyReferenceKeys.length > 0 && (
+                                  <span className="citation-targets"> → {occurrence.bibliographyReferenceKeys.map((key) => (
+                                    <a key={key} href={`#bibliography-${key}`}>{key}</a>
+                                  ))}</span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </article>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+
+              <section className="parsed-group" aria-labelledby="bibliography-heading">
+                <h4 id="bibliography-heading">Bibliography Entries <span>{parsedDocument.bibliographyEntries.length}</span></h4>
+                {parsedDocument.bibliographyEntries.length === 0 ? <p className="parsed-empty">No bibliography entries were detected.</p> : (
+                  <ol className="parsed-bibliography">
+                    {parsedDocument.bibliographyEntries.map((entry) => (
+                      <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`}>
+                        <strong>{entry.title || entry.localReferenceKey}</strong>
+                        <span className="reference-key">{entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}</span>
+                        {entry.authors.length > 0 && <span className="reference-authors">{entry.authors.join(", ")}</span>}
+                        <p>{entry.rawText}</p>
+                        {entry.doi && <small>DOI: {entry.doi}</small>}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+            </section>
           )}
         </section>
       </div>

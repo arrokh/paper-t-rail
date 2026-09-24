@@ -9,7 +9,8 @@ import org.junit.jupiter.api.Test
 class RunConfigurationFactoryTest {
     private val factory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
-        parserVersion = "3.0.5",
+        parserId = "grobid",
+        parserVersion = "0.9.1-crf",
         languageDetectorVersion = "0.6",
         limits = ValidationLimitsSnapshot(52_428_800, 500, 5_000_000, 100_000, 100, 0.65),
     )
@@ -22,8 +23,8 @@ class RunConfigurationFactoryTest {
         assertEquals("heuristic", snapshot.claimExtractor.provider)
         assertEquals("local", snapshot.embedding.provider)
         assertEquals("mock", snapshot.systemOne.provider)
-        assertEquals("pdfbox", snapshot.sourceParser.provider)
-        assertEquals("3.0.5", snapshot.sourceParser.version)
+        assertEquals("grobid", snapshot.sourceParser.provider)
+        assertEquals("0.9.1-crf", snapshot.sourceParser.version)
         assertEquals(52_428_800, snapshot.validationLimits.maxUploadBytes)
         assertEquals(100_000, snapshot.validationLimits.maxExtractedCharactersPerPage)
         assertEquals(100, snapshot.validationLimits.minimumExtractedCharacters)

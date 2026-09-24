@@ -85,6 +85,7 @@ data class AnalysisRunSummary(
     val documentId: UUID,
     val filename: String,
     val sourceContentSha256: String,
+    @field:Schema(description = "PARSED means citation structure is ready; claim and evidence analysis has not run.")
     val status: String,
     @field:Schema(implementation = AnalysisRunProgress::class, description = "Persisted run progress.")
     val progress: JsonNode,
@@ -106,6 +107,7 @@ data class CreatedAnalysisRunResponse(
 
 class RunConfigurationFactory(
     private val objectMapper: ObjectMapper,
+    private val parserId: String,
     private val parserVersion: String,
     private val languageDetectorVersion: String,
     private val limits: ValidationLimitsSnapshot,
@@ -142,7 +144,7 @@ class RunConfigurationFactory(
             claimExtractor = ProviderSelection("heuristic", "v1"),
             embedding = ProviderSelection("local", "v1", "e5-small-v2"),
             systemOne = ProviderSelection("mock", "v1", "mock-v1"),
-            sourceParser = ProviderSelection("pdfbox", parserVersion),
+            sourceParser = ProviderSelection(parserId, parserVersion),
             languageDetector = ProviderSelection("optimaize", languageDetectorVersion),
             validationLimits = limits,
             referenceResolution = ReferenceResolutionSnapshot(

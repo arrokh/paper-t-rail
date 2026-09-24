@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component
 import java.io.ByteArrayInputStream
 
 interface SourceDocumentObjectStore {
-    fun put(objectKey: String, content: ByteArray)
+    fun put(objectKey: String, content: ByteArray, contentType: String = "application/pdf")
     fun get(objectKey: String): ByteArray
     fun delete(objectKey: String)
 }
@@ -33,14 +33,14 @@ class MinioSourceDocumentObjectStore(
     @Volatile
     private var bucketReady = false
 
-    override fun put(objectKey: String, content: ByteArray) {
+    override fun put(objectKey: String, content: ByteArray, contentType: String) {
         ensureBucket()
         client.putObject(
             PutObjectArgs.builder()
                 .bucket(bucket)
                 .`object`(objectKey)
                 .stream(ByteArrayInputStream(content), content.size.toLong(), -1)
-                .contentType("application/pdf")
+                .contentType(contentType)
                 .build(),
         )
     }

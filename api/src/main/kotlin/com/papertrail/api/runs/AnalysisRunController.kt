@@ -3,6 +3,8 @@ package com.papertrail.api.runs
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.documents.ApiError
+import com.papertrail.api.parsing.ParsedDocumentRepository
+import com.papertrail.api.parsing.ParsedDocumentView
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.media.Content
@@ -34,6 +36,7 @@ class AnalysisRunController(
     private val configurationFactory: RunConfigurationFactory,
     private val objectMapper: ObjectMapper,
     private val jdbc: JdbcTemplate,
+    private val parsedDocumentRepository: ParsedDocumentRepository,
 ) {
     @Operation(
         summary = "Upload a PDF and create an Analysis Run",
@@ -121,6 +124,26 @@ class AnalysisRunController(
     @GetMapping("/analysis-runs/{runId}", produces = [MediaType.APPLICATION_JSON_VALUE])
     fun get(@PathVariable runId: UUID): AnalysisRunSummary = analysisRunService.get(runId)
         ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
+
+    @Operation(
+        summary = "Get parsed sections, citation contexts, citation occurrences, and bibliography entries",
+        description = "Returns the immutable parsed structure and parser provenance when an Analysis Run reaches PARSED. PARSED is an intermediate state, not a completed Evidence Coverage Report. All source offsets are zero-based and end-exclusive UTF-16 code-unit indexes in normalizedSourceText.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Persisted parsed document structure", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ParsedDocumentView::class))]),
+            ApiResponse(responseCode = "404", description = "Analysis Run not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "Parsed document structure is not ready", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @GetMapping("/analysis-runs/{runId}/parsed-document", produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun getParsedDocument(@PathVariable runId: UUID): ParsedDocumentView {
+        if (analysisRunService.get(runId) == null) {
+            throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
+        }
+        return parsedDocumentRepository.find(runId)
+            ?: throw ResponseStatusException(HttpStatus.CONFLICT, "Parsed document structure is not available until parsing completes.")
+    }
 
     @Operation(summary = "Check API and database liveness")
     @GetMapping("/health", produces = [MediaType.APPLICATION_JSON_VALUE])

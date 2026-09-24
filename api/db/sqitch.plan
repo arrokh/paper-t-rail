@@ -4,3 +4,5 @@
 
 extensions 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Enable required PostgreSQL extensions
 core_documents [extensions] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist source documents, immutable runs, and message inbox/outbox
+parsed_citation_structure [core_documents] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist versioned parsed document structure and citation links
+grobid_raw_output [parsed_citation_structure] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Keep raw GROBID output under immutable run provenance

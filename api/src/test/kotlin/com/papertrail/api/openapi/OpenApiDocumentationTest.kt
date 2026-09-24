@@ -2,6 +2,10 @@ package com.papertrail.api.openapi
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.logging.RequestCorrelationFilter
+import com.papertrail.api.parsing.ParsedDocumentRepository
+import com.papertrail.api.parsing.ParsedDocumentView
+import com.papertrail.api.parsing.ParsedParserProvenance
+import com.papertrail.api.runs.AnalysisRunSummary
 import com.papertrail.api.queue.OutboxPublisher
 import com.papertrail.api.runs.AnalysisRunService
 import com.papertrail.api.runs.RunConfigurationFactory
@@ -26,6 +30,10 @@ import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.mockito.Mockito
+import java.time.Instant
+import java.util.UUID
 
 @SpringBootTest(properties = ["paper-trail.role=api"])
 @AutoConfigureMockMvc
@@ -51,6 +59,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var outboxPublisher: OutboxPublisher
+
+    @MockitoBean
+    private lateinit var parsedDocumentRepository: ParsedDocumentRepository
 
     @Test
     fun `OpenAPI contract describes the existing analysis run endpoints and PDF upload`() {
@@ -96,6 +107,12 @@ class OpenApiDocumentationTest {
         val snapshotProperties = document.path("components").path("schemas").path(snapshotSchemaName).path("properties")
         assertTrue(snapshotProperties.has("claimExtractor"))
         assertTrue(snapshotProperties.has("validationLimits"))
+        val parsedDocument = paths.path("/api/v1/analysis-runs/{runId}/parsed-document").path("get")
+        assertTrue(parsedDocument.path("responses").path("200").path("content").has("application/json"))
+        assertTrue(parsedDocument.path("description").asText().contains("PARSED"))
+        assertFalse(parsedDocument.path("description").asText().contains("completed Analysis Run"))
+        assertTrue(parsedDocument.path("responses").has("404"))
+        assertTrue(parsedDocument.path("responses").has("409"))
         val reanalysis = paths.path("/api/v1/documents/{documentId}/analysis-runs").path("post")
         assertTrue(reanalysis.path("requestBody").path("content").has("application/json"))
         val reanalysisSchema = reanalysis.path("requestBody").path("content").path("application/json").path("schema")
@@ -173,6 +190,65 @@ class OpenApiDocumentationTest {
         assertTrue(runCatching { java.util.UUID.fromString(invalidId) }.isSuccess)
         assertTrue(runCatching { java.util.UUID.fromString(missingId) }.isSuccess)
         assertTrue(invalidId != missingId)
+    }
+
+    @Test
+    fun `parsed document endpoint returns the stored structure and distinguishes pending or missing runs`() {
+        val runId = java.util.UUID.randomUUID()
+        val documentId = java.util.UUID.randomUUID()
+        val summary = AnalysisRunSummary(
+            id = runId,
+            documentId = documentId,
+            filename = "paper.pdf",
+            sourceContentSha256 = "a".repeat(64),
+            status = "PARSED",
+            progress = objectMapper.readTree("""{"stage":"PARSED"}"""),
+            configuration = objectMapper.readTree("{}"),
+            createdAt = Instant.now(),
+            startedAt = null,
+            failureReason = null,
+        )
+        val parsed = ParsedDocumentView(
+            parser = ParsedParserProvenance("grobid", "0.9.1-crf"),
+            sourceContentSha256 = summary.sourceContentSha256,
+            normalizedSourceText = "Claim [1].",
+            sections = emptyList(),
+            citationContexts = listOf(
+                com.papertrail.api.parsing.ParsedCitationContextView(
+                    id = UUID.randomUUID(),
+                    sectionId = UUID.randomUUID(),
+                    boundaryKind = "SENTENCE_FALLBACK",
+                    text = "Claim [1].",
+                    startOffset = 0,
+                    endOffset = 10,
+                    occurrences = listOf(
+                        com.papertrail.api.parsing.ParsedCitationOccurrenceView(
+                            UUID.randomUUID(), "[1]", 6, 9, listOf("ref1"),
+                        ),
+                    ),
+                ),
+            ),
+            bibliographyEntries = emptyList(),
+        )
+        Mockito.`when`(analysisRunService.get(runId)).thenReturn(summary)
+        Mockito.`when`(parsedDocumentRepository.find(runId)).thenReturn(parsed)
+
+        mockMvc.perform(get("/api/v1/analysis-runs/$runId/parsed-document"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.parser.provider").value("grobid"))
+            .andExpect(jsonPath("$.normalizedSourceText").value("Claim [1]."))
+            .andExpect(jsonPath("$.citationContexts[0].occurrences[0].bibliographyReferenceKeys[0]").value("ref1"))
+
+        val pendingRunId = UUID.randomUUID()
+        Mockito.`when`(analysisRunService.get(pendingRunId)).thenReturn(summary.copy(id = pendingRunId, status = "PROCESSING"))
+        Mockito.`when`(parsedDocumentRepository.find(pendingRunId)).thenReturn(null)
+        mockMvc.perform(get("/api/v1/analysis-runs/$pendingRunId/parsed-document"))
+            .andExpect(status().isConflict)
+
+        val missingRunId = UUID.randomUUID()
+        Mockito.`when`(analysisRunService.get(missingRunId)).thenReturn(null)
+        mockMvc.perform(get("/api/v1/analysis-runs/$missingRunId/parsed-document"))
+            .andExpect(status().isNotFound)
     }
 
     @Test

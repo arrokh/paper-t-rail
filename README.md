@@ -2,7 +2,7 @@
 
 Paper T-Rail helps researchers trace citation-backed claims to evidence in academic documents. Its report is a research triage aid, not certification or grading.
 
-This first runnable slice accepts an English text-based PDF, stores it locally, creates an immutable Analysis Run pinned to the PDF's SHA-256 and configuration, durably queues work, and displays persisted run progress. Citation extraction and later analysis stages are not part of this slice.
+This runnable slice accepts an English text-based PDF, stores it locally, creates an immutable Analysis Run pinned to the PDF's SHA-256 and parser configuration, durably queues work, parses sections and citation structure with self-hosted GROBID, and displays the persisted result. Claim extraction and later evidence-analysis stages are not part of this slice.
 
 ## Run locally
 
@@ -14,9 +14,11 @@ cp .env.example .env  # optional; committed local-only defaults also work
 make dev
 ```
 
-Open <http://127.0.0.1:3000>. `make dev` starts PostgreSQL + pgvector, Redis, and MinIO; deploys the Sqitch migrations; then starts the API, worker, and web app. The API and worker use the same Kotlin/Spring Boot image as separate processes. Redis Streams work is at-least-once; the transactional outbox, PostgreSQL inbox, and pending-message reclaim protect committed work from duplicate delivery and worker restart.
+Open <http://127.0.0.1:3000>. `make dev` starts PostgreSQL + pgvector, Redis, MinIO, and the pinned GROBID service; deploys the Sqitch migrations; then starts the API, worker, and web app. GROBID has no host-published port and is reachable only on the private Compose network. The API and worker use the same Kotlin/Spring Boot image as separate processes. Redis Streams work is at-least-once; the transactional outbox, PostgreSQL inbox, and pending-message reclaim protect committed work from duplicate delivery and worker restart.
 
-The UI pins a safe local run configuration: heuristic extraction, local embeddings, and mock System One. This issue #3 slice only validates the PDF with PDFBox and has the worker verify the stored source hash before persisting `PROCESSING`; it does not yet execute extraction, embeddings, GROBID parsing, or verification. No external provider receives document content.
+The UI pins heuristic extraction, local embeddings, and mock System One. The worker verifies the stored source hash, calls self-hosted GROBID with both external consolidation options explicitly set to `0`, retains the exact raw TEI response in private run-scoped object storage, then persists parser provenance, sections, Citation Contexts, Citation Occurrences, Bibliography Entries, and citation-target links. No external provider receives document content. Claim extraction and verification are not executed in this slice.
+
+The default `grobid/grobid:0.9.1-crf` image includes native linux/arm64 and linux/amd64 builds. Compose waits for GROBID's `/api/isalive` endpoint before starting the worker. Override `GROBID_IMAGE` and `GROBID_PARSER_VERSION` together when selecting a different self-hosted build. To use an externally managed private service instead, set `GROBID_BASE_URL` to an address reachable from the worker and set `GROBID_PARSER_VERSION` to the deployed version; public destinations are rejected. For example, Docker Desktop can use `http://host.docker.internal:8070` when GROBID runs on the host.
 
 ### Local network and data safety
 
@@ -35,6 +37,7 @@ Set these in `.env`; every cap is enforced by rejection, never by truncating the
 | `PAPER_MAX_PAGES` | `500` | Maximum parsed page count |
 | `PAPER_MAX_EXTRACTED_CHARACTERS` | `5000000` | Maximum extracted text before rejection |
 | `PAPER_MAX_EXTRACTED_CHARACTERS_PER_PAGE` | `100000` | Maximum extracted text on one page before rejection; bounds PDFBox per-page buffering |
+| `PAPER_MAX_GROBID_RESPONSE_BYTES` | `67108864` | Maximum TEI response bytes read before rejection and XML parsing |
 | `PAPER_MIN_EXTRACTED_CHARACTERS` | `100` | Minimum text needed for language validation |
 | `PAPER_MIN_LANGUAGE_CONFIDENCE` | `0.65` | Minimum English language-detection confidence |
 
@@ -46,7 +49,8 @@ The Next.js server proxies same-origin `/api/v1/*` calls to the private API; bro
 
 - `POST /api/v1/analysis-runs` — multipart `file` plus optional JSON `configuration`; validates, stores the Source Document, creates a `QUEUED` immutable Analysis Run, and commits its outbox event atomically.
 - `GET /api/v1/analysis-runs` — list recent persisted runs.
-- `GET /api/v1/analysis-runs/{id}` — persisted status, progress, source hash, and configuration snapshot.
+- `GET /api/v1/analysis-runs/{id}` — persisted status, progress, source hash, and configuration snapshot. A `PARSED` run has persisted citation structure but is not a completed Evidence Coverage Report; claim/evidence analysis is not run in this slice.
+- `GET /api/v1/analysis-runs/{id}/parsed-document` — parser provenance, normalized source text, sections, Citation Contexts and their marker-to-reference targets, and Bibliography Entries. Source offsets are zero-based/end-exclusive UTF-16 code-unit indexes into `normalizedSourceText`; the parser separates semicolons and clear contrastive clause connectors, and records sentence fallback when a clause boundary is ambiguous.
 - `POST /api/v1/documents/{id}/analysis-runs` — re-analyze the same stored Source Document as a new run.
 - `GET /api/v1/health` — API/database liveness.
 
@@ -71,6 +75,6 @@ make migrate    # deploy the Sqitch plan into the local Compose PostgreSQL servi
 make clean      # destructive: remove all local application volumes
 ```
 
-`make validate` requires a Docker-compatible container runtime for its PostgreSQL/Redis integration tests. The tests execute the same schema migration SQL and exercise upload/run provenance, re-analysis, duplicate stream delivery, inbox idempotency, and reclaiming pending work with a replacement worker.
+`make validate` requires a Docker-compatible container runtime for its PostgreSQL/Redis integration tests. The tests execute the same schema migrations and exercise upload/run provenance, GROBID consolidation settings, parsing and source spans, citation-clause grouping and sentence fallback, re-analysis, duplicate stream delivery, inbox idempotency, and reclaiming pending work with a replacement worker.
 
 If using Podman, start its machine and export the Docker-compatible socket as `DOCKER_HOST` before Compose/Testcontainers commands. Podman's socket cannot be bind-mounted into Testcontainers' Ryuk cleanup container on some setups; in that case also set `TESTCONTAINERS_RYUK_DISABLED=true` when running tests. Testcontainers still stops the declared containers during normal test shutdown, but disabling Ryuk removes its crash-cleanup safeguard. The Podman machine must have enough memory for PostgreSQL, Redis, MinIO, and the JVM build/test process.

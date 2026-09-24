@@ -11,7 +11,7 @@ button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid 
 .local-badge { display: inline-flex; align-items: center; gap: 8px; color: #506058; font: 11px 'DM Mono', monospace; letter-spacing: .04em; text-transform: uppercase; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #59a275; box-shadow: 0 0 0 3px #dfeee3; }
 .hero { max-width: 720px; padding: 46px 0 32px; }
-.eyebrow, .card-kicker { color: #688071; font: 10px 'DM Mono', monospace; letter-spacing: .13em; }
+.eyebrow, .card-kicker { color: #5f7266; font: 10px 'DM Mono', monospace; letter-spacing: .13em; }
 .hero h1 { margin: 12px 0 13px; font-size: clamp(39px, 6vw, 58px); line-height: 1.08; letter-spacing: -.055em; font-weight: 600; }
 .hero h1 em { color: var(--green); font-family: 'Playfair Display', Georgia, serif; font-weight: 500; letter-spacing: -.04em; }
 .hero-copy { max-width: 570px; margin: 0; color: #66746b; font-size: 15px; line-height: 1.65; }
@@ -50,12 +50,12 @@ h2 { margin: 12px 0 7px; font-size: 21px; letter-spacing: -.04em; }
 .run-status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #d5a858; }
 .run-status-dot.processing { background: #598b69; box-shadow: 0 0 0 3px #e1eee3; }
 .run-status-dot.failed { background: #c25a4c; }
-.run-status-dot.completed, .run-status-dot.completed_with_warnings { background: #598b69; }
+.run-status-dot.parsed, .run-status-dot.completed, .run-status-dot.completed_with_warnings { background: #598b69; }
 .run-row-main { display: grid; min-width: 0; flex: 1; gap: 3px; }
 .run-row-main strong { overflow: hidden; color: #334139; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .run-row-main small { color: #929d94; font: 10px 'DM Mono', monospace; }
 .status-pill { display: inline-flex; align-items: center; border: 1px solid #ead8b8; border-radius: 99px; background: #fbf6eb; padding: 4px 7px; color: #916b2d; font: 9px 'DM Mono', monospace; text-transform: uppercase; white-space: nowrap; }
-.status-pill.processing, .status-pill.completed, .status-pill.completed_with_warnings { border-color: #d4e4d6; background: #f1f7f1; color: #426e4e; }
+.status-pill.processing, .status-pill.parsed, .status-pill.completed, .status-pill.completed_with_warnings { border-color: #d4e4d6; background: #f1f7f1; color: #426e4e; }
 .status-pill.failed { border-color: #efd0cc; background: #fff6f4; color: #a14c41; }
 .run-detail { margin-top: 15px; border-top: 1px solid var(--line); padding-top: 16px; }
 .detail-topline { display: flex; justify-content: space-between; align-items: center; color: #78867c; font: 10px 'DM Mono', monospace; letter-spacing: .1em; }
@@ -68,5 +68,34 @@ h2 { margin: 12px 0 7px; font-size: 21px; letter-spacing: -.04em; }
 .secondary-button { border: 1px solid #dce5dc; background: #fff; color: #425c49; padding: 10px 12px; font-size: 11px; }
 .secondary-button:hover:not(:disabled) { background: #f4f8f3; }
 .error-detail { color: var(--red); font-size: 11px; }
+.parsed-document { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 17px; }
+.parsed-heading-row { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.parsed-document h3 { margin: 8px 0 0; color: #33483a; font-size: 17px; letter-spacing: -.03em; }
+.parser-badge { border: 1px solid #dce7dc; border-radius: 99px; background: #f4f8f3; padding: 5px 8px; color: #53705a; font: 9px 'DM Mono', monospace; white-space: nowrap; }
+.parsed-offset-note { margin: 9px 0 14px; color: #657067; font-size: 10px; line-height: 1.45; }
+.parsed-group { margin-top: 17px; border-top: 1px solid #edf0eb; padding-top: 13px; }
+.parsed-group h4 { display: flex; align-items: center; justify-content: space-between; margin: 0 0 9px; color: #46584b; font-size: 12px; }
+.parsed-group h4 span { color: #657067; font: 10px 'DM Mono', monospace; }
+.parsed-empty, .parsed-state { color: #657067; font-size: 11px; }
+.parsed-sections, .parsed-contexts, .parsed-bibliography { display: grid; gap: 7px; margin: 0; padding-left: 21px; }
+.parsed-sections li, .parsed-contexts li, .parsed-bibliography li { padding-left: 3px; color: #627067; font-size: 10px; line-height: 1.5; }
+.parsed-sections details { border: 1px solid #edf0eb; border-radius: 5px; background: #fbfcfa; padding: 8px 9px; }
+.parsed-sections summary { display: flex; justify-content: space-between; gap: 8px; cursor: pointer; list-style-position: outside; }
+.parsed-sections summary strong { color: #405247; font-size: 11px; }
+.parsed-sections summary span, .context-meta, .parsed-markers li > span { color: #657067; font: 9px 'DM Mono', monospace; }
+.parsed-section-text { margin: 9px 0 1px; color: #5d6a60; font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.parsed-contexts article { border-left: 2px solid #cbd9cb; background: #f8faf7; padding: 8px 10px; }
+.context-meta { display: flex; justify-content: space-between; gap: 8px; text-transform: uppercase; }
+.parsed-contexts article > p { margin: 7px 0; color: #4d5c51; font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.parsed-markers { display: grid; gap: 4px; margin: 0; padding-left: 15px; }
+.parsed-markers code { color: #4d6952; font: 9px 'DM Mono', monospace; }
+.citation-targets a { margin-left: 4px; color: #315b46; text-decoration: underline; text-underline-offset: 2px; }
+.parsed-bibliography li { scroll-margin-top: 18px; }
+.parsed-bibliography li > strong, .reference-key, .reference-authors { display: block; }
+.parsed-bibliography li > strong { color: #425448; font-size: 10px; }
+.reference-key { color: #657067; font: 9px 'DM Mono', monospace; text-transform: uppercase; }
+.reference-authors { color: #657067; font-size: 9px; }
+.parsed-bibliography li p { margin: 4px 0; overflow-wrap: anywhere; }
+.parsed-bibliography li small { color: #58675d; font: 9px 'DM Mono', monospace; }
 .footer-note { display: flex; justify-content: space-between; gap: 18px; border-top: 1px solid #dfe4dc; padding-top: 17px; color: #839087; font-size: 10px; }
 @media (max-width: 760px) { .page-shell { width: min(100% - 28px, 560px); padding-top: 18px; } .workspace-grid { grid-template-columns: 1fr; } .hero { padding-top: 35px; } .upload-card, .runs-card { padding: 20px; } .footer-note { flex-direction: column; gap: 6px; } }

@@ -28,8 +28,8 @@ class AnalysisRunService(
     private val objectStore: SourceDocumentObjectStore,
     private val configurationFactory: RunConfigurationFactory,
     private val objectMapper: ObjectMapper,
-    @Value("\${paper-trail.validation.parser-id}") private val parserId: String,
-    @Value("\${paper-trail.validation.parser-version}") private val parserVersion: String,
+    @Value("\${paper-trail.analysis.parser-id}") private val parserId: String,
+    @Value("\${paper-trail.analysis.parser-version}") private val parserVersion: String,
 ) {
     fun maxUploadBytes(): Long = validator.limits.maxBytes
 
@@ -75,8 +75,8 @@ class AnalysisRunService(
                     validPdf.language,
                     validPdf.pageCount,
                     validPdf.extractedCharacterCount,
-                    parserId,
-                    parserVersion,
+                    validator.parserId,
+                    validator.parserVersion,
                     Timestamp.from(createdAt),
                 )
                 insertRunAndOutbox(

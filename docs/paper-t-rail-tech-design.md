@@ -1700,7 +1700,7 @@ Create a new Analysis Run. For reproducibility, each run must retain the source 
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the intended safe-default provider contract for the complete V1 pipeline. The issue #3 runtime is a narrower ingestion/queue slice: it validates selectable text with PDFBox, persists an immutable run, and verifies the stored hash. It does not yet run GROBID, recorded-fixture ports, embeddings, or System One; its local/mock selections are persisted as run configuration but those pipeline stages are not invoked. Its immutable configuration snapshot records reference resolution and aggregation as `NOT_RUN` (with no uncalibrated policy thresholds) and records an empty external-provider consent list. A stage that was not executed must not be represented as though it used a default policy.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the intended safe-default provider contract for the complete V1 pipeline. The issue #5 runtime extends the issue #3 ingestion/queue slice with self-hosted GROBID parsing and persists run-scoped sections, Citation Contexts, Citation Occurrences, Bibliography Entries, and citation-target links. Recorded-fixture ports, embeddings, claim extraction, reference resolution, and System One are not invoked; their local/mock selections must not be represented as though those stages ran. The immutable configuration snapshot records reference resolution and aggregation as `NOT_RUN` (with no uncalibrated policy thresholds) and records an empty external-provider consent list. A stage that was not executed must not be represented as though it used a default policy.
 
 Safe default example:
 
@@ -1797,10 +1797,13 @@ Recommended top-level lifecycle:
 ```text
 QUEUED
 PROCESSING
+PARSED
 COMPLETED
 COMPLETED_WITH_WARNINGS
 FAILED
 ```
+
+`PARSED` means the source structure is persisted but claim and evidence analysis has not run; it is an intermediate run state, not a completed report.
 
 Optional progress counters:
 
@@ -2105,14 +2108,27 @@ failure_reason nullable
 created_at
 ```
 
-## 35.3 parsed_document_sections
+## 35.3 parsed_document_parses and parsed_document_sections
+
+The initial parser output is stored per Analysis Run so a later parser version cannot rewrite older results.
 
 ```text
+parsed_document_parses
+analysis_run_id UUID PK/FK
+source_content_sha256
+parser_id
+parser_version
+normalized_source_text
+created_at
+
+parsed_document_sections
 id UUID PK
-document_id FK
+analysis_run_id FK
 section_order
 heading
 text
+start_offset
+end_offset
 source_metadata JSONB
 ```
 
@@ -2122,36 +2138,37 @@ A bounded clause-level group of text containing one or more citation markers. Fa
 
 ```text
 id UUID PK
-document_id FK
-section_id FK nullable
+analysis_run_id FK
+section_id FK
 context_text
 boundary_kind  -- CLAUSE | SENTENCE_FALLBACK
 start_offset
 end_offset
 created_at
-UNIQUE(document_id, start_offset, end_offset)
+UNIQUE(analysis_run_id, start_offset, end_offset)
 ```
 
-All source offsets are zero-based, end-exclusive offsets into the normalized source-document text.
+All source offsets are zero-based, end-exclusive UTF-16 code-unit indexes into the normalized source-document text.
 
 ## 35.5 citation_occurrences
 
 ```text
 id UUID PK
-document_id FK
+analysis_run_id FK
 citation_context_id FK
-section_id FK nullable
+section_id FK
 marker_text
 start_offset
 end_offset
 created_at
 ```
 
-## 35.6 bibliography_references
+## 35.6 bibliography_entries
 
 ```text
 id UUID PK
-document_id FK
+analysis_run_id FK
+entry_order
 local_reference_key
 raw_text
 parsed_title nullable
@@ -2167,18 +2184,20 @@ created_at
 Unique:
 
 ```text
-(document_id, local_reference_key)
+(analysis_run_id, local_reference_key)
 ```
 
 ## 35.7 citation_targets
 
-Maps one citation occurrence to one or multiple bibliography references.
+Maps one citation occurrence to one or multiple bibliography entries, preserving GROBID's target order.
 
 ```text
 id UUID PK
+analysis_run_id FK
 citation_occurrence_id FK
-bibliography_reference_id FK
-UNIQUE(citation_occurrence_id, bibliography_reference_id)
+bibliography_entry_id FK
+target_order
+UNIQUE(analysis_run_id, citation_occurrence_id, bibliography_entry_id)
 ```
 
 ## 35.8 atomic_claims
@@ -2680,6 +2699,14 @@ Returns:
 GET /api/v1/analysis-runs/{id}
 ```
 
+### Parsed document structure
+
+```http
+GET /api/v1/analysis-runs/{id}/parsed-document
+```
+
+Returns the run's pinned parser provenance, normalized source text, sections, Citation Contexts, Citation Occurrences and target links, and Bibliography Entries. Offsets are zero-based, end-exclusive UTF-16 code-unit indexes into the returned normalized text. The endpoint returns `409` until the parse is committed; a run with status `PARSED` has no claim/evidence analysis yet and is not a completed report.
+
 ### Coverage report
 
 ```http
@@ -2792,14 +2819,14 @@ Traceability is more important than visual complexity.
 
 # 42. GROBID Data Handling
 
-Store raw parser output in object storage for debugging:
+Store raw parser output in object storage for debugging. GROBID output is immutable per Analysis Run; include the run ID and a content-hash suffix so retries cannot overwrite a different response:
 
 ```text
-source/{documentId}/grobid.xml
+source/{documentId}/analysis-runs/{analysisRunId}/grobid-{sha256}.xml
 papers/{paperId}/grobid.xml
 ```
 
-Persist normalized domain records in PostgreSQL.
+Persist the run-scoped object key and normalized domain records in PostgreSQL.
 
 Do not make application code query TEI XML repeatedly.
 
@@ -3127,13 +3154,21 @@ UNRESOLVED
 UNSUPPORTED_REFERENCE_TYPE
 ```
 
-Suggested run status:
+Use:
+
+```text
+PARSED
+```
+
+when the source has been parsed and its immutable structure is persisted, but claim/evidence stages have not run yet. `PARSED` is not a complete Evidence Coverage Report; a later pipeline stage may transition it back to `PROCESSING`.
+
+Use:
 
 ```text
 COMPLETED
 ```
 
-if processing infrastructure succeeded.
+only when every expected claim-citation pair has reached a terminal domain verification status and processing infrastructure succeeded.
 
 Use:
 
@@ -3162,7 +3197,7 @@ V1 is single-user/no-auth, but still:
 - never trust PDF paths,
 - store generated object keys instead of using user filenames as paths,
 - enforce configurable upload-byte, page-count, and claim-citation-pair limits; choose initial values after benchmarking a representative article and thesis/dissertation against the processing budget, and never silently truncate,
-- limit parsed document size,
+- limit parsed document size; GROBID TEI responses are byte-capped (64 MiB by default) while being read, before XML parsing, and oversized responses are rejected,
 - set timeouts for GROBID and external APIs,
 - limit downloaded cited-paper size,
 - block non-HTTP(S) external locations,
@@ -3240,7 +3275,7 @@ enabled: false
 
 # 55. Local Development Defaults
 
-The following is the target local configuration for the full pipeline (see [the provider matrix](./agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The current issue #3 runtime only performs PDFBox preflight validation and source-hash verification; it does not invoke GROBID, fixture providers, embeddings, or System One.
+The following is the target local configuration for the full pipeline (see [the provider matrix](./agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The issue #5 runtime performs PDFBox preflight validation, source-hash verification, and self-hosted GROBID parsing with external consolidation explicitly disabled; it does not invoke fixture providers, embeddings, claim extraction, reference resolution, or System One.
 
 ```text
 claim extractor:
@@ -3308,7 +3343,7 @@ Jev adapter
 Embedding adapters
 ```
 
-Use recorded/mock responses. The GROBID adapter contract must assert that external consolidation is disabled unless a matching, per-run consent is present.
+Use recorded/mock responses. In the issue #5 private-GROBID implementation, the adapter contract asserts that both external consolidation options are explicitly disabled on every request. A future consent-enabled external-consolidation path must be a separate, explicitly reviewed change with its own consent and contract tests.
 
 ## 56.3 Integration Tests
 
@@ -3595,14 +3630,10 @@ Only after the primary path is stable.
 
 # 59. Suggested First Full-Pipeline Demonstration
 
-After the narrower issue #3 ingestion/queue slice, the first full-pipeline demonstration should be:
+The issue #5 implementation demonstrates upload, queued source-hash verification, GROBID parsing, and display of Citation Contexts and Bibliography Entries. Continue the full-pipeline demonstration from that persisted parse:
 
 ```text
-Upload PDF
-   ↓
-GROBID
-   ↓
-show citation contexts + bibliography entries
+Parsed Source Document
    ↓
 heuristic atomic claims
    ↓
