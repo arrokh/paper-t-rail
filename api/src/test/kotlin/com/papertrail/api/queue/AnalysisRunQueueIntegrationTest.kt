@@ -7,7 +7,6 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.documents.OptimaizeDocumentLanguageDetector
 import com.papertrail.api.documents.PdfDocumentValidator
-import com.papertrail.api.documents.sha256Hex
 import com.papertrail.api.runs.AnalysisRunService
 import com.papertrail.api.runs.RunConfigurationFactory
 import com.papertrail.api.runs.RunConfigurationRequest
@@ -20,13 +19,19 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDType1Font
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
+import org.slf4j.LoggerFactory
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration
 import org.springframework.data.redis.connection.stream.Consumer
 import org.springframework.data.redis.connection.stream.ReadOffset
@@ -61,11 +66,12 @@ class AnalysisRunQueueIntegrationTest {
     @Test
     fun `upload creates queued run with pinned source hash configuration and transactional outbox`() {
         val pdf = englishPdf()
+        val expectedHash = expectedSha256(pdf)
         val service = analysisRunService()
         val created = service.createFromUpload("paper.pdf", "application/pdf", pdf, RunConfigurationRequest())
 
         assertEquals("QUEUED", created.status)
-        assertEquals(sha256Hex(pdf), created.sourceContentSha256)
+        assertEquals(expectedHash, created.sourceContentSha256)
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM source_documents WHERE id = ?", Int::class.java, created.documentId))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM analysis_runs WHERE id = ? AND status = 'QUEUED'", Int::class.java, created.analysisRunId))
         assertEquals(
@@ -141,11 +147,11 @@ class AnalysisRunQueueIntegrationTest {
         val objectKey = jdbc.queryForObject(
             "SELECT object_key FROM source_documents WHERE sha256 = ?",
             String::class.java,
-            sha256Hex(pdf),
+            expectedSha256(pdf),
         )
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM analysis_runs", Int::class.java))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM outbox_events", Int::class.java))
-        assertEquals(sha256Hex(pdf), sha256Hex(objectStore.get(objectKey!!)))
+        assertArrayEquals(pdf, objectStore.get(objectKey!!))
     }
 
     @Test
@@ -217,9 +223,24 @@ class AnalysisRunQueueIntegrationTest {
             retryBackoffMs = "0,0,0",
         )
         replacement.createConsumerGroup()
-        replacement.poll()
+        val workerLogger = LoggerFactory.getLogger(RedisStreamWorker::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        workerLogger.addAppender(appender)
+        try {
+            replacement.poll()
+        } finally {
+            workerLogger.detachAppender(appender)
+        }
 
         assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        val processedEvent = objectMapper.readTree(abandoned.value.getValue("event"))
+        val workerLog = appender.list.single { it.message == "Pipeline event processed" }
+        val mdc = workerLog.mdcPropertyMap
+        assertEquals(processedEvent.path("analysisRunId").asText(), mdc["analysisRunId"])
+        assertEquals(processedEvent.path("eventId").asText(), mdc["eventId"])
+        assertEquals(processedEvent.path("correlationId").asText(), mdc["correlationId"])
+        assertEquals(processedEvent.path("payload").path("documentId").asText(), mdc["documentId"])
+        assertEquals(processedEvent.path("eventType").asText(), mdc["eventType"])
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = ?", Int::class.java, UUID.fromString(envelopeEventId(abandoned.value.getValue("event")))))
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
     }
@@ -252,14 +273,29 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("QUEUED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
 
         val message = operations.range(stream, Range.unbounded<String>()).orEmpty().single { it.value.containsKey("event") }
+        val event = objectMapper.readTree(message.value.getValue("event"))
         val retrySchedule = "$stream:retry-after"
-        repeat(2) { delivery ->
-            redis.opsForHash<String, String>().put(retrySchedule, message.id.value, "0")
-            worker.poll()
-            val expectedStatus = if (delivery == 1) "FAILED" else "QUEUED"
-            assertEquals(expectedStatus, jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        val workerLogger = LoggerFactory.getLogger(RedisStreamWorker::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        workerLogger.addAppender(appender)
+        try {
+            repeat(2) { delivery ->
+                redis.opsForHash<String, String>().put(retrySchedule, message.id.value, "0")
+                worker.poll()
+                val expectedStatus = if (delivery == 1) "FAILED" else "QUEUED"
+                assertEquals(expectedStatus, jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+            }
+        } finally {
+            workerLogger.detachAppender(appender)
         }
 
+        val finalFailureLog = appender.list.single { it.message == "Pipeline event failed on its final attempt" }
+        assertEquals(event.path("analysisRunId").asText(), finalFailureLog.mdcPropertyMap["analysisRunId"])
+        assertEquals(event.path("eventId").asText(), finalFailureLog.mdcPropertyMap["eventId"])
+        assertEquals(event.path("correlationId").asText(), finalFailureLog.mdcPropertyMap["correlationId"])
+        assertEquals(event.path("payload").path("documentId").asText(), finalFailureLog.mdcPropertyMap["documentId"])
+        assertTrue(finalFailureLog.keyValuePairs.any { it.key == "errorType" && it.value == "IllegalStateException" })
+        assertFalse(finalFailureLog.formattedMessage.contains("Queued Source Document is missing."))
         assertTrue(jdbc.queryForObject("SELECT failure_reason IS NOT NULL FROM analysis_runs WHERE id = ?", Boolean::class.java, created.analysisRunId) == true)
         val deadLetter = operations.range("ae:dlq", Range.unbounded<String>()).orEmpty().single().value
         assertEquals("HANDLER_RETRIES_EXHAUSTED", deadLetter["errorCode"])
@@ -299,7 +335,7 @@ class AnalysisRunQueueIntegrationTest {
 
     private fun createQueuedRun(): CreatedRunIds {
         val bytes = "integration pdf bytes".toByteArray()
-        val hash = sha256Hex(bytes)
+        val hash = expectedSha256(bytes)
         val documentId = UUID.randomUUID()
         val runId = UUID.randomUUID()
         val eventId = UUID.randomUUID()
@@ -397,6 +433,10 @@ class AnalysisRunQueueIntegrationTest {
             return ByteArrayOutputStream().use { output -> pdf.save(output); output.toByteArray() }
         }
     }
+
+    private fun expectedSha256(content: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(content)
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     private fun envelopeEventId(envelope: String): String = objectMapper.readTree(envelope).get("eventId").asText()
 

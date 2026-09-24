@@ -30,6 +30,28 @@ class PdfDocumentValidatorTest {
     }
 
     @Test
+    fun `accepts a valid English PDF with its header within the first one thousand twenty four bytes`() {
+        val content = "accepted preamble\\n".toByteArray() + pdfWithText(ENGLISH.repeat(80))
+        val expectedHash = contentHash(content)
+
+        val validated = validator().validate("draft.pdf", "application/pdf", content, expectedHash)
+
+        assertEquals(expectedHash, validated.sha256)
+        assertEquals("en", validated.language)
+    }
+
+    @Test
+    fun `rejects a PDF header after the first one thousand twenty four bytes`() {
+        val content = ByteArray(1024) { 0x20 } + pdfWithText(ENGLISH.repeat(80))
+
+        val exception = assertThrows(DocumentValidationException::class.java) {
+            validator().validate("draft.pdf", "application/pdf", content, contentHash(content))
+        }
+
+        assertEquals("INVALID_PDF_SIGNATURE", exception.code)
+    }
+
+    @Test
     fun `accepts short English text below the old one thousand character minimum`() {
         val content = pdfWithText(ENGLISH.repeat(5))
 

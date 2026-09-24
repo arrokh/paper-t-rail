@@ -26,8 +26,12 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
-    implementation("org.apache.pdfbox:pdfbox:3.0.5")
+    implementation("org.apache.pdfbox:pdfbox:3.0.5") {
+        // Spring JCL supplies the Commons Logging API and avoids a duplicate logging implementation.
+        exclude(group = "commons-logging", module = "commons-logging")
+    }
     implementation("com.optimaize.languagedetector:language-detector:0.6")
     implementation("io.minio:minio:8.5.17")
     runtimeOnly("org.postgresql:postgresql")

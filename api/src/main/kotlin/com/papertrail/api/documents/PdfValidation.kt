@@ -95,7 +95,7 @@ class PdfDocumentValidator(
         if (contentType != null && contentType !in setOf(MediaType.APPLICATION_PDF_VALUE, MediaType.APPLICATION_OCTET_STREAM_VALUE)) {
             reject("UNSUPPORTED_CONTENT_TYPE", "Only PDF documents are supported.")
         }
-        if (bytes.size < PDF_SIGNATURE.size || !bytes.copyOfRange(0, PDF_SIGNATURE.size).contentEquals(PDF_SIGNATURE)) {
+        if (!hasPdfSignature(bytes)) {
             reject("INVALID_PDF_SIGNATURE", "The file does not have a valid PDF signature.")
         }
 
@@ -174,6 +174,13 @@ class PdfDocumentValidator(
         return cleaned.take(120).ifBlank { "upload.pdf" }
     }
 
+    private fun hasPdfSignature(bytes: ByteArray): Boolean {
+        val lastOffset = minOf(bytes.size - PDF_SIGNATURE.size, MAX_PDF_HEADER_SEARCH_BYTES - PDF_SIGNATURE.size)
+        return lastOffset >= 0 && (0..lastOffset).any { offset ->
+            PDF_SIGNATURE.indices.all { index -> bytes[offset + index] == PDF_SIGNATURE[index] }
+        }
+    }
+
     private fun reject(code: String, reason: String): Nothing = throw DocumentValidationException(code, reason)
 
     private class BoundedPdfTextStripper(
@@ -216,6 +223,7 @@ class PdfDocumentValidator(
     private class ExtractedTextLimitExceeded(val limit: ExtractionLimit) : RuntimeException()
 
     companion object {
+        private const val MAX_PDF_HEADER_SEARCH_BYTES = 1024
         private val PDF_SIGNATURE = "%PDF-".toByteArray(Charsets.US_ASCII)
     }
 }

@@ -20,7 +20,7 @@ The UI pins a safe local run configuration: heuristic extraction, local embeddin
 
 ### Local network and data safety
 
-There is no authentication. The web app is published only on `127.0.0.1:3000`; the API has no host-published port and binds to a specific address on the private Compose bridge. PostgreSQL, Redis, and the MinIO console/API are published only on loopback. The API rejects wildcard and public-address binds. Do not change these bindings or expose this stack to a public/untrusted network before authentication and authorization exist.
+There is no authentication. The web app is published only on `127.0.0.1:3000`; the API binds to a specific address on the private Compose bridge and is published to the host only at `127.0.0.1:${API_HOST_PORT:-8080}` for local API/Swagger access. PostgreSQL, Redis, and the MinIO console/API are published only on loopback. The API rejects wildcard and public-address binds. Do not change these bindings or expose this stack to a public/untrusted network before authentication and authorization exist.
 
 The local Compose credentials are development-only. Uploaded PDFs and run metadata remain in local persistent volumes. Per-Source-Document deletion is not part of this slice (tracked by issue #14); until it is implemented, `make clean` is the only provided deletion operation and removes all local documents, runs, queue state, and stored objects.
 
@@ -50,14 +50,23 @@ The Next.js server proxies same-origin `/api/v1/*` calls to the private API; bro
 - `POST /api/v1/documents/{id}/analysis-runs` — re-analyze the same stored Source Document as a new run.
 - `GET /api/v1/health` — API/database liveness.
 
+The OpenAPI 3 document is available at <http://127.0.0.1:8080/v3/api-docs> (YAML at `/v3/api-docs.yaml`) and Swagger UI at <http://127.0.0.1:8080/swagger-ui/index.html>. The API host port defaults to `8080`; configure `API_HOST_PORT` in `.env` if that loopback port is unavailable. Compose binds this published port only to `127.0.0.1`; do not expose it publicly. Swagger/OpenAPI endpoints are disabled in the worker process.
+
 Only configured local providers (`heuristic`, `local`, `mock`) can be selected. Unavailable/external providers and unknown configuration fields are rejected rather than ignored.
+
+## Structured logs and request correlation
+
+The Spring API and worker emit ECS-compatible JSON logs to stdout. The web API proxy emits JSON request-completion/failure records using the same ECS field conventions. Each request gets an `X-Request-ID`: the web proxy validates or generates it, forwards it to the API, and returns it in the response; the API also validates or generates the ID for direct requests. Search both services' logs by this ID to follow synchronous proxy/API work. Worker records include `analysisRunId`, `documentId`, `eventId`, `correlationId`, and `eventType`; outbox publisher records include `analysisRunId`, `eventId`, and `correlationId`.
+
+Logs include request method, route/path, status, duration, and safe error type as applicable. Request bodies and query strings are not logged, and application logs must not include PDF, Source Document, claim, or evidence text. See the [technical design](docs/paper-t-rail-tech-design.md) for the API and observability conventions.
 
 ## Development and verification
 
 Tool versions are pinned in `mise.toml` (Java 21, Gradle 8.14.3, Node 22.19). Use `mise exec -- ...` or the Make targets so local commands use those versions.
 
 ```sh
-make validate   # Kotlin tests + Testcontainers reliability tests + web lint/typecheck/production build
+make validate   # Kotlin/queue tests + web proxy tests, lint, typecheck, and production build
+make test-web   # run the web proxy behavior tests only
 make migrate    # deploy the Sqitch plan into the local Compose PostgreSQL service
 make clean      # destructive: remove all local application volumes
 ```

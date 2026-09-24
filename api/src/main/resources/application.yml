@@ -6,7 +6,7 @@ server:
 
 spring:
   application:
-    name: paper-t-rail-api
+    name: paper-t-rail-${APP_ROLE:api}
   datasource:
     url: ${JDBC_URL:jdbc:postgresql://127.0.0.1:5432/papertrail}
     username: ${POSTGRES_USER:papertrail}
@@ -53,9 +53,16 @@ paper-trail:
     language-detector-id: optimaize
     language-detector-version: 0.6
 
+springdoc:
+  api-docs:
+    enabled: ${API_DOCS_ENABLED:true}
+  swagger-ui:
+    enabled: ${API_DOCS_ENABLED:true}
+
 logging:
   level:
     root: INFO
     com.papertrail.api: INFO
-  pattern:
-    level: "%5p [run:%X{analysisRunId:-none}]"
+  structured:
+    format:
+      console: ecs

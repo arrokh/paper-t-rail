@@ -51,6 +51,11 @@ class AnalysisRunService(
         try {
             objectStore.put(objectKey, bytes)
         } catch (exception: Exception) {
+            logger.atWarn()
+                .addKeyValue("documentId", documentId)
+                .addKeyValue("analysisRunId", runId)
+                .addKeyValue("errorType", exception.javaClass.simpleName)
+                .log("Source Document storage unavailable")
             throw ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Source Document storage is temporarily unavailable.")
         }
         var transactionBodyCompleted = false
@@ -87,12 +92,18 @@ class AnalysisRunService(
         } catch (exception: Exception) {
             if (transactionBodyCompleted) {
                 // A commit failure can be ambiguous: deleting the object may break a committed run.
-                logger.warn("Database commit outcome is uncertain; keeping the uploaded source object")
+                logger.atWarn()
+                    .addKeyValue("documentId", documentId)
+                    .addKeyValue("analysisRunId", runId)
+                    .log("Database commit outcome is uncertain; keeping the uploaded source object")
             } else {
                 runCatching { objectStore.delete(objectKey) }
                     .onFailure { cleanupError ->
-                        logger.error("Failed to clean up an unreferenced source object after database failure")
-                        logger.debug("Object cleanup error", cleanupError)
+                        logger.atError()
+                            .addKeyValue("documentId", documentId)
+                            .addKeyValue("analysisRunId", runId)
+                            .addKeyValue("errorType", cleanupError.javaClass.simpleName)
+                            .log("Failed to clean up an unreferenced source object after database failure")
                     }
             }
             throw exception

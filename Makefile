@@ -1,7 +1,7 @@
 COMPOSE = docker compose -f infra/docker-compose.yml
 MISE = mise exec --
 
-.PHONY: dev infra-up migrate verify-db infra-down clean test test-api lint-web typecheck-web build-web validate
+.PHONY: dev infra-up migrate verify-db infra-down clean test test-api test-web lint-web typecheck-web build-web validate
 
 dev: infra-up migrate
 	$(COMPOSE) up -d --build api worker web
@@ -22,10 +22,13 @@ infra-down:
 clean:
 	$(COMPOSE) down --volumes --remove-orphans
 
-test: test-api lint-web typecheck-web build-web
+test: test-api test-web lint-web typecheck-web build-web
 
 test-api:
 	cd api && $(MISE) ./gradlew test
+
+test-web:
+	cd web && $(MISE) npm test
 
 lint-web:
 	cd web && $(MISE) npm run lint

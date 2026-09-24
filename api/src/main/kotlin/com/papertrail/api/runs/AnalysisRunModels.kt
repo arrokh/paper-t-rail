@@ -2,12 +2,17 @@ package com.papertrail.api.runs
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.swagger.v3.oas.annotations.media.Schema
 import java.time.Instant
 import java.util.UUID
 
+@Schema(description = "Optional selection of local analysis providers.")
 data class RunConfigurationRequest(
+    @field:Schema(description = "Claim extractor provider.", defaultValue = "heuristic", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val claimExtractorProvider: String = "heuristic",
+    @field:Schema(description = "Embedding provider.", defaultValue = "local", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val embeddingProvider: String = "local",
+    @field:Schema(description = "System One verification provider.", defaultValue = "mock", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val systemOneProvider: String = "mock",
 )
 
@@ -65,13 +70,25 @@ data class SourceDocumentSummary(
     val createdAt: Instant,
 )
 
+@Schema(description = "Persisted stage, optional completion percentage, and user-facing progress message.")
+data class AnalysisRunProgress(
+    @field:Schema(description = "Current persisted processing stage.")
+    val stage: String,
+    @field:Schema(description = "Completion percentage when the stage provides one.")
+    val percent: Int? = null,
+    @field:Schema(description = "Human-readable progress or failure message.")
+    val message: String,
+)
+
 data class AnalysisRunSummary(
     val id: UUID,
     val documentId: UUID,
     val filename: String,
     val sourceContentSha256: String,
     val status: String,
+    @field:Schema(implementation = AnalysisRunProgress::class, description = "Persisted run progress.")
     val progress: JsonNode,
+    @field:Schema(implementation = AnalysisConfigurationSnapshot::class, description = "Immutable configuration and provenance snapshot for this run.")
     val configuration: JsonNode,
     val createdAt: Instant,
     val startedAt: Instant?,

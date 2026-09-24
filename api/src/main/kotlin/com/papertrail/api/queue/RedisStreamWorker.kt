@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.data.redis.connection.stream.Consumer
@@ -104,8 +105,9 @@ class RedisStreamWorker(
             }
             messages.forEach(::process)
         } catch (exception: Exception) {
-            logger.warn("Redis Streams poll failed; pending work will be retried")
-            logger.debug("Redis Streams poll error", exception)
+            logger.atWarn()
+                .addKeyValue("errorType", exception.javaClass.simpleName)
+                .log("Redis Streams poll failed; pending work will be retried")
         }
     }
 
@@ -121,6 +123,24 @@ class RedisStreamWorker(
             deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The stream event envelope could not be parsed.")
             return
         }
+        val previousContext = MDC.getCopyOfContextMap()
+        MDC.put("analysisRunId", event.analysisRunId.toString())
+        MDC.put("eventId", event.eventId.toString())
+        MDC.put("correlationId", event.correlationId.toString())
+        MDC.put("documentId", event.payload.documentId.toString())
+        MDC.put("eventType", event.eventType)
+        try {
+            processEvent(record, serialized, event)
+        } finally {
+            if (previousContext == null) MDC.clear() else MDC.setContextMap(previousContext)
+        }
+    }
+
+    private fun processEvent(
+        record: MapRecord<String, String, String>,
+        serialized: String,
+        event: PipelineEvent<DocumentAnalysisRequestedPayload>,
+    ) {
         if (event.eventType != DOCUMENT_ANALYSIS_REQUESTED) {
             deadLetter(record, "UNSUPPORTED_EVENT_TYPE", "No handler is registered for event type '${event.eventType}'.")
             return
@@ -128,27 +148,42 @@ class RedisStreamWorker(
         try {
             handler.handle(serialized)
             acknowledge(record)
+            logger.info("Pipeline event processed")
         } catch (exception: Exception) {
             val attempts = deliveryCount(record.id.value)
             if (attempts >= maxAttempts) {
+                logger.atWarn()
+                    .addKeyValue("attempt", attempts)
+                    .addKeyValue("errorType", exception.javaClass.simpleName)
+                    .log("Pipeline event failed on its final attempt")
                 val reason = "The worker could not complete document analysis after $maxAttempts attempts. The event was moved to the dead-letter queue."
                 try {
                     handler.markFailed(event, reason)
                     deadLetter(record, "HANDLER_RETRIES_EXHAUSTED", reason, attempts)
                 } catch (failureException: Exception) {
-                    logger.warn("Stream message {} could not be failed durably and remains pending", record.id.value)
-                    logger.debug("Failure persistence error", failureException)
+                    logger.atError()
+                        .addKeyValue("streamMessageId", record.id.value)
+                        .addKeyValue("attempt", attempts)
+                        .addKeyValue("errorType", failureException.javaClass.simpleName)
+                        .log("Stream message could not be failed durably and remains pending")
                 }
             } else {
                 try {
                     scheduleRetry(record.id.value, attempts)
-                    logger.warn("Stream message {} failed on attempt {}; retry scheduled", record.id.value, attempts)
+                    logger.atWarn()
+                        .addKeyValue("streamMessageId", record.id.value)
+                        .addKeyValue("attempt", attempts)
+                        .addKeyValue("errorType", exception.javaClass.simpleName)
+                        .log("Stream message failed; retry scheduled")
                 } catch (scheduleException: Exception) {
-                    logger.warn("Stream message {} failed on attempt {}; it remains pending for recovery", record.id.value, attempts)
-                    logger.debug("Retry scheduling error", scheduleException)
+                    logger.atWarn()
+                        .addKeyValue("streamMessageId", record.id.value)
+                        .addKeyValue("attempt", attempts)
+                        .addKeyValue("errorType", scheduleException.javaClass.simpleName)
+                        .addKeyValue("handlerErrorType", exception.javaClass.simpleName)
+                        .log("Stream message failed; it remains pending for recovery")
                 }
             }
-            logger.debug("Stream handler error", exception)
         }
     }
 
@@ -174,8 +209,10 @@ class RedisStreamWorker(
             )
             acknowledge(record)
         } catch (exception: Exception) {
-            logger.warn("Stream message {} could not be dead-lettered and remains pending", record.id.value)
-            logger.debug("Dead-letter error", exception)
+            logger.atWarn()
+                .addKeyValue("streamMessageId", record.id.value)
+                .addKeyValue("errorType", exception.javaClass.simpleName)
+                .log("Stream message could not be dead-lettered and remains pending")
         }
     }
 
@@ -204,8 +241,10 @@ class RedisStreamWorker(
         redis.opsForHash<String, String>().put(retryScheduleKey, record.id.value, leaseExpiresAt.toString())
         true
     } catch (exception: Exception) {
-        logger.warn("Retry message {} could not obtain a processing lease", record.id.value)
-        logger.debug("Retry lease error", exception)
+        logger.atWarn()
+            .addKeyValue("streamMessageId", record.id.value)
+            .addKeyValue("errorType", exception.javaClass.simpleName)
+            .log("Retry message could not obtain a processing lease")
         false
     }
 
@@ -228,8 +267,9 @@ class RedisStreamWorker(
                 groupReady = true
             } catch (exception: Exception) {
                 // The API creates the stream when the transactional outbox first publishes.
-                logger.debug("Redis consumer group is not ready yet")
-                logger.trace("Consumer group creation error", exception)
+                logger.atDebug()
+                    .addKeyValue("errorType", exception.javaClass.simpleName)
+                    .log("Redis consumer group is not ready yet")
             }
         }
         return groupReady
