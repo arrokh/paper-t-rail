@@ -19,4 +19,4 @@ For every change under `web/`, use the [Paper T-Rail Web UI Design System](../do
 
 ## Verification
 
-For UI changes, run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` from `web/` or `make validate` from the repository root. Browser-check changed flows at desktop and mobile sizes; run an accessibility audit for significant interaction or layout changes.
+For UI changes, run `mise exec -- pnpm --dir web test`, `mise exec -- pnpm --dir web run lint`, `mise exec -- pnpm --dir web run typecheck`, and `mise exec -- pnpm --dir web run build`, or run `make validate` from the repository root. Browser-check changed flows at desktop and mobile sizes; run an accessibility audit for significant interaction or layout changes.

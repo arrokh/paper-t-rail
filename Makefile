@@ -28,15 +28,15 @@ test-api:
 	cd api && $(MISE) ./gradlew test
 
 test-web:
-	cd web && $(MISE) npm test
+	cd web && $(MISE) pnpm test
 
 lint-web:
-	cd web && $(MISE) npm run lint
+	cd web && $(MISE) pnpm run lint
 
 typecheck-web:
-	cd web && $(MISE) npm run typecheck
+	cd web && $(MISE) pnpm run typecheck
 
 build-web:
-	cd web && $(MISE) npm run build
+	cd web && $(MISE) pnpm run build
 
 validate: test

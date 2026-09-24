@@ -70,7 +70,7 @@ Target WCAG 2.2 AA for the rendered interface.
 2. Prefer semantic tokens and reusable shadcn variants over one-off colors, repeated style strings, or raw HTML controls. Extend a local variant when a product state recurs.
 3. Keep shadcn-generated files locally owned and reviewable. Do not replace a whole component with a registry snippet without checking its React, accessibility, and Tailwind versions.
 4. Keep accessibility behavior, provider consent, run provenance, and truthful persisted progress intact while changing appearance.
-5. For a UI change, run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` from `web/` (or `make validate` for the full stack). Exercise changed flows in a browser at desktop and mobile widths and run an accessibility audit for significant interaction/layout changes.
+5. For a UI change, run `mise exec -- pnpm --dir web test`, `mise exec -- pnpm --dir web run lint`, `mise exec -- pnpm --dir web run typecheck`, and `mise exec -- pnpm --dir web run build` (or `make validate` for the full stack). Exercise changed flows in a browser at desktop and mobile widths and run an accessibility audit for significant interaction/layout changes.
 
 ### Official references
 

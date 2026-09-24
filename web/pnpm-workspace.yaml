@@ -1,0 +1,8 @@
+# Preserve pnpm's default minimum release age for all other packages.
+minimumReleaseAgeExclude:
+  - hono@4.13.9
+  - lucide-react@1.48.0
+
+# Preserve the prior behavior of not running this dependency's build script.
+allowBuilds:
+  unrs-resolver: false
