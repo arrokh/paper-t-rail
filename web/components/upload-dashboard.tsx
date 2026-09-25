@@ -905,7 +905,7 @@ export function UploadDashboard() {
                           <p className="text-sm text-muted-foreground">No citation markers were detected.</p>
                         ) : (
                           <ol className="space-y-3">
-                            {parsedDocument.citationContexts.map((context) => (
+                            {parsedDocument.citationContexts.map((context, index) => (
                               <li key={context.id} id={`citation-context-${context.id}`} className="citation-context-anchor scroll-mt-5">
                                 <article className="space-y-3 rounded-lg border border-border bg-muted/20 p-4">
                                   <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-muted-foreground">
@@ -915,7 +915,7 @@ export function UploadDashboard() {
                                     <span>{context.startOffset}–{context.endOffset}</span>
                                   </div>
                                   <p className="break-words text-sm leading-relaxed">{context.text}</p>
-                                  <section className="space-y-2" aria-label="Atomic Claims from this Citation Context">
+                                  <section className="space-y-2" aria-label={`Atomic Claims from Citation Context ${index + 1}`}>
                                     <h5 className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Atomic Claims</h5>
                                     {context.atomicClaims.length === 0 ? (
                                       <p className="text-sm text-muted-foreground">No Atomic Claims were extracted from this Citation Context.</p>

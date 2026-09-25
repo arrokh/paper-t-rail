@@ -3,6 +3,7 @@ package com.papertrail.api.queue
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import jakarta.annotation.PostConstruct
+import jakarta.annotation.PreDestroy
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
@@ -17,6 +18,9 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Duration
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 @Component
 @ConditionalOnProperty(prefix = "paper-trail", name = ["role"], havingValue = "worker")
@@ -33,6 +37,9 @@ class RedisStreamWorker(
     @Value("\${paper-trail.queue.retry-backoff-ms}") retryBackoffMs: String,
 ) {
     private val retryBackoffDelaysMs = retryBackoffMs.split(',').map { it.trim().toLong() }
+    private val leaseHeartbeatExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { task ->
+        Thread(task, "redis-stream-lease-heartbeat").apply { isDaemon = true }
+    }
 
     init {
         require(maxAttempts > 0) { "Queue max attempts must be positive." }
@@ -146,7 +153,12 @@ class RedisStreamWorker(
             return
         }
         try {
-            handler.handle(serialized)
+            val processingLease = startProcessingLease(record.id.value)
+            try {
+                handler.handle(serialized)
+            } finally {
+                processingLease?.close()
+            }
             acknowledge(record)
             logger.info("Pipeline event processed")
         } catch (exception: Exception) {
@@ -235,6 +247,45 @@ class RedisStreamWorker(
 
     private fun retryDelayMillis(attempt: Long): Long =
         retryBackoffDelaysMs[(attempt - 1).coerceIn(0, retryBackoffDelaysMs.lastIndex.toLong()).toInt()]
+
+    private fun startProcessingLease(messageId: String): AutoCloseable? {
+        if (reclaimDelayMs <= 0) return null
+
+        val lock = Any()
+        var active = true
+        val refresh = {
+            synchronized(lock) {
+                if (!active) return@synchronized
+                val leaseExpiresAt = System.currentTimeMillis() + reclaimDelayMs
+                redis.opsForHash<String, String>().put(retryScheduleKey, messageId, leaseExpiresAt.toString())
+            }
+        }
+        refresh()
+        val heartbeatIntervalMs = maxOf(1, reclaimDelayMs / 3)
+        val heartbeat = leaseHeartbeatExecutor.scheduleAtFixedRate(
+            {
+                runCatching(refresh).onFailure { exception ->
+                    logger.atWarn()
+                        .addKeyValue("errorType", exception.javaClass.simpleName)
+                        .log("Processing lease heartbeat failed; pending work remains recoverable")
+                }
+            },
+            heartbeatIntervalMs,
+            heartbeatIntervalMs,
+            TimeUnit.MILLISECONDS,
+        )
+        return AutoCloseable {
+            synchronized(lock) {
+                active = false
+                heartbeat.cancel(false)
+            }
+        }
+    }
+
+    @PreDestroy
+    fun shutdownLeaseHeartbeat() {
+        leaseHeartbeatExecutor.shutdownNow()
+    }
 
     private fun extendRetryLease(record: MapRecord<String, String, String>): Boolean = try {
         val leaseExpiresAt = System.currentTimeMillis() + reclaimDelayMs

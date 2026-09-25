@@ -1,5 +1,7 @@
 COMPOSE = docker compose -f infra/docker-compose.yml
 MISE = mise exec --
+# Keep command-line CHANGE data out of shell source text in the revert target.
+export CHANGE
 
 .PHONY: dev infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-web lint-web typecheck-web build-web validate
 
@@ -24,7 +26,7 @@ migrate\:ls:
 
 # Revert CHANGE itself and all later changes; Sqitch prompts before execution.
 migrate\:revert:
-	@set -eu; change_id='$(CHANGE)'; \
+	@set -eu; change_id="$${CHANGE:-}"; \
 	if [ "$${#change_id}" -ne 40 ] || ! printf '%s\n' "$$change_id" | grep -Eq '^[[:xdigit:]]{40}$$'; then \
 		echo 'Usage: make migrate:revert CHANGE=<40-character Sqitch change ID>' >&2; exit 2; \
 	fi; \

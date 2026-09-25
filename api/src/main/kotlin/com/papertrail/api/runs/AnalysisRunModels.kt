@@ -10,6 +10,7 @@ import com.papertrail.api.providers.ProviderRegistration
 import com.papertrail.api.providers.ProviderTrustBoundary
 import com.papertrail.api.providers.SCHOLARLY_METADATA_ROLE
 import com.papertrail.api.providers.SYSTEM_ONE_ROLE
+import com.papertrail.api.references.ScholarlyMetadataMatcher
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.Instant
 import java.util.UUID
@@ -136,7 +137,7 @@ class RunConfigurationFactory(
     private val parserVersion: String,
     private val languageDetectorVersion: String,
     private val limits: ValidationLimitsSnapshot,
-    private val referenceResolutionPolicyVersion: String = com.papertrail.api.references.ScholarlyMetadataMatcher.POLICY_VERSION,
+    private val referenceResolutionPolicyVersion: String = ScholarlyMetadataMatcher.POLICY_VERSION,
     private val referenceResolutionConfidenceThreshold: Double = 0.9,
 ) {
     init {

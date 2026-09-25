@@ -71,7 +71,7 @@ export function ReferenceResolutionEntryCard({
             )}
             {entry.matchMethod && (
               <div className="space-y-1">
-                <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Matched by</dt>
+                <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Resolution method</dt>
                 <dd className="m-0 break-words text-sm text-foreground">{entry.matchMethod.replaceAll("_", " ").toLowerCase()}</dd>
               </div>
             )}
@@ -94,7 +94,7 @@ export function ReferenceResolutionEntryCard({
           )}
         </div>
 
-        <section className="space-y-2 border-t border-border p-4" aria-label="Original bibliography entry">
+        <section className="space-y-2 border-t border-border p-4" aria-label={`Original bibliography entry ${entry.localReferenceKey}`}>
           <h5 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Original bibliography entry</h5>
           {hasLongSourceReference ? (
             <Collapsible className="group/reference space-y-2">
@@ -114,7 +114,7 @@ export function ReferenceResolutionEntryCard({
         </section>
 
         {entry.canonicalPaper && (
-          <section className="space-y-2 border-t border-border bg-primary/5 p-4" aria-label="Matched Canonical Paper">
+          <section className="space-y-2 border-t border-border bg-primary/5 p-4" aria-label={`Matched Canonical Paper for ${entry.localReferenceKey}`}>
             <p className="font-mono text-[0.65rem] tracking-wide text-primary uppercase">Matched Canonical Paper</p>
             <h5 className="break-words font-medium leading-relaxed text-foreground">{entry.canonicalPaper.title}</h5>
             {entry.canonicalPaper.authors.length > 0 && (

@@ -75,6 +75,9 @@ import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 @Testcontainers
 class AnalysisRunQueueIntegrationTest {
@@ -522,6 +525,65 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `active processing lease prevents another worker from reclaiming slow work`() {
+        val created = createQueuedRun()
+        val stream = "ae:test:${UUID.randomUUID()}"
+        val group = "group-${UUID.randomUUID()}"
+        val operations = redis.opsForStream<String, String>()
+        operations.add(stream, mapOf("bootstrap" to "1"))
+        operations.createGroup(stream, ReadOffset.from("$"), group)
+        OutboxPublisher(jdbc, redis, stream).publishPending()
+
+        val parserStarted = CountDownLatch(1)
+        val continueParsing = CountDownLatch(1)
+        val slowParser = BlockingScientificDocumentParser(parserStarted, continueParsing)
+        val activeWorker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(slowParser),
+            objectMapper = objectMapper,
+            stream = stream,
+            group = group,
+            consumerName = "active-worker",
+            reclaimDelayMs = 300,
+            batchSize = 10,
+            maxAttempts = 3,
+            retryBackoffMs = "0,0,0",
+        )
+        val replacementWorker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(slowParser),
+            objectMapper = objectMapper,
+            stream = stream,
+            group = group,
+            consumerName = "replacement-worker",
+            reclaimDelayMs = 300,
+            batchSize = 10,
+            maxAttempts = 3,
+            retryBackoffMs = "0,0,0",
+        )
+        activeWorker.createConsumerGroup()
+        replacementWorker.createConsumerGroup()
+        val activePoll = Thread(activeWorker::poll).apply { start() }
+        try {
+            assertTrue(parserStarted.await(2, TimeUnit.SECONDS), "Active worker did not start parsing.")
+            Thread.sleep(750)
+            replacementWorker.poll()
+
+            assertEquals(1, slowParser.parseCalls.get())
+            assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        } finally {
+            continueParsing.countDown()
+            activePoll.join(10_000)
+            activeWorker.shutdownLeaseHeartbeat()
+            replacementWorker.shutdownLeaseHeartbeat()
+        }
+
+        assertFalse(activePoll.isAlive, "Active worker did not finish after parsing was released.")
+        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
+    }
+
+    @Test
     fun `marks a persistently failing queued run failed and dead-letters it after three deliveries`() {
         val created = createQueuedRun()
         objectStore.delete("source/${created.documentId}/${created.hash}.pdf")
@@ -607,6 +669,21 @@ class AnalysisRunQueueIntegrationTest {
         val deadLetter = operations.range("ae:dlq", Range.unbounded<String>()).orEmpty().single().value
         assertEquals("MALFORMED_EVENT_ENVELOPE", deadLetter["errorCode"])
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
+    }
+
+    private class BlockingScientificDocumentParser(
+        private val started: CountDownLatch,
+        private val proceed: CountDownLatch,
+    ) : ScientificDocumentParser {
+        val parseCalls = AtomicInteger()
+
+        override fun parse(pdf: ByteArray): ParsedScientificDocument {
+            if (parseCalls.incrementAndGet() == 1) {
+                started.countDown()
+                check(proceed.await(10, TimeUnit.SECONDS)) { "Timed out waiting to release the blocking parser." }
+            }
+            return TestScientificDocumentParser.parse(pdf)
+        }
     }
 
     private object TestScientificDocumentParser : ScientificDocumentParser {
@@ -761,12 +838,12 @@ class AnalysisRunQueueIntegrationTest {
         return configuration.toString()
     }
 
-    private fun eventHandler() = DocumentAnalysisRequestedHandler(
+    private fun eventHandler(parser: ScientificDocumentParser = TestScientificDocumentParser) = DocumentAnalysisRequestedHandler(
         jdbc,
         TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource)),
         objectMapper,
         objectStore,
-        TestScientificDocumentParser,
+        parser,
         ParsedDocumentRepository(jdbc, objectMapper),
         ClaimExtractionService(ProviderCatalog.safeDefaults(), listOf(HeuristicClaimExtractor())),
         referenceResolutionService(),

@@ -257,13 +257,25 @@ class GrobidTeiParser(
             val doi = descendants(element).firstOrNull {
                 it.localName == "idno" && it.getAttribute("type").equals("doi", ignoreCase = true)
             }?.let { normalizeDoi(it.textContent) }
-            val type = when {
-                descendants(element).any { it.localName == "meeting" } -> "CONFERENCE_PAPER"
-                descendants(element).any { it.localName == "title" && it.getAttribute("level") == "j" } -> "JOURNAL_ARTICLE"
-                descendants(element).any { it.localName == "title" && it.getAttribute("level") == "m" } -> "BOOK"
-                else -> "OTHER"
-            }
+            val type = referenceType(element)
             ParsedBibliographyEntry(index, id, rawText, title, authors, year, doi, type)
+        }
+    }
+
+    private fun referenceType(element: Element): String {
+        val reportDescription = descendants(element)
+            .filter { it.localName == "note" && it.getAttribute("type") in setOf("report", "report_type") }
+            .joinToString(" ") { normalizeWhitespace(it.textContent) }
+        val hasArxivIdentifier = descendants(element).any {
+            it.localName == "idno" && it.getAttribute("type").equals("arXiv", ignoreCase = true)
+        }
+        return when {
+            THESIS_PATTERN.containsMatchIn(reportDescription) -> "ACADEMIC_MANUSCRIPT"
+            hasArxivIdentifier || PREPRINT_PATTERN.containsMatchIn(reportDescription) -> "PREPRINT"
+            descendants(element).any { it.localName == "meeting" } -> "CONFERENCE_PAPER"
+            descendants(element).any { it.localName == "title" && it.getAttribute("level") == "j" } -> "JOURNAL_ARTICLE"
+            descendants(element).any { it.localName == "title" && it.getAttribute("level") == "m" } -> "BOOK"
+            else -> "OTHER"
         }
     }
 
@@ -327,5 +339,7 @@ class GrobidTeiParser(
     companion object {
         private val WHITESPACE = Regex("[\\s\\p{Z}]+")
         private val YEAR_PATTERN = Regex("(?:18|19|20)\\d{2}")
+        private val THESIS_PATTERN = Regex("\\b(?:thesis|dissertation)\\b", RegexOption.IGNORE_CASE)
+        private val PREPRINT_PATTERN = Regex("\\bpreprint\\b", RegexOption.IGNORE_CASE)
     }
 }

@@ -51,6 +51,35 @@ class GrobidTeiParserTest {
     }
 
     @Test
+    fun `classifies preprints and academic manuscripts from explicit GROBID TEI signals`() {
+        val tei = """
+            <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+              <text>
+                <body><div><p>A short source paragraph.</p></div></body>
+                <back><listBibl>
+                  <biblStruct xml:id="preprint">
+                    <analytic><title level="a">Preprint title</title></analytic>
+                    <monogr><imprint><date when="2024"/></imprint></monogr>
+                    <idno type="arXiv">arXiv:2401.01234</idno>
+                  </biblStruct>
+                  <biblStruct xml:id="thesis">
+                    <monogr><title level="m">Thesis title</title><imprint><date when="2023"/></imprint></monogr>
+                    <note type="report">Ph.D. thesis</note>
+                  </biblStruct>
+                  <biblStruct xml:id="book">
+                    <monogr><title level="m">Book title</title></monogr>
+                  </biblStruct>
+                </listBibl></back>
+              </text>
+            </TEI>
+        """.trimIndent()
+
+        val parsed = GrobidTeiParser("grobid", "0.9.1-crf").parse(tei)
+
+        assertEquals(listOf("PREPRINT", "ACADEMIC_MANUSCRIPT", "BOOK"), parsed.bibliographyEntries.map { it.referenceType })
+    }
+
+    @Test
     fun `uses safe XML parsing and rejects a response without a TEI body`() {
         val exception = org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
             GrobidTeiParser("grobid", "0.9.1-crf").parse("<TEI><text><back/></text></TEI>")
