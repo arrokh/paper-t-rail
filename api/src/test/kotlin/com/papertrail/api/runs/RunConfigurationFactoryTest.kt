@@ -45,14 +45,34 @@ class RunConfigurationFactoryTest {
         assertEquals(52_428_800, snapshot.validationLimits.maxUploadBytes)
         assertEquals(100_000, snapshot.validationLimits.maxExtractedCharactersPerPage)
         assertEquals(100, snapshot.validationLimits.minimumExtractedCharacters)
-        assertEquals("NOT_RUN", snapshot.referenceResolution.executionStatus)
+        assertEquals("PENDING", snapshot.referenceResolution.executionStatus)
+        val metadataProvider = snapshot.referenceResolution.provider!!
+        assertEquals("recorded-fixtures", metadataProvider.provider)
+        assertEquals("LOCAL", metadataProvider.trustBoundary)
+        assertEquals(listOf("bibliographic_metadata"), metadataProvider.dataCategories)
+        assertEquals("title-author-year-weighted-edit-similarity-v1", snapshot.referenceResolution.scorePolicyVersion)
+        assertEquals(0.9, snapshot.referenceResolution.confidenceThreshold)
         assertEquals("NOT_RUN", snapshot.aggregation.executionStatus)
         assertEquals(0, snapshot.externalProviderConsents.size)
         val json = jacksonObjectMapper().readTree(factory.toJson(snapshot))
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
-        assertTrue(json["referenceResolution"]["confidenceThreshold"].isNull)
+        assertEquals(0.9, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"].has("thresholds"))
         assertTrue(json["aggregation"]["thresholds"].isNull)
+    }
+
+    @Test
+    fun `loads immutable pre-resolution run snapshots without inventing a policy`() {
+        val objectMapper = jacksonObjectMapper()
+        val legacyTree = objectMapper.readTree(factory.toJson(factory.from(RunConfigurationRequest()))) as com.fasterxml.jackson.databind.node.ObjectNode
+        legacyTree.remove("referenceResolution")
+
+        val legacySnapshot = objectMapper.treeToValue(legacyTree, AnalysisConfigurationSnapshot::class.java)
+
+        assertEquals("NOT_RUN", legacySnapshot.referenceResolution.executionStatus)
+        assertEquals(null, legacySnapshot.referenceResolution.provider)
+        assertEquals(null, legacySnapshot.referenceResolution.scorePolicyVersion)
+        assertEquals(null, legacySnapshot.referenceResolution.confidenceThreshold)
     }
 
     @Test
@@ -62,6 +82,9 @@ class RunConfigurationFactoryTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             factory.from(RunConfigurationRequest(embeddingProvider = "google-gemini-api"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            factory.from(RunConfigurationRequest(scholarlyMetadataProvider = "crossref"))
         }
         assertThrows(IllegalArgumentException::class.java) {
             factoryFor().from(RunConfigurationRequest(systemOneProvider = "unreviewed-provider"))
@@ -131,6 +154,28 @@ class RunConfigurationFactoryTest {
                 ExternalProviderConsentSnapshot("reviewed-llm", listOf("citation_context")),
             )))
         }
+    }
+
+    @Test
+    fun `Crossref selection must be explicitly consented in the Analysis Run snapshot`() {
+        val externalFactory = factoryFor()
+        assertThrows(IllegalArgumentException::class.java) {
+            externalFactory.from(RunConfigurationRequest(scholarlyMetadataProvider = "crossref"))
+        }
+
+        val snapshot = externalFactory.from(
+            RunConfigurationRequest(
+                scholarlyMetadataProvider = "crossref",
+                externalProviderConsents = listOf(
+                    ExternalProviderConsentSnapshot("crossref", listOf("bibliographic_metadata")),
+                ),
+            ),
+        )
+        val metadataProvider = snapshot.referenceResolution.provider!!
+        assertEquals("crossref", metadataProvider.provider)
+        assertEquals("EXTERNAL", metadataProvider.trustBoundary)
+        assertEquals("crossref", snapshot.externalProviderConsents.single().providerId)
+        assertEquals(listOf("bibliographic_metadata"), snapshot.externalProviderConsents.single().dataCategories)
     }
 
     @Test

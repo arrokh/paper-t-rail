@@ -2,10 +2,12 @@ package com.papertrail.api.providers
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.runs.AnalysisConfigurationSnapshot
+import java.security.MessageDigest
 
 const val CLAIM_EXTRACTOR_ROLE = "claimExtractor"
 const val EMBEDDING_ROLE = "embedding"
 const val SYSTEM_ONE_ROLE = "systemOne"
+const val SCHOLARLY_METADATA_ROLE = "scholarlyMetadata"
 
 enum class ProviderTrustBoundary(val id: String) {
     LOCAL("LOCAL"),
@@ -39,6 +41,7 @@ data class ProviderRegistration(
     val dataCategories: Set<DataCategory>,
     val retentionDisclosure: String? = null,
     val enablementReviewed: Boolean = false,
+    val payloadConfigurationFingerprint: String? = null,
 )
 
 data class ProviderOption(
@@ -72,7 +75,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
         require(registrations.map { it.role to it.providerId }.distinct().size == registrations.size) {
             "Provider registrations must be unique by role and provider ID."
         }
-        require(registrations.all { it.role in setOf(CLAIM_EXTRACTOR_ROLE, EMBEDDING_ROLE, SYSTEM_ONE_ROLE) }) {
+        require(registrations.all { it.role in setOf(CLAIM_EXTRACTOR_ROLE, EMBEDDING_ROLE, SYSTEM_ONE_ROLE, SCHOLARLY_METADATA_ROLE) }) {
             "Provider registration contains an unsupported provider role."
         }
         require(registrations.none { it.enabled && it.trustBoundary == ProviderTrustBoundary.UNREVIEWED }) {
@@ -125,8 +128,46 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
     }
 
     companion object {
-        fun safeDefaults(): ProviderCatalog = ProviderCatalog(
+        private fun sha256Fingerprint(value: String): String = MessageDigest
+            .getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+
+        fun safeDefaults(
+            crossrefEnabled: Boolean = false,
+            crossrefEnablementReviewed: Boolean = false,
+            crossrefRetentionDisclosure: String? = null,
+            crossrefContactEmail: String? = null,
+        ): ProviderCatalog = ProviderCatalog(
             listOf(
+                ProviderRegistration(
+                    role = SCHOLARLY_METADATA_ROLE,
+                    providerId = "recorded-fixtures",
+                    displayName = "Recorded scholarly metadata fixtures",
+                    version = "v1",
+                    model = null,
+                    trustBoundary = ProviderTrustBoundary.LOCAL,
+                    enabled = true,
+                    dataCategories = setOf(DataCategory.BIBLIOGRAPHIC_METADATA),
+                ),
+                ProviderRegistration(
+                    role = SCHOLARLY_METADATA_ROLE,
+                    providerId = "crossref",
+                    displayName = "Crossref REST API",
+                    version = "v1",
+                    model = null,
+                    trustBoundary = ProviderTrustBoundary.EXTERNAL,
+                    enabled = crossrefEnabled,
+                    dataCategories = setOfNotNull(
+                        DataCategory.BIBLIOGRAPHIC_METADATA,
+                        DataCategory.PROVIDER_CONTACT_EMAIL.takeIf { !crossrefContactEmail.isNullOrBlank() },
+                    ),
+                    retentionDisclosure = crossrefRetentionDisclosure,
+                    enablementReviewed = crossrefEnablementReviewed,
+                    payloadConfigurationFingerprint = crossrefContactEmail
+                        ?.takeIf(String::isNotBlank)
+                        ?.let(::sha256Fingerprint),
+                ),
                 ProviderRegistration(
                     role = CLAIM_EXTRACTOR_ROLE,
                     providerId = "heuristic",
@@ -218,14 +259,18 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
             CLAIM_EXTRACTOR_ROLE -> configuration.claimExtractor
             EMBEDDING_ROLE -> configuration.embedding
             SYSTEM_ONE_ROLE -> configuration.systemOne
+            SCHOLARLY_METADATA_ROLE -> configuration.referenceResolution.provider
             else -> throw ProviderCallRejectedException("Provider role '$role' is not supported.")
-        }
+        } ?: throw ProviderCallRejectedException("Provider role '$role' was not configured for this Analysis Run.")
         if (selected.provider != providerId) {
             throw ProviderCallRejectedException("Provider '$providerId' was not selected for this Analysis Run.")
         }
+        val scholarlyConfigurationChanged = role == SCHOLARLY_METADATA_ROLE &&
+            configuration.referenceResolution.providerConfigurationFingerprint != registration.payloadConfigurationFingerprint
         if (selected.version != registration.version || selected.model != registration.model ||
             selected.trustBoundary != registration.trustBoundary.id ||
-            selected.dataCategories.toSet() != registration.dataCategories.map(DataCategory::id).toSet()
+            selected.dataCategories.toSet() != registration.dataCategories.map(DataCategory::id).toSet() ||
+            scholarlyConfigurationChanged
         ) {
             throw ProviderCallRejectedException("Provider '$providerId' configuration or payload mapping changed after this Analysis Run was created.")
         }

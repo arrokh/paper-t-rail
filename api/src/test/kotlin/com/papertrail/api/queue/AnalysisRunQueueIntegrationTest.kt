@@ -17,6 +17,9 @@ import com.papertrail.api.parsing.ParsedScientificDocument
 import com.papertrail.api.parsing.ParsedSection
 import com.papertrail.api.parsing.ScientificDocumentParser
 import com.papertrail.api.providers.ProviderCatalog
+import com.papertrail.api.references.RecordedFixtureScholarlyMetadataLookupFactory
+import com.papertrail.api.references.ReferenceResolutionRepository
+import com.papertrail.api.references.ReferenceResolutionService
 import com.papertrail.api.providers.reviewedExternalProviderCatalog
 import com.papertrail.api.runs.AnalysisRunService
 import com.papertrail.api.runs.RunConfigurationFactory
@@ -118,10 +121,34 @@ class AnalysisRunQueueIntegrationTest {
             ),
         )
         assertEquals(
-            "NOT_RUN",
+            "PENDING",
             jdbc.queryForObject(
                 "SELECT configuration_snapshot #>> '{referenceResolution,executionStatus}' FROM analysis_runs WHERE id = ?",
                 String::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertEquals(
+            "recorded-fixtures",
+            jdbc.queryForObject(
+                "SELECT configuration_snapshot #>> '{referenceResolution,provider,provider}' FROM analysis_runs WHERE id = ?",
+                String::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertEquals(
+            "title-author-year-weighted-edit-similarity-v1",
+            jdbc.queryForObject(
+                "SELECT configuration_snapshot #>> '{referenceResolution,scorePolicyVersion}' FROM analysis_runs WHERE id = ?",
+                String::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertEquals(
+            0.9,
+            jdbc.queryForObject(
+                "SELECT (configuration_snapshot #>> '{referenceResolution,confidenceThreshold}')::double precision FROM analysis_runs WHERE id = ?",
+                Double::class.java,
                 created.analysisRunId,
             ),
         )
@@ -154,6 +181,23 @@ class AnalysisRunQueueIntegrationTest {
         assertThrows(org.springframework.dao.DataAccessException::class.java) {
             jdbc.update("UPDATE analysis_runs SET status = 'COMPLETED' WHERE id = ?", secondRun.analysisRunId)
         }
+    }
+
+    @Test
+    fun `legacy immutable runs keep reference resolution not run rather than inventing a policy`() {
+        val created = createQueuedRun(configurationJson = legacyResolutionConfigurationJson())
+        val event = jdbc.queryForObject("SELECT payload::text FROM outbox_events WHERE analysis_run_id = ?", String::class.java, created.analysisRunId)
+
+        eventHandler().handle(event!!)
+
+        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        val report = referenceResolutionService().report(created.analysisRunId)!!
+        assertEquals("NOT_RUN", report.referenceResolution.executionStatus)
+        assertEquals(null, report.referenceResolution.scorePolicyVersion)
+        assertEquals(null, report.referenceResolution.confidenceThreshold)
+        assertEquals(4, report.referenceResolution.summary.notAttempted)
+        assertTrue(report.referenceResolution.entries.all { it.canonicalPaper == null })
     }
 
     @Test
@@ -311,7 +355,11 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("however, later work disputes it [3].", parsed.citationContexts[1].text)
         assertEquals("[3]", parsed.citationContexts[1].occurrences.single().markerText)
         assertEquals(listOf("ref3"), parsed.citationContexts[1].occurrences.single().bibliographyReferenceKeys)
-        assertEquals(listOf("ref1", "ref2", "ref3"), parsed.bibliographyEntries.map { it.localReferenceKey })
+        assertEquals(listOf("ref1", "ref2", "ref3", "ref4"), parsed.bibliographyEntries.map { it.localReferenceKey })
+        assertEquals(
+            listOf("RESOLVED", "UNSUPPORTED_REFERENCE_TYPE", "UNSUPPORTED_REFERENCE_TYPE", "UNRESOLVED"),
+            parsed.bibliographyEntries.map { it.resolutionStatus },
+        )
         assertEquals(listOf("Prior results support the method", "Prior results reproduce it"), parsed.citationContexts[0].atomicClaims.map { it.text })
         assertEquals("however, later work disputes it", parsed.citationContexts[1].atomicClaims.single().text)
         assertEquals(listOf("reproduce it"), parsed.citationContexts[0].atomicClaims.drop(1).map { parsed.normalizedSourceText.substring(it.sourceStartOffset, it.sourceEndOffset) })
@@ -369,6 +417,25 @@ class AnalysisRunQueueIntegrationTest {
                 parsed.citationContexts[0].atomicClaims.first().id,
                 parsed.citationContexts[1].atomicClaims.single().citationTargets.single().id,
             )
+        }
+        val report = referenceResolutionService().report(created.analysisRunId)!!
+        assertEquals("COMPLETED", report.referenceResolution.executionStatus)
+        assertEquals("title-author-year-weighted-edit-similarity-v1", report.referenceResolution.scorePolicyVersion)
+        assertEquals(0.9, report.referenceResolution.confidenceThreshold)
+        assertEquals(4, report.referenceResolution.summary.total)
+        assertEquals(1, report.referenceResolution.summary.resolved)
+        assertEquals(1, report.referenceResolution.summary.unresolved)
+        assertEquals(2, report.referenceResolution.summary.unsupportedReferenceType)
+        assertEquals("10.5555/papertrail.fixture.reference-resolution.2024", report.referenceResolution.entries[0].canonicalPaper?.doi)
+        assertEquals("CONFIRMED_DOI", report.referenceResolution.entries[0].matchMethod)
+        assertEquals("UNSUPPORTED_REFERENCE_TYPE", report.referenceResolution.entries[1].reasonCode)
+        assertEquals("UNRESOLVED", report.referenceResolution.entries[3].status)
+        assertEquals("BELOW_CONFIDENCE_THRESHOLD", report.referenceResolution.entries[3].reasonCode)
+        assertNull(report.referenceResolution.entries[3].canonicalPaper)
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM canonical_papers", Int::class.java))
+        assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertThrows(org.springframework.dao.DataAccessException::class.java) {
+            jdbc.update("UPDATE bibliography_entry_resolutions SET reason_code = 'changed' WHERE analysis_run_id = ?", created.analysisRunId)
         }
         val persistedTargetLinks = jdbc.query(
             """
@@ -574,16 +641,29 @@ class AnalysisRunQueueIntegrationTest {
                     ),
                 ),
                 bibliographyEntries = listOf(
-                    ParsedBibliographyEntry(0, "ref1", "Reference one", "Reference one", emptyList(), 2020, null, "OTHER"),
+                    ParsedBibliographyEntry(
+                        0,
+                        "ref1",
+                        "A fixture study of conservative scholarly reference resolution",
+                        "A fixture study of conservative scholarly reference resolution",
+                        listOf("Riley Example", "Jordan Researcher"),
+                        2024,
+                        "10.5555/papertrail.fixture.reference-resolution.2024",
+                        "JOURNAL_ARTICLE",
+                    ),
                     ParsedBibliographyEntry(1, "ref2", "Reference two", "Reference two", emptyList(), 2019, null, "OTHER"),
                     ParsedBibliographyEntry(2, "ref3", "Reference three", "Reference three", emptyList(), 2018, null, "OTHER"),
+                    ParsedBibliographyEntry(3, "ref4", "An unrelated ocean chemistry paper", "An unrelated ocean chemistry paper", listOf("Different Author"), 1991, null, "JOURNAL_ARTICLE"),
                 ),
                 rawParserOutput = "<TEI>test GROBID output</TEI>".toByteArray(),
             )
         }
     }
 
-    private fun createQueuedRun(createdAt: Instant = Instant.now()): CreatedRunIds {
+    private fun createQueuedRun(
+        createdAt: Instant = Instant.now(),
+        configurationJson: String = objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest())),
+    ): CreatedRunIds {
         val bytes = "integration pdf bytes".toByteArray()
         val hash = expectedSha256(bytes)
         val documentId = UUID.randomUUID()
@@ -599,8 +679,8 @@ class AnalysisRunQueueIntegrationTest {
         )
         jdbc.update(
             """INSERT INTO analysis_runs (id, document_id, source_content_sha256, source_parser_id, source_parser_version, configuration_snapshot, status, progress, created_at)
-               VALUES (?, ?, ?, 'grobid', '0.9.1-crf', '{"claimExtractor":{"provider":"heuristic","version":"v1"}}'::jsonb, 'QUEUED', '{"stage":"QUEUED"}'::jsonb, ?)""",
-            runId, documentId, hash, java.sql.Timestamp.from(createdAt),
+               VALUES (?, ?, ?, 'grobid', '0.9.1-crf', ?::jsonb, 'QUEUED', '{"stage":"QUEUED"}'::jsonb, ?)""",
+            runId, documentId, hash, configurationJson, java.sql.Timestamp.from(createdAt),
         )
         val event = PipelineEvent(
             eventId,
@@ -643,14 +723,7 @@ class AnalysisRunQueueIntegrationTest {
             parserId = "pdfbox",
             parserVersion = "3.0.5",
         )
-        val factory = RunConfigurationFactory(
-            objectMapper = objectMapper,
-            providerCatalog = providerCatalog,
-            parserId = "grobid",
-            parserVersion = "0.9.1-crf",
-            languageDetectorVersion = "0.6",
-            limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
-        )
+        val factory = configurationFactory(providerCatalog)
         return AnalysisRunService(
             jdbc,
             transactionTemplate,
@@ -663,6 +736,31 @@ class AnalysisRunQueueIntegrationTest {
         )
     }
 
+    private fun configurationFactory(providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults()) = RunConfigurationFactory(
+        objectMapper = objectMapper,
+        providerCatalog = providerCatalog,
+        parserId = "grobid",
+        parserVersion = "0.9.1-crf",
+        languageDetectorVersion = "0.6",
+        limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
+    )
+
+    private fun referenceResolutionService() = ReferenceResolutionService(
+        jdbc,
+        objectMapper,
+        ReferenceResolutionRepository(jdbc, objectMapper, TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource))),
+        listOf(RecordedFixtureScholarlyMetadataLookupFactory(objectMapper)),
+    )
+
+    private fun legacyResolutionConfigurationJson(): String {
+        val configuration = objectMapper.readTree(objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest()))) as com.fasterxml.jackson.databind.node.ObjectNode
+        configuration.set<com.fasterxml.jackson.databind.JsonNode>(
+            "referenceResolution",
+            objectMapper.readTree("""{"executionStatus":"NOT_RUN","scorePolicyVersion":null,"confidenceThreshold":null}"""),
+        )
+        return configuration.toString()
+    }
+
     private fun eventHandler() = DocumentAnalysisRequestedHandler(
         jdbc,
         TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource)),
@@ -671,6 +769,7 @@ class AnalysisRunQueueIntegrationTest {
         TestScientificDocumentParser,
         ParsedDocumentRepository(jdbc, objectMapper),
         ClaimExtractionService(ProviderCatalog.safeDefaults(), listOf(HeuristicClaimExtractor())),
+        referenceResolutionService(),
     )
 
     private fun englishPdf(): ByteArray {
@@ -746,7 +845,7 @@ class AnalysisRunQueueIntegrationTest {
             jdbc = JdbcTemplate(dataSource)
             val migrationDirectory = listOf(Path.of("db/deploy"), Path.of("api/db/deploy"))
                 .firstOrNull(Files::isDirectory) ?: error("Could not locate Sqitch deployment directory")
-            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql").forEach { filename ->
+            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql", "conservative_reference_resolution.sql").forEach { filename ->
                 val migration = migrationDirectory.resolve(filename)
                 dataSource.connection.use { connection ->
                     connection.createStatement().use { statement -> statement.execute(Files.readString(migration)) }
@@ -755,6 +854,10 @@ class AnalysisRunQueueIntegrationTest {
             val claimMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("atomic_claims.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(claimMigrationVerification)) }
+            }
+            val referenceResolutionMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("conservative_reference_resolution.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(referenceResolutionMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

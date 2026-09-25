@@ -7,6 +7,10 @@ import com.papertrail.api.parsing.ParsedDocumentView
 import com.papertrail.api.parsing.ParsedAtomicClaimView
 import com.papertrail.api.parsing.ParsedClaimCitationTargetView
 import com.papertrail.api.parsing.ParsedParserProvenance
+import com.papertrail.api.references.EvidenceCoverageReport
+import com.papertrail.api.references.ReferenceResolutionReport
+import com.papertrail.api.references.ReferenceResolutionService
+import com.papertrail.api.references.ReferenceResolutionSummary
 import com.papertrail.api.runs.AnalysisRunPage
 import com.papertrail.api.runs.AnalysisRunSummary
 import com.papertrail.api.queue.OutboxPublisher
@@ -65,6 +69,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var parsedDocumentRepository: ParsedDocumentRepository
+
+    @MockitoBean
+    private lateinit var referenceResolutionService: ReferenceResolutionService
 
     @Test
     fun `OpenAPI contract describes the existing analysis run endpoints and PDF upload`() {
@@ -130,12 +137,16 @@ class OpenApiDocumentationTest {
         assertTrue(parsedDocument.path("responses").has("409"))
         val reanalysis = paths.path("/api/v1/documents/{documentId}/analysis-runs").path("post")
         assertTrue(reanalysis.path("requestBody").path("content").has("application/json"))
+        val report = paths.path("/api/v1/analysis-runs/{runId}/report").path("get")
+        assertTrue(report.path("responses").path("200").path("content").has("application/json"))
+        assertTrue(report.path("responses").has("404"))
         val reanalysisSchema = reanalysis.path("requestBody").path("content").path("application/json").path("schema")
         val configSchemaName = reanalysisSchema.path("${'$'}ref").asText().substringAfterLast('/')
         val configProperties = document.path("components").path("schemas").path(configSchemaName).path("properties")
         assertTrue(configProperties.has("claimExtractorProvider"))
         assertTrue(configProperties.has("embeddingProvider"))
         assertTrue(configProperties.has("systemOneProvider"))
+        assertTrue(configProperties.has("scholarlyMetadataProvider"))
         assertTrue(configProperties.has("externalProviderConsents"))
         assertTrue(reanalysis.path("responses").has("201"))
         assertTrue(reanalysis.path("responses").has("404"))
@@ -171,12 +182,14 @@ class OpenApiDocumentationTest {
         val claimExtractorOptions = providers.path("claimExtractor")
         val embeddingOptions = providers.path("embedding")
         val systemOneOptions = providers.path("systemOne")
-        assertEquals(setOf("claimExtractor", "embedding", "systemOne"), providers.fieldNames().asSequence().toSet())
+        val scholarlyMetadataOptions = providers.path("scholarlyMetadata")
+        assertEquals(setOf("claimExtractor", "embedding", "systemOne", "scholarlyMetadata"), providers.fieldNames().asSequence().toSet())
         assertEquals(1, claimExtractorOptions.size())
         assertEquals(1, embeddingOptions.size())
         assertEquals(1, systemOneOptions.size())
-        val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions).flatMap { it.toList() }
-        assertEquals(3, providerOptions.size)
+        assertEquals(1, scholarlyMetadataOptions.size())
+        val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions, scholarlyMetadataOptions).flatMap { it.toList() }
+        assertEquals(4, providerOptions.size)
         assertTrue(providerOptions.all { it.path("trustBoundary").asText() == "LOCAL" })
         assertFalse(providerOptions.any { it.path("providerId").asText() in setOf("jev", "google-gemini-api", "unreviewed-provider") })
         val disclosedCategoryIds = directory.path("dataCategories").map { it.path("id").asText() }.toSet()
@@ -334,6 +347,31 @@ class OpenApiDocumentationTest {
         Mockito.`when`(analysisRunService.get(missingRunId)).thenReturn(null)
         mockMvc.perform(get("/api/v1/analysis-runs/$missingRunId/parsed-document"))
             .andExpect(status().isNotFound)
+    }
+
+    @Test
+    fun `report endpoint exposes persisted reference outcomes and pinned policy`() {
+        val runId = UUID.randomUUID()
+        Mockito.`when`(referenceResolutionService.report(runId)).thenReturn(
+            EvidenceCoverageReport(
+                analysisRunId = runId,
+                runStatus = "PARSED",
+                referenceResolution = ReferenceResolutionReport(
+                    executionStatus = "COMPLETED",
+                    scorePolicyVersion = "title-author-year-weighted-edit-similarity-v1",
+                    confidenceThreshold = 0.9,
+                    summary = ReferenceResolutionSummary(2, 1, 0, 1, 0),
+                    entries = emptyList(),
+                ),
+            ),
+        )
+
+        mockMvc.perform(get("/api/v1/analysis-runs/$runId/report"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.referenceResolution.executionStatus").value("COMPLETED"))
+            .andExpect(jsonPath("$.referenceResolution.scorePolicyVersion").value("title-author-year-weighted-edit-similarity-v1"))
+            .andExpect(jsonPath("$.referenceResolution.confidenceThreshold").value(0.9))
+            .andExpect(jsonPath("$.referenceResolution.summary.unsupportedReferenceType").value(1))
     }
 
     @Test

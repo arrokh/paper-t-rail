@@ -20,3 +20,13 @@ For every change under `web/`, use the [Paper T-Rail Web UI Design System](../do
 ## Verification
 
 For UI changes, run `mise exec -- pnpm --dir web test`, `mise exec -- pnpm --dir web run lint`, `mise exec -- pnpm --dir web run typecheck`, and `mise exec -- pnpm --dir web run build`, or run `make validate` from the repository root. Browser-check changed flows at desktop and mobile sizes; run an accessibility audit for significant interaction or layout changes.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

@@ -3,6 +3,28 @@ package com.papertrail.api.providers
 fun reviewedExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
     listOf(
         ProviderRegistration(
+            SCHOLARLY_METADATA_ROLE,
+            "recorded-fixtures",
+            "Recorded metadata fixtures",
+            "v1",
+            null,
+            ProviderTrustBoundary.LOCAL,
+            true,
+            setOf(DataCategory.BIBLIOGRAPHIC_METADATA),
+        ),
+        ProviderRegistration(
+            SCHOLARLY_METADATA_ROLE,
+            "crossref",
+            "Crossref",
+            "v1",
+            null,
+            ProviderTrustBoundary.EXTERNAL,
+            true,
+            setOf(DataCategory.BIBLIOGRAPHIC_METADATA),
+            retentionDisclosure = "Reviewed Crossref retention disclosure for this test deployment.",
+            enablementReviewed = true,
+        ),
+        ProviderRegistration(
             CLAIM_EXTRACTOR_ROLE,
             "heuristic",
             "Heuristic",

@@ -8,3 +8,4 @@ parsed_citation_structure [core_documents] 2026-09-24T00:00:00Z Paper T-Rail Mai
 grobid_raw_output [parsed_citation_structure] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Keep raw GROBID output under immutable run provenance
 analysis_run_listing_cursor [grobid_raw_output] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Index deterministic Analysis Run cursor pagination
 atomic_claims [analysis_run_listing_cursor] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist run-scoped Atomic Claims and inferred context-scoped target links
+conservative_reference_resolution [atomic_claims] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist Canonical Papers and immutable bibliography resolution outcomes

@@ -6,6 +6,7 @@ import com.papertrail.api.claims.ClaimExtractionService
 import com.papertrail.api.documents.sha256Hex
 import com.papertrail.api.parsing.ParsedDocumentRepository
 import com.papertrail.api.parsing.ScientificDocumentParser
+import com.papertrail.api.references.ReferenceResolutionService
 import com.papertrail.api.storage.SourceDocumentObjectStore
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
@@ -23,6 +24,7 @@ class DocumentAnalysisRequestedHandler(
     private val scientificDocumentParser: ScientificDocumentParser,
     private val parsedDocumentRepository: ParsedDocumentRepository,
     private val claimExtractionService: ClaimExtractionService,
+    private val referenceResolutionService: ReferenceResolutionService,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
@@ -94,76 +96,120 @@ class DocumentAnalysisRequestedHandler(
             throw IllegalStateException("Analysis Run is not in a parsable state.")
         }
 
-        val parsed = scientificDocumentParser.parse(content)
-        if (parsed.parserId != run.parserId || parsed.parserVersion != run.parserVersion) {
-            throw IllegalStateException("The scientific parser identity does not match the Analysis Run provenance.")
-        }
-        require(parsed.rawParserOutput.isNotEmpty()) { "The scientific parser returned no raw parser output." }
-        val extractedClaims = claimExtractionService.extract(
-            run.claimExtractorProvider,
-            run.claimExtractorVersion,
-            parsed.citationContexts,
-        )
-        val bibliographyReferenceKeys = parsed.bibliographyEntries.mapTo(mutableSetOf()) { it.localReferenceKey }
-        val targetCountByContextSpan = parsed.citationContexts.associate { context ->
-            (context.startOffset to context.endOffset) to context.occurrences.sumOf { occurrence ->
-                occurrence.bibliographyReferenceKeys.distinct().count { it in bibliographyReferenceKeys }
+        val existingParsed = parsedDocumentRepository.find(event.analysisRunId)
+        if (existingParsed == null) {
+            val parsed = scientificDocumentParser.parse(content)
+            if (parsed.parserId != run.parserId || parsed.parserVersion != run.parserVersion) {
+                throw IllegalStateException("The scientific parser identity does not match the Analysis Run provenance.")
             }
-        }
-        val inferredClaimTargetLinkCount = extractedClaims.sumOf { contextClaims ->
-            contextClaims.claims.size * targetCountByContextSpan.getValue(contextClaims.contextStartOffset to contextClaims.contextEndOffset)
-        }
-        val rawTeiObjectKey =
-            "source/${event.payload.documentId}/analysis-runs/${event.analysisRunId}/grobid-${sha256Hex(parsed.rawParserOutput)}.xml"
-        objectStore.put(rawTeiObjectKey, parsed.rawParserOutput, "application/xml")
-        var transactionBodyCompleted = false
-        try {
-            transactionTemplate.executeWithoutResult {
-                val inserted = jdbc.update(
-                    "INSERT INTO inbox_events (event_id, handler_name, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
-                    event.eventId,
-                    DOCUMENT_ANALYSIS_HANDLER,
-                    java.sql.Timestamp.from(Instant.now()),
-                )
-                if (inserted == 0) return@executeWithoutResult
-
-                parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, extractedClaims)
-                val completed = jdbc.update(
-                    """
-                    UPDATE analysis_runs
-                       SET status = 'PARSED',
-                           progress = jsonb_build_object(
-                               'stage', 'PARSED',
-                               'percent', 100,
-                               'message', 'Sections, citation contexts, Atomic Claims, inferred reference links, and bibliography entries were saved; evidence analysis has not run.',
-                               'sectionCount', ?,
-                               'citationContextCount', ?,
-                               'citationOccurrenceCount', ?,
-                               'bibliographyEntryCount', ?,
-                               'atomicClaimCount', ?,
-                               'inferredClaimTargetLinkCount', ?
+            require(parsed.rawParserOutput.isNotEmpty()) { "The scientific parser returned no raw parser output." }
+            val extractedClaims = claimExtractionService.extract(
+                run.claimExtractorProvider,
+                run.claimExtractorVersion,
+                parsed.citationContexts,
+            )
+            val rawTeiObjectKey =
+                "source/${event.payload.documentId}/analysis-runs/${event.analysisRunId}/grobid-${sha256Hex(parsed.rawParserOutput)}.xml"
+            objectStore.put(rawTeiObjectKey, parsed.rawParserOutput, "application/xml")
+            var transactionBodyCompleted = false
+            try {
+                transactionTemplate.executeWithoutResult {
+                    parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, extractedClaims)
+                    val updated = jdbc.update(
+                        """
+                        UPDATE analysis_runs
+                           SET progress = jsonb_build_object(
+                               'stage', 'RESOLVING_REFERENCES',
+                               'percent', 65,
+                               'message', 'Parsed structure and Atomic Claims saved; conservatively resolving supported bibliography entries.'
                            ),
                            updated_at = now()
-                     WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
-                       AND status = 'PROCESSING'
-                    """.trimIndent(),
-                    parsed.sections.size,
-                    parsed.citationContexts.size,
-                    parsed.citationContexts.sumOf { it.occurrences.size },
-                    parsed.bibliographyEntries.size,
-                    extractedClaims.sumOf { it.claims.size },
-                    inferredClaimTargetLinkCount,
-                    event.analysisRunId,
-                    event.payload.documentId,
-                    run.sourceHash,
-                )
-                if (completed != 1) throw IllegalStateException("Analysis Run could not be marked PARSED after parsing.")
-                transactionBodyCompleted = true
+                         WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
+                           AND status = 'PROCESSING'
+                        """.trimIndent(),
+                        event.analysisRunId,
+                        event.payload.documentId,
+                        run.sourceHash,
+                    )
+                    if (updated != 1) throw IllegalStateException("Analysis Run could not advance to reference resolution.")
+                    transactionBodyCompleted = true
+                }
+                if (!transactionBodyCompleted) cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
+            } catch (exception: Exception) {
+                if (!transactionBodyCompleted) cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
+                throw exception
             }
-            if (!transactionBodyCompleted) cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
-        } catch (exception: Exception) {
-            if (!transactionBodyCompleted) cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
-            throw exception
+        } else if (existingParsed.sourceContentSha256 != run.sourceHash ||
+            existingParsed.parser.provider != run.parserId || existingParsed.parser.version != run.parserVersion
+        ) {
+            throw IllegalStateException("Persisted parse provenance does not match the Analysis Run.")
+        }
+
+        val progressUpdated = jdbc.update(
+            """
+            UPDATE analysis_runs
+               SET progress = jsonb_build_object(
+                   'stage', 'RESOLVING_REFERENCES',
+                   'percent', 65,
+                   'message', 'Parsed structure and Atomic Claims saved; conservatively resolving supported bibliography entries.'
+               ),
+               updated_at = now()
+             WHERE id = ? AND document_id = ? AND source_content_sha256 = ? AND status = 'PROCESSING'
+            """.trimIndent(),
+            event.analysisRunId,
+            event.payload.documentId,
+            run.sourceHash,
+        )
+        if (progressUpdated != 1) throw IllegalStateException("Analysis Run could not advance to reference resolution.")
+        val resolutionSummary = referenceResolutionService.resolvePending(event.analysisRunId)
+        val parsed = parsedDocumentRepository.find(event.analysisRunId)
+            ?: throw IllegalStateException("Persisted parsed document structure is missing after reference resolution.")
+        val atomicClaims = parsed.citationContexts.flatMap { it.atomicClaims }
+        val inferredClaimTargetLinkCount = atomicClaims.sumOf { it.citationTargets.size }
+        transactionTemplate.executeWithoutResult {
+            val inserted = jdbc.update(
+                "INSERT INTO inbox_events (event_id, handler_name, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
+                event.eventId,
+                DOCUMENT_ANALYSIS_HANDLER,
+                java.sql.Timestamp.from(Instant.now()),
+            )
+            if (inserted == 0) return@executeWithoutResult
+            val completed = jdbc.update(
+                """
+                UPDATE analysis_runs
+                   SET status = 'PARSED',
+                       progress = jsonb_build_object(
+                           'stage', 'PARSED',
+                           'percent', 100,
+                           'message', 'Parsed structure, Atomic Claims, inferred reference links, and conservative bibliography resolution are ready; evidence verification has not run.',
+                           'sectionCount', ?,
+                           'citationContextCount', ?,
+                           'citationOccurrenceCount', ?,
+                           'bibliographyEntryCount', ?,
+                           'atomicClaimCount', ?,
+                           'inferredClaimTargetLinkCount', ?,
+                           'resolvedReferenceCount', ?,
+                           'unresolvedReferenceCount', ?,
+                           'unsupportedReferenceTypeCount', ?
+                       ),
+                       updated_at = now()
+                 WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
+                   AND status = 'PROCESSING'
+                """.trimIndent(),
+                parsed.sections.size,
+                parsed.citationContexts.size,
+                parsed.citationContexts.sumOf { it.occurrences.size },
+                parsed.bibliographyEntries.size,
+                atomicClaims.size,
+                inferredClaimTargetLinkCount,
+                resolutionSummary.resolved,
+                resolutionSummary.unresolved,
+                resolutionSummary.unsupportedReferenceType,
+                event.analysisRunId,
+                event.payload.documentId,
+                run.sourceHash,
+            )
+            if (completed != 1) throw IllegalStateException("Analysis Run could not be marked PARSED after reference resolution.")
         }
         return event.eventId
     }

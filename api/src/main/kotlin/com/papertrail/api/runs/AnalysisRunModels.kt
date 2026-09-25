@@ -8,6 +8,7 @@ import com.papertrail.api.providers.EMBEDDING_ROLE
 import com.papertrail.api.providers.ProviderCatalog
 import com.papertrail.api.providers.ProviderRegistration
 import com.papertrail.api.providers.ProviderTrustBoundary
+import com.papertrail.api.providers.SCHOLARLY_METADATA_ROLE
 import com.papertrail.api.providers.SYSTEM_ONE_ROLE
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.Instant
@@ -21,6 +22,8 @@ data class RunConfigurationRequest(
     val embeddingProvider: String = "local",
     @field:Schema(description = "System One verification provider.", defaultValue = "mock", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val systemOneProvider: String = "mock",
+    @field:Schema(description = "Scholarly metadata provider used for conservative bibliography resolution.", defaultValue = "recorded-fixtures", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+    val scholarlyMetadataProvider: String = "recorded-fixtures",
     @field:Schema(description = "Provider-specific data categories explicitly approved for this run.", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val externalProviderConsents: List<ExternalProviderConsentSnapshot> = emptyList(),
 )
@@ -43,9 +46,11 @@ data class ValidationLimitsSnapshot(
 )
 
 data class ReferenceResolutionSnapshot(
-    val executionStatus: String,
-    val scorePolicyVersion: String?,
-    val confidenceThreshold: Double?,
+    val executionStatus: String = "NOT_RUN",
+    val provider: ProviderSelection? = null,
+    val scorePolicyVersion: String? = null,
+    val confidenceThreshold: Double? = null,
+    val providerConfigurationFingerprint: String? = null,
 )
 
 data class AggregationPolicySnapshot(
@@ -67,7 +72,7 @@ data class AnalysisConfigurationSnapshot(
     val sourceParser: ProviderSelection,
     val languageDetector: ProviderSelection,
     val validationLimits: ValidationLimitsSnapshot,
-    val referenceResolution: ReferenceResolutionSnapshot,
+    val referenceResolution: ReferenceResolutionSnapshot = ReferenceResolutionSnapshot(),
     val aggregation: AggregationPolicySnapshot,
     val externalProviderConsents: List<ExternalProviderConsentSnapshot>,
 )
@@ -96,7 +101,7 @@ data class AnalysisRunSummary(
     val documentId: UUID,
     val filename: String,
     val sourceContentSha256: String,
-    @field:Schema(description = "PARSED means citation structure, Atomic Claims, and inferred Citation Target links are persisted; evidence verification has not run.")
+    @field:Schema(description = "PARSED means parsed citation structure, Atomic Claims, inferred Citation Target links, and conservative bibliography-resolution outcomes are persisted; evidence verification has not run.")
     val status: String,
     @field:Schema(implementation = AnalysisRunProgress::class, description = "Persisted run progress.")
     val progress: JsonNode,
@@ -131,11 +136,17 @@ class RunConfigurationFactory(
     private val parserVersion: String,
     private val languageDetectorVersion: String,
     private val limits: ValidationLimitsSnapshot,
+    private val referenceResolutionPolicyVersion: String = com.papertrail.api.references.ScholarlyMetadataMatcher.POLICY_VERSION,
+    private val referenceResolutionConfidenceThreshold: Double = 0.9,
 ) {
+    init {
+        require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
+        require(referenceResolutionConfidenceThreshold in 0.0..1.0) { "Reference resolution threshold must be between zero and one." }
+    }
     fun parseRequest(node: JsonNode?): RunConfigurationRequest {
         if (node == null || node.isNull) return RunConfigurationRequest()
         require(node.isObject) { "Analysis configuration must be a JSON object." }
-        val allowed = setOf("claimExtractorProvider", "embeddingProvider", "systemOneProvider", "externalProviderConsents")
+        val allowed = setOf("claimExtractorProvider", "embeddingProvider", "systemOneProvider", "scholarlyMetadataProvider", "externalProviderConsents")
         val supplied = node.fieldNames().asSequence().toSet()
         require(supplied.all { it in allowed }) { "Analysis configuration contains unsupported fields." }
         fun provider(name: String, default: String): String {
@@ -166,6 +177,7 @@ class RunConfigurationFactory(
             claimExtractorProvider = provider("claimExtractorProvider", "heuristic"),
             embeddingProvider = provider("embeddingProvider", "local"),
             systemOneProvider = provider("systemOneProvider", "mock"),
+            scholarlyMetadataProvider = provider("scholarlyMetadataProvider", "recorded-fixtures"),
             externalProviderConsents = providerConsents,
         )
     }
@@ -175,6 +187,7 @@ class RunConfigurationFactory(
             providerCatalog.requireSelectable(CLAIM_EXTRACTOR_ROLE, request.claimExtractorProvider),
             providerCatalog.requireSelectable(EMBEDDING_ROLE, request.embeddingProvider),
             providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, request.systemOneProvider),
+            providerCatalog.requireSelectable(SCHOLARLY_METADATA_ROLE, request.scholarlyMetadataProvider),
         )
         val requiredConsents = selected
             .filter { it.trustBoundary == ProviderTrustBoundary.EXTERNAL }
@@ -209,9 +222,11 @@ class RunConfigurationFactory(
             languageDetector = ProviderSelection("optimaize", languageDetectorVersion),
             validationLimits = limits,
             referenceResolution = ReferenceResolutionSnapshot(
-                executionStatus = "NOT_RUN",
-                scorePolicyVersion = null,
-                confidenceThreshold = null,
+                executionStatus = "PENDING",
+                provider = selected[3].toSelection(),
+                providerConfigurationFingerprint = selected[3].payloadConfigurationFingerprint,
+                scorePolicyVersion = referenceResolutionPolicyVersion,
+                confidenceThreshold = referenceResolutionConfidenceThreshold,
             ),
             aggregation = AggregationPolicySnapshot(
                 executionStatus = "NOT_RUN",

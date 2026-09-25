@@ -9,7 +9,7 @@ import {
   FileText,
   LockKeyhole,
 } from "lucide-react";
-import type { AnalysisRun, AnalysisRunPage, ApiError, CreatedRun, ParsedDocument } from "@/lib/types";
+import type { AnalysisRun, AnalysisRunPage, ApiError, CreatedRun, EvidenceCoverageReport, ParsedDocument } from "@/lib/types";
 import {
   consentRequirements,
   createRunConfiguration,
@@ -58,12 +58,13 @@ import {
 
 const RUN_PAGE_SIZE = 25;
 
-type AnalysisRunDetailTab = "progress" | "parsed";
+type AnalysisRunDetailTab = "progress" | "parsed" | "report";
 
 const DEFAULT_SELECTIONS: ProviderSelections = {
   claimExtractorProvider: "heuristic",
   embeddingProvider: "local",
   systemOneProvider: "mock",
+  scholarlyMetadataProvider: "recorded-fixtures",
 };
 
 const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
@@ -95,6 +96,19 @@ function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
       className={cn("shrink-0 capitalize", STATUS_CLASS_NAMES[status])}
     >
       {statusLabel(status)}
+    </Badge>
+  );
+}
+
+function ReferenceResolutionBadge({ status }: { status: string }) {
+  const className = status === "RESOLVED"
+    ? "border-primary/20 bg-primary/5 text-primary"
+    : status === "UNSUPPORTED_REFERENCE_TYPE"
+      ? "border-destructive/25 bg-destructive/10 text-destructive"
+      : "border-warning/40 bg-warning/10 text-warning-foreground";
+  return (
+    <Badge variant="outline" className={cn("shrink-0", className)}>
+      {status.replaceAll("_", " ").toLowerCase()}
     </Badge>
   );
 }
@@ -176,6 +190,9 @@ export function UploadDashboard() {
   const [parsedDocumentResult, setParsedDocumentResult] = useState<
     { runId: string; document: ParsedDocument } | { runId: string; error: string } | null
   >(null);
+  const [reportResult, setReportResult] = useState<
+    { runId: string; report: EvidenceCoverageReport } | { runId: string; error: string } | null
+  >(null);
   const detailsCardRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingDetailsScroll = useRef(false);
@@ -197,6 +214,16 @@ export function UploadDashboard() {
   const parsedDocumentError = parsedDocumentResultForSelection && "error" in parsedDocumentResultForSelection
     ? parsedDocumentResultForSelection.error
     : null;
+  const reportResultForSelection = reportResult?.runId === selectedRunId ? reportResult : null;
+  const coverageReport = reportResultForSelection && "report" in reportResultForSelection
+    ? reportResultForSelection.report
+    : null;
+  const coverageReportError = reportResultForSelection && "error" in reportResultForSelection
+    ? reportResultForSelection.error
+    : null;
+  const coverageReportLoading = Boolean(
+    selectedRun && isParsedDocumentReady(selectedRunStatus) && !reportResultForSelection,
+  );
   const citationContextAnchorsByReferenceKey = useMemo(() => {
     const anchorsByReferenceKey = new Map<string, Array<{ id: string; label: string }>>();
     if (!parsedDocument) return anchorsByReferenceKey;
@@ -250,7 +277,7 @@ export function UploadDashboard() {
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
         const directory = (await response.json()) as ProviderDirectory;
-        const roles: ProviderRole[] = ["claimExtractor", "embedding", "systemOne"];
+        const roles: ProviderRole[] = ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata"];
         if (roles.some((role) => !directory.providers[role]?.length)) {
           throw new Error("The API has no enabled provider for one or more Analysis Run stages.");
         }
@@ -263,6 +290,7 @@ export function UploadDashboard() {
           claimExtractorProvider: selectAvailable("claimExtractor", current.claimExtractorProvider),
           embeddingProvider: selectAvailable("embedding", current.embeddingProvider),
           systemOneProvider: selectAvailable("systemOne", current.systemOneProvider),
+          scholarlyMetadataProvider: selectAvailable("scholarlyMetadata", current.scholarlyMetadataProvider),
         }));
         setProviderError(null);
       })
@@ -287,6 +315,26 @@ export function UploadDashboard() {
     scrollToDetails(detailsCardRef.current);
     pendingDetailsScroll.current = false;
   }, [selectedRunId]);
+
+  useEffect(() => {
+    if (!selectedRunId || !isParsedDocumentReady(selectedRunStatus)) return;
+
+    let active = true;
+    void fetch(`/api/v1/analysis-runs/${encodeURIComponent(selectedRunId)}/report`, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await readError(response));
+        return (await response.json()) as EvidenceCoverageReport;
+      })
+      .then((report) => { if (active) setReportResult({ runId: selectedRunId, report }); })
+      .catch((cause: unknown) => {
+        if (active) setReportResult({
+          runId: selectedRunId,
+          error: cause instanceof Error ? cause.message : "Could not load the Evidence Coverage Report.",
+        });
+      });
+
+    return () => { active = false; };
+  }, [selectedRunId, selectedRunStatus]);
 
   useEffect(() => {
     if (!selectedRunId || !isParsedDocumentReady(selectedRunStatus)) return;
@@ -322,6 +370,7 @@ export function UploadDashboard() {
       claimExtractorProvider: role === "claimExtractor" ? providerId : current.claimExtractorProvider,
       embeddingProvider: role === "embedding" ? providerId : current.embeddingProvider,
       systemOneProvider: role === "systemOne" ? providerId : current.systemOneProvider,
+      scholarlyMetadataProvider: role === "scholarlyMetadata" ? providerId : current.scholarlyMetadataProvider,
     }));
   }
 
@@ -448,6 +497,7 @@ export function UploadDashboard() {
                   ["claimExtractor", "Claim extraction", "claimExtractorProvider"],
                   ["embedding", "Embeddings", "embeddingProvider"],
                   ["systemOne", "Evidence assessment", "systemOneProvider"],
+                  ["scholarlyMetadata", "Bibliography resolution", "scholarlyMetadataProvider"],
                 ] as const).map(([role, label, selectionField]) => {
                   const selectId = `provider-${role}`;
                   return (
@@ -696,7 +746,7 @@ export function UploadDashboard() {
               <Tabs
                 value={activeDetailTab}
                 onValueChange={(value) => {
-                  if (value === "progress" || value === "parsed") setActiveDetailTab(value);
+                  if (value === "progress" || value === "parsed" || value === "report") setActiveDetailTab(value);
                 }}
                 className="gap-4"
               >
@@ -721,6 +771,17 @@ export function UploadDashboard() {
                     <span className="sm:hidden">Parsed</span>
                     <span className="hidden sm:inline">Parsed Document</span>
                   </TabsTrigger>
+                  <ArrowRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" aria-hidden="true" />
+                  <TabsTrigger
+                    value="report"
+                    aria-label="Evidence Coverage Report"
+                    disabled={!isParsedDocumentReady(selectedRunStatus)}
+                    className="min-h-11 min-w-0 justify-start rounded-none px-1.5 text-[0.65rem] text-muted-foreground uppercase tracking-normal data-active:text-primary disabled:opacity-100 aria-disabled:opacity-100 sm:flex-none sm:px-2 sm:text-xs sm:tracking-[0.08em]"
+                  >
+                    <span className="font-mono text-warning-foreground">03</span>
+                    <span className="sm:hidden">Report</span>
+                    <span className="hidden sm:inline">Evidence Coverage Report</span>
+                  </TabsTrigger>
                 </TabsList>
 
                 <div className="flex justify-end">
@@ -729,13 +790,15 @@ export function UploadDashboard() {
                     variant="outline"
                     size="sm"
                     className="min-h-11"
-                    disabled={activeDetailTab === "progress" && !isParsedDocumentReady(selectedRunStatus)}
-                    onClick={() => setActiveDetailTab(activeDetailTab === "progress" ? "parsed" : "progress")}
+                    disabled={activeDetailTab !== "report" && !isParsedDocumentReady(selectedRunStatus)}
+                    onClick={() => setActiveDetailTab(activeDetailTab === "progress" ? "parsed" : activeDetailTab === "parsed" ? "report" : "parsed")}
                   >
                     {activeDetailTab === "progress" ? (
                       <>Next: Parsed Document <ArrowRight aria-hidden="true" /></>
+                    ) : activeDetailTab === "parsed" ? (
+                      <>Next: Evidence Coverage Report <ArrowRight aria-hidden="true" /></>
                     ) : (
-                      <><ArrowLeft aria-hidden="true" /> Run Progress</>
+                      <><ArrowLeft aria-hidden="true" /> Parsed Document</>
                     )}
                   </Button>
                 </div>
@@ -754,7 +817,7 @@ export function UploadDashboard() {
                     <dd className="m-0 break-all font-mono text-xs leading-relaxed text-foreground">{selectedRun.sourceContentSha256}</dd>
                     <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Configuration</dt>
                     <dd className="m-0 break-words text-sm text-foreground">
-                      {selectedRun.configuration.claimExtractor.provider} · {selectedRun.configuration.embedding.provider} · {selectedRun.configuration.systemOne.provider}
+                      {selectedRun.configuration.claimExtractor.provider} · {selectedRun.configuration.embedding.provider} · {selectedRun.configuration.systemOne.provider} · {selectedRun.configuration.referenceResolution?.provider?.provider ?? "not configured"}
                     </dd>
                     <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Worker stage</dt>
                     <dd className="m-0 text-sm capitalize text-foreground">
@@ -974,6 +1037,113 @@ export function UploadDashboard() {
                       </section>
                     </div>
                   )}
+                </TabsContent>
+
+                <TabsContent value="report" className="space-y-5 outline-none">
+                  {coverageReportLoading && (
+                    <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+                      <Spinner aria-hidden="true" /> Loading Evidence Coverage Report…
+                    </p>
+                  )}
+                  {coverageReportError && (
+                    <Alert variant="destructive">
+                      <AlertTitle>Report unavailable</AlertTitle>
+                      <AlertDescription>{coverageReportError}</AlertDescription>
+                    </Alert>
+                  )}
+                  {coverageReport && (() => {
+                    const resolution = coverageReport.referenceResolution;
+                    const counts = resolution.summary;
+                    return (
+                      <div className="space-y-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Evidence Coverage Report</p>
+                            <h3 className="font-heading text-lg font-semibold tracking-tight">Bibliography resolution</h3>
+                          </div>
+                          <Badge variant="secondary" className="font-mono text-xs">
+                            {resolution.executionStatus.toLowerCase()}
+                          </Badge>
+                        </div>
+                        <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <dt className="font-mono text-xs uppercase text-muted-foreground">Score policy</dt>
+                            <dd className="m-0 break-words font-mono text-xs text-foreground">{resolution.scorePolicyVersion ?? "Not configured for this run"}</dd>
+                          </div>
+                          <div className="space-y-1">
+                            <dt className="font-mono text-xs uppercase text-muted-foreground">Configured threshold</dt>
+                            <dd className="m-0 font-mono text-xs text-foreground">{resolution.confidenceThreshold === null ? "Not configured" : resolution.confidenceThreshold.toFixed(2)}</dd>
+                          </div>
+                        </dl>
+                        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                          {([
+                            ["Bibliography entries", counts.total],
+                            ["Resolved", counts.resolved],
+                            ["Unresolved", counts.unresolved],
+                            ["Unsupported types", counts.unsupportedReferenceType],
+                            ["Not attempted", counts.notAttempted],
+                          ] as const).map(([label, count]) => (
+                            <div key={label} className="rounded-lg border border-border bg-card px-3 py-3">
+                              <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
+                              <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">{count}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                        {resolution.entries.length === 0 ? (
+                          <p className="rounded-lg border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
+                            No Bibliography Entries were available for resolution.
+                          </p>
+                        ) : (
+                          <ol className="space-y-3">
+                            {resolution.entries.map((entry) => (
+                              <li key={entry.localReferenceKey} className="rounded-lg border border-border bg-card p-4">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div className="min-w-0 space-y-1">
+                                    <h4 className="break-words font-medium leading-relaxed">{entry.title || entry.localReferenceKey}</h4>
+                                    <p className="break-words text-sm text-muted-foreground">{entry.rawText}</p>
+                                  </div>
+                                  <ReferenceResolutionBadge status={entry.status} />
+                                </div>
+                                <p className="mt-2 font-mono text-xs text-muted-foreground">
+                                  {entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}
+                                  {entry.confidenceScore !== null ? ` · score ${entry.confidenceScore.toFixed(3)}` : ""}
+                                </p>
+                                {entry.reasonCode && (
+                                  <p className="mt-2 text-xs text-muted-foreground">Resolution: {entry.reasonCode.replaceAll("_", " ").toLowerCase()}</p>
+                                )}
+                                {entry.canonicalPaper && (
+                                  <div className="mt-3 space-y-1 border-t border-border pt-3">
+                                    <p className="text-sm font-medium">Canonical Paper: {entry.canonicalPaper.title}</p>
+                                    {entry.canonicalPaper.authors.length > 0 && (
+                                      <p className="break-words text-xs text-muted-foreground">{entry.canonicalPaper.authors.join(", ")}</p>
+                                    )}
+                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                      {entry.canonicalPaper.year && <span>{entry.canonicalPaper.year}</span>}
+                                      {entry.canonicalPaper.doi && (
+                                        <a
+                                          className="break-all text-primary underline underline-offset-4 hover:text-primary/80"
+                                          href={`https://doi.org/${entry.canonicalPaper.doi.split("/").map(encodeURIComponent).join("/")}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                        >
+                                          DOI: {entry.canonicalPaper.doi}
+                                        </a>
+                                      )}
+                                      <span className="break-all font-mono">Canonical ID {entry.canonicalPaper.id}</span>
+                                    </div>
+                                    {entry.matchMethod && <p className="text-xs text-muted-foreground">Matched by {entry.matchMethod.replaceAll("_", " ").toLowerCase()}</p>}
+                                  </div>
+                                )}
+                              </li>
+                            ))}
+                          </ol>
+                        )}
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          Ambiguous and below-threshold matches remain unresolved. The configured threshold is pinned to this run; numeric calibration remains a separate release gate. This report does not claim to complete Atomic Claim or evidence analysis.
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </TabsContent>
               </Tabs>
             </CardContent>

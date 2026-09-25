@@ -190,9 +190,14 @@ class ParsedDocumentRepository(
         )
         val bibliographyEntries = jdbc.query(
             """
-            SELECT entry_order, local_reference_key, raw_text, parsed_title, parsed_authors::text AS parsed_authors,
-                   parsed_year, parsed_doi, reference_type, resolution_status
-              FROM bibliography_entries WHERE analysis_run_id = ? ORDER BY entry_order
+            SELECT entry.entry_order, entry.local_reference_key, entry.raw_text, entry.parsed_title,
+                   entry.parsed_authors::text AS parsed_authors, entry.parsed_year, entry.parsed_doi,
+                   entry.reference_type, COALESCE(resolution.status, entry.resolution_status) AS resolution_status
+              FROM bibliography_entries entry
+              LEFT JOIN bibliography_entry_resolutions resolution
+                ON resolution.analysis_run_id = entry.analysis_run_id
+               AND resolution.bibliography_entry_id = entry.id
+             WHERE entry.analysis_run_id = ? ORDER BY entry.entry_order
             """.trimIndent(),
             { rs, _ -> rs.toBibliographyEntryView() },
             analysisRunId,

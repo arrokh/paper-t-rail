@@ -1,0 +1,192 @@
+package com.papertrail.api.references
+
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.papertrail.api.providers.DataCategory
+import com.papertrail.api.providers.ProviderCallGate
+import com.papertrail.api.providers.reviewedExternalProviderCatalog
+import com.papertrail.api.runs.ExternalProviderConsentSnapshot
+import com.papertrail.api.runs.RunConfigurationFactory
+import com.papertrail.api.runs.RunConfigurationRequest
+import com.papertrail.api.runs.ValidationLimitsSnapshot
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Test
+import org.springframework.http.HttpMethod
+import org.springframework.http.MediaType
+import org.springframework.test.web.client.ExpectedCount
+import org.springframework.test.web.client.MockRestServiceServer
+import org.springframework.test.web.client.match.MockRestRequestMatchers.method
+import org.springframework.test.web.client.match.MockRestRequestMatchers.queryParam
+import org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo
+import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
+import org.springframework.web.client.RestClient
+import org.hamcrest.Matchers.containsString
+
+class CrossrefScholarlyMetadataLookupTest {
+    private val objectMapper = jacksonObjectMapper()
+    private val providerCatalog = reviewedExternalProviderCatalog()
+    private val gate = ProviderCallGate(providerCatalog)
+    private val runConfigurationFactory = RunConfigurationFactory(
+        objectMapper = objectMapper,
+        providerCatalog = providerCatalog,
+        parserId = "grobid",
+        parserVersion = "0.9.1-crf",
+        languageDetectorVersion = "0.6",
+        limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
+    )
+
+    @Test
+    fun `missing per-run bibliography metadata consent results in no Crossref HTTP request`() {
+        val builder = RestClient.builder().baseUrl("https://api.crossref.org")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(ExpectedCount.never(), requestTo(containsString("api.crossref.org")))
+        val configuration = crossrefConfiguration().copy(externalProviderConsents = emptyList())
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, configuration, null)
+
+        assertThrows(com.papertrail.api.providers.ProviderCallRejectedException::class.java) {
+            lookup.byDoi("10.1234/unconsented")
+        }
+
+        server.verify()
+    }
+
+    @Test
+    fun `consented DOI lookup sends the request and returns Crossref metadata`() {
+        val builder = RestClient.builder().baseUrl("https://api.crossref.org")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo(containsString("/works/10.1234")))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess(
+                """{"message":{"DOI":"10.1234/confirmed","title":["Confirmed study"],"author":[{"given":"Ada","family":"Researcher"}],"published-print":{"date-parts":[[2024]]}}}""",
+                MediaType.APPLICATION_JSON,
+            ))
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null)
+
+        val work = lookup.byDoi("10.1234/confirmed")
+
+        assertEquals("10.1234/confirmed", work?.doi)
+        assertEquals("Confirmed study", work?.title)
+        assertEquals(listOf("Ada Researcher"), work?.authors)
+        assertEquals(2024, work?.year)
+        server.verify()
+    }
+
+    @Test
+    fun `metadata search sends only the bibliography query and parses returned works`() {
+        val builder = RestClient.builder().baseUrl("https://api.crossref.org")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo(containsString("/works?")))
+            .andExpect(method(HttpMethod.GET))
+            .andExpect(queryParam("query.bibliographic", "A%20test%20title%20Ada%20Researcher%202024"))
+            .andRespond(withSuccess(
+                """{"message":{"items":[{"DOI":"10.1234/search-match","title":["A test title"],"author":[{"given":"Ada","family":"Researcher"}],"issued":{"date-parts":[[2024]]}}]}}""",
+                MediaType.APPLICATION_JSON,
+            ))
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null)
+
+        val matches = lookup.search(BibliographyReference("A test title", listOf("Ada Researcher"), 2024, null, "JOURNAL_ARTICLE"))
+
+        assertEquals(1, matches.size)
+        assertEquals("10.1234/search-match", matches.single().doi)
+        assertEquals("A test title", matches.single().title)
+        server.verify()
+    }
+
+    @Test
+    fun `contact email is separately consented before Crossref can dispatch a request`() {
+        val contactEmail = "operator@example.invalid"
+        val catalog = reviewedExternalProviderCatalogWithContactEmail(contactEmail)
+        val configurationFactory = RunConfigurationFactory(
+            objectMapper = objectMapper,
+            providerCatalog = catalog,
+            parserId = "grobid",
+            parserVersion = "0.9.1-crf",
+            languageDetectorVersion = "0.6",
+            limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
+        )
+        val fullyConsented = configurationFactory.from(
+            com.papertrail.api.runs.RunConfigurationRequest(
+                scholarlyMetadataProvider = "crossref",
+                externalProviderConsents = listOf(
+                    ExternalProviderConsentSnapshot("crossref", listOf("bibliographic_metadata", "provider_contact_email")),
+                ),
+            ),
+        )
+        val missingEmailConsent = fullyConsented.copy(
+            externalProviderConsents = listOf(
+                ExternalProviderConsentSnapshot("crossref", listOf("bibliographic_metadata")),
+            ),
+        )
+        val builder = RestClient.builder().baseUrl("https://api.crossref.org")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(ExpectedCount.never(), requestTo(containsString("api.crossref.org")))
+        val lookup = CrossrefScholarlyMetadataLookup(
+            builder.build(),
+            objectMapper,
+            ProviderCallGate(catalog),
+            missingEmailConsent,
+            contactEmail,
+        )
+
+        assertThrows(com.papertrail.api.providers.ProviderCallRejectedException::class.java) {
+            lookup.search(BibliographyReference("A test title", listOf("A Researcher"), 2024, null, "JOURNAL_ARTICLE"))
+        }
+
+        server.verify()
+    }
+
+    @Test
+    fun `rejects changed Crossref contact email after the run is configured without making a request`() {
+        val originalEmail = "original@example.invalid"
+        val changedEmail = "changed@example.invalid"
+        val originalCatalog = reviewedExternalProviderCatalogWithContactEmail(originalEmail)
+        val configuration = RunConfigurationFactory(
+            objectMapper = objectMapper,
+            providerCatalog = originalCatalog,
+            parserId = "grobid",
+            parserVersion = "0.9.1-crf",
+            languageDetectorVersion = "0.6",
+            limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
+        ).from(
+            RunConfigurationRequest(
+                scholarlyMetadataProvider = "crossref",
+                externalProviderConsents = listOf(
+                    ExternalProviderConsentSnapshot("crossref", listOf("bibliographic_metadata", "provider_contact_email")),
+                ),
+            ),
+        )
+        val builder = RestClient.builder().baseUrl("https://api.crossref.org")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(ExpectedCount.never(), requestTo(containsString("api.crossref.org")))
+        val lookup = CrossrefScholarlyMetadataLookup(
+            builder.build(),
+            objectMapper,
+            ProviderCallGate(reviewedExternalProviderCatalogWithContactEmail(changedEmail)),
+            configuration,
+            changedEmail,
+        )
+
+        assertThrows(com.papertrail.api.providers.ProviderCallRejectedException::class.java) {
+            lookup.search(BibliographyReference("A test title", listOf("A Researcher"), 2024, null, "JOURNAL_ARTICLE"))
+        }
+
+        server.verify()
+    }
+
+    private fun reviewedExternalProviderCatalogWithContactEmail(contactEmail: String) =
+        com.papertrail.api.providers.ProviderCatalog.safeDefaults(
+            crossrefEnabled = true,
+            crossrefEnablementReviewed = true,
+            crossrefRetentionDisclosure = "Reviewed test retention disclosure.",
+            crossrefContactEmail = contactEmail,
+        )
+
+    private fun crossrefConfiguration() = runConfigurationFactory.from(
+        RunConfigurationRequest(
+            scholarlyMetadataProvider = "crossref",
+            externalProviderConsents = listOf(
+                ExternalProviderConsentSnapshot("crossref", listOf(DataCategory.BIBLIOGRAPHIC_METADATA.id)),
+            ),
+        ),
+    )
+}
