@@ -358,6 +358,28 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `cleans unreferenced raw parser output when parsed-data persistence rolls back`() {
+        val created = createQueuedRun()
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        val transactionTemplate = TransactionTemplate(
+            RollbackOnNthCommitTransactionManager(DataSourceTransactionManager(dataSource), failingCommit = 2),
+        )
+        val handler = eventHandler(transactionTemplate = transactionTemplate)
+
+        assertThrows(TransactionSystemException::class.java) { handler.handle(event) }
+
+        val rawTeiKey = "source/${created.documentId}/analysis-runs/${created.analysisRunId}/grobid-${expectedSha256("<TEI>test GROBID output</TEI>".toByteArray())}.xml"
+        assertThrows(IllegalStateException::class.java) { objectStore.get(rawTeiKey) }
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM parsed_document_parses WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+    }
+
+    @Test
     fun `duplicate Redis delivery is applied once and acknowledged only after inbox commit`() {
         val created = createQueuedRun()
         val stream = "ae:test:${UUID.randomUUID()}"
@@ -878,6 +900,34 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
     }
 
+    private class RollbackOnNthCommitTransactionManager(
+        private val delegate: PlatformTransactionManager,
+        private val failingCommit: Int,
+    ) : PlatformTransactionManager {
+        private var commitCount = 0
+        private var rolledBackStatus: TransactionStatus? = null
+
+        override fun getTransaction(definition: TransactionDefinition?): TransactionStatus = delegate.getTransaction(definition)
+
+        override fun commit(status: TransactionStatus) {
+            commitCount++
+            if (commitCount == failingCommit) {
+                delegate.rollback(status)
+                rolledBackStatus = status
+                throw TransactionSystemException("Simulated commit failure after transaction rollback.")
+            }
+            delegate.commit(status)
+        }
+
+        override fun rollback(status: TransactionStatus) {
+            if (rolledBackStatus === status) {
+                rolledBackStatus = null
+                return
+            }
+            delegate.rollback(status)
+        }
+    }
+
     private class RetryableDoiLookupFactory(
         private val failOnlyFirstDoiLookup: Boolean,
     ) : ScholarlyMetadataLookupFactory {
@@ -1108,10 +1158,11 @@ class AnalysisRunQueueIntegrationTest {
     private fun eventHandler(
         parser: ScientificDocumentParser = TestScientificDocumentParser,
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
+        transactionTemplate: TransactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
     ): DocumentAnalysisRequestedHandler {
         val processingService = AnalysisRunProcessingService(
             jdbc,
-            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            transactionTemplate,
             objectMapper,
             objectStore,
             parser,

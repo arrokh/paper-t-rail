@@ -117,7 +117,6 @@ class AnalysisRunProcessingService(
             val rawTeiObjectKey =
                 "source/${event.payload.documentId}/analysis-runs/${event.analysisRunId}/grobid-${sha256Hex(parsed.rawParserOutput)}.xml"
             objectStore.put(rawTeiObjectKey, parsed.rawParserOutput, "application/xml")
-            var transactionBodyCompleted = false
             try {
                 transactionTemplate.executeWithoutResult {
                     parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, extractedClaims)
@@ -138,11 +137,9 @@ class AnalysisRunProcessingService(
                         run.sourceHash,
                     )
                     if (updated != 1) throw IllegalStateException("Analysis Run could not advance to reference resolution.")
-                    transactionBodyCompleted = true
                 }
-                if (!transactionBodyCompleted) cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
             } catch (exception: Exception) {
-                if (!transactionBodyCompleted) cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
+                cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
                 throw exception
             }
         } else if (existingParsed.sourceContentSha256 != run.sourceHash ||
