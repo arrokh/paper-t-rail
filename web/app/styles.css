@@ -134,7 +134,8 @@
 }
 
 .citation-context-anchor.citation-target-highlight > article,
-.bibliography-entry-anchor.citation-target-highlight {
+.bibliography-entry-anchor.citation-target-highlight,
+.reference-resolution-anchor.citation-target-highlight > article {
   outline: 2px solid transparent;
   outline-offset: 3px;
   animation: citation-target-arrival 1.2s ease-out both;
@@ -151,7 +152,8 @@
   }
 
   .citation-context-anchor.citation-target-highlight > article,
-  .bibliography-entry-anchor.citation-target-highlight {
+  .bibliography-entry-anchor.citation-target-highlight,
+  .reference-resolution-anchor.citation-target-highlight > article {
     animation: none !important;
     background-color: color-mix(in srgb, var(--accent) 55%, transparent);
     outline: 2px solid var(--ring);

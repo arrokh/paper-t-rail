@@ -49,12 +49,11 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { TabsContent } from "@/components/ui/tabs";
+import { ReferenceResolutionBadge } from "@/components/reference-resolution-badge";
+import { ReferenceResolutionEntryCard } from "@/components/reference-resolution-entry-card";
+import { WorkflowStepTabs, type WorkflowStep } from "@/components/workflow-step-tabs";
+import { scrollToAnchorTarget } from "@/lib/scroll-to-anchor";
 
 const RUN_PAGE_SIZE = 25;
 
@@ -100,21 +99,27 @@ function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
   );
 }
 
-function ReferenceResolutionBadge({ status }: { status: string }) {
-  const className = status === "RESOLVED"
-    ? "border-primary/20 bg-primary/5 text-primary"
-    : status === "UNSUPPORTED_REFERENCE_TYPE"
-      ? "border-destructive/25 bg-destructive/10 text-destructive"
-      : "border-warning/40 bg-warning/10 text-warning-foreground";
-  return (
-    <Badge variant="outline" className={cn("shrink-0", className)}>
-      {status.replaceAll("_", " ").toLowerCase()}
-    </Badge>
-  );
-}
-
 function isParsedDocumentReady(status: AnalysisRun["status"] | undefined): boolean {
   return status === "PARSED" || status === "COMPLETED" || status === "COMPLETED_WITH_WARNINGS";
+}
+
+function runProgressStep(status: AnalysisRun["status"] | undefined): Pick<WorkflowStep, "state" | "statusLabel"> {
+  switch (status) {
+    case "QUEUED":
+      return { state: "waiting", statusLabel: "Queued" };
+    case "PROCESSING":
+      return { state: "in-progress", statusLabel: "In progress" };
+    case "PARSED":
+      return { state: "ready", statusLabel: "Parsed" };
+    case "COMPLETED":
+      return { state: "complete", statusLabel: "Done" };
+    case "COMPLETED_WITH_WARNINGS":
+      return { state: "complete", statusLabel: "Done with warnings" };
+    case "FAILED":
+      return { state: "failed", statusLabel: "Failed" };
+    default:
+      return { state: "waiting", statusLabel: "Select a run" };
+  }
 }
 
 function scrollToDetails(element: HTMLElement | null) {
@@ -132,45 +137,11 @@ function scrollToParsedDocumentTarget(event: MouseEvent<HTMLAnchorElement>) {
   if (!target) return;
 
   event.preventDefault();
-  const hash = event.currentTarget.hash;
-  if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+  scrollToAnchorTarget(target, event.currentTarget.hash);
+}
 
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let didScroll = false;
-  let finished = false;
-  let settleTimer: number | null = null;
-  let noScrollTimer: number | null = null;
-
-  const highlightTarget = () => {
-    target.classList.remove("citation-target-highlight");
-    void target.offsetWidth;
-    target.classList.add("citation-target-highlight");
-    window.setTimeout(() => target.classList.remove("citation-target-highlight"), 1_500);
-  };
-  const finishAfterScroll = () => {
-    if (finished) return;
-    finished = true;
-    if (settleTimer !== null) window.clearTimeout(settleTimer);
-    if (noScrollTimer !== null) window.clearTimeout(noScrollTimer);
-    window.removeEventListener("scroll", handleScroll);
-    document.removeEventListener("scrollend", finishAfterScroll);
-    window.removeEventListener("scrollend", finishAfterScroll);
-    highlightTarget();
-  };
-  const handleScroll = () => {
-    didScroll = true;
-    if (noScrollTimer !== null) window.clearTimeout(noScrollTimer);
-    if (settleTimer !== null) window.clearTimeout(settleTimer);
-    settleTimer = window.setTimeout(finishAfterScroll, 500);
-  };
-
-  window.addEventListener("scroll", handleScroll, { passive: true });
-  document.addEventListener("scrollend", finishAfterScroll, { once: true });
-  window.addEventListener("scrollend", finishAfterScroll, { once: true });
-  target.scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
-  noScrollTimer = window.setTimeout(() => {
-    if (!didScroll) finishAfterScroll();
-  }, 120);
+function referenceResolutionAnchorId(referenceKey: string): string {
+  return `reference-resolution-${referenceKey}`;
 }
 
 export function UploadDashboard() {
@@ -195,7 +166,7 @@ export function UploadDashboard() {
   >(null);
   const detailsCardRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pendingDetailsScroll = useRef(false);
+  const pendingDetailTarget = useRef<{ tab: AnalysisRunDetailTab; targetId: string } | null>(null);
   const listRequestSequence = useRef(0);
   const pageCursor = pageCursors[pageIndex] ?? null;
   const runs = runPage.items;
@@ -221,6 +192,14 @@ export function UploadDashboard() {
   const coverageReportError = reportResultForSelection && "error" in reportResultForSelection
     ? reportResultForSelection.error
     : null;
+  const resolutionEntriesByReferenceKey = useMemo(
+    () => new Map(coverageReport?.referenceResolution.entries.map((entry) => [entry.localReferenceKey, entry] as const) ?? []),
+    [coverageReport],
+  );
+  const parsedReferenceKeys = useMemo(
+    () => new Set(parsedDocument?.bibliographyEntries.map((entry) => entry.localReferenceKey) ?? []),
+    [parsedDocument],
+  );
   const coverageReportLoading = Boolean(
     selectedRun && isParsedDocumentReady(selectedRunStatus) && !reportResultForSelection,
   );
@@ -261,7 +240,7 @@ export function UploadDashboard() {
       setRunPage(currentPage);
       setSelectedRunId((currentId) => currentId && currentPage.items.some((run) => run.id === currentId)
         ? currentId
-        : currentPage.items[0]?.id ?? null);
+        : null);
       setError(null);
     } catch (cause) {
       if (requestSequenceNumber !== listRequestSequence.current) return;
@@ -311,10 +290,35 @@ export function UploadDashboard() {
   }, [refreshRuns]);
 
   useEffect(() => {
-    if (!pendingDetailsScroll.current || !selectedRunId) return;
-    scrollToDetails(detailsCardRef.current);
-    pendingDetailsScroll.current = false;
-  }, [selectedRunId]);
+    const pending = pendingDetailTarget.current;
+    if (!pending || activeDetailTab !== pending.tab) return;
+
+    let frame = 0;
+    let attempts = 0;
+    const locateTarget = () => {
+      if (pendingDetailTarget.current !== pending) return;
+
+      const target = document.getElementById(pending.targetId);
+      if (target) {
+        pendingDetailTarget.current = null;
+        scrollToAnchorTarget(target);
+        return;
+      }
+
+      attempts += 1;
+      if (attempts < 8) {
+        frame = window.requestAnimationFrame(locateTarget);
+        return;
+      }
+
+      const targetDataLoaded = pending.tab === "parsed" ? Boolean(parsedDocument) : Boolean(coverageReport);
+      const targetDataFailed = pending.tab === "parsed" ? Boolean(parsedDocumentError) : Boolean(coverageReportError);
+      if (targetDataLoaded || targetDataFailed) pendingDetailTarget.current = null;
+    };
+
+    frame = window.requestAnimationFrame(locateTarget);
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeDetailTab, parsedDocument, parsedDocumentError, coverageReport, coverageReportError]);
 
   useEffect(() => {
     if (!selectedRunId || !isParsedDocumentReady(selectedRunStatus)) return;
@@ -388,6 +392,7 @@ export function UploadDashboard() {
   }
 
   function selectRun(runId: string) {
+    pendingDetailTarget.current = null;
     setSelectedRunId(runId);
     setActiveDetailTab("progress");
     scrollToDetails(detailsCardRef.current);
@@ -395,7 +400,8 @@ export function UploadDashboard() {
 
   function goToNextRunPage() {
     if (!runPage.nextCursor || loading) return;
-    pendingDetailsScroll.current = true;
+    pendingDetailTarget.current = null;
+    setSelectedRunId(null);
     setLoading(true);
     setActiveDetailTab("progress");
     setPageCursors((current) => [...current.slice(0, pageIndex + 1), runPage.nextCursor!]);
@@ -404,10 +410,23 @@ export function UploadDashboard() {
 
   function goToPreviousRunPage() {
     if (pageIndex === 0 || loading) return;
-    pendingDetailsScroll.current = true;
+    pendingDetailTarget.current = null;
+    setSelectedRunId(null);
     setLoading(true);
     setActiveDetailTab("progress");
     setPageIndex(pageIndex - 1);
+  }
+
+  function navigateToDetailTarget(
+    event: MouseEvent<HTMLAnchorElement>,
+    tab: AnalysisRunDetailTab,
+    targetId: string,
+  ) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    event.preventDefault();
+    pendingDetailTarget.current = { tab, targetId };
+    setActiveDetailTab(tab);
   }
 
   async function startRun(event: FormEvent<HTMLFormElement>) {
@@ -477,6 +496,31 @@ export function UploadDashboard() {
   }
 
   const activeError = error ?? providerError;
+  const parsedDocumentReady = isParsedDocumentReady(selectedRunStatus);
+  const parsedStepState: Pick<WorkflowStep, "state" | "statusLabel"> = !parsedDocumentReady
+    ? { state: "waiting", statusLabel: "Waiting" }
+    : parsedDocumentLoading
+      ? { state: "loading", statusLabel: "Loading" }
+      : parsedDocumentError
+        ? { state: "failed", statusLabel: "Unavailable" }
+        : { state: "ready", statusLabel: "Ready" };
+  const reportStepState: Pick<WorkflowStep, "state" | "statusLabel"> = !parsedDocumentReady
+    ? { state: "waiting", statusLabel: "Waiting" }
+    : coverageReportLoading
+      ? { state: "loading", statusLabel: "Loading" }
+      : coverageReportError
+        ? { state: "failed", statusLabel: "Unavailable" }
+        : { state: "ready", statusLabel: "Ready" };
+  const workflowSteps: WorkflowStep[] = [
+    { value: "progress", number: "01", label: "Run Progress", compactLabel: "Progress", ...runProgressStep(selectedRunStatus) },
+    { value: "parsed", number: "02", label: "Parsed Document", compactLabel: "Parsed", ...parsedStepState, disabled: !parsedDocumentReady },
+    { value: "report", number: "03", label: "Evidence Coverage Report", compactLabel: "Report", ...reportStepState, disabled: !parsedDocumentReady },
+  ];
+
+  function scrollToDetailsHeading() {
+    document.getElementById("parsed-document-heading")?.focus({ preventScroll: true });
+    scrollToDetails(detailsCardRef.current);
+  }
 
   return (
     <section className="space-y-6" aria-label="Source Document workspace">
@@ -717,14 +761,14 @@ export function UploadDashboard() {
           </CardContent>
         </Card>
 
-        <Card className="scroll-mt-5 shadow-sm lg:col-span-2" ref={detailsCardRef}>
+        <Card className="scroll-mt-5 min-w-0 overflow-visible shadow-sm lg:col-span-2" ref={detailsCardRef}>
           <CardHeader className="gap-3 border-b border-border/70 pb-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 space-y-2">
                 <p className="flex items-center gap-2 font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
                   <span className="font-semibold text-warning-foreground">03</span> Parsed Document
                 </p>
-                <CardTitle id="parsed-document-heading" role="heading" aria-level={2} className="break-words text-xl tracking-tight">
+                <CardTitle id="parsed-document-heading" role="heading" aria-level={2} tabIndex={-1} className="break-words text-xl tracking-tight">
                   {selectedRun?.filename ?? "Analysis Run details"}
                 </CardTitle>
               </div>
@@ -743,65 +787,18 @@ export function UploadDashboard() {
             </CardContent>
           ) : (
             <CardContent className="space-y-5">
-              <Tabs
+              <WorkflowStepTabs
                 value={activeDetailTab}
                 onValueChange={(value) => {
-                  if (value === "progress" || value === "parsed" || value === "report") setActiveDetailTab(value);
+                  if (value === "progress" || value === "parsed" || value === "report") {
+                    pendingDetailTarget.current = null;
+                    setActiveDetailTab(value);
+                  }
                 }}
-                className="gap-4"
+                steps={workflowSteps}
+                onScrollToTop={scrollToDetailsHeading}
+                scrollToTopLabel="Back to Parsed Document heading"
               >
-                <TabsList variant="line" className="h-auto w-full min-w-0 justify-start gap-1 rounded-none border-b border-border bg-transparent p-0 sm:gap-3">
-                  <TabsTrigger
-                    value="progress"
-                    aria-label="Run Progress"
-                    className="min-h-11 min-w-0 justify-start rounded-none px-1.5 text-[0.65rem] text-muted-foreground uppercase tracking-normal data-active:text-primary disabled:opacity-100 aria-disabled:opacity-100 sm:flex-none sm:px-2 sm:text-xs sm:tracking-[0.08em]"
-                  >
-                    <span className="font-mono text-warning-foreground">01</span>
-                    <span className="sm:hidden">Progress</span>
-                    <span className="hidden sm:inline">Run Progress</span>
-                  </TabsTrigger>
-                  <ArrowRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" aria-hidden="true" />
-                  <TabsTrigger
-                    value="parsed"
-                    aria-label="Parsed Document"
-                    disabled={!isParsedDocumentReady(selectedRunStatus)}
-                    className="min-h-11 min-w-0 justify-start rounded-none px-1.5 text-[0.65rem] text-muted-foreground uppercase tracking-normal data-active:text-primary disabled:opacity-100 aria-disabled:opacity-100 sm:flex-none sm:px-2 sm:text-xs sm:tracking-[0.08em]"
-                  >
-                    <span className="font-mono text-warning-foreground">02</span>
-                    <span className="sm:hidden">Parsed</span>
-                    <span className="hidden sm:inline">Parsed Document</span>
-                  </TabsTrigger>
-                  <ArrowRight className="hidden size-4 shrink-0 text-muted-foreground sm:block" aria-hidden="true" />
-                  <TabsTrigger
-                    value="report"
-                    aria-label="Evidence Coverage Report"
-                    disabled={!isParsedDocumentReady(selectedRunStatus)}
-                    className="min-h-11 min-w-0 justify-start rounded-none px-1.5 text-[0.65rem] text-muted-foreground uppercase tracking-normal data-active:text-primary disabled:opacity-100 aria-disabled:opacity-100 sm:flex-none sm:px-2 sm:text-xs sm:tracking-[0.08em]"
-                  >
-                    <span className="font-mono text-warning-foreground">03</span>
-                    <span className="sm:hidden">Report</span>
-                    <span className="hidden sm:inline">Evidence Coverage Report</span>
-                  </TabsTrigger>
-                </TabsList>
-
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="min-h-11"
-                    disabled={activeDetailTab !== "report" && !isParsedDocumentReady(selectedRunStatus)}
-                    onClick={() => setActiveDetailTab(activeDetailTab === "progress" ? "parsed" : activeDetailTab === "parsed" ? "report" : "parsed")}
-                  >
-                    {activeDetailTab === "progress" ? (
-                      <>Next: Parsed Document <ArrowRight aria-hidden="true" /></>
-                    ) : activeDetailTab === "parsed" ? (
-                      <>Next: Evidence Coverage Report <ArrowRight aria-hidden="true" /></>
-                    ) : (
-                      <><ArrowLeft aria-hidden="true" /> Parsed Document</>
-                    )}
-                  </Button>
-                </div>
 
                 <TabsContent value="progress" className="space-y-5 outline-none">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -999,6 +996,7 @@ export function UploadDashboard() {
                           <ol className="space-y-3">
                             {parsedDocument.bibliographyEntries.map((entry) => {
                               const citingContexts = citationContextAnchorsByReferenceKey.get(entry.localReferenceKey) ?? [];
+                              const resolution = resolutionEntriesByReferenceKey.get(entry.localReferenceKey);
                               return (
                                 <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`} className="bibliography-entry-anchor scroll-mt-5 rounded-lg border border-border bg-card p-4">
                                   <h5 className="break-words font-medium leading-relaxed">
@@ -1013,6 +1011,21 @@ export function UploadDashboard() {
                                   <p className="mt-3 break-words text-sm leading-relaxed">{entry.rawText}</p>
                                   {entry.doi && (
                                     <p className="mt-2 break-all font-mono text-xs text-muted-foreground">DOI: {entry.doi}</p>
+                                  )}
+                                  {resolution && (
+                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-muted-foreground">Resolution</span>
+                                        <ReferenceResolutionBadge status={resolution.status} />
+                                      </div>
+                                      <a
+                                        className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary underline underline-offset-4 hover:text-primary/80 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                                        href={`#${referenceResolutionAnchorId(entry.localReferenceKey)}`}
+                                        onClick={(event) => navigateToDetailTarget(event, "report", referenceResolutionAnchorId(entry.localReferenceKey))}
+                                      >
+                                        View resolution result <ArrowRight className="size-4" aria-hidden="true" />
+                                      </a>
+                                    </div>
                                   )}
                                   {citingContexts.length > 0 && (
                                     <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border pt-3">
@@ -1096,45 +1109,14 @@ export function UploadDashboard() {
                         ) : (
                           <ol className="space-y-3">
                             {resolution.entries.map((entry) => (
-                              <li key={entry.localReferenceKey} className="rounded-lg border border-border bg-card p-4">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div className="min-w-0 space-y-1">
-                                    <h4 className="break-words font-medium leading-relaxed">{entry.title || entry.localReferenceKey}</h4>
-                                    <p className="break-words text-sm text-muted-foreground">{entry.rawText}</p>
-                                  </div>
-                                  <ReferenceResolutionBadge status={entry.status} />
-                                </div>
-                                <p className="mt-2 font-mono text-xs text-muted-foreground">
-                                  {entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}
-                                  {entry.confidenceScore !== null ? ` · score ${entry.confidenceScore.toFixed(3)}` : ""}
-                                </p>
-                                {entry.reasonCode && (
-                                  <p className="mt-2 text-xs text-muted-foreground">Resolution: {entry.reasonCode.replaceAll("_", " ").toLowerCase()}</p>
-                                )}
-                                {entry.canonicalPaper && (
-                                  <div className="mt-3 space-y-1 border-t border-border pt-3">
-                                    <p className="text-sm font-medium">Canonical Paper: {entry.canonicalPaper.title}</p>
-                                    {entry.canonicalPaper.authors.length > 0 && (
-                                      <p className="break-words text-xs text-muted-foreground">{entry.canonicalPaper.authors.join(", ")}</p>
-                                    )}
-                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                                      {entry.canonicalPaper.year && <span>{entry.canonicalPaper.year}</span>}
-                                      {entry.canonicalPaper.doi && (
-                                        <a
-                                          className="break-all text-primary underline underline-offset-4 hover:text-primary/80"
-                                          href={`https://doi.org/${entry.canonicalPaper.doi.split("/").map(encodeURIComponent).join("/")}`}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                        >
-                                          DOI: {entry.canonicalPaper.doi}
-                                        </a>
-                                      )}
-                                      <span className="break-all font-mono">Canonical ID {entry.canonicalPaper.id}</span>
-                                    </div>
-                                    {entry.matchMethod && <p className="text-xs text-muted-foreground">Matched by {entry.matchMethod.replaceAll("_", " ").toLowerCase()}</p>}
-                                  </div>
-                                )}
-                              </li>
+                              <ReferenceResolutionEntryCard
+                                key={entry.localReferenceKey}
+                                entry={entry}
+                                anchorId={referenceResolutionAnchorId(entry.localReferenceKey)}
+                                parsedEntryHref={`#bibliography-${entry.localReferenceKey}`}
+                                parsedEntryAvailable={parsedReferenceKeys.has(entry.localReferenceKey)}
+                                onViewParsedEntry={(event, referenceKey) => navigateToDetailTarget(event, "parsed", `bibliography-${referenceKey}`)}
+                              />
                             ))}
                           </ol>
                         )}
@@ -1145,7 +1127,7 @@ export function UploadDashboard() {
                     );
                   })()}
                 </TabsContent>
-              </Tabs>
+              </WorkflowStepTabs>
             </CardContent>
           )}
         </Card>
