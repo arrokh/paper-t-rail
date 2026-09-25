@@ -92,7 +92,7 @@ make lint-web       # run web lint
 make typecheck-web  # run web typecheck
 make build-web      # create the web production build
 make migrate        # deploy the Sqitch plan into the local Compose PostgreSQL service
-make migrate:ls     # list Sqitch events with full change IDs
+make migrate:ls     # print Sqitch events with full change IDs (no pager)
 make migrate:revert CHANGE=<change-id>  # revert that change and later migrations; interactive confirmation
 make clean          # destructive: remove all local application volumes
 ```

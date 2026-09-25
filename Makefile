@@ -12,9 +12,9 @@ infra-up:
 migrate:
 	set -a; if [ -f .env ]; then . ./.env; fi; set +a; $(COMPOSE) --profile migration run --rm sqitch deploy "db:pg://$${POSTGRES_USER:-papertrail}:$${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/$${POSTGRES_DB:-papertrail}"
 
-# List the Sqitch event history with full change IDs (not Git commit IDs).
+# Print Sqitch event history with full change IDs, without opening a pager.
 migrate\:ls:
-	set -a; if [ -f .env ]; then . ./.env; fi; set +a; $(COMPOSE) --profile migration run --rm sqitch log --format=oneline --abbrev 40 "db:pg://$${POSTGRES_USER:-papertrail}:$${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/$${POSTGRES_DB:-papertrail}"
+	set -a; if [ -f .env ]; then . ./.env; fi; set +a; $(COMPOSE) --profile migration run --rm sqitch --no-pager log --format=oneline --abbrev 40 "db:pg://$${POSTGRES_USER:-papertrail}:$${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/$${POSTGRES_DB:-papertrail}"
 
 # Revert CHANGE itself and all later changes; Sqitch prompts before execution.
 migrate\:revert:
