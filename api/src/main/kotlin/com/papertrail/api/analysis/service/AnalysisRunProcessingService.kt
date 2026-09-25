@@ -1,0 +1,286 @@
+package com.papertrail.api.analysis.service
+
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.citation.claims.service.ClaimExtractionService
+import com.papertrail.api.citation.parsing.ParsedDocumentRepository
+import com.papertrail.api.citation.parsing.ScientificDocumentParser
+import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.infrastructure.crypto.sha256Hex
+import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
+import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
+import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
+import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
+import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedPayload
+import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
+import org.slf4j.LoggerFactory
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.stereotype.Service
+import org.springframework.transaction.support.TransactionTemplate
+import java.sql.Timestamp
+import java.time.Instant
+import java.util.UUID
+
+@Service
+class AnalysisRunProcessingService(
+    private val jdbc: JdbcTemplate,
+    private val transactionTemplate: TransactionTemplate,
+    private val objectMapper: ObjectMapper,
+    private val objectStore: SourceDocumentObjectStore,
+    private val scientificDocumentParser: ScientificDocumentParser,
+    private val parsedDocumentRepository: ParsedDocumentRepository,
+    private val claimExtractionService: ClaimExtractionService,
+    private val referenceResolutionService: ReferenceResolutionService,
+    private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
+) {
+    fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
+        "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
+        Boolean::class.java,
+        eventId,
+    ) == true
+
+    fun process(event: PipelineEvent<DocumentAnalysisRequestedPayload>): UUID {
+        require(event.eventType == DOCUMENT_ANALYSIS_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        if (isProcessed(event.eventId)) return event.eventId
+
+        val document = jdbc.query(
+            "SELECT object_key, sha256 FROM source_documents WHERE id = ?",
+            { rs, _ -> StoredSource(rs.getString("object_key"), rs.getString("sha256")) },
+            event.payload.documentId,
+        ).firstOrNull() ?: throw IllegalStateException("Queued Source Document is missing.")
+        val run = jdbc.query(
+            """
+            SELECT document_id, source_content_sha256, source_parser_id, source_parser_version,
+                   configuration_snapshot #>> '{claimExtractor,provider}' AS claim_extractor_provider,
+                   configuration_snapshot #>> '{claimExtractor,version}' AS claim_extractor_version
+              FROM analysis_runs WHERE id = ?
+            """.trimIndent(),
+            { rs, _ ->
+                RunProvenance(
+                    rs.getObject("document_id", UUID::class.java),
+                    rs.getString("source_content_sha256"),
+                    rs.getString("source_parser_id"),
+                    rs.getString("source_parser_version"),
+                    rs.getString("claim_extractor_provider") ?: throw IllegalStateException("Analysis Run has no pinned claim extractor provider."),
+                    rs.getString("claim_extractor_version") ?: throw IllegalStateException("Analysis Run has no pinned claim extractor version."),
+                )
+            },
+            event.analysisRunId,
+        ).firstOrNull() ?: throw IllegalStateException("Queued Analysis Run is missing.")
+
+        if (run.documentId != event.payload.documentId || run.sourceHash != event.payload.sourceContentSha256 || document.sha256 != run.sourceHash) {
+            throw IllegalStateException("Queue event provenance does not match the persisted Source Document and Analysis Run.")
+        }
+        val content = objectStore.get(document.objectKey)
+        if (sha256Hex(content) != run.sourceHash) {
+            throw IllegalStateException("Stored Source Document failed its SHA-256 integrity check.")
+        }
+
+        val shouldParse = transactionTemplate.execute {
+            val updated = jdbc.update(
+                """
+                UPDATE analysis_runs
+                   SET status = CASE WHEN status = 'QUEUED' THEN 'PROCESSING' ELSE status END,
+                       started_at = COALESCE(started_at, now()),
+                       progress = jsonb_build_object(
+                           'stage', 'PARSING_DOCUMENT',
+                           'percent', 10,
+                           'message', 'The stored PDF was verified; extracting sections and citations.'
+                       ),
+                       updated_at = now()
+                 WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
+                   AND status IN ('QUEUED', 'PROCESSING')
+                """.trimIndent(),
+                event.analysisRunId,
+                event.payload.documentId,
+                run.sourceHash,
+            )
+            updated == 1
+        } ?: false
+        if (!shouldParse) {
+            if (isProcessed(event.eventId)) return event.eventId
+            throw IllegalStateException("Analysis Run is not in a parsable state.")
+        }
+
+        val existingParsed = parsedDocumentRepository.find(event.analysisRunId)
+        if (existingParsed == null) {
+            val parsed = scientificDocumentParser.parse(content)
+            if (parsed.parserId != run.parserId || parsed.parserVersion != run.parserVersion) {
+                throw IllegalStateException("The scientific parser identity does not match the Analysis Run provenance.")
+            }
+            require(parsed.rawParserOutput.isNotEmpty()) { "The scientific parser returned no raw parser output." }
+            val extractedClaims = claimExtractionService.extract(
+                run.claimExtractorProvider,
+                run.claimExtractorVersion,
+                parsed.citationContexts,
+            )
+            val rawTeiObjectKey =
+                "source/${event.payload.documentId}/analysis-runs/${event.analysisRunId}/grobid-${sha256Hex(parsed.rawParserOutput)}.xml"
+            objectStore.put(rawTeiObjectKey, parsed.rawParserOutput, "application/xml")
+            var transactionBodyCompleted = false
+            try {
+                transactionTemplate.executeWithoutResult {
+                    parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, extractedClaims)
+                    val updated = jdbc.update(
+                        """
+                        UPDATE analysis_runs
+                           SET progress = jsonb_build_object(
+                               'stage', 'RESOLVING_REFERENCES',
+                               'percent', 65,
+                               'message', 'Parsed structure and Atomic Claims saved; conservatively resolving supported bibliography entries.'
+                           ),
+                           updated_at = now()
+                         WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
+                           AND status = 'PROCESSING'
+                        """.trimIndent(),
+                        event.analysisRunId,
+                        event.payload.documentId,
+                        run.sourceHash,
+                    )
+                    if (updated != 1) throw IllegalStateException("Analysis Run could not advance to reference resolution.")
+                    transactionBodyCompleted = true
+                }
+                if (!transactionBodyCompleted) cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
+            } catch (exception: Exception) {
+                if (!transactionBodyCompleted) cleanupRawTeiIfUnreferenced(event.analysisRunId, rawTeiObjectKey)
+                throw exception
+            }
+        } else if (existingParsed.sourceContentSha256 != run.sourceHash ||
+            existingParsed.parser.provider != run.parserId || existingParsed.parser.version != run.parserVersion
+        ) {
+            throw IllegalStateException("Persisted parse provenance does not match the Analysis Run.")
+        }
+
+        val progressUpdated = jdbc.update(
+            """
+            UPDATE analysis_runs
+               SET progress = jsonb_build_object(
+                   'stage', 'RESOLVING_REFERENCES',
+                   'percent', 65,
+                   'message', 'Parsed structure and Atomic Claims saved; conservatively resolving supported bibliography entries.'
+               ),
+               updated_at = now()
+             WHERE id = ? AND document_id = ? AND source_content_sha256 = ? AND status = 'PROCESSING'
+            """.trimIndent(),
+            event.analysisRunId,
+            event.payload.documentId,
+            run.sourceHash,
+        )
+        if (progressUpdated != 1) throw IllegalStateException("Analysis Run could not advance to reference resolution.")
+        val bibliographyEntryIds = jdbc.query(
+            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? ORDER BY entry_order",
+            { rs, _ -> rs.getObject("id", UUID::class.java) },
+            event.analysisRunId,
+        )
+        val resolutionConfigured = referenceResolutionService.isResolutionConfigured(event.analysisRunId)
+        transactionTemplate.executeWithoutResult {
+            val inserted = jdbc.update(
+                "INSERT INTO inbox_events (event_id, handler_name, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
+                event.eventId,
+                DOCUMENT_ANALYSIS_HANDLER,
+                Timestamp.from(Instant.now()),
+            )
+            if (inserted == 0) return@executeWithoutResult
+            if (resolutionConfigured) {
+                bibliographyEntryIds.forEach { bibliographyEntryId ->
+                    val resolutionEvent = PipelineEvent(
+                        eventId = UUID.randomUUID(),
+                        eventType = REFERENCE_RESOLUTION_REQUESTED,
+                        schemaVersion = 1,
+                        analysisRunId = event.analysisRunId,
+                        correlationId = event.correlationId,
+                        causationId = event.eventId,
+                        occurredAt = Instant.now(),
+                        attempt = 0,
+                        payload = ReferenceResolutionRequestedPayload(
+                            documentId = event.payload.documentId,
+                            sourceContentSha256 = run.sourceHash,
+                            bibliographyEntryId = bibliographyEntryId,
+                        ),
+                    )
+                    insertOutboxEvent(resolutionEvent)
+                }
+            }
+            analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
+        }
+        return event.eventId
+    }
+
+    fun markFailed(event: PipelineEvent<DocumentAnalysisRequestedPayload>, reason: String) {
+        transactionTemplate.executeWithoutResult {
+            jdbc.update(
+                """
+                UPDATE analysis_runs
+                   SET status = 'FAILED',
+                       failure_reason = ?,
+                       progress = jsonb_build_object('stage', 'FAILED', 'percent', 0, 'message', ?),
+                       completed_at = now(),
+                       updated_at = now()
+                 WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
+                   AND status IN ('QUEUED', 'PROCESSING')
+                   AND NOT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)
+                """.trimIndent(),
+                reason,
+                reason,
+                event.analysisRunId,
+                event.payload.documentId,
+                event.payload.sourceContentSha256,
+                event.eventId,
+            )
+        }
+    }
+
+    private fun insertOutboxEvent(event: PipelineEvent<ReferenceResolutionRequestedPayload>) {
+        jdbc.update(
+            """
+            INSERT INTO outbox_events (
+                event_id, event_type, schema_version, analysis_run_id,
+                correlation_id, causation_id, occurred_at, payload, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
+            """.trimIndent(),
+            event.eventId,
+            event.eventType,
+            event.schemaVersion,
+            event.analysisRunId,
+            event.correlationId,
+            event.causationId,
+            Timestamp.from(event.occurredAt),
+            objectMapper.writeValueAsString(event),
+            Timestamp.from(Instant.now()),
+        )
+    }
+
+    private fun cleanupRawTeiIfUnreferenced(analysisRunId: UUID, objectKey: String) {
+        val referencedKey = try {
+            parsedDocumentRepository.rawTeiObjectKey(analysisRunId)
+        } catch (exception: Exception) {
+            logger.atWarn()
+                .addKeyValue("analysisRunId", analysisRunId)
+                .addKeyValue("errorType", exception.javaClass.simpleName)
+                .log("Could not verify raw GROBID object references; preserving parser output")
+            return
+        }
+        if (referencedKey == objectKey) return
+        runCatching { objectStore.delete(objectKey) }
+            .onFailure { exception ->
+                logger.atWarn()
+                    .addKeyValue("analysisRunId", analysisRunId)
+                    .addKeyValue("errorType", exception.javaClass.simpleName)
+                    .log("Failed to clean up an unreferenced raw GROBID object")
+            }
+    }
+
+    private data class StoredSource(val objectKey: String, val sha256: String)
+    private data class RunProvenance(
+        val documentId: UUID,
+        val sourceHash: String,
+        val parserId: String,
+        val parserVersion: String,
+        val claimExtractorProvider: String,
+        val claimExtractorVersion: String,
+    )
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(AnalysisRunProcessingService::class.java)
+    }
+}

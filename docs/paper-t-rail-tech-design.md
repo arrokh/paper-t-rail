@@ -2496,77 +2496,58 @@ This hybrid approach is easier to reason about than pure choreography.
 
 # 37. Suggested Backend Package Structure
 
-Keep one Spring Boot project initially.
+Keep one Spring Boot project initially. Group code by business capability first; within each feature, use role packages that make the execution path easy to follow. The names below are a guide, not a requirement to create empty packages before their behavior exists.
 
 ```text
 api/
-├── build.gradle.kts
-└── src/main/kotlin/com/example/academic/
-    │
-    ├── bootstrap/
-    │   ├── ApiApplication.kt
-    │   └── WorkerApplication.kt
-    │
-    ├── document/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── analysis/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── citation/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── scholarly/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── evidence/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── review/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── providers/
-    │   ├── claim/
-    │   ├── llm/
-    │   ├── embedding/
-    │   ├── systemone/
-    │   ├── parser/
-    │   ├── scholarly/
-    │   └── retrieval/
-    │
-    ├── messaging/
-    │   ├── inbox/
-    │   ├── outbox/
-    │   ├── redis/
-    │   └── events/
-    │
-    └── shared/
-        ├── ids/
-        ├── errors/
-        ├── json/
-        └── observability/
+├── bootstrap/
+├── document/
+│   ├── controller/       # Only if document-specific HTTP routes exist
+│   ├── service/          # Upload, validation, retention/deletion use cases
+│   ├── domain/           # Source Document rules and value types
+│   ├── repository/       # Document metadata persistence
+│   └── storage/          # Source object-store port and adapter
+├── analysis/
+│   ├── controller/       # Analysis Run HTTP entry points
+│   ├── service/          # Create, process, query, and lifecycle use cases
+│   ├── domain/           # Run state/provenance rules
+│   ├── configuration/    # Immutable run-pinned configuration snapshots
+│   ├── repository/       # Run persistence and read projections
+│   └── queue/            # Analysis Run-specific event handlers
+├── citation/
+│   ├── parsing/          # Parser contract, GROBID adapter, parsed structures
+│   ├── claims/           # Atomic Claim extraction and citation associations
+│   ├── domain/           # Citation Context, Bibliography Entry, and claim rules
+│   └── repository/       # Run-scoped parsed citation persistence
+├── scholarly/
+│   └── references/
+│       ├── controller/
+│       ├── service/      # Resolve-entry and report use cases
+│       ├── resolver/     # Pure conservative matching policy
+│       ├── repository/   # Resolution outcomes and Canonical Paper persistence
+│       ├── client/       # Scholarly metadata provider adapters
+│       ├── report/       # Reference Resolution Report projections
+│       └── queue/        # Per-Bibliography-Entry resolution handler
+├── evidence/             # Add when evidence retrieval/verification is implemented
+├── review/               # Add when Human Review is implemented
+├── infrastructure/
+│   ├── messaging/        # Generic outbox, inbox, stream worker, event envelope
+│   ├── providers/        # Shared provider catalog and consent gate
+│   ├── logging/
+│   └── observability/
+└── config/               # Composition root and framework configuration
 ```
 
-Prefer package-by-feature over giant technical packages such as:
+The intended call paths are explicit and short:
 
 ```text
-controllers/
-services/
-repositories/
+HTTP controller → feature service/use case → domain policy + repository/client adapter
+Generic message worker → feature queue handler → the same feature service/use case
 ```
 
+Keep feature-specific adapters and policies beside the feature they serve. Only genuinely reusable mechanisms—such as the generic Redis worker, outbox publisher, provider consent gate, and logging—belong in shared infrastructure. Do not create global `controllers/`, `services/`, or `repositories/` packages, and do not use `model` as a general-purpose bucket: reserve it for persistence entities/projections; keep HTTP contracts, run configuration snapshots, and domain types in their own focused packages. Put Spring-managed application services/components in a feature's `service/`; framework adapters remain in their role packages. Prefer one named production type per focused file.
+
+Migrate incrementally by end-to-end flow. Keep the public HTTP contract, persisted schema, event envelope, retry/idempotency behavior, and transaction boundaries unchanged during structural refactors. Keep the behavior tests beside the owning feature; async integration tests should exercise the real message-to-terminal-state flow.
 ---
 
 # 38. Repository Layout

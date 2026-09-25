@@ -28,7 +28,7 @@ See `docs/paper-t-rail-tech-design.md` §56 for the repository testing strategy.
 
 ### Cross-service implementation
 
-For changes in either service (`api/` or `web/`), follow `docs/agents/coding-principles.md` for simplicity, maintainability, SOLID, guard clauses, and type/file structure. API-specific Kotlin import rules are in `api/AGENTS.md`; web-specific rules are in `web/AGENTS.md`.
+For changes in either service (`api/` or `web/`), follow `docs/agents/coding-principles.md` for simplicity, maintainability, SOLID, guard clauses, and type/file structure. API-specific Kotlin import and feature-architecture rules are in `api/AGENTS.md`; web-specific rules are in `web/AGENTS.md`.
 
 ### Web UI
 

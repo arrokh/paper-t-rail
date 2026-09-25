@@ -1,21 +1,22 @@
 package com.papertrail.api.openapi
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.papertrail.api.logging.RequestCorrelationFilter
-import com.papertrail.api.parsing.ParsedDocumentRepository
-import com.papertrail.api.parsing.ParsedDocumentView
-import com.papertrail.api.parsing.ParsedAtomicClaimView
-import com.papertrail.api.parsing.ParsedClaimCitationTargetView
-import com.papertrail.api.parsing.ParsedParserProvenance
-import com.papertrail.api.references.report.ReferenceResolutionReportResponse
-import com.papertrail.api.references.report.ReferenceResolutionReport
-import com.papertrail.api.references.report.ReferenceResolutionSummary
-import com.papertrail.api.references.service.ReferenceResolutionService
-import com.papertrail.api.runs.AnalysisRunPage
-import com.papertrail.api.runs.AnalysisRunSummary
-import com.papertrail.api.queue.OutboxPublisher
-import com.papertrail.api.runs.AnalysisRunService
-import com.papertrail.api.runs.RunConfigurationFactory
+import com.papertrail.api.infrastructure.logging.RequestCorrelationFilter
+import com.papertrail.api.citation.parsing.ParsedDocumentView
+import com.papertrail.api.citation.parsing.ParsedAtomicClaimView
+import com.papertrail.api.citation.parsing.ParsedClaimCitationTargetView
+import com.papertrail.api.citation.parsing.ParsedCitationContextView
+import com.papertrail.api.citation.parsing.ParsedCitationOccurrenceView
+import com.papertrail.api.citation.parsing.ParsedParserProvenance
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionReportResponse
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
+import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
+import com.papertrail.api.analysis.http.AnalysisRunPage
+import com.papertrail.api.analysis.http.AnalysisRunSummary
+import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
+import com.papertrail.api.analysis.service.AnalysisRunService
+import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -29,6 +30,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean
 import jakarta.servlet.FilterChain
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.http.HttpStatus
+import org.springframework.web.server.ResponseStatusException
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.test.web.servlet.MockMvc
@@ -66,9 +69,6 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var outboxPublisher: OutboxPublisher
-
-    @MockitoBean
-    private lateinit var parsedDocumentRepository: ParsedDocumentRepository
 
     @MockitoBean
     private lateinit var referenceResolutionService: ReferenceResolutionService
@@ -265,15 +265,15 @@ class OpenApiDocumentationTest {
             .response
             .getHeader("X-Request-ID")
 
-        assertTrue(runCatching { java.util.UUID.fromString(invalidId) }.isSuccess)
-        assertTrue(runCatching { java.util.UUID.fromString(missingId) }.isSuccess)
+        assertTrue(runCatching { UUID.fromString(invalidId) }.isSuccess)
+        assertTrue(runCatching { UUID.fromString(missingId) }.isSuccess)
         assertTrue(invalidId != missingId)
     }
 
     @Test
     fun `parsed document endpoint returns the stored structure and distinguishes pending or missing runs`() {
-        val runId = java.util.UUID.randomUUID()
-        val documentId = java.util.UUID.randomUUID()
+        val runId = UUID.randomUUID()
+        val documentId = UUID.randomUUID()
         val summary = AnalysisRunSummary(
             id = runId,
             documentId = documentId,
@@ -292,7 +292,7 @@ class OpenApiDocumentationTest {
             normalizedSourceText = "Claim [1].",
             sections = emptyList(),
             citationContexts = listOf(
-                com.papertrail.api.parsing.ParsedCitationContextView(
+                ParsedCitationContextView(
                     id = UUID.randomUUID(),
                     sectionId = UUID.randomUUID(),
                     boundaryKind = "SENTENCE_FALLBACK",
@@ -300,7 +300,7 @@ class OpenApiDocumentationTest {
                     startOffset = 0,
                     endOffset = 10,
                     occurrences = listOf(
-                        com.papertrail.api.parsing.ParsedCitationOccurrenceView(
+                        ParsedCitationOccurrenceView(
                             UUID.randomUUID(), "[1]", 6, 9, listOf("ref1"),
                         ),
                     ),
@@ -325,8 +325,7 @@ class OpenApiDocumentationTest {
             ),
             bibliographyEntries = emptyList(),
         )
-        Mockito.`when`(analysisRunService.get(runId)).thenReturn(summary)
-        Mockito.`when`(parsedDocumentRepository.find(runId)).thenReturn(parsed)
+        Mockito.`when`(analysisRunService.getParsedDocument(runId)).thenReturn(parsed)
 
         mockMvc.perform(get("/api/v1/analysis-runs/$runId/parsed-document"))
             .andExpect(status().isOk)
@@ -338,13 +337,16 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].citationTargets[0].associationKind").value("INFERRED_PROVISIONAL"))
 
         val pendingRunId = UUID.randomUUID()
-        Mockito.`when`(analysisRunService.get(pendingRunId)).thenReturn(summary.copy(id = pendingRunId, status = "PROCESSING"))
-        Mockito.`when`(parsedDocumentRepository.find(pendingRunId)).thenReturn(parsed)
+        Mockito.`when`(analysisRunService.getParsedDocument(pendingRunId)).thenThrow(
+            ResponseStatusException(HttpStatus.CONFLICT, "Parsed document structure is not ready for this Analysis Run."),
+        )
         mockMvc.perform(get("/api/v1/analysis-runs/$pendingRunId/parsed-document"))
             .andExpect(status().isConflict)
 
         val missingRunId = UUID.randomUUID()
-        Mockito.`when`(analysisRunService.get(missingRunId)).thenReturn(null)
+        Mockito.`when`(analysisRunService.getParsedDocument(missingRunId)).thenThrow(
+            ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found."),
+        )
         mockMvc.perform(get("/api/v1/analysis-runs/$missingRunId/parsed-document"))
             .andExpect(status().isNotFound)
     }

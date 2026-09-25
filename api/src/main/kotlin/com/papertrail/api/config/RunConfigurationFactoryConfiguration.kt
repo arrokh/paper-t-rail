@@ -1,11 +1,11 @@
 package com.papertrail.api.config
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.papertrail.api.documents.PdfDocumentValidator
-import com.papertrail.api.providers.ProviderCallGate
-import com.papertrail.api.providers.ProviderCatalog
-import com.papertrail.api.runs.RunConfigurationFactory
-import com.papertrail.api.runs.ValidationLimitsSnapshot
+import com.papertrail.api.document.validation.PdfDocumentValidator
+import com.papertrail.api.infrastructure.providers.ProviderCallGate
+import com.papertrail.api.infrastructure.providers.ProviderCatalog
+import com.papertrail.api.analysis.configuration.RunConfigurationFactory
+import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
