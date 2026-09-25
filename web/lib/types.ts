@@ -95,6 +95,7 @@ export type ReferenceResolutionReportResponse = {
       unresolved: number;
       unsupportedReferenceType: number;
       notAttempted: number;
+      failed: number;
     };
     entries: Array<{
       entryOrder: number;

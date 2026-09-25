@@ -1,4 +1,4 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.client
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper

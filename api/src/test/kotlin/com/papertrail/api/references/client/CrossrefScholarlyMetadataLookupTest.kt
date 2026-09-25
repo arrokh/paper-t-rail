@@ -1,4 +1,4 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.client
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.providers.DataCategory

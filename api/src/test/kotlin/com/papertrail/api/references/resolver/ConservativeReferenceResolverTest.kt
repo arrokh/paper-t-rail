@@ -1,5 +1,9 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.resolver
 
+import com.papertrail.api.references.client.ScholarlyMetadataLookup
+import com.papertrail.api.references.client.BibliographyReference
+import com.papertrail.api.references.client.ScholarlyWork
+import com.papertrail.api.references.normalization.DoiNormalizer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull

@@ -1,60 +1,10 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.resolver
 
+import com.papertrail.api.references.client.BibliographyReference
+import com.papertrail.api.references.client.ScholarlyWork
+import com.papertrail.api.references.normalization.DoiNormalizer
 import java.util.Locale
 import kotlin.math.max
-
-data class BibliographyReference(
-    val title: String?,
-    val authors: List<String>,
-    val year: Int?,
-    val doi: String?,
-    val referenceType: String,
-)
-
-data class ScholarlyWork(
-    val doi: String?,
-    val title: String,
-    val authors: List<String>,
-    val year: Int?,
-)
-
-interface ScholarlyMetadataLookup {
-    fun byDoi(doi: String): ScholarlyWork?
-    fun search(reference: BibliographyReference): List<ScholarlyWork>
-}
-
-enum class ReferenceResolutionStatus {
-    RESOLVED,
-    UNRESOLVED,
-    UNSUPPORTED_REFERENCE_TYPE,
-}
-
-data class ReferenceResolutionDecision(
-    val status: ReferenceResolutionStatus,
-    val reasonCode: String,
-    val work: ScholarlyWork? = null,
-    val score: Double? = null,
-    val matchMethod: String? = null,
-)
-
-data class ScholarlyMatch(
-    val candidate: ScholarlyWork?,
-    val score: Double?,
-    val reasonCode: String,
-)
-
-object DoiNormalizer {
-    private val doiPattern = Regex("^10\\.\\d{4,9}/[-._;()/:A-Z0-9]+$", RegexOption.IGNORE_CASE)
-
-    fun normalize(value: String?): String? {
-        if (value.isNullOrBlank()) return null
-        val normalized = value.trim()
-            .replace(Regex("^https?://(?:dx\\.)?doi\\.org/", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("^doi:\\s*", RegexOption.IGNORE_CASE), "")
-            .trim()
-        return normalized.takeIf { doiPattern.matches(it) }?.lowercase(Locale.ROOT)
-    }
-}
 
 /** Stable score policy: title 0.70, author list 0.20, and exact year 0.10. */
 class ScholarlyMetadataMatcher(
@@ -147,70 +97,5 @@ class ScholarlyMetadataMatcher(
         private const val TITLE_WEIGHT = 0.70
         private const val AUTHOR_WEIGHT = 0.20
         private const val YEAR_WEIGHT = 0.10
-    }
-}
-
-class ConservativeReferenceResolver(
-    private val scholarlyMetadata: ScholarlyMetadataLookup,
-    private val matcher: ScholarlyMetadataMatcher,
-) {
-    fun resolve(reference: BibliographyReference): ReferenceResolutionDecision {
-        if (reference.referenceType !in SUPPORTED_REFERENCE_TYPES) {
-            return ReferenceResolutionDecision(
-                ReferenceResolutionStatus.UNSUPPORTED_REFERENCE_TYPE,
-                "UNSUPPORTED_REFERENCE_TYPE",
-            )
-        }
-
-        val doi = DoiNormalizer.normalize(reference.doi)
-        if (doi != null) {
-            val doiWork = scholarlyMetadata.byDoi(doi)
-            if (doiWork != null && DoiNormalizer.normalize(doiWork.doi) == doi) {
-                return ReferenceResolutionDecision(
-                    ReferenceResolutionStatus.RESOLVED,
-                    "DOI_CONFIRMED",
-                    doiWork,
-                    1.0,
-                    "CONFIRMED_DOI",
-                )
-            }
-            return ReferenceResolutionDecision(
-                ReferenceResolutionStatus.UNRESOLVED,
-                "DOI_UNCONFIRMED",
-            )
-        }
-
-        if (reference.title.isNullOrBlank()) {
-            return ReferenceResolutionDecision(
-                ReferenceResolutionStatus.UNRESOLVED,
-                "INSUFFICIENT_MATCH_METADATA",
-            )
-        }
-        val match = matcher.match(reference, scholarlyMetadata.search(reference))
-        return if (match.candidate != null) {
-            ReferenceResolutionDecision(
-                ReferenceResolutionStatus.RESOLVED,
-                "METADATA_MATCH",
-                match.candidate,
-                match.score,
-                "METADATA_MATCH",
-            )
-        } else {
-            ReferenceResolutionDecision(
-                ReferenceResolutionStatus.UNRESOLVED,
-                match.reasonCode,
-                score = match.score,
-                matchMethod = "METADATA_MATCH",
-            )
-        }
-    }
-
-    companion object {
-        val SUPPORTED_REFERENCE_TYPES = setOf(
-            "JOURNAL_ARTICLE",
-            "CONFERENCE_PAPER",
-            "PREPRINT",
-            "ACADEMIC_MANUSCRIPT",
-        )
     }
 }

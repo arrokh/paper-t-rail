@@ -1,4 +1,4 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.client
 
 import com.papertrail.api.runs.AnalysisConfigurationSnapshot
 

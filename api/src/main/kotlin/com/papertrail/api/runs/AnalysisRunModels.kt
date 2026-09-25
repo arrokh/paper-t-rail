@@ -10,7 +10,7 @@ import com.papertrail.api.providers.ProviderRegistration
 import com.papertrail.api.providers.ProviderTrustBoundary
 import com.papertrail.api.providers.SCHOLARLY_METADATA_ROLE
 import com.papertrail.api.providers.SYSTEM_ONE_ROLE
-import com.papertrail.api.references.ScholarlyMetadataMatcher
+import com.papertrail.api.references.resolver.ScholarlyMetadataMatcher
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.Instant
 import java.util.UUID

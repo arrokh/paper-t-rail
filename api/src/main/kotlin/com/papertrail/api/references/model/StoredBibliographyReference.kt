@@ -1,7 +1,8 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.model
 
 import java.util.UUID
 
+/** Read projection of one persisted `bibliography_entries` row used during resolution. */
 data class StoredBibliographyReference(
     val id: UUID,
     val entryOrder: Int,

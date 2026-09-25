@@ -1,6 +1,9 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.references.client.CrossrefScholarlyMetadataLookup
+import com.papertrail.api.references.client.ScholarlyMetadataLookup
+import com.papertrail.api.references.client.ScholarlyMetadataLookupFactory
 import com.papertrail.api.providers.ProviderCallGate
 import com.papertrail.api.runs.AnalysisConfigurationSnapshot
 import org.springframework.beans.factory.annotation.Qualifier

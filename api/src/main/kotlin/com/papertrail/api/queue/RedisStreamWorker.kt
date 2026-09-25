@@ -1,5 +1,6 @@
 package com.papertrail.api.queue
 
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import jakarta.annotation.PostConstruct
@@ -27,6 +28,7 @@ import java.util.concurrent.TimeUnit
 class RedisStreamWorker(
     private val redis: StringRedisTemplate,
     private val handler: DocumentAnalysisRequestedHandler,
+    private val referenceResolutionHandler: ReferenceResolutionRequestedHandler,
     private val objectMapper: ObjectMapper,
     @Value("\${paper-trail.queue.stream}") private val stream: String,
     @Value("\${paper-trail.queue.group}") private val group: String,
@@ -124,7 +126,7 @@ class RedisStreamWorker(
             deadLetter(record, "MISSING_EVENT_ENVELOPE", "The stream entry did not contain an event envelope.")
             return
         }
-        val event: PipelineEvent<DocumentAnalysisRequestedPayload> = try {
+        val event: PipelineEvent<JsonNode> = try {
             objectMapper.readValue(serialized)
         } catch (exception: Exception) {
             deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The stream event envelope could not be parsed.")
@@ -134,7 +136,7 @@ class RedisStreamWorker(
         MDC.put("analysisRunId", event.analysisRunId.toString())
         MDC.put("eventId", event.eventId.toString())
         MDC.put("correlationId", event.correlationId.toString())
-        MDC.put("documentId", event.payload.documentId.toString())
+        MDC.put("documentId", event.payload.path("documentId").asText())
         MDC.put("eventType", event.eventType)
         try {
             processEvent(record, serialized, event)
@@ -146,16 +148,51 @@ class RedisStreamWorker(
     private fun processEvent(
         record: MapRecord<String, String, String>,
         serialized: String,
-        event: PipelineEvent<DocumentAnalysisRequestedPayload>,
+        event: PipelineEvent<JsonNode>,
     ) {
-        if (event.eventType != DOCUMENT_ANALYSIS_REQUESTED) {
-            deadLetter(record, "UNSUPPORTED_EVENT_TYPE", "No handler is registered for event type '${event.eventType}'.")
-            return
+        when (event.eventType) {
+            DOCUMENT_ANALYSIS_REQUESTED -> {
+                val typedEvent: PipelineEvent<DocumentAnalysisRequestedPayload> = try {
+                    objectMapper.readValue(serialized)
+                } catch (exception: Exception) {
+                    deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The document-analysis event payload could not be parsed.")
+                    return
+                }
+                processTypedEvent(
+                    record = record,
+                    workDescription = "document analysis",
+                    handle = { handler.handle(serialized) },
+                    markFailed = { reason -> handler.markFailed(typedEvent, reason) },
+                )
+            }
+            REFERENCE_RESOLUTION_REQUESTED -> {
+                val typedEvent: PipelineEvent<ReferenceResolutionRequestedPayload> = try {
+                    objectMapper.readValue(serialized)
+                } catch (exception: Exception) {
+                    deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The reference-resolution event payload could not be parsed.")
+                    return
+                }
+                processTypedEvent(
+                    record = record,
+                    workDescription = "bibliography reference resolution",
+                    handle = { referenceResolutionHandler.handle(serialized) },
+                    markFailed = { reason -> referenceResolutionHandler.markFailed(typedEvent, reason) },
+                )
+            }
+            else -> deadLetter(record, "UNSUPPORTED_EVENT_TYPE", "No handler is registered for event type '${event.eventType}'.")
         }
+    }
+
+    private fun processTypedEvent(
+        record: MapRecord<String, String, String>,
+        workDescription: String,
+        handle: () -> Unit,
+        markFailed: (String) -> Unit,
+    ) {
         try {
             val processingLease = startProcessingLease(record.id.value)
             try {
-                handler.handle(serialized)
+                handle()
             } finally {
                 processingLease?.close()
             }
@@ -168,9 +205,9 @@ class RedisStreamWorker(
                     .addKeyValue("attempt", attempts)
                     .addKeyValue("errorType", exception.javaClass.simpleName)
                     .log("Pipeline event failed on its final attempt")
-                val reason = "The worker could not complete document analysis after $maxAttempts attempts. The event was moved to the dead-letter queue."
+                val reason = "The worker could not complete $workDescription after $maxAttempts attempts. The event was moved to the dead-letter queue."
                 try {
-                    handler.markFailed(event, reason)
+                    markFailed(reason)
                     deadLetter(record, "HANDLER_RETRIES_EXHAUSTED", reason, attempts)
                 } catch (failureException: Exception) {
                     logger.atError()
@@ -204,7 +241,7 @@ class RedisStreamWorker(
             val originalEnvelope = record.value["event"] ?: ""
             val deadLetterEnvelope = attempts?.let { deliveryCount ->
                 runCatching {
-                    val event: PipelineEvent<DocumentAnalysisRequestedPayload> = objectMapper.readValue(originalEnvelope)
+                    val event: PipelineEvent<JsonNode> = objectMapper.readValue(originalEnvelope)
                     objectMapper.writeValueAsString(event.copy(attempt = deliveryCount.toInt()))
                 }.getOrNull()
             } ?: originalEnvelope

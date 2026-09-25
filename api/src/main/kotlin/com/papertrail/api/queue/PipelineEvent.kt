@@ -8,6 +8,12 @@ data class DocumentAnalysisRequestedPayload(
     val sourceContentSha256: String,
 )
 
+data class ReferenceResolutionRequestedPayload(
+    val documentId: UUID,
+    val sourceContentSha256: String,
+    val bibliographyEntryId: UUID,
+)
+
 data class PipelineEvent<T>(
     val eventId: UUID,
     val eventType: String,
@@ -22,3 +28,5 @@ data class PipelineEvent<T>(
 
 const val DOCUMENT_ANALYSIS_REQUESTED = "DocumentAnalysisRequested"
 const val DOCUMENT_ANALYSIS_HANDLER = "DocumentAnalysisRequestedHandler"
+const val REFERENCE_RESOLUTION_REQUESTED = "ReferenceResolutionRequested"
+const val REFERENCE_RESOLUTION_HANDLER = "ReferenceResolutionRequestedHandler"

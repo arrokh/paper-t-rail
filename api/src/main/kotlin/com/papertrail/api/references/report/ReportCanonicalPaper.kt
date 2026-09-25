@@ -1,4 +1,4 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.report
 
 import java.util.UUID
 

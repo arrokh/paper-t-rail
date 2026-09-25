@@ -1,4 +1,4 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.report
 
 data class ReferenceResolutionSummary(
     val total: Int,
@@ -6,4 +6,5 @@ data class ReferenceResolutionSummary(
     val unresolved: Int,
     val unsupportedReferenceType: Int,
     val notAttempted: Int,
+    val failed: Int,
 )

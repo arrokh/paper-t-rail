@@ -1,7 +1,18 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.references.client.BibliographyReference
+import com.papertrail.api.references.client.ScholarlyMetadataLookupFactory
+import com.papertrail.api.references.report.BibliographyResolutionReportEntry
+import com.papertrail.api.references.report.ReferenceResolutionReport
+import com.papertrail.api.references.report.ReferenceResolutionReportResponse
+import com.papertrail.api.references.report.ReferenceResolutionSummary
+import com.papertrail.api.references.resolver.ReferenceResolutionStatus
+import com.papertrail.api.references.repository.ReferenceResolutionRepository
+import com.papertrail.api.references.resolver.ConservativeReferenceResolver
+import com.papertrail.api.references.resolver.ScholarlyMetadataMatcher
 import com.papertrail.api.runs.AnalysisConfigurationSnapshot
+import com.papertrail.api.runs.ReferenceResolutionSnapshot
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import java.util.UUID
@@ -13,34 +24,40 @@ class ReferenceResolutionService(
     private val repository: ReferenceResolutionRepository,
     private val lookupFactories: List<ScholarlyMetadataLookupFactory>,
 ) {
-    fun resolvePending(analysisRunId: UUID): ReferenceResolutionSummary {
+    fun isResolutionConfigured(analysisRunId: UUID): Boolean {
         val context = loadRun(analysisRunId) ?: throw IllegalArgumentException("Analysis Run not found for reference resolution.")
-        val referenceResolution = context.configuration.referenceResolution
-        val providerId = referenceResolution.provider?.provider
-        val threshold = referenceResolution.confidenceThreshold
-        if (providerId == null || threshold == null || referenceResolution.scorePolicyVersion.isNullOrBlank() ||
-            referenceResolution.executionStatus == "NOT_RUN"
-        ) {
-            return summarize(repository.reportEntries(analysisRunId))
+        return context.configuration.referenceResolution.isConfigured()
+    }
+
+    fun resolveEntry(analysisRunId: UUID, bibliographyEntryId: UUID) {
+        val context = loadRun(analysisRunId) ?: throw IllegalArgumentException("Analysis Run not found for reference resolution.")
+        val configuration = context.configuration.referenceResolution
+        require(configuration.isConfigured()) { "Reference resolution is not configured for this Analysis Run." }
+        val stored = repository.pendingEntry(analysisRunId, bibliographyEntryId)
+        if (stored == null) {
+            if (repository.entryExists(analysisRunId, bibliographyEntryId) &&
+                repository.resolutionExists(analysisRunId, bibliographyEntryId)
+            ) return
+            throw IllegalArgumentException("Bibliography Entry is not part of this Analysis Run or has no pending resolution.")
         }
+        val providerId = requireNotNull(configuration.provider?.provider)
+        val threshold = requireNotNull(configuration.confidenceThreshold)
         val factory = lookupFactories.singleOrNull { it.providerId == providerId }
             ?: throw IllegalStateException("Configured scholarly metadata provider is unavailable.")
-        val lookup = factory.forRun(context.configuration)
         val resolver = ConservativeReferenceResolver(
-            scholarlyMetadata = lookup,
+            scholarlyMetadata = factory.forRun(context.configuration),
             matcher = ScholarlyMetadataMatcher(
                 threshold = threshold,
                 ambiguityMargin = ScholarlyMetadataMatcher.AMBIGUITY_MARGIN,
             ),
         )
-        repository.pendingEntries(analysisRunId).forEach { stored ->
-            val decision = resolver.resolve(
-                BibliographyReference(stored.title, stored.authors, stored.year, stored.doi, stored.referenceType),
-            )
-            repository.save(analysisRunId, stored, decision, providerId)
-        }
-        return summarize(repository.reportEntries(analysisRunId))
+        val decision = resolver.resolve(
+            BibliographyReference(stored.title, stored.authors, stored.year, stored.doi, stored.referenceType),
+        )
+        repository.save(analysisRunId, stored, decision, providerId)
     }
+
+    fun summary(analysisRunId: UUID): ReferenceResolutionSummary = summarize(repository.reportEntries(analysisRunId))
 
     fun report(analysisRunId: UUID): ReferenceResolutionReportResponse? {
         val context = loadRun(analysisRunId) ?: return null
@@ -54,7 +71,8 @@ class ReferenceResolutionService(
             referenceResolution = ReferenceResolutionReport(
                 executionStatus = when {
                     !policyConfigured || configuration.executionStatus == "NOT_RUN" -> "NOT_RUN"
-                    summary.notAttempted == 0 && context.runStatus in setOf("PARSED", "COMPLETED", "COMPLETED_WITH_WARNINGS") -> "COMPLETED"
+                    context.runStatus == "COMPLETED_WITH_WARNINGS" -> "COMPLETED_WITH_WARNINGS"
+                    summary.notAttempted == 0 && summary.failed == 0 && context.runStatus in setOf("PARSED", "COMPLETED") -> "COMPLETED"
                     else -> "PENDING"
                 },
                 scorePolicyVersion = configuration.scorePolicyVersion,
@@ -71,7 +89,11 @@ class ReferenceResolutionService(
         unresolved = entries.count { it.status == ReferenceResolutionStatus.UNRESOLVED.name },
         unsupportedReferenceType = entries.count { it.status == ReferenceResolutionStatus.UNSUPPORTED_REFERENCE_TYPE.name },
         notAttempted = entries.count { it.status == "NOT_ATTEMPTED" },
+        failed = entries.count { it.status == "RESOLUTION_FAILED" },
     )
+
+    private fun ReferenceResolutionSnapshot.isConfigured(): Boolean =
+        provider?.provider != null && !scorePolicyVersion.isNullOrBlank() && confidenceThreshold != null && executionStatus != "NOT_RUN"
 
     private fun loadRun(analysisRunId: UUID): RunResolutionContext? = jdbc.query(
         "SELECT status, configuration_snapshot::text AS configuration FROM analysis_runs WHERE id = ?",

@@ -7,10 +7,10 @@ import com.papertrail.api.parsing.ParsedDocumentView
 import com.papertrail.api.parsing.ParsedAtomicClaimView
 import com.papertrail.api.parsing.ParsedClaimCitationTargetView
 import com.papertrail.api.parsing.ParsedParserProvenance
-import com.papertrail.api.references.ReferenceResolutionReportResponse
-import com.papertrail.api.references.ReferenceResolutionReport
-import com.papertrail.api.references.ReferenceResolutionService
-import com.papertrail.api.references.ReferenceResolutionSummary
+import com.papertrail.api.references.report.ReferenceResolutionReportResponse
+import com.papertrail.api.references.report.ReferenceResolutionReport
+import com.papertrail.api.references.report.ReferenceResolutionSummary
+import com.papertrail.api.references.service.ReferenceResolutionService
 import com.papertrail.api.runs.AnalysisRunPage
 import com.papertrail.api.runs.AnalysisRunSummary
 import com.papertrail.api.queue.OutboxPublisher
@@ -339,7 +339,7 @@ class OpenApiDocumentationTest {
 
         val pendingRunId = UUID.randomUUID()
         Mockito.`when`(analysisRunService.get(pendingRunId)).thenReturn(summary.copy(id = pendingRunId, status = "PROCESSING"))
-        Mockito.`when`(parsedDocumentRepository.find(pendingRunId)).thenReturn(null)
+        Mockito.`when`(parsedDocumentRepository.find(pendingRunId)).thenReturn(parsed)
         mockMvc.perform(get("/api/v1/analysis-runs/$pendingRunId/parsed-document"))
             .andExpect(status().isConflict)
 
@@ -360,7 +360,7 @@ class OpenApiDocumentationTest {
                     executionStatus = "COMPLETED",
                     scorePolicyVersion = "title-author-year-weighted-edit-similarity-v1",
                     confidenceThreshold = 0.9,
-                    summary = ReferenceResolutionSummary(2, 1, 0, 1, 0),
+                    summary = ReferenceResolutionSummary(2, 1, 0, 1, 0, 0),
                     entries = emptyList(),
                 ),
             ),
@@ -372,6 +372,7 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.scorePolicyVersion").value("title-author-year-weighted-edit-similarity-v1"))
             .andExpect(jsonPath("$.referenceResolution.confidenceThreshold").value(0.9))
             .andExpect(jsonPath("$.referenceResolution.summary.unsupportedReferenceType").value(1))
+            .andExpect(jsonPath("$.referenceResolution.summary.failed").value(0))
     }
 
     @Test

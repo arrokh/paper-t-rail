@@ -6,7 +6,7 @@ import com.papertrail.api.claims.ClaimExtractionService
 import com.papertrail.api.documents.sha256Hex
 import com.papertrail.api.parsing.ParsedDocumentRepository
 import com.papertrail.api.parsing.ScientificDocumentParser
-import com.papertrail.api.references.ReferenceResolutionService
+import com.papertrail.api.references.service.ReferenceResolutionService
 import com.papertrail.api.storage.SourceDocumentObjectStore
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
@@ -25,6 +25,7 @@ class DocumentAnalysisRequestedHandler(
     private val parsedDocumentRepository: ParsedDocumentRepository,
     private val claimExtractionService: ClaimExtractionService,
     private val referenceResolutionService: ReferenceResolutionService,
+    private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
@@ -161,11 +162,12 @@ class DocumentAnalysisRequestedHandler(
             run.sourceHash,
         )
         if (progressUpdated != 1) throw IllegalStateException("Analysis Run could not advance to reference resolution.")
-        val resolutionSummary = referenceResolutionService.resolvePending(event.analysisRunId)
-        val parsed = parsedDocumentRepository.find(event.analysisRunId)
-            ?: throw IllegalStateException("Persisted parsed document structure is missing after reference resolution.")
-        val atomicClaims = parsed.citationContexts.flatMap { it.atomicClaims }
-        val inferredClaimTargetLinkCount = atomicClaims.sumOf { it.citationTargets.size }
+        val bibliographyEntryIds = jdbc.query(
+            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? ORDER BY entry_order",
+            { rs, _ -> rs.getObject("id", UUID::class.java) },
+            event.analysisRunId,
+        )
+        val resolutionConfigured = referenceResolutionService.isResolutionConfigured(event.analysisRunId)
         transactionTemplate.executeWithoutResult {
             val inserted = jdbc.update(
                 "INSERT INTO inbox_events (event_id, handler_name, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
@@ -174,42 +176,27 @@ class DocumentAnalysisRequestedHandler(
                 java.sql.Timestamp.from(Instant.now()),
             )
             if (inserted == 0) return@executeWithoutResult
-            val completed = jdbc.update(
-                """
-                UPDATE analysis_runs
-                   SET status = 'PARSED',
-                       progress = jsonb_build_object(
-                           'stage', 'PARSED',
-                           'percent', 100,
-                           'message', 'Parsed structure, Atomic Claims, inferred reference links, and conservative bibliography resolution are ready; evidence verification has not run.',
-                           'sectionCount', ?,
-                           'citationContextCount', ?,
-                           'citationOccurrenceCount', ?,
-                           'bibliographyEntryCount', ?,
-                           'atomicClaimCount', ?,
-                           'inferredClaimTargetLinkCount', ?,
-                           'resolvedReferenceCount', ?,
-                           'unresolvedReferenceCount', ?,
-                           'unsupportedReferenceTypeCount', ?
-                       ),
-                       updated_at = now()
-                 WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
-                   AND status = 'PROCESSING'
-                """.trimIndent(),
-                parsed.sections.size,
-                parsed.citationContexts.size,
-                parsed.citationContexts.sumOf { it.occurrences.size },
-                parsed.bibliographyEntries.size,
-                atomicClaims.size,
-                inferredClaimTargetLinkCount,
-                resolutionSummary.resolved,
-                resolutionSummary.unresolved,
-                resolutionSummary.unsupportedReferenceType,
-                event.analysisRunId,
-                event.payload.documentId,
-                run.sourceHash,
-            )
-            if (completed != 1) throw IllegalStateException("Analysis Run could not be marked PARSED after reference resolution.")
+            if (resolutionConfigured) {
+                bibliographyEntryIds.forEach { bibliographyEntryId ->
+                    val resolutionEvent = PipelineEvent(
+                        eventId = UUID.randomUUID(),
+                        eventType = REFERENCE_RESOLUTION_REQUESTED,
+                        schemaVersion = 1,
+                        analysisRunId = event.analysisRunId,
+                        correlationId = event.correlationId,
+                        causationId = event.eventId,
+                        occurredAt = Instant.now(),
+                        attempt = 0,
+                        payload = ReferenceResolutionRequestedPayload(
+                            documentId = event.payload.documentId,
+                            sourceContentSha256 = run.sourceHash,
+                            bibliographyEntryId = bibliographyEntryId,
+                        ),
+                    )
+                    insertOutboxEvent(resolutionEvent)
+                }
+            }
+            analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
         return event.eventId
     }
@@ -236,6 +223,26 @@ class DocumentAnalysisRequestedHandler(
                 event.eventId,
             )
         }
+    }
+
+    private fun insertOutboxEvent(event: PipelineEvent<ReferenceResolutionRequestedPayload>) {
+        jdbc.update(
+            """
+            INSERT INTO outbox_events (
+                event_id, event_type, schema_version, analysis_run_id,
+                correlation_id, causation_id, occurred_at, payload, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
+            """.trimIndent(),
+            event.eventId,
+            event.eventType,
+            event.schemaVersion,
+            event.analysisRunId,
+            event.correlationId,
+            event.causationId,
+            java.sql.Timestamp.from(event.occurredAt),
+            objectMapper.writeValueAsString(event),
+            java.sql.Timestamp.from(Instant.now()),
+        )
     }
 
     private fun cleanupRawTeiIfUnreferenced(analysisRunId: UUID, objectKey: String) {

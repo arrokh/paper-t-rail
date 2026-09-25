@@ -1,7 +1,12 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.service
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.references.client.BibliographyReference
+import com.papertrail.api.references.client.ScholarlyMetadataLookup
+import com.papertrail.api.references.client.ScholarlyMetadataLookupFactory
+import com.papertrail.api.references.client.ScholarlyWork
+import com.papertrail.api.references.normalization.DoiNormalizer
 import com.papertrail.api.runs.AnalysisConfigurationSnapshot
 import org.springframework.core.io.ClassPathResource
 import org.springframework.stereotype.Component

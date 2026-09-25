@@ -1,4 +1,4 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.service
 
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration

@@ -1076,7 +1076,7 @@ export function UploadDashboard() {
                             <h3 className="font-heading text-lg font-semibold tracking-tight">Bibliography resolution</h3>
                           </div>
                           <Badge variant="secondary" className="font-mono text-xs">
-                            {resolution.executionStatus.toLowerCase()}
+                            {resolution.executionStatus.replaceAll("_", " ").toLowerCase()}
                           </Badge>
                         </div>
                         <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-2">
@@ -1089,13 +1089,14 @@ export function UploadDashboard() {
                             <dd className="m-0 font-mono text-xs text-foreground">{formatConfidenceThreshold(resolution.confidenceThreshold)}</dd>
                           </div>
                         </dl>
-                        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+                        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
                           {([
                             ["Bibliography entries", counts.total],
                             ["Resolved", counts.resolved],
                             ["Unresolved", counts.unresolved],
                             ["Unsupported types", counts.unsupportedReferenceType],
                             ["Not attempted", counts.notAttempted],
+                            ["Processing failed", counts.failed],
                           ] as const).map(([label, count]) => (
                             <div key={label} className="rounded-lg border border-border bg-card px-3 py-3">
                               <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>

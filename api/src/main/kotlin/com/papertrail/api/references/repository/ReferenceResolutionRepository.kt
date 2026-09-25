@@ -1,6 +1,12 @@
-package com.papertrail.api.references
+package com.papertrail.api.references.repository
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.references.client.ScholarlyWork
+import com.papertrail.api.references.model.StoredBibliographyReference
+import com.papertrail.api.references.report.BibliographyResolutionReportEntry
+import com.papertrail.api.references.report.ReportCanonicalPaper
+import com.papertrail.api.references.resolver.ReferenceResolutionDecision
+import com.papertrail.api.references.normalization.DoiNormalizer
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
@@ -15,19 +21,33 @@ class ReferenceResolutionRepository(
     private val objectMapper: ObjectMapper,
     private val transactionTemplate: TransactionTemplate,
 ) {
-    fun pendingEntries(analysisRunId: UUID): List<StoredBibliographyReference> = jdbc.query(
+    fun pendingEntry(analysisRunId: UUID, bibliographyEntryId: UUID): StoredBibliographyReference? = jdbc.query(
         """
         SELECT b.id, b.entry_order, b.local_reference_key, b.raw_text, b.parsed_title,
                b.parsed_authors::text AS parsed_authors, b.parsed_year, b.parsed_doi, b.reference_type
           FROM bibliography_entries b
           LEFT JOIN bibliography_entry_resolutions r
             ON r.analysis_run_id = b.analysis_run_id AND r.bibliography_entry_id = b.id
-         WHERE b.analysis_run_id = ? AND r.bibliography_entry_id IS NULL
-         ORDER BY b.entry_order
+         WHERE b.analysis_run_id = ? AND b.id = ? AND r.bibliography_entry_id IS NULL
         """.trimIndent(),
         { rs, _ -> rs.toStoredReference() },
         analysisRunId,
-    )
+        bibliographyEntryId,
+    ).firstOrNull()
+
+    fun entryExists(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
+        "SELECT EXISTS (SELECT 1 FROM bibliography_entries WHERE analysis_run_id = ? AND id = ?)",
+        Boolean::class.java,
+        analysisRunId,
+        bibliographyEntryId,
+    ) == true
+
+    fun resolutionExists(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
+        "SELECT EXISTS (SELECT 1 FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND bibliography_entry_id = ?)",
+        Boolean::class.java,
+        analysisRunId,
+        bibliographyEntryId,
+    ) == true
 
     fun save(
         analysisRunId: UUID,
@@ -66,12 +86,33 @@ class ReferenceResolutionRepository(
         """
         SELECT b.entry_order, b.local_reference_key, b.raw_text, b.parsed_title,
                b.parsed_authors::text AS parsed_authors, b.parsed_year, b.parsed_doi, b.reference_type,
-               r.status, r.reason_code, r.canonical_paper_id, r.matched_doi, r.matched_title,
+               CASE
+                   WHEN r.bibliography_entry_id IS NOT NULL THEN r.status
+                   WHEN task.event_id IS NOT NULL AND task_inbox.event_id IS NOT NULL THEN 'RESOLUTION_FAILED'
+                   ELSE 'NOT_ATTEMPTED'
+               END AS status,
+               CASE
+                   WHEN r.bibliography_entry_id IS NOT NULL THEN r.reason_code
+                   WHEN task.event_id IS NOT NULL AND task_inbox.event_id IS NOT NULL THEN 'RESOLUTION_RETRIES_EXHAUSTED'
+                   ELSE NULL
+               END AS reason_code,
+               r.canonical_paper_id, r.matched_doi, r.matched_title,
                r.matched_authors::text AS matched_authors, r.matched_year, r.confidence_score,
                r.match_method
           FROM bibliography_entries b
           LEFT JOIN bibliography_entry_resolutions r
             ON r.analysis_run_id = b.analysis_run_id AND r.bibliography_entry_id = b.id
+          -- A terminal request without a persisted domain outcome is an exhausted processing task, not a domain rejection.
+          LEFT JOIN LATERAL (
+              SELECT event.event_id
+                FROM outbox_events event
+               WHERE event.analysis_run_id = b.analysis_run_id
+                 AND event.event_type = 'ReferenceResolutionRequested'
+                 AND event.payload -> 'payload' ->> 'bibliographyEntryId' = b.id::text
+               ORDER BY event.created_at DESC, event.event_id
+               LIMIT 1
+          ) task ON true
+          LEFT JOIN inbox_events task_inbox ON task_inbox.event_id = task.event_id
          WHERE b.analysis_run_id = ?
          ORDER BY b.entry_order
         """.trimIndent(),

@@ -17,10 +17,16 @@ import com.papertrail.api.parsing.ParsedScientificDocument
 import com.papertrail.api.parsing.ParsedSection
 import com.papertrail.api.parsing.ScientificDocumentParser
 import com.papertrail.api.providers.ProviderCatalog
-import com.papertrail.api.references.RecordedFixtureScholarlyMetadataLookupFactory
-import com.papertrail.api.references.ReferenceResolutionRepository
-import com.papertrail.api.references.ReferenceResolutionService
+import com.papertrail.api.references.client.BibliographyReference
+import com.papertrail.api.references.client.ScholarlyMetadataLookup
+import com.papertrail.api.references.client.ScholarlyMetadataLookupFactory
+import com.papertrail.api.references.client.ScholarlyWork
+import com.papertrail.api.references.service.RecordedFixtureScholarlyMetadataLookupFactory
+import com.papertrail.api.references.normalization.DoiNormalizer
+import com.papertrail.api.references.repository.ReferenceResolutionRepository
+import com.papertrail.api.references.service.ReferenceResolutionService
 import com.papertrail.api.providers.reviewedExternalProviderCatalog
+import com.papertrail.api.runs.AnalysisConfigurationSnapshot
 import com.papertrail.api.runs.AnalysisRunService
 import com.papertrail.api.runs.RunConfigurationFactory
 import com.papertrail.api.runs.RunConfigurationRequest
@@ -329,8 +335,9 @@ class AnalysisRunQueueIntegrationTest {
             handler.handle(record.value.getValue("event"))
             operations.acknowledge(stream, group, record.id)
         }
+        processReferenceResolutionEvents(created.analysisRunId)
 
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = (SELECT event_id FROM outbox_events WHERE analysis_run_id = ?)", Int::class.java, created.analysisRunId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = (SELECT event_id FROM outbox_events WHERE analysis_run_id = ? AND event_type = 'DocumentAnalysisRequested')", Int::class.java, created.analysisRunId))
         assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         assertNull(jdbc.queryForObject("SELECT completed_at FROM analysis_runs WHERE id = ?", java.sql.Timestamp::class.java, created.analysisRunId))
         assertEquals(
@@ -492,6 +499,7 @@ class AnalysisRunQueueIntegrationTest {
         val replacement = RedisStreamWorker(
             redis = redis,
             handler = eventHandler(),
+            referenceResolutionHandler = referenceResolutionEventHandler(),
             objectMapper = objectMapper,
             stream = stream,
             group = group,
@@ -511,6 +519,8 @@ class AnalysisRunQueueIntegrationTest {
             workerLogger.detachAppender(appender)
         }
 
+        OutboxPublisher(jdbc, redis, stream).publishPending()
+        replacement.poll()
         assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         val processedEvent = objectMapper.readTree(abandoned.value.getValue("event"))
         val workerLog = appender.list.single { it.message == "Pipeline event processed" }
@@ -540,6 +550,7 @@ class AnalysisRunQueueIntegrationTest {
         val activeWorker = RedisStreamWorker(
             redis = redis,
             handler = eventHandler(slowParser),
+            referenceResolutionHandler = referenceResolutionEventHandler(),
             objectMapper = objectMapper,
             stream = stream,
             group = group,
@@ -552,6 +563,7 @@ class AnalysisRunQueueIntegrationTest {
         val replacementWorker = RedisStreamWorker(
             redis = redis,
             handler = eventHandler(slowParser),
+            referenceResolutionHandler = referenceResolutionEventHandler(),
             objectMapper = objectMapper,
             stream = stream,
             group = group,
@@ -575,12 +587,158 @@ class AnalysisRunQueueIntegrationTest {
             continueParsing.countDown()
             activePoll.join(10_000)
             activeWorker.shutdownLeaseHeartbeat()
-            replacementWorker.shutdownLeaseHeartbeat()
         }
 
         assertFalse(activePoll.isAlive, "Active worker did not finish after parsing was released.")
+        OutboxPublisher(jdbc, redis, stream).publishPending()
+        try {
+            replacementWorker.poll()
+        } finally {
+            replacementWorker.shutdownLeaseHeartbeat()
+        }
         assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
+    }
+
+    @Test
+    fun `reference resolution retries only the failed bibliography entry`() {
+        val created = createQueuedRun()
+        val lookupFactory = RetryableDoiLookupFactory(failOnlyFirstDoiLookup = true)
+        val resolutionService = referenceResolutionService(listOf(lookupFactory))
+        val stream = "ae:test:${UUID.randomUUID()}"
+        val group = "group-${UUID.randomUUID()}"
+        val operations = redis.opsForStream<String, String>()
+        operations.add(stream, mapOf("bootstrap" to "1"))
+        operations.createGroup(stream, ReadOffset.from("$"), group)
+        val worker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(resolutionService = resolutionService),
+            referenceResolutionHandler = referenceResolutionEventHandler(resolutionService),
+            objectMapper = objectMapper,
+            stream = stream,
+            group = group,
+            consumerName = "reference-retry-worker",
+            reclaimDelayMs = 0,
+            batchSize = 10,
+            maxAttempts = 3,
+            retryBackoffMs = "0,0,0",
+        )
+        worker.createConsumerGroup()
+
+        try {
+            OutboxPublisher(jdbc, redis, stream).publishPending()
+            worker.poll()
+            assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+            assertEquals(4, jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+                Int::class.java,
+                created.analysisRunId,
+                REFERENCE_RESOLUTION_REQUESTED,
+            ))
+
+            OutboxPublisher(jdbc, redis, stream).publishPending()
+            worker.poll()
+            assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+            assertEquals(3, jdbc.queryForObject(
+                "SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?",
+                Int::class.java,
+                created.analysisRunId,
+            ))
+            assertEquals(1L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
+
+            val failedEntryId = jdbc.queryForObject(
+                "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? AND local_reference_key = 'ref1'",
+                UUID::class.java,
+                created.analysisRunId,
+            )!!
+            val failedMessage = operations.range(stream, Range.unbounded<String>()).orEmpty().single { record ->
+                record.value["event"]?.let { serialized ->
+                    objectMapper.readTree(serialized).path("payload").path("bibliographyEntryId").asText() == failedEntryId.toString()
+                } == true
+            }
+            redis.opsForHash<String, String>().put("$stream:retry-after", failedMessage.id.value, "0")
+            worker.poll()
+
+            assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+            assertEquals(4, jdbc.queryForObject(
+                "SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?",
+                Int::class.java,
+                created.analysisRunId,
+            ))
+            assertEquals(2, lookupFactory.doiLookupCalls.get())
+            assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
+        } finally {
+            worker.shutdownLeaseHeartbeat()
+        }
+    }
+
+    @Test
+    fun `exhausted per-entry retries complete the run with a visible resolution failure`() {
+        val created = createQueuedRun()
+        val lookupFactory = RetryableDoiLookupFactory(failOnlyFirstDoiLookup = false)
+        val resolutionService = referenceResolutionService(listOf(lookupFactory))
+        val stream = "ae:test:${UUID.randomUUID()}"
+        val group = "group-${UUID.randomUUID()}"
+        val operations = redis.opsForStream<String, String>()
+        operations.add(stream, mapOf("bootstrap" to "1"))
+        operations.createGroup(stream, ReadOffset.from("$"), group)
+        val worker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(resolutionService = resolutionService),
+            referenceResolutionHandler = referenceResolutionEventHandler(resolutionService),
+            objectMapper = objectMapper,
+            stream = stream,
+            group = group,
+            consumerName = "reference-failure-worker",
+            reclaimDelayMs = 0,
+            batchSize = 10,
+            maxAttempts = 2,
+            retryBackoffMs = "0,0",
+        )
+        worker.createConsumerGroup()
+
+        try {
+            OutboxPublisher(jdbc, redis, stream).publishPending()
+            worker.poll()
+            OutboxPublisher(jdbc, redis, stream).publishPending()
+            worker.poll()
+            assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+
+            val failedEntryId = jdbc.queryForObject(
+                "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? AND local_reference_key = 'ref1'",
+                UUID::class.java,
+                created.analysisRunId,
+            )!!
+            val failedMessage = operations.range(stream, Range.unbounded<String>()).orEmpty().single { record ->
+                record.value["event"]?.let { serialized ->
+                    objectMapper.readTree(serialized).path("payload").path("bibliographyEntryId").asText() == failedEntryId.toString()
+                } == true
+            }
+            redis.opsForHash<String, String>().put("$stream:retry-after", failedMessage.id.value, "0")
+            worker.poll()
+
+            assertEquals("COMPLETED_WITH_WARNINGS", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+            assertEquals(1, jdbc.queryForObject(
+                "SELECT (progress ->> 'failedReferenceResolutionCount')::integer FROM analysis_runs WHERE id = ?",
+                Int::class.java,
+                created.analysisRunId,
+            ))
+            assertTrue(jdbc.queryForObject("SELECT completed_at IS NOT NULL FROM analysis_runs WHERE id = ?", Boolean::class.java, created.analysisRunId) == true)
+            assertEquals(3, jdbc.queryForObject(
+                "SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?",
+                Int::class.java,
+                created.analysisRunId,
+            ))
+            val report = resolutionService.report(created.analysisRunId)!!
+            assertEquals("COMPLETED_WITH_WARNINGS", report.referenceResolution.executionStatus)
+            assertEquals(1, report.referenceResolution.summary.failed)
+            assertEquals(0, report.referenceResolution.summary.notAttempted)
+            assertEquals("RESOLUTION_FAILED", report.referenceResolution.entries.first().status)
+            assertEquals("RESOLUTION_RETRIES_EXHAUSTED", report.referenceResolution.entries.first().reasonCode)
+            assertEquals(2, lookupFactory.doiLookupCalls.get())
+        } finally {
+            worker.shutdownLeaseHeartbeat()
+        }
     }
 
     @Test
@@ -597,6 +755,7 @@ class AnalysisRunQueueIntegrationTest {
         val worker = RedisStreamWorker(
             redis = redis,
             handler = eventHandler(),
+            referenceResolutionHandler = referenceResolutionEventHandler(),
             objectMapper = objectMapper,
             stream = stream,
             group = group,
@@ -653,6 +812,7 @@ class AnalysisRunQueueIntegrationTest {
         val worker = RedisStreamWorker(
             redis = redis,
             handler = eventHandler(),
+            referenceResolutionHandler = referenceResolutionEventHandler(),
             objectMapper = objectMapper,
             stream = stream,
             group = group,
@@ -669,6 +829,33 @@ class AnalysisRunQueueIntegrationTest {
         val deadLetter = operations.range("ae:dlq", Range.unbounded<String>()).orEmpty().single().value
         assertEquals("MALFORMED_EVENT_ENVELOPE", deadLetter["errorCode"])
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
+    }
+
+    private class RetryableDoiLookupFactory(
+        private val failOnlyFirstDoiLookup: Boolean,
+    ) : ScholarlyMetadataLookupFactory {
+        override val providerId = "recorded-fixtures"
+        val doiLookupCalls = AtomicInteger()
+
+        override fun forRun(configuration: AnalysisConfigurationSnapshot): ScholarlyMetadataLookup = object : ScholarlyMetadataLookup {
+            override fun byDoi(doi: String): ScholarlyWork? {
+                if (DoiNormalizer.normalize(doi) != FIXTURE_DOI) return null
+                val attempt = doiLookupCalls.incrementAndGet()
+                if (!failOnlyFirstDoiLookup || attempt == 1) throw IllegalStateException("Temporary scholarly metadata provider failure.")
+                return ScholarlyWork(
+                    doi = FIXTURE_DOI,
+                    title = "A fixture study of conservative scholarly reference resolution",
+                    authors = listOf("Riley Example", "Jordan Researcher"),
+                    year = 2024,
+                )
+            }
+
+            override fun search(reference: BibliographyReference): List<ScholarlyWork> = emptyList()
+        }
+
+        companion object {
+            private const val FIXTURE_DOI = "10.5555/papertrail.fixture.reference-resolution.2024"
+        }
     }
 
     private class BlockingScientificDocumentParser(
@@ -822,12 +1009,44 @@ class AnalysisRunQueueIntegrationTest {
         limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
     )
 
-    private fun referenceResolutionService() = ReferenceResolutionService(
+    private fun referenceResolutionService(
+        lookupFactories: List<ScholarlyMetadataLookupFactory> = listOf(RecordedFixtureScholarlyMetadataLookupFactory(objectMapper)),
+    ) = ReferenceResolutionService(
         jdbc,
         objectMapper,
         ReferenceResolutionRepository(jdbc, objectMapper, TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource))),
-        listOf(RecordedFixtureScholarlyMetadataLookupFactory(objectMapper)),
+        lookupFactories,
     )
+
+    private fun stageCompletionService(
+        resolutionService: ReferenceResolutionService = referenceResolutionService(),
+    ) = AnalysisRunStageCompletionService(
+        jdbc,
+        TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource)),
+        ParsedDocumentRepository(jdbc, objectMapper),
+        resolutionService,
+    )
+
+    private fun referenceResolutionEventHandler(
+        resolutionService: ReferenceResolutionService = referenceResolutionService(),
+    ) = ReferenceResolutionRequestedHandler(
+        jdbc,
+        TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource)),
+        objectMapper,
+        resolutionService,
+        stageCompletionService(resolutionService),
+    )
+
+    private fun processReferenceResolutionEvents(analysisRunId: UUID) {
+        val events = jdbc.query(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
+            { rs, _ -> rs.getString(1) },
+            analysisRunId,
+            REFERENCE_RESOLUTION_REQUESTED,
+        )
+        val handler = referenceResolutionEventHandler()
+        events.forEach(handler::handle)
+    }
 
     private fun legacyResolutionConfigurationJson(): String {
         val configuration = objectMapper.readTree(objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest()))) as com.fasterxml.jackson.databind.node.ObjectNode
@@ -838,7 +1057,10 @@ class AnalysisRunQueueIntegrationTest {
         return configuration.toString()
     }
 
-    private fun eventHandler(parser: ScientificDocumentParser = TestScientificDocumentParser) = DocumentAnalysisRequestedHandler(
+    private fun eventHandler(
+        parser: ScientificDocumentParser = TestScientificDocumentParser,
+        resolutionService: ReferenceResolutionService = referenceResolutionService(),
+    ) = DocumentAnalysisRequestedHandler(
         jdbc,
         TransactionTemplate(org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource)),
         objectMapper,
@@ -846,7 +1068,8 @@ class AnalysisRunQueueIntegrationTest {
         parser,
         ParsedDocumentRepository(jdbc, objectMapper),
         ClaimExtractionService(ProviderCatalog.safeDefaults(), listOf(HeuristicClaimExtractor())),
-        referenceResolutionService(),
+        resolutionService,
+        stageCompletionService(resolutionService),
     )
 
     private fun englishPdf(): ByteArray {
