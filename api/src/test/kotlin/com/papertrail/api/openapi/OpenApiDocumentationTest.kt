@@ -1,17 +1,22 @@
 package com.papertrail.api.openapi
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.papertrail.api.logging.RequestCorrelationFilter
-import com.papertrail.api.parsing.ParsedDocumentRepository
-import com.papertrail.api.parsing.ParsedDocumentView
-import com.papertrail.api.parsing.ParsedAtomicClaimView
-import com.papertrail.api.parsing.ParsedClaimCitationTargetView
-import com.papertrail.api.parsing.ParsedParserProvenance
-import com.papertrail.api.runs.AnalysisRunPage
-import com.papertrail.api.runs.AnalysisRunSummary
-import com.papertrail.api.queue.OutboxPublisher
-import com.papertrail.api.runs.AnalysisRunService
-import com.papertrail.api.runs.RunConfigurationFactory
+import com.papertrail.api.infrastructure.logging.RequestCorrelationFilter
+import com.papertrail.api.citation.parsing.ParsedDocumentView
+import com.papertrail.api.citation.parsing.ParsedAtomicClaimView
+import com.papertrail.api.citation.parsing.ParsedClaimCitationTargetView
+import com.papertrail.api.citation.parsing.ParsedCitationContextView
+import com.papertrail.api.citation.parsing.ParsedCitationOccurrenceView
+import com.papertrail.api.citation.parsing.ParsedParserProvenance
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionReportResponse
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
+import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
+import com.papertrail.api.analysis.http.AnalysisRunPage
+import com.papertrail.api.analysis.http.AnalysisRunSummary
+import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
+import com.papertrail.api.analysis.service.AnalysisRunService
+import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -25,6 +30,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean
 import jakarta.servlet.FilterChain
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.http.HttpStatus
+import org.springframework.web.server.ResponseStatusException
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.test.web.servlet.MockMvc
@@ -64,7 +71,7 @@ class OpenApiDocumentationTest {
     private lateinit var outboxPublisher: OutboxPublisher
 
     @MockitoBean
-    private lateinit var parsedDocumentRepository: ParsedDocumentRepository
+    private lateinit var referenceResolutionService: ReferenceResolutionService
 
     @Test
     fun `OpenAPI contract describes the existing analysis run endpoints and PDF upload`() {
@@ -130,12 +137,16 @@ class OpenApiDocumentationTest {
         assertTrue(parsedDocument.path("responses").has("409"))
         val reanalysis = paths.path("/api/v1/documents/{documentId}/analysis-runs").path("post")
         assertTrue(reanalysis.path("requestBody").path("content").has("application/json"))
+        val report = paths.path("/api/v1/analysis-runs/{runId}/report").path("get")
+        assertTrue(report.path("responses").path("200").path("content").has("application/json"))
+        assertTrue(report.path("responses").has("404"))
         val reanalysisSchema = reanalysis.path("requestBody").path("content").path("application/json").path("schema")
         val configSchemaName = reanalysisSchema.path("${'$'}ref").asText().substringAfterLast('/')
         val configProperties = document.path("components").path("schemas").path(configSchemaName).path("properties")
         assertTrue(configProperties.has("claimExtractorProvider"))
         assertTrue(configProperties.has("embeddingProvider"))
         assertTrue(configProperties.has("systemOneProvider"))
+        assertTrue(configProperties.has("scholarlyMetadataProvider"))
         assertTrue(configProperties.has("externalProviderConsents"))
         assertTrue(reanalysis.path("responses").has("201"))
         assertTrue(reanalysis.path("responses").has("404"))
@@ -171,12 +182,14 @@ class OpenApiDocumentationTest {
         val claimExtractorOptions = providers.path("claimExtractor")
         val embeddingOptions = providers.path("embedding")
         val systemOneOptions = providers.path("systemOne")
-        assertEquals(setOf("claimExtractor", "embedding", "systemOne"), providers.fieldNames().asSequence().toSet())
+        val scholarlyMetadataOptions = providers.path("scholarlyMetadata")
+        assertEquals(setOf("claimExtractor", "embedding", "systemOne", "scholarlyMetadata"), providers.fieldNames().asSequence().toSet())
         assertEquals(1, claimExtractorOptions.size())
         assertEquals(1, embeddingOptions.size())
         assertEquals(1, systemOneOptions.size())
-        val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions).flatMap { it.toList() }
-        assertEquals(3, providerOptions.size)
+        assertEquals(1, scholarlyMetadataOptions.size())
+        val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions, scholarlyMetadataOptions).flatMap { it.toList() }
+        assertEquals(4, providerOptions.size)
         assertTrue(providerOptions.all { it.path("trustBoundary").asText() == "LOCAL" })
         assertFalse(providerOptions.any { it.path("providerId").asText() in setOf("jev", "google-gemini-api", "unreviewed-provider") })
         val disclosedCategoryIds = directory.path("dataCategories").map { it.path("id").asText() }.toSet()
@@ -252,15 +265,15 @@ class OpenApiDocumentationTest {
             .response
             .getHeader("X-Request-ID")
 
-        assertTrue(runCatching { java.util.UUID.fromString(invalidId) }.isSuccess)
-        assertTrue(runCatching { java.util.UUID.fromString(missingId) }.isSuccess)
+        assertTrue(runCatching { UUID.fromString(invalidId) }.isSuccess)
+        assertTrue(runCatching { UUID.fromString(missingId) }.isSuccess)
         assertTrue(invalidId != missingId)
     }
 
     @Test
     fun `parsed document endpoint returns the stored structure and distinguishes pending or missing runs`() {
-        val runId = java.util.UUID.randomUUID()
-        val documentId = java.util.UUID.randomUUID()
+        val runId = UUID.randomUUID()
+        val documentId = UUID.randomUUID()
         val summary = AnalysisRunSummary(
             id = runId,
             documentId = documentId,
@@ -279,7 +292,7 @@ class OpenApiDocumentationTest {
             normalizedSourceText = "Claim [1].",
             sections = emptyList(),
             citationContexts = listOf(
-                com.papertrail.api.parsing.ParsedCitationContextView(
+                ParsedCitationContextView(
                     id = UUID.randomUUID(),
                     sectionId = UUID.randomUUID(),
                     boundaryKind = "SENTENCE_FALLBACK",
@@ -287,7 +300,7 @@ class OpenApiDocumentationTest {
                     startOffset = 0,
                     endOffset = 10,
                     occurrences = listOf(
-                        com.papertrail.api.parsing.ParsedCitationOccurrenceView(
+                        ParsedCitationOccurrenceView(
                             UUID.randomUUID(), "[1]", 6, 9, listOf("ref1"),
                         ),
                     ),
@@ -312,8 +325,7 @@ class OpenApiDocumentationTest {
             ),
             bibliographyEntries = emptyList(),
         )
-        Mockito.`when`(analysisRunService.get(runId)).thenReturn(summary)
-        Mockito.`when`(parsedDocumentRepository.find(runId)).thenReturn(parsed)
+        Mockito.`when`(analysisRunService.getParsedDocument(runId)).thenReturn(parsed)
 
         mockMvc.perform(get("/api/v1/analysis-runs/$runId/parsed-document"))
             .andExpect(status().isOk)
@@ -325,15 +337,44 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].citationTargets[0].associationKind").value("INFERRED_PROVISIONAL"))
 
         val pendingRunId = UUID.randomUUID()
-        Mockito.`when`(analysisRunService.get(pendingRunId)).thenReturn(summary.copy(id = pendingRunId, status = "PROCESSING"))
-        Mockito.`when`(parsedDocumentRepository.find(pendingRunId)).thenReturn(null)
+        Mockito.`when`(analysisRunService.getParsedDocument(pendingRunId)).thenThrow(
+            ResponseStatusException(HttpStatus.CONFLICT, "Parsed document structure is not ready for this Analysis Run."),
+        )
         mockMvc.perform(get("/api/v1/analysis-runs/$pendingRunId/parsed-document"))
             .andExpect(status().isConflict)
 
         val missingRunId = UUID.randomUUID()
-        Mockito.`when`(analysisRunService.get(missingRunId)).thenReturn(null)
+        Mockito.`when`(analysisRunService.getParsedDocument(missingRunId)).thenThrow(
+            ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found."),
+        )
         mockMvc.perform(get("/api/v1/analysis-runs/$missingRunId/parsed-document"))
             .andExpect(status().isNotFound)
+    }
+
+    @Test
+    fun `report endpoint exposes persisted reference outcomes and pinned policy`() {
+        val runId = UUID.randomUUID()
+        Mockito.`when`(referenceResolutionService.report(runId)).thenReturn(
+            ReferenceResolutionReportResponse(
+                analysisRunId = runId,
+                runStatus = "PARSED",
+                referenceResolution = ReferenceResolutionReport(
+                    executionStatus = "COMPLETED",
+                    scorePolicyVersion = "title-author-year-weighted-edit-similarity-v1",
+                    confidenceThreshold = 0.9,
+                    summary = ReferenceResolutionSummary(2, 1, 0, 1, 0, 0),
+                    entries = emptyList(),
+                ),
+            ),
+        )
+
+        mockMvc.perform(get("/api/v1/analysis-runs/$runId/report"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.referenceResolution.executionStatus").value("COMPLETED"))
+            .andExpect(jsonPath("$.referenceResolution.scorePolicyVersion").value("title-author-year-weighted-edit-similarity-v1"))
+            .andExpect(jsonPath("$.referenceResolution.confidenceThreshold").value(0.9))
+            .andExpect(jsonPath("$.referenceResolution.summary.unsupportedReferenceType").value(1))
+            .andExpect(jsonPath("$.referenceResolution.summary.failed").value(0))
     }
 
     @Test

@@ -1,8 +1,8 @@
 package com.papertrail.api.config
 
-import com.papertrail.api.parsing.GrobidScientificDocumentParser
-import com.papertrail.api.parsing.GrobidTeiParser
-import com.papertrail.api.parsing.ScientificDocumentParser
+import com.papertrail.api.citation.parsing.GrobidScientificDocumentParser
+import com.papertrail.api.citation.parsing.GrobidTeiParser
+import com.papertrail.api.citation.parsing.ScientificDocumentParser
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration

@@ -1,0 +1,4 @@
+DROP TRIGGER bibliography_entry_resolutions_are_immutable ON bibliography_entry_resolutions;
+DROP FUNCTION prevent_bibliography_resolution_update();
+DROP TABLE bibliography_entry_resolutions;
+DROP TABLE canonical_papers;

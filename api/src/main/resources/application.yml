@@ -57,6 +57,13 @@ paper-trail:
     parser-version: ${GROBID_PARSER_VERSION:0.9.1-crf}
     parser-response-max-bytes: ${PAPER_MAX_GROBID_RESPONSE_BYTES:67108864}
     grobid-base-url: ${GROBID_BASE_URL:http://127.0.0.1:8070}
+    reference-resolution-confidence-threshold: ${PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD:0.9}
+  providers:
+    crossref:
+      enabled: ${CROSSREF_ENABLED:false}
+      enablement-reviewed: ${CROSSREF_ENABLEMENT_REVIEWED:false}
+      retention-disclosure: ${CROSSREF_RETENTION_DISCLOSURE:}
+      contact-email: ${CROSSREF_CONTACT_EMAIL:}
 
 springdoc:
   api-docs:

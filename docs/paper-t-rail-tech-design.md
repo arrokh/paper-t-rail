@@ -94,7 +94,7 @@ The architecture intentionally uses:
 - **Immutable Analysis Runs** so the same document can be re-analyzed with different providers/models.
 - **Human reviews** stored separately from model results to preserve ground truth.
 
-The system should be simple enough for one developer to understand end-to-end, but modular enough to replace Laya with Jev, local embeddings with Google embeddings, heuristic claim extraction with LLM extraction, or PostgreSQL retrieval with a different implementation later. External or unclassified provider implementations remain disabled until their data boundary/retention terms are reviewed and any required per-run consent is in place.
+The system should be simple enough for one developer to understand end-to-end, but modular enough to replace Laya with Jev, local embeddings with Google embeddings, heuristic claim extraction with LLM extraction, or PostgreSQL retrieval with a different implementation later. External or unclassified provider implementations remain disabled until their data boundary/retention terms are reviewed and any required per-run consent is in place. Shared API/web implementation conventions for keeping code simple and maintainable are in [Coding Principles](./agents/coding-principles.md); Kotlin import requirements are in [`api/AGENTS.md`](../api/AGENTS.md).
 
 ---
 
@@ -1332,9 +1332,10 @@ OpenAccessProvider
 flowchart TD
     BIB["Bibliography Entry"]
 
-    DOI{"DOI supplied and validated?"}
-
-    CROSSREF["Crossref search"]
+    DOI{"Valid DOI supplied?"}
+    DOI_LOOKUP["Crossref lookup by DOI"]
+    CONFIRMED{"Exact DOI confirmed?"}
+    METADATA["Crossref metadata search"]
     MATCH{"Confident match?"}
 
     CANON["Canonical Paper"]
@@ -1345,9 +1346,12 @@ flowchart TD
 
     BIB --> DOI
 
-    DOI -- Yes --> CANON
-    DOI -- No --> CROSSREF
-    CROSSREF --> MATCH
+    DOI -- Yes --> DOI_LOOKUP
+    DOI_LOOKUP --> CONFIRMED
+    CONFIRMED -- Yes --> CANON
+    CONFIRMED -- No --> UNRES
+    DOI -- No --> METADATA
+    METADATA --> MATCH
 
     MATCH -- Yes --> CANON
     MATCH -- No --> UNRES
@@ -1356,7 +1360,7 @@ flowchart TD
     S2 --> OA
 ```
 
-Crossref is the primary identity-resolution mechanism. A DOI printed in a bibliography entry must be normalized and validated against scholarly metadata before it is treated as a confirmed identity; an invalid or unconfirmed DOI falls back to conservative metadata matching. For non-DOI matches, use a deterministic score over title, author, and year, and require a configurable confidence threshold; do not choose a merely top-ranked candidate when it falls below the threshold or remains ambiguous. Mark that reference `UNRESOLVED` instead. Calibrate the numeric threshold on a human-labeled fixture containing confirmed matches and near-miss decoys, prioritizing precision over recall, and set it before release. Version the score policy and threshold with each Analysis Run.
+Crossref is the primary identity-resolution mechanism. A syntactically valid DOI printed in a bibliography entry must be normalized and confirmed against scholarly metadata; only a record carrying that exact normalized DOI can resolve the entry. If the lookup is empty or returns another DOI, mark the entry `UNRESOLVED` and do not fall back to metadata search, preventing a supplied identifier from being silently replaced with a different work. When no valid DOI is supplied, use a deterministic score over title, author, and year, and require a configurable confidence threshold; do not choose a merely top-ranked candidate when it falls below the threshold or remains ambiguous. Mark that reference `UNRESOLVED` instead. Calibrate the numeric threshold on a human-labeled fixture containing confirmed matches and near-miss decoys, prioritizing precision over recall, and set it before release. Version the score policy and threshold with each Analysis Run.
 
 Semantic Scholar is enrichment/graph context, not a competing canonical-identity authority in V1.
 
@@ -1675,7 +1679,14 @@ Example shape (symbolic placeholders must be replaced with the actual run values
     "finalK": 5
   },
   "referenceResolution": {
-    "scorePolicyVersion": "v1",
+    "executionStatus": "PENDING",
+    "provider": {
+      "provider": "crossref",
+      "version": "v1",
+      "trustBoundary": "EXTERNAL",
+      "dataCategories": ["bibliographic_metadata"]
+    },
+    "scorePolicyVersion": "title-author-year-weighted-edit-similarity-v1",
     "confidenceThreshold": "configured-value"
   },
   "aggregationThresholds": {
@@ -1687,6 +1698,10 @@ Example shape (symbolic placeholders must be replaced with the actual run values
     {
       "providerId": "laya",
       "dataCategories": ["atomic_claims", "evidence_passages"]
+    },
+    {
+      "providerId": "crossref",
+      "dataCategories": ["bibliographic_metadata"]
     }
   ],
   "verificationPolicyVersion": "v1",
@@ -1696,13 +1711,15 @@ Example shape (symbolic placeholders must be replaced with the actual run values
 
 Never rerun by mutating the old run.
 
+For provider settings that affect the outbound payload without changing its data categories, pin an opaque configuration fingerprint in the run and reject dispatch if the live provider registration no longer matches. For example, Crossref pins a digest of the configured contact email rather than storing the email value in the run snapshot.
+
 Create a new Analysis Run. For reproducibility, each run must retain the source document hash and parser identity/version, and each verification must point to the exact cited-paper asset used, including that asset's content hash, parser identity/version, and language-detector version where language gating was applied. Chunks inherit their asset identity; reusing an identical content hash and embedding profile across runs is allowed, but a newer global asset must never silently replace the asset used by an older run. Record per-run external-provider consent and the data categories authorized in the run snapshot.
 
 ---
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the intended safe-default provider contract for the complete V1 pipeline. The issue #6 runtime extends the issue #3 ingestion/queue and issue #5 parsing slices with a version-pinned local heuristic claim extractor, persisting run-scoped Atomic Claims with source spans and all-to-all links to Citation Targets in their own Citation Context. Embeddings, reference resolution, and System One are not invoked; their local/mock selections must not be represented as though those stages ran. The immutable configuration snapshot records reference resolution and aggregation as `NOT_RUN` (with no uncalibrated policy thresholds) and records an empty external-provider consent list. A stage that was not executed must not be represented as though it used a default policy.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the intended safe-default provider contract for the complete V1 pipeline. The issue #6 runtime extends the issue #3 ingestion/queue and issue #5 parsing slices with a version-pinned local heuristic claim extractor, persisting run-scoped Atomic Claims with source spans and all-to-all links to Citation Targets in their own Citation Context. Issue #7 adds conservative bibliography resolution using the enabled scholarly-metadata provider; the local default is the checked-in recorded-fixture set, while Crossref remains disabled unless explicitly reviewed and enabled. Embeddings and System One are not invoked; their local/mock selections must not be represented as though those stages ran. The immutable run snapshot pins the claim-extraction and reference-resolution providers, reference-resolution score-policy version and configured threshold, and empty-by-default external-provider consent list. Aggregation remains `NOT_RUN` without uncalibrated thresholds. A stage that was not executed must not be represented as though it used a default policy.
 
 Safe default example:
 
@@ -1778,7 +1795,7 @@ providers:
       enabled: false  # external; enable only after review and per-run consent
 ```
 
-In this profile, `recorded-fixtures` is a required fixture-provider contract: when implemented, it must use deterministic, checked-in provider/parser responses and representative paper assets, and must not make remote requests. It is the intended way to keep metadata resolution, OA discovery/acquisition, parsing, and verification testable without remote credentials or an approved remote provider. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. This profile's local embedding provider and mock System One let the vertical pipeline run without external LLM, embedding, metadata, graph, OA, consolidation, or Jev services.
+In this profile, the scholarly-metadata `recorded-fixtures` provider uses deterministic, checked-in metadata records and makes no remote requests. Recorded-fixture ports for OA discovery/acquisition, parser outputs, and verification remain the intended way to test those stages without remote credentials or an approved remote provider. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. This profile runs reference resolution against the local metadata fixtures while claim extraction, embedding, System One, graph enrichment, OA acquisition, and verification remain unexecuted.
 
 Rules:
 
@@ -2479,77 +2496,58 @@ This hybrid approach is easier to reason about than pure choreography.
 
 # 37. Suggested Backend Package Structure
 
-Keep one Spring Boot project initially.
+Keep one Spring Boot project initially. Group code by business capability first; within each feature, use role packages that make the execution path easy to follow. The names below are a guide, not a requirement to create empty packages before their behavior exists.
 
 ```text
 api/
-├── build.gradle.kts
-└── src/main/kotlin/com/example/academic/
-    │
-    ├── bootstrap/
-    │   ├── ApiApplication.kt
-    │   └── WorkerApplication.kt
-    │
-    ├── document/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── analysis/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── citation/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── scholarly/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── evidence/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── review/
-    │   ├── domain/
-    │   ├── application/
-    │   └── infrastructure/
-    │
-    ├── providers/
-    │   ├── claim/
-    │   ├── llm/
-    │   ├── embedding/
-    │   ├── systemone/
-    │   ├── parser/
-    │   ├── scholarly/
-    │   └── retrieval/
-    │
-    ├── messaging/
-    │   ├── inbox/
-    │   ├── outbox/
-    │   ├── redis/
-    │   └── events/
-    │
-    └── shared/
-        ├── ids/
-        ├── errors/
-        ├── json/
-        └── observability/
+├── bootstrap/
+├── document/
+│   ├── controller/       # Only if document-specific HTTP routes exist
+│   ├── service/          # Upload, validation, retention/deletion use cases
+│   ├── domain/           # Source Document rules and value types
+│   ├── repository/       # Document metadata persistence
+│   └── storage/          # Source object-store port and adapter
+├── analysis/
+│   ├── controller/       # Analysis Run HTTP entry points
+│   ├── service/          # Create, process, query, and lifecycle use cases
+│   ├── domain/           # Run state/provenance rules
+│   ├── configuration/    # Immutable run-pinned configuration snapshots
+│   ├── repository/       # Run persistence and read projections
+│   └── queue/            # Analysis Run-specific event handlers
+├── citation/
+│   ├── parsing/          # Parser contract, GROBID adapter, parsed structures
+│   ├── claims/           # Atomic Claim extraction and citation associations
+│   ├── domain/           # Citation Context, Bibliography Entry, and claim rules
+│   └── repository/       # Run-scoped parsed citation persistence
+├── scholarly/
+│   └── references/
+│       ├── controller/
+│       ├── service/      # Resolve-entry and report use cases
+│       ├── resolver/     # Pure conservative matching policy
+│       ├── repository/   # Resolution outcomes and Canonical Paper persistence
+│       ├── client/       # Scholarly metadata provider adapters
+│       ├── report/       # Reference Resolution Report projections
+│       └── queue/        # Per-Bibliography-Entry resolution handler
+├── evidence/             # Add when evidence retrieval/verification is implemented
+├── review/               # Add when Human Review is implemented
+├── infrastructure/
+│   ├── messaging/        # Generic outbox, inbox, stream worker, event envelope
+│   ├── providers/        # Shared provider catalog and consent gate
+│   ├── logging/
+│   └── observability/
+└── config/               # Composition root and framework configuration
 ```
 
-Prefer package-by-feature over giant technical packages such as:
+The intended call paths are explicit and short:
 
 ```text
-controllers/
-services/
-repositories/
+HTTP controller → feature service/use case → domain policy + repository/client adapter
+Generic message worker → feature queue handler → the same feature service/use case
 ```
 
+Keep feature-specific adapters and policies beside the feature they serve. Only genuinely reusable mechanisms—such as the generic Redis worker, outbox publisher, provider consent gate, and logging—belong in shared infrastructure. Do not create global `controllers/`, `services/`, or `repositories/` packages, and do not use `model` as a general-purpose bucket: reserve it for persistence entities/projections; keep HTTP contracts, run configuration snapshots, and domain types in their own focused packages. Put Spring-managed application services/components in a feature's `service/`; framework adapters remain in their role packages. Prefer one named production type per focused file.
+
+Migrate incrementally by end-to-end flow. Keep the public HTTP contract, persisted schema, event envelope, retry/idempotency behavior, and transaction boundaries unchanged during structural refactors. Keep the behavior tests beside the owning feature; async integration tests should exercise the real message-to-terminal-state flow.
 ---
 
 # 38. Repository Layout
@@ -2694,6 +2692,7 @@ The multipart `configuration` field and re-analysis JSON body use the same confi
   "claimExtractorProvider": "heuristic",
   "embeddingProvider": "local",
   "systemOneProvider": "mock",
+  "scholarlyMetadataProvider": "recorded-fixtures",
   "externalProviderConsents": []
 }
 ```
@@ -2765,7 +2764,7 @@ Request:
 GET /api/v1/providers
 ```
 
-Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, and `systemOne`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The default runtime exposes only local/mock providers.
+Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, `systemOne`, and `scholarlyMetadata`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The default runtime exposes local/mock providers and recorded scholarly-metadata fixtures; Crossref remains disabled by default.
 
 ## 40.5 OpenAPI and Swagger UI
 
@@ -3303,7 +3302,7 @@ enabled: false
 
 # 55. Local Development Defaults
 
-The following is the target local configuration for the full pipeline (see [the provider matrix](./agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The current runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, and version-pinned local heuristic claim extraction with context-scoped target linking. It does not invoke fixture providers, embeddings, reference resolution, or System One.
+The following is the target local configuration for the full pipeline (see [the provider matrix](./agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The current runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, version-pinned local heuristic claim extraction with context-scoped target linking, and conservative bibliography resolution through recorded metadata fixtures. It does not invoke embeddings or System One.
 
 ```text
 claim extractor:
@@ -3321,7 +3320,13 @@ self-hosted parser; consolidateHeader=0, consolidateCitations=0
 retrieval:
 postgres hybrid
 
-metadata, graph, and OA providers:
+scholarly metadata:
+recorded fixtures by default; Crossref disabled until trust-boundary/retention review and per-run consent
+
+reference resolution:
+title-author-year-weighted-edit-similarity-v1; configured confidence threshold pinned to each Analysis Run (numeric calibration remains a release gate)
+
+graph and OA providers:
 recorded fixtures by default; remote adapters disabled until trust-boundary/retention review and per-run consent
 
 storage:

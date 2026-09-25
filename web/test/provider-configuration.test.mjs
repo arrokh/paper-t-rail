@@ -60,36 +60,55 @@ const directory = {
         retentionDisclosure: null,
       },
     ],
+    scholarlyMetadata: [
+      {
+        role: "scholarlyMetadata",
+        providerId: "recorded-fixtures",
+        displayName: "Recorded scholarly metadata fixtures",
+        version: "v1",
+        model: null,
+        trustBoundary: "LOCAL",
+        dataCategories: ["bibliographic_metadata"],
+        retentionDisclosure: null,
+      },
+      {
+        role: "scholarlyMetadata",
+        providerId: "crossref",
+        displayName: "Crossref REST API",
+        version: "v1",
+        model: null,
+        trustBoundary: "EXTERNAL",
+        dataCategories: ["bibliographic_metadata"],
+        retentionDisclosure: "Crossref request logging and retention disclosure.",
+      },
+    ],
   },
   dataCategories: [],
 };
 
+const localSelections = {
+  claimExtractorProvider: "heuristic",
+  embeddingProvider: "local",
+  systemOneProvider: "mock",
+  scholarlyMetadataProvider: "recorded-fixtures",
+};
+
 test("local defaults have no external provider consent requirements", () => {
-  const requirements = consentRequirements(directory, {
-    claimExtractorProvider: "heuristic",
-    embeddingProvider: "local",
-    systemOneProvider: "mock",
-  });
+  const requirements = consentRequirements(directory, localSelections);
 
   assert.deepEqual(requirements, []);
   assert.deepEqual(missingConsents(requirements, {}), []);
-  assert.deepEqual(createRunConfiguration({
-    claimExtractorProvider: "heuristic",
-    embeddingProvider: "local",
-    systemOneProvider: "mock",
-  }, requirements, {}), {
-    claimExtractorProvider: "heuristic",
-    embeddingProvider: "local",
-    systemOneProvider: "mock",
+  assert.deepEqual(createRunConfiguration(localSelections, requirements, {}), {
+    ...localSelections,
     externalProviderConsents: [],
   });
 });
 
 test("external provider disclosure and saved consent include every selected request category", () => {
   const selections = {
+    ...localSelections,
     claimExtractorProvider: "hosted-ai",
     embeddingProvider: "hosted-ai",
-    systemOneProvider: "mock",
   };
   const requirements = consentRequirements(directory, selections);
   assert.deepEqual(requirements, [{
@@ -106,4 +125,23 @@ test("external provider disclosure and saved consent include every selected requ
     providerId: "hosted-ai",
     dataCategories: ["citation_context", "cited_paper_chunks", "embedding_input"],
   }]);
+});
+
+test("Crossref selection requires explicit per-run consent for bibliographic metadata", () => {
+  const selections = { ...localSelections, scholarlyMetadataProvider: "crossref" };
+  const requirements = consentRequirements(directory, selections);
+  assert.deepEqual(requirements, [{
+    providerId: "crossref",
+    displayName: "Crossref REST API",
+    dataCategories: ["bibliographic_metadata"],
+    retentionDisclosure: "Crossref request logging and retention disclosure.",
+  }]);
+  assert.deepEqual(missingConsents(requirements, {}), requirements);
+
+  const approved = { crossref: ["bibliographic_metadata"] };
+  assert.deepEqual(missingConsents(requirements, approved), []);
+  assert.deepEqual(createRunConfiguration(selections, requirements, approved), {
+    ...selections,
+    externalProviderConsents: [{ providerId: "crossref", dataCategories: ["bibliographic_metadata"] }],
+  });
 });
