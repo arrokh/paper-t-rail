@@ -12,9 +12,15 @@ infra-up:
 migrate:
 	set -a; if [ -f .env ]; then . ./.env; fi; set +a; $(COMPOSE) --profile migration run --rm sqitch deploy "db:pg://$${POSTGRES_USER:-papertrail}:$${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/$${POSTGRES_DB:-papertrail}"
 
-# Print Sqitch event history with full change IDs, without opening a pager.
+# Print Sqitch events oldest-first with local timestamps and full change IDs.
 migrate\:ls:
-	set -a; if [ -f .env ]; then . ./.env; fi; set +a; $(COMPOSE) --profile migration run --rm sqitch --no-pager log --format=oneline --abbrev 40 "db:pg://$${POSTGRES_USER:-papertrail}:$${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/$${POSTGRES_DB:-papertrail}"
+	@set -eu; \
+	set -a; if [ -f .env ]; then . ./.env; fi; set +a; \
+	local_timezone="$${TZ:-$$(readlink /etc/localtime 2>/dev/null | sed -n 's#^.*/zoneinfo/##p')}"; \
+	if [ -z "$$local_timezone" ]; then echo 'Could not determine local timezone; set TZ to an IANA timezone.' >&2; exit 1; fi; \
+	timezone_label=$$(TZ="$$local_timezone" date +%Z); \
+	printf 'Sqitch timestamps use local timezone %s (%s), oldest first.\n' "$$local_timezone" "$$timezone_label"; \
+	$(COMPOSE) --profile migration run --rm -e TZ="$$local_timezone" sqitch --no-pager log --reverse --format='format:%{date:strftime:%Y-%m-%d %H:%M:%S %Z %z}c %H %e %o:%n %s' --abbrev 40 "db:pg://$${POSTGRES_USER:-papertrail}:$${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/$${POSTGRES_DB:-papertrail}"
 
 # Revert CHANGE itself and all later changes; Sqitch prompts before execution.
 migrate\:revert:

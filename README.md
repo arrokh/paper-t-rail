@@ -92,12 +92,12 @@ make lint-web       # run web lint
 make typecheck-web  # run web typecheck
 make build-web      # create the web production build
 make migrate        # deploy the Sqitch plan into the local Compose PostgreSQL service
-make migrate:ls     # print Sqitch events with full change IDs (no pager)
+make migrate:ls     # print full change IDs, oldest-first in the local timezone
 make migrate:revert CHANGE=<change-id>  # revert that change and later migrations; interactive confirmation
 make clean          # destructive: remove all local application volumes
 ```
 
-The Sqitch IDs are database change IDs, not Git commit SHAs. `migrate:ls` shows the event history; pass a full 40-character change ID from it to `migrate:revert`. Sqitch reverts the selected change and all later changes, retains its interactive confirmation, and runs the migration revert scripts. This can delete persisted schema data (for example, bibliography-resolution outcomes); back up and review the target database before proceeding. Neither target removes Compose volumes.
+The Sqitch IDs are database change IDs, not Git commit SHAs. `migrate:ls` prints events oldest-first, converts commit timestamps to the machine's local timezone, labels the timezone, and shows full IDs without a pager; pass a full 40-character change ID from it to `migrate:revert`. Sqitch reverts the selected change and all later changes, retains its interactive confirmation, and runs the migration revert scripts. This can delete persisted schema data (for example, bibliography-resolution outcomes); back up and review the target database before proceeding. Neither target removes Compose volumes.
 
 `make validate` requires a Docker-compatible container runtime for its PostgreSQL/Redis integration tests. The tests execute the same schema migrations and exercise upload/run provenance, GROBID consolidation settings, DOI validation, deterministic matching and ambiguity abstention, unsupported-type precedence, Crossref consent gating with a no-request contract, persisted Canonical Paper/report output, parsing and source spans, citation-clause grouping and sentence fallback, qualifier-preserving claim extraction, per-run/context/span claim deduplication, all-to-all same-context target links with database-enforced context isolation, re-analysis, duplicate stream delivery, inbox idempotency, and reclaiming pending work with a replacement worker.
 
