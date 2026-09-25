@@ -82,7 +82,7 @@ export type ParsedDocument = {
   }>;
 };
 
-export type EvidenceCoverageReport = {
+export type ReferenceResolutionReportResponse = {
   analysisRunId: string;
   runStatus: string;
   referenceResolution: {

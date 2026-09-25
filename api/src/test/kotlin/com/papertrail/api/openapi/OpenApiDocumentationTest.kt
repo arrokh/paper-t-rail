@@ -7,7 +7,7 @@ import com.papertrail.api.parsing.ParsedDocumentView
 import com.papertrail.api.parsing.ParsedAtomicClaimView
 import com.papertrail.api.parsing.ParsedClaimCitationTargetView
 import com.papertrail.api.parsing.ParsedParserProvenance
-import com.papertrail.api.references.EvidenceCoverageReport
+import com.papertrail.api.references.ReferenceResolutionReportResponse
 import com.papertrail.api.references.ReferenceResolutionReport
 import com.papertrail.api.references.ReferenceResolutionService
 import com.papertrail.api.references.ReferenceResolutionSummary
@@ -353,7 +353,7 @@ class OpenApiDocumentationTest {
     fun `report endpoint exposes persisted reference outcomes and pinned policy`() {
         val runId = UUID.randomUUID()
         Mockito.`when`(referenceResolutionService.report(runId)).thenReturn(
-            EvidenceCoverageReport(
+            ReferenceResolutionReportResponse(
                 analysisRunId = runId,
                 runStatus = "PARSED",
                 referenceResolution = ReferenceResolutionReport(

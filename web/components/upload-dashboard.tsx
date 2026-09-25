@@ -9,7 +9,7 @@ import {
   FileText,
   LockKeyhole,
 } from "lucide-react";
-import type { AnalysisRun, AnalysisRunPage, ApiError, CreatedRun, EvidenceCoverageReport, ParsedDocument } from "@/lib/types";
+import type { AnalysisRun, AnalysisRunPage, ApiError, CreatedRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/lib/types";
 import {
   consentRequirements,
   createRunConfiguration,
@@ -53,6 +53,7 @@ import { TabsContent } from "@/components/ui/tabs";
 import { ReferenceResolutionBadge } from "@/components/reference-resolution-badge";
 import { ReferenceResolutionEntryCard } from "@/components/reference-resolution-entry-card";
 import { WorkflowStepTabs, type WorkflowStep } from "@/components/workflow-step-tabs";
+import { formatConfidenceThreshold } from "@/lib/format-confidence-threshold";
 import { scrollToAnchorTarget } from "@/lib/scroll-to-anchor";
 
 const RUN_PAGE_SIZE = 25;
@@ -162,7 +163,7 @@ export function UploadDashboard() {
     { runId: string; document: ParsedDocument } | { runId: string; error: string } | null
   >(null);
   const [reportResult, setReportResult] = useState<
-    { runId: string; report: EvidenceCoverageReport } | { runId: string; error: string } | null
+    { runId: string; report: ReferenceResolutionReportResponse } | { runId: string; error: string } | null
   >(null);
   const detailsCardRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -327,13 +328,13 @@ export function UploadDashboard() {
     void fetch(`/api/v1/analysis-runs/${encodeURIComponent(selectedRunId)}/report`, { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
-        return (await response.json()) as EvidenceCoverageReport;
+        return (await response.json()) as ReferenceResolutionReportResponse;
       })
       .then((report) => { if (active) setReportResult({ runId: selectedRunId, report }); })
       .catch((cause: unknown) => {
         if (active) setReportResult({
           runId: selectedRunId,
-          error: cause instanceof Error ? cause.message : "Could not load the Evidence Coverage Report.",
+          error: cause instanceof Error ? cause.message : "Could not load the Reference Resolution Report.",
         });
       });
 
@@ -514,7 +515,7 @@ export function UploadDashboard() {
   const workflowSteps: WorkflowStep[] = [
     { value: "progress", number: "01", label: "Run Progress", compactLabel: "Progress", ...runProgressStep(selectedRunStatus) },
     { value: "parsed", number: "02", label: "Parsed Document", compactLabel: "Parsed", ...parsedStepState, disabled: !parsedDocumentReady },
-    { value: "report", number: "03", label: "Evidence Coverage Report", compactLabel: "Report", ...reportStepState, disabled: !parsedDocumentReady },
+    { value: "report", number: "03", label: "Reference Resolution Report", compactLabel: "Report", ...reportStepState, disabled: !parsedDocumentReady },
   ];
 
   function scrollToDetailsHeading() {
@@ -1055,7 +1056,7 @@ export function UploadDashboard() {
                 <TabsContent value="report" className="space-y-5 outline-none">
                   {coverageReportLoading && (
                     <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-                      <Spinner aria-hidden="true" /> Loading Evidence Coverage Report…
+                      <Spinner aria-hidden="true" /> Loading Reference Resolution Report…
                     </p>
                   )}
                   {coverageReportError && (
@@ -1071,7 +1072,7 @@ export function UploadDashboard() {
                       <div className="space-y-5">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="space-y-1">
-                            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Evidence Coverage Report</p>
+                            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Reference Resolution Report</p>
                             <h3 className="font-heading text-lg font-semibold tracking-tight">Bibliography resolution</h3>
                           </div>
                           <Badge variant="secondary" className="font-mono text-xs">
@@ -1085,7 +1086,7 @@ export function UploadDashboard() {
                           </div>
                           <div className="space-y-1">
                             <dt className="font-mono text-xs uppercase text-muted-foreground">Configured threshold</dt>
-                            <dd className="m-0 font-mono text-xs text-foreground">{resolution.confidenceThreshold === null ? "Not configured" : resolution.confidenceThreshold.toFixed(2)}</dd>
+                            <dd className="m-0 font-mono text-xs text-foreground">{formatConfidenceThreshold(resolution.confidenceThreshold)}</dd>
                           </div>
                         </dl>
                         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-5">

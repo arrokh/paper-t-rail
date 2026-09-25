@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { ArrowRight, ChevronDown } from "lucide-react";
-import type { EvidenceCoverageReport } from "@/lib/types";
+import type { ReferenceResolutionReportResponse } from "@/lib/types";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ReferenceResolutionBadge } from "@/components/reference-resolution-badge";
 
-type ReferenceResolutionEntry = EvidenceCoverageReport["referenceResolution"]["entries"][number];
+type ReferenceResolutionEntry = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number];
 
 export function ReferenceResolutionEntryCard({
   entry,

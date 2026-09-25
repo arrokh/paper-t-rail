@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.documents.ApiError
 import com.papertrail.api.parsing.ParsedDocumentRepository
 import com.papertrail.api.parsing.ParsedDocumentView
-import com.papertrail.api.references.EvidenceCoverageReport
+import com.papertrail.api.references.ReferenceResolutionReportResponse
 import com.papertrail.api.references.ReferenceResolutionService
 import com.papertrail.api.providers.ProviderCatalog
 import io.swagger.v3.oas.annotations.Operation
@@ -147,7 +147,7 @@ class AnalysisRunController(
 
     @Operation(
         summary = "Get parsed document structure, Atomic Claims, resolution status, and inferred links",
-        description = "Returns the immutable parsed structure, extracted Atomic Claims, inferred/provisional all-to-all Claim–Citation Target links scoped to each Citation Context, and current bibliography resolution status projected from separate immutable outcomes when an Analysis Run reaches PARSED. PARSED is an intermediate state, not a completed Evidence Coverage Report. All source offsets are zero-based and end-exclusive UTF-16 code-unit indexes in normalizedSourceText.",
+        description = "Returns the immutable parsed structure, extracted Atomic Claims, inferred/provisional all-to-all Claim–Citation Target links scoped to each Citation Context, and current bibliography resolution status projected from separate immutable outcomes when an Analysis Run reaches PARSED. PARSED is an intermediate state: reference resolution may be available, but claim and evidence verification have not run. All source offsets are zero-based and end-exclusive UTF-16 code-unit indexes in normalizedSourceText.",
     )
     @ApiResponses(
         value = [
@@ -166,17 +166,17 @@ class AnalysisRunController(
     }
 
     @Operation(
-        summary = "Get the Evidence Coverage Report",
+        summary = "Get the Reference Resolution Report",
         description = "Returns persisted conservative bibliography-resolution results, Canonical Paper identities, configured matching policy, and per-run threshold. Claim and evidence analysis is not implied by a parsed run.",
     )
     @ApiResponses(
         value = [
-            ApiResponse(responseCode = "200", description = "Persisted bibliography resolution report", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = EvidenceCoverageReport::class))]),
+            ApiResponse(responseCode = "200", description = "Persisted bibliography resolution report", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ReferenceResolutionReportResponse::class))]),
             ApiResponse(responseCode = "404", description = "Analysis Run not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @GetMapping("/analysis-runs/{runId}/report", produces = [MediaType.APPLICATION_JSON_VALUE])
-    fun getReport(@PathVariable runId: UUID): EvidenceCoverageReport = referenceResolutionService.report(runId)
+    fun getReport(@PathVariable runId: UUID): ReferenceResolutionReportResponse = referenceResolutionService.report(runId)
         ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
 
     @Operation(summary = "Check API and database liveness")

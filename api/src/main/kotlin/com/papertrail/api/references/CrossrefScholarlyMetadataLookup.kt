@@ -7,65 +7,11 @@ import com.papertrail.api.providers.ProviderCallGate
 import com.papertrail.api.providers.ProviderCallPayload
 import com.papertrail.api.providers.SCHOLARLY_METADATA_ROLE
 import com.papertrail.api.runs.AnalysisConfigurationSnapshot
-import org.springframework.beans.factory.annotation.Value
-import org.springframework.context.annotation.Bean
-import org.springframework.context.annotation.Configuration
-import org.springframework.core.io.ClassPathResource
-import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpStatus
-import org.springframework.http.client.JdkClientHttpRequestFactory
-import org.springframework.stereotype.Component
+import org.springframework.http.MediaType
 import org.springframework.web.client.RestClient
 import org.springframework.web.util.UriComponentsBuilder
 import java.net.URI
-import java.net.http.HttpClient
-import java.time.Duration
-
-interface ScholarlyMetadataLookupFactory {
-    val providerId: String
-    fun forRun(configuration: AnalysisConfigurationSnapshot): ScholarlyMetadataLookup
-}
-
-@Component
-class RecordedFixtureScholarlyMetadataLookupFactory(
-    objectMapper: ObjectMapper,
-) : ScholarlyMetadataLookupFactory {
-    private val works: List<ScholarlyWork> = objectMapper.readTree(ClassPathResource("provider-fixtures/recorded-scholarly-works.json").inputStream)
-        .map { node ->
-            ScholarlyWork(
-                doi = node.path("doi").takeIf(JsonNode::isTextual)?.asText(),
-                title = node.path("title").asText(),
-                authors = node.path("authors").map(JsonNode::asText),
-                year = node.path("year").takeIf(JsonNode::isIntegralNumber)?.asInt(),
-            )
-        }
-
-    override val providerId: String = "recorded-fixtures"
-
-    override fun forRun(configuration: AnalysisConfigurationSnapshot): ScholarlyMetadataLookup = object : ScholarlyMetadataLookup {
-        override fun byDoi(doi: String): ScholarlyWork? = works.firstOrNull { DoiNormalizer.normalize(it.doi) == doi }
-
-        override fun search(reference: BibliographyReference): List<ScholarlyWork> = works
-    }
-}
-
-@Component
-class CrossrefScholarlyMetadataLookupFactory(
-    @Qualifier("crossrefRestClient") private val client: RestClient,
-    private val objectMapper: ObjectMapper,
-    private val callGate: ProviderCallGate,
-    @Value("\${paper-trail.providers.crossref.contact-email:}") private val contactEmail: String,
-) : ScholarlyMetadataLookupFactory {
-    override val providerId: String = "crossref"
-
-    override fun forRun(configuration: AnalysisConfigurationSnapshot): ScholarlyMetadataLookup = CrossrefScholarlyMetadataLookup(
-        client = client,
-        objectMapper = objectMapper,
-        callGate = callGate,
-        configuration = configuration,
-        contactEmail = contactEmail.takeIf(String::isNotBlank),
-    )
-}
 
 class CrossrefScholarlyMetadataLookup(
     private val client: RestClient,
@@ -127,7 +73,7 @@ class CrossrefScholarlyMetadataLookup(
 
     private fun exchange(uri: URI): JsonNode? = client.get()
         .uri(uri)
-        .accept(org.springframework.http.MediaType.APPLICATION_JSON)
+        .accept(MediaType.APPLICATION_JSON)
         .exchange { _, response ->
             when {
                 response.statusCode == HttpStatus.NOT_FOUND -> null
@@ -154,15 +100,5 @@ class CrossrefScholarlyMetadataLookup(
 
     companion object {
         const val MAX_RESULTS = 10
-    }
-}
-
-@Configuration
-class CrossrefClientConfiguration {
-    @Bean
-    fun crossrefRestClient(): RestClient {
-        val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
-        val requestFactory = JdkClientHttpRequestFactory(client).apply { setReadTimeout(Duration.ofSeconds(20)) }
-        return RestClient.builder().baseUrl("https://api.crossref.org").requestFactory(requestFactory).build()
     }
 }
