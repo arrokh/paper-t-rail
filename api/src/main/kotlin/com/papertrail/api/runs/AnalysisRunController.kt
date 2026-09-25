@@ -143,8 +143,8 @@ class AnalysisRunController(
         ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
 
     @Operation(
-        summary = "Get parsed sections, citation contexts, citation occurrences, and bibliography entries",
-        description = "Returns the immutable parsed structure and parser provenance when an Analysis Run reaches PARSED. PARSED is an intermediate state, not a completed Evidence Coverage Report. All source offsets are zero-based and end-exclusive UTF-16 code-unit indexes in normalizedSourceText.",
+        summary = "Get parsed document structure, Atomic Claims, and inferred Citation Target links",
+        description = "Returns the immutable parsed structure, extracted Atomic Claims, and inferred/provisional all-to-all Claim–Citation Target links scoped to each Citation Context when an Analysis Run reaches PARSED. PARSED is an intermediate state, not a completed Evidence Coverage Report. All source offsets are zero-based and end-exclusive UTF-16 code-unit indexes in normalizedSourceText.",
     )
     @ApiResponses(
         value = [

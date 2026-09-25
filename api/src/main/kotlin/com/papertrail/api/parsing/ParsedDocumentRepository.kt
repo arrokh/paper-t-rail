@@ -1,6 +1,7 @@
 package com.papertrail.api.parsing
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.claims.CitationContextClaims
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import java.sql.ResultSet
@@ -11,7 +12,17 @@ class ParsedDocumentRepository(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
 ) {
-    fun save(analysisRunId: UUID, sourceContentSha256: String, parsed: ParsedScientificDocument, rawTeiObjectKey: String) {
+    fun save(
+        analysisRunId: UUID,
+        sourceContentSha256: String,
+        parsed: ParsedScientificDocument,
+        rawTeiObjectKey: String,
+        extractedClaims: List<CitationContextClaims>,
+    ) {
+        val claimsByContextSpan = extractedClaims.associateBy { it.contextStartOffset to it.contextEndOffset }
+        require(claimsByContextSpan.size == extractedClaims.size &&
+            claimsByContextSpan.keys == parsed.citationContexts.map { it.startOffset to it.endOffset }.toSet()
+        ) { "Extracted Atomic Claims must match every Citation Context exactly once." }
         jdbc.update(
             """
             INSERT INTO parsed_document_parses (
@@ -68,6 +79,7 @@ class ParsedDocumentRepository(
 
         parsed.citationContexts.forEach { context ->
             val contextId = UUID.randomUUID()
+            val contextTargetIds = mutableListOf<UUID>()
             val sectionId = sectionIds.getValue(context.sectionOrder)
             jdbc.update(
                 """
@@ -106,16 +118,49 @@ class ParsedDocumentRepository(
                         jdbc.update(
                             """
                             INSERT INTO citation_targets (
-                                id, analysis_run_id, citation_occurrence_id, bibliography_entry_id, target_order
-                            ) VALUES (?, ?, ?, ?, ?)
+                                id, analysis_run_id, citation_context_id, citation_occurrence_id, bibliography_entry_id, target_order
+                            ) VALUES (?, ?, ?, ?, ?, ?)
                             """.trimIndent(),
-                            UUID.randomUUID(),
+                            UUID.randomUUID().also { contextTargetIds.add(it) },
                             analysisRunId,
+                            contextId,
                             occurrenceId,
                             referenceId,
                             targetOrder,
                         )
                     }
+            }
+
+            val contextClaims = claimsByContextSpan.getValue(context.startOffset to context.endOffset)
+            contextClaims.claims.forEach { claim ->
+                val claimId = UUID.randomUUID()
+                jdbc.update(
+                    """
+                    INSERT INTO atomic_claims (
+                        id, analysis_run_id, citation_context_id, claim_text, source_start_offset, source_end_offset
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                    claimId,
+                    analysisRunId,
+                    contextId,
+                    claim.text,
+                    claim.sourceStartOffset,
+                    claim.sourceEndOffset,
+                )
+                contextTargetIds.distinct().forEach { targetId ->
+                    jdbc.update(
+                        """
+                        INSERT INTO atomic_claim_citation_targets (
+                            id, analysis_run_id, citation_context_id, atomic_claim_id, citation_target_id, association_kind
+                        ) VALUES (?, ?, ?, ?, ?, 'INFERRED_PROVISIONAL')
+                        """.trimIndent(),
+                        UUID.randomUUID(),
+                        analysisRunId,
+                        contextId,
+                        claimId,
+                        targetId,
+                    )
+                }
             }
         }
     }
@@ -180,6 +225,52 @@ class ParsedDocumentRepository(
                 )
             }.toMutableList()
         }
+        val claimsByContext = linkedMapOf<UUID, MutableList<ParsedAtomicClaimView>>()
+        val claimRows = jdbc.query(
+            """
+            SELECT c.id, c.citation_context_id, c.claim_text, c.source_start_offset, c.source_end_offset,
+                   link.association_kind, target.id AS target_id, occurrence.marker_text,
+                   entry.local_reference_key, entry.parsed_title
+              FROM atomic_claims c
+              LEFT JOIN atomic_claim_citation_targets link
+                ON link.analysis_run_id = c.analysis_run_id AND link.atomic_claim_id = c.id
+              LEFT JOIN citation_targets target
+                ON target.analysis_run_id = link.analysis_run_id
+               AND target.id = link.citation_target_id
+               AND target.citation_context_id = link.citation_context_id
+              LEFT JOIN citation_occurrences occurrence
+                ON occurrence.analysis_run_id = target.analysis_run_id
+               AND occurrence.id = target.citation_occurrence_id
+              LEFT JOIN bibliography_entries entry
+                ON entry.analysis_run_id = target.analysis_run_id
+               AND entry.id = target.bibliography_entry_id
+             WHERE c.analysis_run_id = ?
+             ORDER BY c.source_start_offset, occurrence.start_offset, target.target_order
+            """.trimIndent(),
+            { rs, _ -> rs.toClaimTargetRow() },
+            analysisRunId,
+        )
+        claimRows.groupBy(ClaimTargetRow::contextId).forEach { (contextId, rows) ->
+            claimsByContext[contextId] = rows.groupBy(ClaimTargetRow::claimId).values.map { duplicateRows ->
+                val first = duplicateRows.first()
+                ParsedAtomicClaimView(
+                    id = first.claimId,
+                    text = first.text,
+                    sourceStartOffset = first.sourceStartOffset,
+                    sourceEndOffset = first.sourceEndOffset,
+                    citationTargets = duplicateRows.mapNotNull { row ->
+                        val targetId = row.targetId ?: return@mapNotNull null
+                        ParsedClaimCitationTargetView(
+                            id = targetId,
+                            markerText = row.markerText ?: return@mapNotNull null,
+                            bibliographyReferenceKey = row.referenceKey ?: return@mapNotNull null,
+                            bibliographyTitle = row.referenceTitle,
+                            associationKind = row.associationKind ?: return@mapNotNull null,
+                        )
+                    }.distinctBy(ParsedClaimCitationTargetView::id),
+                )
+            }.toMutableList()
+        }
         val contexts = jdbc.query(
             """
             SELECT id, section_id, context_text, boundary_kind, start_offset, end_offset
@@ -195,6 +286,7 @@ class ParsedDocumentRepository(
                     startOffset = rs.getInt("start_offset"),
                     endOffset = rs.getInt("end_offset"),
                     occurrences = occurrencesByContext[id].orEmpty(),
+                    atomicClaims = claimsByContext[id].orEmpty(),
                 )
             },
             analysisRunId,
@@ -208,6 +300,19 @@ class ParsedDocumentRepository(
             bibliographyEntries = bibliographyEntries,
         )
     }
+
+    private fun ResultSet.toClaimTargetRow() = ClaimTargetRow(
+        claimId = getObject("id", UUID::class.java),
+        contextId = getObject("citation_context_id", UUID::class.java),
+        text = getString("claim_text"),
+        sourceStartOffset = getInt("source_start_offset"),
+        sourceEndOffset = getInt("source_end_offset"),
+        associationKind = getString("association_kind"),
+        targetId = getObject("target_id", UUID::class.java),
+        markerText = getString("marker_text"),
+        referenceKey = getString("local_reference_key"),
+        referenceTitle = getString("parsed_title"),
+    )
 
     private fun ResultSet.toOccurrenceRow() = OccurrenceRow(
         id = getObject("id", UUID::class.java),
@@ -230,6 +335,18 @@ class ParsedDocumentRepository(
         resolutionStatus = getString("resolution_status"),
     )
 
+    private data class ClaimTargetRow(
+        val claimId: UUID,
+        val contextId: UUID,
+        val text: String,
+        val sourceStartOffset: Int,
+        val sourceEndOffset: Int,
+        val associationKind: String?,
+        val targetId: UUID?,
+        val markerText: String?,
+        val referenceKey: String?,
+        val referenceTitle: String?,
+    )
     private data class ParseRow(val parserId: String, val parserVersion: String, val sourceContentSha256: String, val normalizedSourceText: String)
     private data class OccurrenceRow(val id: UUID, val contextId: UUID, val markerText: String, val startOffset: Int, val endOffset: Int, val referenceKey: String?)
 }
@@ -246,5 +363,28 @@ data class ParsedDocumentView(
 data class ParsedParserProvenance(val provider: String, val version: String)
 data class ParsedSectionView(val id: UUID, val sectionOrder: Int, val heading: String?, val text: String, val startOffset: Int, val endOffset: Int)
 data class ParsedCitationOccurrenceView(val id: UUID, val markerText: String, val startOffset: Int, val endOffset: Int, val bibliographyReferenceKeys: List<String>)
-data class ParsedCitationContextView(val id: UUID, val sectionId: UUID, val boundaryKind: String, val text: String, val startOffset: Int, val endOffset: Int, val occurrences: List<ParsedCitationOccurrenceView>)
+data class ParsedCitationContextView(
+    val id: UUID,
+    val sectionId: UUID,
+    val boundaryKind: String,
+    val text: String,
+    val startOffset: Int,
+    val endOffset: Int,
+    val occurrences: List<ParsedCitationOccurrenceView>,
+    val atomicClaims: List<ParsedAtomicClaimView> = emptyList(),
+)
+data class ParsedAtomicClaimView(
+    val id: UUID,
+    val text: String,
+    val sourceStartOffset: Int,
+    val sourceEndOffset: Int,
+    val citationTargets: List<ParsedClaimCitationTargetView>,
+)
+data class ParsedClaimCitationTargetView(
+    val id: UUID,
+    val markerText: String,
+    val bibliographyReferenceKey: String,
+    val bibliographyTitle: String?,
+    val associationKind: String,
+)
 data class ParsedBibliographyEntryView(val entryOrder: Int, val localReferenceKey: String, val rawText: String, val title: String?, val authors: List<String>, val year: Int?, val doi: String?, val referenceType: String, val resolutionStatus: String)

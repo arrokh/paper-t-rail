@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.logging.RequestCorrelationFilter
 import com.papertrail.api.parsing.ParsedDocumentRepository
 import com.papertrail.api.parsing.ParsedDocumentView
+import com.papertrail.api.parsing.ParsedAtomicClaimView
+import com.papertrail.api.parsing.ParsedClaimCitationTargetView
 import com.papertrail.api.parsing.ParsedParserProvenance
 import com.papertrail.api.runs.AnalysisRunPage
 import com.papertrail.api.runs.AnalysisRunSummary
@@ -119,6 +121,9 @@ class OpenApiDocumentationTest {
         assertTrue(snapshotProperties.has("validationLimits"))
         val parsedDocument = paths.path("/api/v1/analysis-runs/{runId}/parsed-document").path("get")
         assertTrue(parsedDocument.path("responses").path("200").path("content").has("application/json"))
+        assertTrue(parsedDocument.path("summary").asText().contains("Atomic Claims"))
+        assertTrue(parsedDocument.path("description").asText().contains("inferred/provisional"))
+        assertTrue(parsedDocument.path("description").asText().contains("Citation Context"))
         assertTrue(parsedDocument.path("description").asText().contains("PARSED"))
         assertFalse(parsedDocument.path("description").asText().contains("completed Analysis Run"))
         assertTrue(parsedDocument.path("responses").has("404"))
@@ -286,6 +291,23 @@ class OpenApiDocumentationTest {
                             UUID.randomUUID(), "[1]", 6, 9, listOf("ref1"),
                         ),
                     ),
+                    atomicClaims = listOf(
+                        ParsedAtomicClaimView(
+                            id = UUID.randomUUID(),
+                            text = "Claim",
+                            sourceStartOffset = 0,
+                            sourceEndOffset = 5,
+                            citationTargets = listOf(
+                                ParsedClaimCitationTargetView(
+                                    id = UUID.randomUUID(),
+                                    markerText = "[1]",
+                                    bibliographyReferenceKey = "ref1",
+                                    bibliographyTitle = "Reference one",
+                                    associationKind = "INFERRED_PROVISIONAL",
+                                ),
+                            ),
+                        ),
+                    ),
                 ),
             ),
             bibliographyEntries = emptyList(),
@@ -298,6 +320,9 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.parser.provider").value("grobid"))
             .andExpect(jsonPath("$.normalizedSourceText").value("Claim [1]."))
             .andExpect(jsonPath("$.citationContexts[0].occurrences[0].bibliographyReferenceKeys[0]").value("ref1"))
+            .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].text").value("Claim"))
+            .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].sourceStartOffset").value(0))
+            .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].citationTargets[0].associationKind").value("INFERRED_PROVISIONAL"))
 
         val pendingRunId = UUID.randomUUID()
         Mockito.`when`(analysisRunService.get(pendingRunId)).thenReturn(summary.copy(id = pendingRunId, status = "PROCESSING"))
