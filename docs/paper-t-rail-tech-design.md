@@ -94,7 +94,7 @@ The architecture intentionally uses:
 - **Immutable Analysis Runs** so the same document can be re-analyzed with different providers/models.
 - **Human reviews** stored separately from model results to preserve ground truth.
 
-The system should be simple enough for one developer to understand end-to-end, but modular enough to replace Laya with Jev, local embeddings with Google embeddings, heuristic claim extraction with LLM extraction, or PostgreSQL retrieval with a different implementation later. External or unclassified provider implementations remain disabled until their data boundary/retention terms are reviewed and any required per-run consent is in place.
+The system should be simple enough for one developer to understand end-to-end, but modular enough to replace Laya with Jev, local embeddings with Google embeddings, heuristic claim extraction with LLM extraction, or PostgreSQL retrieval with a different implementation later. External or unclassified provider implementations remain disabled until their data boundary/retention terms are reviewed and any required per-run consent is in place. Shared API/web implementation conventions for keeping code simple and maintainable are in [Coding Principles](./agents/coding-principles.md); Kotlin import requirements are in [`api/AGENTS.md`](../api/AGENTS.md).
 
 ---
 

@@ -1,5 +1,7 @@
 # Web UI Instructions
 
+For code-structure, SOLID, guard-clause, and type/file conventions shared with the API, follow [Shared Coding Principles](../docs/agents/coding-principles.md).
+
 For every change under `web/`, use the [Paper T-Rail Web UI Design System](../docs/ui-design-system.md) as the source of truth and preserve the accepted choice in [ADR 0005](../docs/adr/0005-shadcn-web-ui-system.md).
 
 ## Component and styling rules
