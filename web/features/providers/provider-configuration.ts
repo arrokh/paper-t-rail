@@ -1,3 +1,5 @@
+import type { AnalysisRunConfiguration } from "../analysis-runs/types.ts";
+
 export type ProviderRole = "claimExtractor" | "embedding" | "systemOne" | "scholarlyMetadata";
 
 export type ProviderSelections = {
@@ -35,6 +37,23 @@ export type ProviderConsentRequirement = {
   dataCategories: string[];
   retentionDisclosure: string | null;
 };
+
+export function availableProviderSelections(
+  directory: ProviderDirectory,
+  selections: ProviderSelections,
+): ProviderSelections {
+  const selectAvailable = (role: ProviderRole, current: string) =>
+    directory.providers[role]?.find((provider) => provider.providerId === current)?.providerId
+      ?? directory.providers[role]?.[0]?.providerId
+      ?? current;
+
+  return {
+    claimExtractorProvider: selectAvailable("claimExtractor", selections.claimExtractorProvider),
+    embeddingProvider: selectAvailable("embedding", selections.embeddingProvider),
+    systemOneProvider: selectAvailable("systemOne", selections.systemOneProvider),
+    scholarlyMetadataProvider: selectAvailable("scholarlyMetadata", selections.scholarlyMetadataProvider),
+  };
+}
 
 export function consentRequirements(
   directory: ProviderDirectory,
@@ -81,7 +100,7 @@ export function createRunConfiguration(
   selections: ProviderSelections,
   requirements: ProviderConsentRequirement[],
   approvedCategories: Record<string, string[]>,
-) {
+): AnalysisRunConfiguration {
   return {
     ...selections,
     externalProviderConsents: requirements.map((provider) => ({

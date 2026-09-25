@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { consentRequirements, createRunConfiguration, missingConsents } from "../lib/provider-configuration.ts";
+import { consentRequirements, createRunConfiguration, missingConsents } from "../features/providers/provider-configuration.ts";
 
 const directory = {
   providers: {

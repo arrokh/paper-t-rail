@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { UploadDashboard } from "@/components/upload-dashboard";
+import { UploadDashboard } from "@/features/workspace/components/upload-dashboard";
 
 export default function Home() {
   return (

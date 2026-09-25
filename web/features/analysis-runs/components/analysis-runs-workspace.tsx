@@ -1,23 +1,23 @@
 "use client";
 
-import { FormEvent, MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useIsMutating } from "@tanstack/react-query";
+import { useProviderConfiguration } from "@/features/providers/provider-configuration-context";
+import {
+  useParsedDocument,
+  useRecentAnalysisRuns,
+  UPLOAD_ANALYSIS_RUN_MUTATION_KEY,
+  useReanalyzeDocument,
+  useReferenceResolutionReport,
+} from "@/features/analysis-runs/queries/analysis-run-queries";
+import type { AnalysisRun, AnalysisRunPage } from "@/features/analysis-runs/types";
 import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
   ChevronDown,
   FileText,
-  LockKeyhole,
 } from "lucide-react";
-import type { AnalysisRun, AnalysisRunPage, ApiError, CreatedRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/lib/types";
-import {
-  consentRequirements,
-  createRunConfiguration,
-  missingConsents,
-  type ProviderDirectory,
-  type ProviderRole,
-  type ProviderSelections,
-} from "@/lib/provider-configuration";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -28,44 +28,24 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-  FieldLegend,
-  FieldSet,
-} from "@/components/ui/field";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { TabsContent } from "@/components/ui/tabs";
-import { ReferenceResolutionBadge } from "@/components/reference-resolution-badge";
-import { ReferenceResolutionEntryCard } from "@/components/reference-resolution-entry-card";
-import { WorkflowStepTabs, type WorkflowStep } from "@/components/workflow-step-tabs";
-import { formatConfidenceThreshold } from "@/lib/format-confidence-threshold";
+import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
+import { ReferenceResolutionEntryCard } from "@/features/reference-resolution/components/reference-resolution-entry-card";
+import { WorkflowStepTabs, type WorkflowStep } from "@/features/analysis-runs/components/workflow-step-tabs";
+import { formatConfidenceThreshold } from "@/features/reference-resolution/format-confidence-threshold";
 import { scrollToAnchorTarget } from "@/lib/scroll-to-anchor";
-
-const RUN_PAGE_SIZE = 25;
 
 type AnalysisRunDetailTab = "progress" | "parsed" | "report";
 
-const DEFAULT_SELECTIONS: ProviderSelections = {
-  claimExtractorProvider: "heuristic",
-  embeddingProvider: "local",
-  systemOneProvider: "mock",
-  scholarlyMetadataProvider: "recorded-fixtures",
-};
+const EMPTY_ANALYSIS_RUN_PAGE: AnalysisRunPage = { items: [], nextCursor: null };
 
 const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
   QUEUED: "border-border bg-muted text-muted-foreground",
@@ -76,13 +56,8 @@ const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
   FAILED: "border-destructive/25 bg-destructive/10 text-destructive",
 };
 
-async function readError(response: Response): Promise<string> {
-  try {
-    const error = (await response.json()) as ApiError;
-    return error.message || "The request was rejected.";
-  } catch {
-    return `Request failed (${response.status}).`;
-  }
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function statusLabel(status: AnalysisRun["status"]): string {
@@ -145,53 +120,38 @@ function referenceResolutionAnchorId(referenceKey: string): string {
   return `reference-resolution-${referenceKey}`;
 }
 
-export function UploadDashboard() {
-  const [runPage, setRunPage] = useState<AnalysisRunPage>({ items: [], nextCursor: null });
+export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelectedRunId: string | null }) {
   const [pageCursors, setPageCursors] = useState<Array<string | null>>([null]);
   const [pageIndex, setPageIndex] = useState(0);
   const [activeDetailTab, setActiveDetailTab] = useState<AnalysisRunDetailTab>("progress");
-  const [providerDirectory, setProviderDirectory] = useState<ProviderDirectory | null>(null);
-  const [providerSelections, setProviderSelections] = useState<ProviderSelections>(DEFAULT_SELECTIONS);
-  const [approvedCategories, setApprovedCategories] = useState<Record<string, string[]>>({});
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [providerError, setProviderError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
-  const [parsedDocumentResult, setParsedDocumentResult] = useState<
-    { runId: string; document: ParsedDocument } | { runId: string; error: string } | null
-  >(null);
-  const [reportResult, setReportResult] = useState<
-    { runId: string; report: ReferenceResolutionReportResponse } | { runId: string; error: string } | null
-  >(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialSelectedRunId);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const providerConfiguration = useProviderConfiguration();
+  const reanalyzeMutation = useReanalyzeDocument();
+  const uploadPending = useIsMutating({ mutationKey: UPLOAD_ANALYSIS_RUN_MUTATION_KEY }) > 0;
+  const busy = reanalyzeMutation.isPending || uploadPending;
   const detailsCardRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingDetailTarget = useRef<{ tab: AnalysisRunDetailTab; targetId: string } | null>(null);
-  const listRequestSequence = useRef(0);
   const pageCursor = pageCursors[pageIndex] ?? null;
+  const runsQuery = useRecentAnalysisRuns(pageCursor);
+  const runPage = runsQuery.data ?? EMPTY_ANALYSIS_RUN_PAGE;
   const runs = runPage.items;
-
+  const loading = runsQuery.isPending;
   const selectedRun = useMemo(
     () => runs.find((run) => run.id === selectedRunId) ?? null,
     [runs, selectedRunId],
   );
   const selectedRunStatus = selectedRun?.status;
-  const parsedDocumentResultForSelection = parsedDocumentResult?.runId === selectedRunId
-    ? parsedDocumentResult
+  const parsedDocumentReady = isParsedDocumentReady(selectedRunStatus);
+  const parsedDocumentQuery = useParsedDocument(selectedRunId, parsedDocumentReady);
+  const reportQuery = useReferenceResolutionReport(selectedRunId, parsedDocumentReady);
+  const parsedDocument = parsedDocumentQuery.data ?? null;
+  const parsedDocumentError = parsedDocumentQuery.isError
+    ? errorMessage(parsedDocumentQuery.error, "Could not load the parsed document.")
     : null;
-  const parsedDocument = parsedDocumentResultForSelection && "document" in parsedDocumentResultForSelection
-    ? parsedDocumentResultForSelection.document
-    : null;
-  const parsedDocumentError = parsedDocumentResultForSelection && "error" in parsedDocumentResultForSelection
-    ? parsedDocumentResultForSelection.error
-    : null;
-  const reportResultForSelection = reportResult?.runId === selectedRunId ? reportResult : null;
-  const coverageReport = reportResultForSelection && "report" in reportResultForSelection
-    ? reportResultForSelection.report
-    : null;
-  const coverageReportError = reportResultForSelection && "error" in reportResultForSelection
-    ? reportResultForSelection.error
+  const coverageReport = reportQuery.data ?? null;
+  const coverageReportError = reportQuery.isError
+    ? errorMessage(reportQuery.error, "Could not load the Reference Resolution Report.")
     : null;
   const resolutionEntriesByReferenceKey = useMemo(
     () => new Map(coverageReport?.referenceResolution.entries.map((entry) => [entry.localReferenceKey, entry] as const) ?? []),
@@ -201,9 +161,7 @@ export function UploadDashboard() {
     () => new Set(parsedDocument?.bibliographyEntries.map((entry) => entry.localReferenceKey) ?? []),
     [parsedDocument],
   );
-  const coverageReportLoading = Boolean(
-    selectedRun && isParsedDocumentReady(selectedRunStatus) && !reportResultForSelection,
-  );
+  const coverageReportLoading = Boolean(selectedRun && parsedDocumentReady && reportQuery.isPending);
   const citationContextAnchorsByReferenceKey = useMemo(() => {
     const anchorsByReferenceKey = new Map<string, Array<{ id: string; label: string }>>();
     if (!parsedDocument) return anchorsByReferenceKey;
@@ -221,75 +179,7 @@ export function UploadDashboard() {
 
     return anchorsByReferenceKey;
   }, [parsedDocument]);
-  const parsedDocumentLoading = Boolean(
-    selectedRun && isParsedDocumentReady(selectedRunStatus) && !parsedDocumentResultForSelection,
-  );
-  const consentRequirementsForRun = useMemo(
-    () => providerDirectory ? consentRequirements(providerDirectory, providerSelections) : [],
-    [providerDirectory, providerSelections],
-  );
-
-  const refreshRuns = useCallback(async (cursor: string | null = pageCursor) => {
-    const requestSequenceNumber = ++listRequestSequence.current;
-    try {
-      const query = new URLSearchParams({ limit: String(RUN_PAGE_SIZE) });
-      if (cursor) query.set("cursor", cursor);
-      const response = await fetch(`/api/v1/analysis-runs?${query.toString()}`, { cache: "no-store" });
-      if (!response.ok) throw new Error(await readError(response));
-      const currentPage = (await response.json()) as AnalysisRunPage;
-      if (requestSequenceNumber !== listRequestSequence.current) return;
-      setRunPage(currentPage);
-      setSelectedRunId((currentId) => currentId && currentPage.items.some((run) => run.id === currentId)
-        ? currentId
-        : null);
-      setError(null);
-    } catch (cause) {
-      if (requestSequenceNumber !== listRequestSequence.current) return;
-      setError(cause instanceof Error ? cause.message : "Could not load saved Analysis Runs.");
-    } finally {
-      if (requestSequenceNumber === listRequestSequence.current) setLoading(false);
-    }
-  }, [pageCursor]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch("/api/v1/providers", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(await readError(response));
-        const directory = (await response.json()) as ProviderDirectory;
-        const roles: ProviderRole[] = ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata"];
-        if (roles.some((role) => !directory.providers[role]?.length)) {
-          throw new Error("The API has no enabled provider for one or more Analysis Run stages.");
-        }
-        const selectAvailable = (role: ProviderRole, current: string) =>
-          directory.providers[role]?.find((provider) => provider.providerId === current)?.providerId
-          ?? directory.providers[role]?.[0]?.providerId
-          ?? current;
-        setProviderDirectory(directory);
-        setProviderSelections((current) => ({
-          claimExtractorProvider: selectAvailable("claimExtractor", current.claimExtractorProvider),
-          embeddingProvider: selectAvailable("embedding", current.embeddingProvider),
-          systemOneProvider: selectAvailable("systemOne", current.systemOneProvider),
-          scholarlyMetadataProvider: selectAvailable("scholarlyMetadata", current.scholarlyMetadataProvider),
-        }));
-        setProviderError(null);
-      })
-      .catch((cause: unknown) => {
-        if (cause instanceof DOMException && cause.name === "AbortError") return;
-        setProviderError(cause instanceof Error ? cause.message : "Could not load available providers.");
-      });
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    const initialLoad = window.setTimeout(() => void refreshRuns(), 0);
-    const interval = window.setInterval(() => void refreshRuns(), 2500);
-    return () => {
-      window.clearTimeout(initialLoad);
-      window.clearInterval(interval);
-    };
-  }, [refreshRuns]);
-
+  const parsedDocumentLoading = Boolean(selectedRun && parsedDocumentReady && parsedDocumentQuery.isPending);
   useEffect(() => {
     const pending = pendingDetailTarget.current;
     if (!pending || activeDetailTab !== pending.tab) return;
@@ -321,77 +211,6 @@ export function UploadDashboard() {
     return () => window.cancelAnimationFrame(frame);
   }, [activeDetailTab, parsedDocument, parsedDocumentError, coverageReport, coverageReportError]);
 
-  useEffect(() => {
-    if (!selectedRunId || !isParsedDocumentReady(selectedRunStatus)) return;
-
-    let active = true;
-    void fetch(`/api/v1/analysis-runs/${encodeURIComponent(selectedRunId)}/report`, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(await readError(response));
-        return (await response.json()) as ReferenceResolutionReportResponse;
-      })
-      .then((report) => { if (active) setReportResult({ runId: selectedRunId, report }); })
-      .catch((cause: unknown) => {
-        if (active) setReportResult({
-          runId: selectedRunId,
-          error: cause instanceof Error ? cause.message : "Could not load the Reference Resolution Report.",
-        });
-      });
-
-    return () => { active = false; };
-  }, [selectedRunId, selectedRunStatus]);
-
-  useEffect(() => {
-    if (!selectedRunId || !isParsedDocumentReady(selectedRunStatus)) return;
-
-    let active = true;
-    void fetch(`/api/v1/analysis-runs/${encodeURIComponent(selectedRunId)}/parsed-document`, { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(await readError(response));
-        return (await response.json()) as ParsedDocument;
-      })
-      .then((document) => { if (active) setParsedDocumentResult({ runId: selectedRunId, document }); })
-      .catch((cause: unknown) => {
-        if (active) setParsedDocumentResult({
-          runId: selectedRunId,
-          error: cause instanceof Error ? cause.message : "Could not load the parsed document.",
-        });
-      });
-
-    return () => { active = false; };
-  }, [selectedRunId, selectedRunStatus]);
-
-  function runConfiguration() {
-    if (!providerDirectory) throw new Error("Available providers have not loaded yet.");
-    if (missingConsents(consentRequirementsForRun, approvedCategories).length > 0) {
-      throw new Error("Approve every disclosed data category for each selected external provider, or choose a local provider.");
-    }
-    return createRunConfiguration(providerSelections, consentRequirementsForRun, approvedCategories);
-  }
-
-  function selectProvider(role: ProviderRole, providerId: string) {
-    setProviderSelections((current) => ({
-      ...current,
-      claimExtractorProvider: role === "claimExtractor" ? providerId : current.claimExtractorProvider,
-      embeddingProvider: role === "embedding" ? providerId : current.embeddingProvider,
-      systemOneProvider: role === "systemOne" ? providerId : current.systemOneProvider,
-      scholarlyMetadataProvider: role === "scholarlyMetadata" ? providerId : current.scholarlyMetadataProvider,
-    }));
-  }
-
-  function approveCategory(providerId: string, category: string, approved: boolean) {
-    setApprovedCategories((current) => {
-      const existing = new Set(current[providerId] ?? []);
-      if (approved) existing.add(category);
-      else existing.delete(category);
-      return { ...current, [providerId]: [...existing] };
-    });
-  }
-
-  function providerOptions(role: ProviderRole) {
-    return providerDirectory?.providers[role] ?? [];
-  }
-
   function selectRun(runId: string) {
     pendingDetailTarget.current = null;
     setSelectedRunId(runId);
@@ -403,7 +222,6 @@ export function UploadDashboard() {
     if (!runPage.nextCursor || loading) return;
     pendingDetailTarget.current = null;
     setSelectedRunId(null);
-    setLoading(true);
     setActiveDetailTab("progress");
     setPageCursors((current) => [...current.slice(0, pageIndex + 1), runPage.nextCursor!]);
     setPageIndex(pageIndex + 1);
@@ -413,7 +231,6 @@ export function UploadDashboard() {
     if (pageIndex === 0 || loading) return;
     pendingDetailTarget.current = null;
     setSelectedRunId(null);
-    setLoading(true);
     setActiveDetailTab("progress");
     setPageIndex(pageIndex - 1);
   }
@@ -430,74 +247,34 @@ export function UploadDashboard() {
     setActiveDetailTab(tab);
   }
 
-  async function startRun(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const fileInput = form.elements.namedItem("file");
-    if (!(fileInput instanceof HTMLInputElement) || !fileInput.files?.[0]) {
-      setError("Choose an English, text-based PDF to continue.");
-      return;
-    }
+  function reanalyze() {
+    if (!selectedRun) return;
 
     let configuration;
     try {
-      configuration = runConfiguration();
+      configuration = providerConfiguration.createConfiguration();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Review provider consent before continuing.");
+      setValidationError(errorMessage(cause, "Review provider consent before continuing."));
       return;
     }
-    const data = new FormData();
-    data.append("file", fileInput.files[0]);
-    data.append("configuration", JSON.stringify(configuration));
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/v1/analysis-runs", { method: "POST", body: data });
-      if (!response.ok) throw new Error(await readError(response));
-      const created = (await response.json()) as CreatedRun;
-      setPageCursors([null]);
-      setPageIndex(0);
-      setActiveDetailTab("progress");
-      setSelectedRunId(created.analysisRunId);
-      form.reset();
-      setSelectedFileName(null);
-      await refreshRuns(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The upload could not be processed.");
-    } finally {
-      setApprovedCategories({});
-      setBusy(false);
-    }
+
+    setValidationError(null);
+    reanalyzeMutation.mutate({ documentId: selectedRun.documentId, configuration }, {
+      onSuccess: (created) => {
+        setPageCursors([null]);
+        setPageIndex(0);
+        setActiveDetailTab("progress");
+        setSelectedRunId(created.analysisRunId);
+      },
+      onSettled: providerConfiguration.resetApprovedCategories,
+    });
   }
 
-  async function reanalyze() {
-    if (!selectedRun) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const configuration = runConfiguration();
-      const response = await fetch(`/api/v1/documents/${encodeURIComponent(selectedRun.documentId)}/analysis-runs`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(configuration),
-      });
-      if (!response.ok) throw new Error(await readError(response));
-      const created = (await response.json()) as CreatedRun;
-      setPageCursors([null]);
-      setPageIndex(0);
-      setActiveDetailTab("progress");
-      setSelectedRunId(created.analysisRunId);
-      await refreshRuns(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "A new Analysis Run could not be created.");
-    } finally {
-      setApprovedCategories({});
-      setBusy(false);
-    }
-  }
-
-  const activeError = error ?? providerError;
-  const parsedDocumentReady = isParsedDocumentReady(selectedRunStatus);
+  const runQueryError = runsQuery.error
+    ? errorMessage(runsQuery.error, "Could not load saved Analysis Runs.")
+    : null;
+  const reanalysisError = validationError
+    ?? (reanalyzeMutation.error ? errorMessage(reanalyzeMutation.error, "A new Analysis Run could not be created.") : null);
   const parsedStepState: Pick<WorkflowStep, "state" | "statusLabel"> = !parsedDocumentReady
     ? { state: "waiting", statusLabel: "Waiting" }
     : parsedDocumentLoading
@@ -524,170 +301,7 @@ export function UploadDashboard() {
   }
 
   return (
-    <section className="space-y-6" aria-label="Source Document workspace">
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <Card className="shadow-sm">
-          <CardHeader className="gap-2 border-b border-border/70 pb-5">
-            <p className="flex items-center gap-2 font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
-              <span className="font-semibold text-warning-foreground">01</span> Source Document
-            </p>
-            <CardTitle id="upload-heading" role="heading" aria-level={2} className="text-xl tracking-tight">
-              Start with your PDF
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <form onSubmit={startRun} className="space-y-5">
-              <FieldGroup className="gap-4">
-                {([
-                  ["claimExtractor", "Claim extraction", "claimExtractorProvider"],
-                  ["embedding", "Embeddings", "embeddingProvider"],
-                  ["systemOne", "Evidence assessment", "systemOneProvider"],
-                  ["scholarlyMetadata", "Bibliography resolution", "scholarlyMetadataProvider"],
-                ] as const).map(([role, label, selectionField]) => {
-                  const selectId = `provider-${role}`;
-                  return (
-                    <Field key={role}>
-                      <FieldLabel htmlFor={selectId} className="text-xs font-medium text-foreground">
-                        {label}
-                      </FieldLabel>
-                      <NativeSelect
-                        id={selectId}
-                        className="w-full [&_[data-slot=native-select]]:h-11"
-                        value={providerSelections[selectionField]}
-                        disabled={busy || !providerDirectory}
-                        onChange={(event) => selectProvider(role, event.target.value)}
-                      >
-                        {providerDirectory ? providerOptions(role).map((provider) => (
-                          <NativeSelectOption key={provider.providerId} value={provider.providerId}>
-                            {provider.displayName}
-                          </NativeSelectOption>
-                        )) : (
-                          <NativeSelectOption value={providerSelections[selectionField]}>
-                            Loading provider choices…
-                          </NativeSelectOption>
-                        )}
-                      </NativeSelect>
-                    </Field>
-                  );
-                })}
-              </FieldGroup>
-
-              {!providerDirectory ? (
-                <p className="text-sm text-muted-foreground" role="status">Loading provider disclosures…</p>
-              ) : consentRequirementsForRun.length === 0 ? (
-                <div className="flex gap-3 rounded-lg border border-primary/15 bg-primary/5 p-4 text-sm" role="note" aria-live="polite">
-                  <LockKeyhole className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-                  <div className="space-y-1">
-                    <p className="font-medium text-foreground">Local/mock providers selected</p>
-                    <p className="text-sm leading-relaxed text-muted-foreground">
-                      No external provider receives document content for this run.
-                    </p>
-                  </div>
-                </div>
-              ) : consentRequirementsForRun.map((provider) => (
-                <section
-                  className="space-y-4 rounded-lg border border-border bg-muted/20 p-4"
-                  key={provider.providerId}
-                  aria-labelledby={`consent-${provider.providerId}`}
-                >
-                  <div className="space-y-1">
-                    <h3 id={`consent-${provider.providerId}`} className="font-medium">
-                      {provider.displayName} data access
-                    </h3>
-                    <p className="text-sm leading-relaxed text-muted-foreground">
-                      May receive in this run:
-                    </p>
-                    {provider.retentionDisclosure && (
-                      <p className="text-sm text-warning-foreground">{provider.retentionDisclosure}</p>
-                    )}
-                  </div>
-                  <FieldSet className="min-w-0 gap-3 border-0 p-0">
-                    <FieldLegend variant="label" className="text-sm">
-                      Approve each category to continue
-                    </FieldLegend>
-                    {provider.dataCategories.map((categoryId) => {
-                      const category = providerDirectory?.dataCategories.find((item) => item.id === categoryId);
-                      const checkboxId = `consent-${provider.providerId}-${categoryId}`;
-                      return (
-                        <Field orientation="horizontal" key={categoryId} className="items-start gap-3">
-                          <Checkbox
-                            id={checkboxId}
-                            disabled={busy}
-                            checked={approvedCategories[provider.providerId]?.includes(categoryId) ?? false}
-                            onCheckedChange={(checked) => approveCategory(provider.providerId, categoryId, checked === true)}
-                          />
-                          <div className="min-w-0 space-y-1">
-                            <FieldLabel htmlFor={checkboxId} className="text-sm font-medium">
-                              {category?.label ?? categoryId}
-                            </FieldLabel>
-                            <FieldDescription className="text-xs leading-relaxed">
-                              <code className="font-mono text-[0.7rem]">{categoryId}</code>
-                              {category?.description ? ` · ${category.description}` : ""}
-                            </FieldDescription>
-                          </div>
-                        </Field>
-                      );
-                    })}
-                  </FieldSet>
-                  <p className="text-xs leading-relaxed text-warning-foreground">
-                    Consent applies only to this run and these categories.
-                  </p>
-                </section>
-              ))}
-
-              <Field>
-                <FieldLabel htmlFor="source-file-trigger">Choose a PDF</FieldLabel>
-                <div className="flex min-h-11 items-center gap-3 rounded-lg border border-input bg-background px-2.5 py-1">
-                  <Button
-                    id="source-file-trigger"
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy}
-                    aria-describedby="source-file-description"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    Choose File
-                  </Button>
-                  <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground" aria-live="polite">
-                    {selectedFileName ?? "No file chosen"}
-                  </span>
-                  <input
-                    ref={fileInputRef}
-                    id="source-file"
-                    name="file"
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    disabled={busy}
-                    aria-hidden="true"
-                    tabIndex={-1}
-                    className="sr-only"
-                    onChange={(event) => setSelectedFileName(event.currentTarget.files?.[0]?.name ?? null)}
-                  />
-                </div>
-                <FieldDescription id="source-file-description">
-                  English PDFs with selectable text only.
-                </FieldDescription>
-              </Field>
-
-              <Button type="submit" size="lg" className="min-h-11 w-full justify-between" disabled={busy || !providerDirectory}>
-                <span className="inline-flex items-center gap-2">
-                  {busy && <Spinner aria-hidden="true" />}
-                  {busy ? "Starting run…" : "Upload & start Analysis Run"}
-                </span>
-                {!busy && <ArrowUpRight className="size-4" aria-hidden="true" />}
-              </Button>
-            </form>
-
-            {activeError && (
-              <Alert variant="destructive">
-                <AlertTitle>Could not continue</AlertTitle>
-                <AlertDescription>{activeError}</AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-        </Card>
-
+    <>
         <Card className="shadow-sm">
           <CardHeader className="gap-2 border-b border-border/70 pb-5">
             <p className="flex items-center gap-2 font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">
@@ -703,6 +317,12 @@ export function UploadDashboard() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {runQueryError && (
+              <Alert variant="destructive">
+                <AlertTitle>Could not load saved Analysis Runs</AlertTitle>
+                <AlertDescription>{runQueryError}</AlertDescription>
+              </Alert>
+            )}
             {loading ? (
               <div className="space-y-3" role="status" aria-label="Loading saved Analysis Runs">
                 <span className="sr-only">Loading saved Analysis Runs</span>
@@ -828,9 +448,15 @@ export function UploadDashboard() {
                       <AlertDescription>{selectedRun.failureReason}</AlertDescription>
                     </Alert>
                   )}
-                  <Button type="button" variant="outline" className="min-h-11 w-full justify-between sm:w-auto" disabled={busy || !providerDirectory} onClick={reanalyze}>
+                  <Button type="button" variant="outline" className="min-h-11 w-full justify-between sm:w-auto" disabled={busy || !providerConfiguration.directory} onClick={reanalyze}>
                     Create a new run from this document <ArrowUpRight aria-hidden="true" />
                   </Button>
+                  {reanalysisError && (
+                    <Alert variant="destructive">
+                      <AlertTitle>Could not create a new Analysis Run</AlertTitle>
+                      <AlertDescription>{reanalysisError}</AlertDescription>
+                    </Alert>
+                  )}
                 </TabsContent>
 
                 <TabsContent value="parsed" className="space-y-5 outline-none">
@@ -1133,7 +759,6 @@ export function UploadDashboard() {
             </CardContent>
           )}
         </Card>
-      </div>
-    </section>
+    </>
   );
 }
