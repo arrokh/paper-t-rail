@@ -80,6 +80,20 @@ CREATE TRIGGER claim_paper_verifications_have_monotonic_status
     BEFORE UPDATE ON claim_paper_verifications
     FOR EACH ROW EXECUTE FUNCTION enforce_claim_paper_verification_transition();
 
+CREATE FUNCTION analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot JSONB)
+RETURNS BOOLEAN
+LANGUAGE SQL
+IMMUTABLE
+AS $$
+    SELECT COALESCE(
+        jsonb_typeof(configuration_snapshot -> 'openAccess') = 'object'
+        AND configuration_snapshot #>> '{referenceResolution,executionStatus}' <> 'NOT_RUN'
+        AND configuration_snapshot #>> '{aggregation,executionStatus}' = 'PENDING'
+        AND jsonb_typeof(configuration_snapshot #> '{aggregation,thresholds}') = 'object',
+        FALSE
+    )
+$$;
+
 INSERT INTO claim_paper_verifications (
     id, analysis_run_id, atomic_claim_id, bibliography_entry_id,
     canonical_paper_id, processing_status, verification_scope
@@ -91,10 +105,7 @@ SELECT gen_random_uuid(), link.analysis_run_id, link.atomic_claim_id, target.bib
     ON target.analysis_run_id = link.analysis_run_id
    AND target.id = link.citation_target_id
   JOIN analysis_runs run ON run.id = link.analysis_run_id
- WHERE jsonb_typeof(run.configuration_snapshot -> 'openAccess') = 'object'
-   AND run.configuration_snapshot #>> '{referenceResolution,executionStatus}' <> 'NOT_RUN'
-   AND run.configuration_snapshot #>> '{aggregation,executionStatus}' = 'PENDING'
-   AND jsonb_typeof(run.configuration_snapshot #> '{aggregation,thresholds}') = 'object'
+ WHERE analysis_run_has_conflict_aware_evidence_coverage(run.configuration_snapshot)
 ON CONFLICT (analysis_run_id, atomic_claim_id, bibliography_entry_id) DO NOTHING;
 
 ALTER TABLE evidence_candidates

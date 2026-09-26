@@ -14,7 +14,7 @@ import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
-import com.papertrail.api.scholarly.acquisition.report.CitedReferenceVerificationOutcome
+import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.evidence.report.EvidenceCoverageReport
 import com.papertrail.api.evidence.report.EvidenceCoverageSummary
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService

@@ -32,7 +32,7 @@ class RunConfigurationFactory(
     private val lexicalCandidateLimit: Int = 10,
     private val finalCandidateLimit: Int = 5,
     private val reciprocalRankFusionConstant: Int = 60,
-    private val evidenceAggregationThresholds: EvidenceAggregationThresholds = EvidenceAggregationThresholds.CALIBRATED_V1,
+    private val evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
 ) {
     init {
         require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
@@ -147,10 +147,10 @@ class RunConfigurationFactory(
                 confidenceThreshold = referenceResolutionConfidenceThreshold,
             ),
             aggregation = AggregationPolicySnapshot(
-                executionStatus = "PENDING",
-                verificationPolicyVersion = EvidenceJudgement.STRENGTH_RUBRIC_VERSION,
-                aggregationPolicyVersion = EvidenceAggregationPolicy.POLICY_VERSION,
-                thresholds = evidenceAggregationThresholds.asMap(),
+                executionStatus = if (evidenceAggregationThresholds == null) "NOT_RUN" else "PENDING",
+                verificationPolicyVersion = evidenceAggregationThresholds?.let { EvidenceJudgement.STRENGTH_RUBRIC_VERSION },
+                aggregationPolicyVersion = evidenceAggregationThresholds?.let { EvidenceAggregationPolicy.POLICY_VERSION },
+                thresholds = evidenceAggregationThresholds?.asMap(),
             ),
             externalProviderConsents = consentSnapshots,
         )

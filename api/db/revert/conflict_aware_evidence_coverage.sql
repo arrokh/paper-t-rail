@@ -13,6 +13,8 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION analysis_run_has_conflict_aware_evidence_coverage(JSONB);
+
 DROP TRIGGER evidence_judgements_are_immutable ON evidence_judgements;
 DROP FUNCTION prevent_evidence_judgement_update();
 DROP TABLE evidence_judgements;

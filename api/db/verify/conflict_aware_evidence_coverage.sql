@@ -1,5 +1,8 @@
 DO $$
 BEGIN
+    IF to_regprocedure('analysis_run_has_conflict_aware_evidence_coverage(jsonb)') IS NULL THEN
+        RAISE EXCEPTION 'The pinned Evidence Coverage configuration predicate is missing';
+    END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
          WHERE conname = 'claim_paper_verifications_run_reference_fk'
@@ -56,10 +59,7 @@ BEGIN
             ON target.analysis_run_id = link.analysis_run_id
            AND target.id = link.citation_target_id
           JOIN analysis_runs run ON run.id = link.analysis_run_id
-         WHERE jsonb_typeof(run.configuration_snapshot -> 'openAccess') = 'object'
-           AND run.configuration_snapshot #>> '{referenceResolution,executionStatus}' <> 'NOT_RUN'
-           AND run.configuration_snapshot #>> '{aggregation,executionStatus}' = 'PENDING'
-           AND jsonb_typeof(run.configuration_snapshot #> '{aggregation,thresholds}') = 'object'
+         WHERE analysis_run_has_conflict_aware_evidence_coverage(run.configuration_snapshot)
         EXCEPT
         SELECT analysis_run_id, atomic_claim_id, bibliography_entry_id
           FROM claim_paper_verifications

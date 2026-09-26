@@ -82,6 +82,10 @@ class EvidenceVerificationService(
         }
     }
 
+    fun failFullText(analysisRunId: UUID, bibliographyEntryId: UUID, reason: String) {
+        verificationRepository.failFullText(analysisRunId, bibliographyEntryId, reason)
+    }
+
     private fun evaluateThroughProviderGate(
         provider: SystemOneProvider,
         configuration: AnalysisConfigurationSnapshot,
@@ -104,8 +108,9 @@ class EvidenceVerificationService(
 
     private fun thresholdsFrom(thresholds: Map<String, Double>?): EvidenceAggregationThresholds {
         requireNotNull(thresholds) { "The Analysis Run has no pinned evidence aggregation thresholds." }
-        val defaults = EvidenceAggregationThresholds.CALIBRATED_V1
-        require(thresholds.keys == defaults.asMap().keys) { "The Analysis Run aggregation thresholds are incomplete or unsupported." }
+        require(thresholds.keys == EvidenceAggregationThresholds.REQUIRED_KEYS) {
+            "The Analysis Run aggregation thresholds are incomplete or unsupported."
+        }
         return EvidenceAggregationThresholds(
             directSupport = thresholds.getValue(EvidenceAggregationThresholds.DIRECT_SUPPORT),
             partialSupport = thresholds.getValue(EvidenceAggregationThresholds.PARTIAL_SUPPORT),

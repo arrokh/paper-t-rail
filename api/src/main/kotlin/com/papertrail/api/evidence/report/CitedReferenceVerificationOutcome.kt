@@ -1,6 +1,5 @@
-package com.papertrail.api.scholarly.acquisition.report
+package com.papertrail.api.evidence.report
 
-import com.papertrail.api.evidence.report.EvidencePassageReport
 import java.util.UUID
 
 data class CitedReferenceVerificationOutcome(

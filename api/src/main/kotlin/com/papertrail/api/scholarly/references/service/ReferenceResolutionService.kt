@@ -16,14 +16,18 @@ import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.ReferenceResolutionSnapshot
 import com.papertrail.api.evidence.report.EvidenceCoverageReport
 import com.papertrail.api.evidence.report.EvidenceCoverageReportRepository
+import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
+import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 
 @Service
 class ReferenceResolutionService(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
+    private val transactionTemplate: TransactionTemplate,
+    private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val repository: ReferenceResolutionRepository,
     private val citedPaperAccessRepository: CitedPaperAccessRepository,
     private val evidenceCoverageReportRepository: EvidenceCoverageReportRepository,
@@ -59,7 +63,20 @@ class ReferenceResolutionService(
         val decision = resolver.resolve(
             BibliographyReference(stored.title, stored.authors, stored.year, stored.doi, stored.referenceType),
         )
-        repository.save(analysisRunId, stored, decision, providerId)
+        transactionTemplate.executeWithoutResult {
+            val canonicalPaperId = repository.save(analysisRunId, stored, decision, providerId)
+            claimReferenceVerificationRepository.applyResolution(
+                analysisRunId = analysisRunId,
+                bibliographyEntryId = stored.id,
+                status = decision.status,
+                reason = decision.reasonCode,
+                canonicalPaperId = canonicalPaperId,
+            )
+        }
+    }
+
+    fun failResolution(analysisRunId: UUID, bibliographyEntryId: UUID, reason: String) {
+        claimReferenceVerificationRepository.failReference(analysisRunId, bibliographyEntryId, reason)
     }
 
     fun summary(analysisRunId: UUID): ReferenceResolutionSummary = summarize(repository.reportEntries(analysisRunId))
@@ -67,7 +84,12 @@ class ReferenceResolutionService(
     fun report(analysisRunId: UUID): ReferenceResolutionReportResponse? {
         val context = loadRun(analysisRunId) ?: return null
         val entries = repository.reportEntries(analysisRunId)
-        val accessByReference = citedPaperAccessRepository.reportEntries(analysisRunId)
+        val indexingByReference = evidenceCoverageReportRepository.indexingReportsByReference(analysisRunId)
+        val accessByReference = citedPaperAccessRepository.reportEntries(analysisRunId).associate { accessEntry ->
+            accessEntry.localReferenceKey to accessEntry.report.copy(
+                evidenceIndexing = indexingByReference[accessEntry.bibliographyEntryId],
+            )
+        }
         val outcomesByReference = evidenceCoverageReportRepository.outcomesByReference(analysisRunId)
         val reportEntries = entries.map { entry ->
             val outcomes = outcomesByReference[entry.localReferenceKey].orEmpty()
@@ -127,10 +149,7 @@ class ReferenceResolutionService(
         """
         SELECT status,
                configuration_snapshot::text AS configuration,
-               jsonb_typeof(configuration_snapshot -> 'openAccess') = 'object'
-                   AND configuration_snapshot #>> '{referenceResolution,executionStatus}' <> 'NOT_RUN'
-                   AND configuration_snapshot #>> '{aggregation,executionStatus}' = 'PENDING'
-                   AND jsonb_typeof(configuration_snapshot #> '{aggregation,thresholds}') = 'object' AS semantic_pipeline_configured
+               analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot) AS semantic_pipeline_configured
           FROM analysis_runs WHERE id = ?
         """.trimIndent(),
         { rs, _ ->

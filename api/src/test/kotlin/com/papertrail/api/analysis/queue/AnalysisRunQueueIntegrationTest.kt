@@ -30,9 +30,11 @@ import com.papertrail.api.evidence.repository.EvidenceReportRepository
 import com.papertrail.api.evidence.report.EvidenceCoverageReportRepository
 import com.papertrail.api.evidence.verification.provider.MockSystemOneProvider
 import com.papertrail.api.evidence.verification.provider.SystemOneProvider
+import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementRequest
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementResult
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
+import com.papertrail.api.evidence.verification.repository.JdbcClaimReferenceVerificationRepository
 import com.papertrail.api.evidence.verification.repository.EvidenceJudgementRepository
 import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
 import com.papertrail.api.evidence.embedding.FeatureHashEmbeddingProvider
@@ -340,6 +342,75 @@ class AnalysisRunQueueIntegrationTest {
         val judgements = reference.verificationOutcomes.flatMap { it.evidencePassages }.mapNotNull { it.evidenceJudgement }
         assertTrue(judgements.isNotEmpty())
         assertTrue(judgements.all { it.providerId == "mock" && it.judgement == "INSUFFICIENT" })
+    }
+
+    @Test
+    fun `mock semantic fixture markers exercise conflict aggregation through the pipeline`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val location = OpenAccessLocation(
+            "fixture://controlled/conflicting-evidence",
+            "CC0-1.0",
+            "publishedVersion",
+            "repository",
+            "recorded-fixtures",
+        )
+        val fetchCalls = AtomicInteger()
+        val fullText = """
+            ${MockSystemOneProvider.DIRECT_SUPPORT_FIXTURE_MARKER} Prior results support and reproduce the method in the treatment group.
+
+            ${MockSystemOneProvider.CONTRADICTION_FIXTURE_MARKER} Later results do not support or reproduce the method in the treatment group.
+        """.trimIndent()
+        val citedPaperParser = object : CitedPaperParser {
+            override fun parse(content: ByteArray, mediaType: String): ParsedScientificDocument {
+                val text = content.toString(Charsets.UTF_8)
+                val separator = "\n\n"
+                val firstEnd = text.indexOf(separator)
+                val secondStart = firstEnd + separator.length
+                return ParsedScientificDocument(
+                    parserId = "fixture-cited-paper-parser",
+                    parserVersion = "v7",
+                    normalizedSourceText = text,
+                    sections = listOf(
+                        ParsedSection(0, "Results", text.substring(0, firstEnd), 0, firstEnd),
+                        ParsedSection(1, "Discussion", text.substring(secondStart), secondStart, text.length),
+                    ),
+                    citationContexts = emptyList(),
+                    bibliographyEntries = emptyList(),
+                )
+            }
+        }
+
+        processReferenceResolutionEvents(
+            analysisRunId = created.analysisRunId,
+            providerFactories = listOf(
+                controlledOpenAccessFactory(
+                    OpenAccessDiscovery(true, false, listOf(location), "recorded-fixtures", Instant.now()),
+                    fullText,
+                    fetchCalls,
+                ),
+            ),
+            citedPaperParser = citedPaperParser,
+        )
+
+        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }
+        val outcomes = reference.verificationOutcomes
+        assertEquals(1, fetchCalls.get())
+        assertTrue(outcomes.isNotEmpty())
+        assertTrue(outcomes.all { it.processingStatus == "COMPLETED" }, outcomes.toString())
+        assertTrue(outcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" }, outcomes.toString())
+        assertTrue(outcomes.all { it.evidenceConflict }, outcomes.toString())
+        val judgements = outcomes.flatMap { it.evidencePassages }.mapNotNull { it.evidenceJudgement }
+        assertTrue(judgements.any { it.judgement == "DIRECT_SUPPORT" })
+        assertTrue(judgements.any { it.judgement == "CONTRADICTS" })
+        assertTrue(judgements.all { it.providerId == "mock" && it.confidence == 0.96 })
     }
 
     @Test
@@ -1628,28 +1699,20 @@ class AnalysisRunQueueIntegrationTest {
         parserVersion = "0.9.1-crf",
         languageDetectorVersion = "0.6",
         limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
+        evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
     )
 
-    private fun claimReferenceVerificationRepository() = ClaimReferenceVerificationRepository(jdbc)
+    private fun claimReferenceVerificationRepository(): ClaimReferenceVerificationRepository = JdbcClaimReferenceVerificationRepository(jdbc)
 
     private fun referenceResolutionService(
         lookupFactories: List<ScholarlyMetadataLookupFactory> = listOf(RecordedFixtureScholarlyMetadataLookupFactory(objectMapper)),
     ) = ReferenceResolutionService(
         jdbc,
         objectMapper,
-        ReferenceResolutionRepository(
-            jdbc,
-            objectMapper,
-            TransactionTemplate(DataSourceTransactionManager(dataSource)),
-            claimReferenceVerificationRepository(),
-        ),
-        CitedPaperAccessRepository(
-            jdbc,
-            objectMapper,
-            TransactionTemplate(DataSourceTransactionManager(dataSource)),
-            EvidenceReportRepository(jdbc),
-            claimReferenceVerificationRepository(),
-        ),
+        TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        claimReferenceVerificationRepository(),
+        ReferenceResolutionRepository(jdbc, objectMapper),
+        CitedPaperAccessRepository(jdbc, objectMapper),
         EvidenceCoverageReportRepository(jdbc, EvidenceReportRepository(jdbc)),
         lookupFactories,
     )
@@ -1693,13 +1756,9 @@ class AnalysisRunQueueIntegrationTest {
     ) = CitedPaperAccessService(
         jdbc = jdbc,
         objectMapper = objectMapper,
-        repository = CitedPaperAccessRepository(
-            jdbc,
-            objectMapper,
-            TransactionTemplate(DataSourceTransactionManager(dataSource)),
-            EvidenceReportRepository(jdbc),
-            claimReferenceVerificationRepository(),
-        ),
+        transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        claimReferenceVerificationRepository = claimReferenceVerificationRepository(),
+        repository = CitedPaperAccessRepository(jdbc, objectMapper),
         objectStore = objectStore,
         languageDetector = languageDetector,
         textExtractor = PdfBoxCitedPaperTextExtractor(5_000_000),
@@ -1719,7 +1778,6 @@ class AnalysisRunQueueIntegrationTest {
         objectMapper,
         citedPaperAccessService(providerFactories, languageDetector),
         CitedPaperIndexingQueue(jdbc, objectMapper),
-        claimReferenceVerificationRepository(),
         stageCompletionService(resolutionService),
     )
 
@@ -1755,7 +1813,6 @@ class AnalysisRunQueueIntegrationTest {
                 EvidenceJudgementRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
                 claimReferenceVerificationRepository(),
             ),
-            claimReferenceVerificationRepository(),
             stageCompletionService(resolutionService),
         )
     }
@@ -1767,7 +1824,6 @@ class AnalysisRunQueueIntegrationTest {
         TransactionTemplate(DataSourceTransactionManager(dataSource)),
         objectMapper,
         resolutionService,
-        claimReferenceVerificationRepository(),
         stageCompletionService(resolutionService),
     )
 

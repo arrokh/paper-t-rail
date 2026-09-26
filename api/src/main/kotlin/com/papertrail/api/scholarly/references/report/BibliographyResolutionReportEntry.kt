@@ -1,7 +1,7 @@
 package com.papertrail.api.scholarly.references.report
 
+import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
-import com.papertrail.api.scholarly.acquisition.report.CitedReferenceVerificationOutcome
 
 data class BibliographyResolutionReportEntry(
     val entryOrder: Int,

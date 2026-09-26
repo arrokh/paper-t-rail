@@ -3,6 +3,8 @@ package com.papertrail.api.analysis.configuration
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.papertrail.api.analysis.http.RunConfigurationRequest
+import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
+import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
@@ -61,19 +63,29 @@ class RunConfigurationFactoryTest {
         assertEquals(listOf("bibliographic_metadata"), metadataProvider.dataCategories)
         assertEquals("title-author-year-weighted-edit-similarity-v1", snapshot.referenceResolution.scorePolicyVersion)
         assertEquals(0.9, snapshot.referenceResolution.confidenceThreshold)
-        assertEquals("PENDING", snapshot.aggregation.executionStatus)
-        assertEquals("weighted-evidence-role-scope-design-v1", snapshot.aggregation.verificationPolicyVersion)
-        assertEquals("conflict-aware-evidence-strength-v1", snapshot.aggregation.aggregationPolicyVersion)
-        assertEquals(0.8, snapshot.aggregation.thresholds?.get("directSupport"))
-        assertEquals(0.7, snapshot.aggregation.thresholds?.get("partialSupport"))
-        assertEquals(0.8, snapshot.aggregation.thresholds?.get("contradiction"))
-        assertEquals(0.08, snapshot.aggregation.thresholds?.get("comparabilityMargin"))
+        assertEquals("NOT_RUN", snapshot.aggregation.executionStatus)
+        assertEquals(null, snapshot.aggregation.verificationPolicyVersion)
+        assertEquals(null, snapshot.aggregation.aggregationPolicyVersion)
+        assertEquals(null, snapshot.aggregation.thresholds)
         assertEquals(0, snapshot.externalProviderConsents.size)
         val json = jacksonObjectMapper().readTree(factory.toJson(snapshot))
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
         assertEquals(0.9, json["referenceResolution"]["confidenceThreshold"].asDouble())
-        assertTrue(json["aggregation"].has("thresholds"))
-        assertEquals(0.8, json["aggregation"]["thresholds"]["directSupport"].asDouble())
+        assertTrue(json["aggregation"]["thresholds"].isNull)
+    }
+
+    @Test
+    fun `pins aggregation thresholds only when an explicit policy is supplied`() {
+        val configured = factoryFor(evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values)
+            .from(RunConfigurationRequest())
+
+        assertEquals("PENDING", configured.aggregation.executionStatus)
+        assertEquals("weighted-evidence-role-scope-design-v1", configured.aggregation.verificationPolicyVersion)
+        assertEquals("conflict-aware-evidence-strength-v1", configured.aggregation.aggregationPolicyVersion)
+        assertEquals(0.8, configured.aggregation.thresholds?.get("directSupport"))
+        assertEquals(0.7, configured.aggregation.thresholds?.get("partialSupport"))
+        assertEquals(0.8, configured.aggregation.thresholds?.get("contradiction"))
+        assertEquals(0.08, configured.aggregation.thresholds?.get("comparabilityMargin"))
     }
 
     @Test
@@ -329,6 +341,7 @@ class RunConfigurationFactoryTest {
         lexicalCandidateLimit: Int = 10,
         finalCandidateLimit: Int = 5,
         reciprocalRankFusionConstant: Int = 60,
+        evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
         providerCatalog = reviewedExternalProviderCatalog(),
@@ -341,6 +354,7 @@ class RunConfigurationFactoryTest {
         lexicalCandidateLimit = lexicalCandidateLimit,
         finalCandidateLimit = finalCandidateLimit,
         reciprocalRankFusionConstant = reciprocalRankFusionConstant,
+        evidenceAggregationThresholds = evidenceAggregationThresholds,
     )
 
     @Test

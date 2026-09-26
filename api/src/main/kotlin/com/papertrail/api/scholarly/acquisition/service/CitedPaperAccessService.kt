@@ -13,6 +13,7 @@ import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessReason
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessStatus
 import com.papertrail.api.scholarly.acquisition.domain.LegalOpenAccessLocationPolicy
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
+import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepository
 import com.papertrail.api.scholarly.acquisition.repository.ResolvedCitedReference
 import com.papertrail.api.scholarly.references.client.BibliographyReference
@@ -20,6 +21,7 @@ import com.papertrail.api.document.validation.DocumentLanguageDetector
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
 import java.util.UUID
 
@@ -27,6 +29,8 @@ import java.util.UUID
 class CitedPaperAccessService(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
+    private val transactionTemplate: TransactionTemplate,
+    private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val repository: CitedPaperAccessRepository,
     private val objectStore: SourceDocumentObjectStore,
     private val languageDetector: DocumentLanguageDetector,
@@ -35,6 +39,10 @@ class CitedPaperAccessService(
 ) {
     private val locationPolicy = LegalOpenAccessLocationPolicy()
     private val accessPolicy = CitedPaperAccessPolicy()
+
+    fun failAccess(analysisRunId: UUID, bibliographyEntryId: UUID, reason: String) {
+        claimReferenceVerificationRepository.failReference(analysisRunId, bibliographyEntryId, reason)
+    }
 
     fun acquire(analysisRunId: UUID, bibliographyEntryId: UUID) {
         if (repository.accessExists(analysisRunId, bibliographyEntryId)) return
@@ -87,23 +95,34 @@ class CitedPaperAccessService(
         }
         try {
             if (acquired != null && objectKey != null) objectStore.put(objectKey, acquired.bytes, acquired.mediaType)
-            val inserted = repository.save(
-                analysisRunId = analysisRunId,
-                reference = reference,
-                discovery = discovery,
-                decision = decision,
-                accessReason = accessReason,
-                locationUrl = provenanceLocation?.url,
-                license = provenanceLocation?.license,
-                version = provenanceLocation?.version,
-                hostType = provenanceLocation?.hostType,
-                providerId = providerSelection.provider,
-                discoveredAt = discovery?.discoveredAt ?: Instant.now(),
-                objectKey = objectKey,
-                fullText = acquired,
-                language = language,
-                languageDetectorVersion = context.configuration.languageDetector.version.takeIf { acquired != null },
-            )
+            val inserted = transactionTemplate.execute {
+                val saved = repository.save(
+                    analysisRunId = analysisRunId,
+                    reference = reference,
+                    discovery = discovery,
+                    decision = decision,
+                    accessReason = accessReason,
+                    locationUrl = provenanceLocation?.url,
+                    license = provenanceLocation?.license,
+                    version = provenanceLocation?.version,
+                    hostType = provenanceLocation?.hostType,
+                    providerId = providerSelection.provider,
+                    discoveredAt = discovery?.discoveredAt ?: Instant.now(),
+                    objectKey = objectKey,
+                    fullText = acquired,
+                    language = language,
+                    languageDetectorVersion = context.configuration.languageDetector.version.takeIf { acquired != null },
+                )
+                if (saved) {
+                    claimReferenceVerificationRepository.applyAccessDecision(
+                        analysisRunId = analysisRunId,
+                        bibliographyEntryId = reference.bibliographyEntryId,
+                        canonicalPaperId = reference.canonicalPaperId,
+                        decision = decision,
+                    )
+                }
+                saved
+            } ?: false
             if (!inserted && objectKey != null && !repository.isObjectKeyReferenced(objectKey)) {
                 objectStore.delete(objectKey)
             }

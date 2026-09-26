@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
 import java.util.UUID
 
 class EvidenceAggregationPolicyTest {
-    private val policy = EvidenceAggregationPolicy(EvidenceAggregationThresholds.CALIBRATED_V1)
+    private val policy = EvidenceAggregationPolicy(TestEvidenceAggregationThresholds.values)
 
     @Test
     fun `terminal domain vocabulary remains exactly seven statuses`() {

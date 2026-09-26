@@ -1,7 +1,6 @@
 package com.papertrail.api.evidence.report
 
 import com.papertrail.api.evidence.repository.EvidenceReportRepository
-import com.papertrail.api.scholarly.acquisition.report.CitedReferenceVerificationOutcome
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import java.sql.ResultSet
@@ -12,6 +11,9 @@ class EvidenceCoverageReportRepository(
     private val jdbc: JdbcTemplate,
     private val evidenceReportRepository: EvidenceReportRepository,
 ) {
+    fun indexingReportsByReference(analysisRunId: UUID): Map<UUID, EvidenceIndexingReport> =
+        evidenceReportRepository.indexingReportsByReference(analysisRunId)
+
     fun summary(analysisRunId: UUID): EvidenceCoverageSummary = jdbc.queryForObject(
         """
         SELECT count(*)::integer AS total,

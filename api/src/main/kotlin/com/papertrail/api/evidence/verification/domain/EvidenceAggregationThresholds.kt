@@ -25,11 +25,6 @@ data class EvidenceAggregationThresholds(
         const val CONTRADICTION = "contradiction"
         const val COMPARABILITY_MARGIN = "comparabilityMargin"
 
-        val CALIBRATED_V1 = EvidenceAggregationThresholds(
-            directSupport = 0.8,
-            partialSupport = 0.7,
-            contradiction = 0.8,
-            comparabilityMargin = 0.08,
-        )
+        val REQUIRED_KEYS = setOf(DIRECT_SUPPORT, PARTIAL_SUPPORT, CONTRADICTION, COMPARABILITY_MARGIN)
     }
 }

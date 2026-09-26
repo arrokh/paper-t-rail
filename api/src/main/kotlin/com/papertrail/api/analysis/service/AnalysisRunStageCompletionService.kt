@@ -106,13 +106,7 @@ class AnalysisRunStageCompletionService(
             ?: throw IllegalStateException("Persisted parsed document structure is missing after reference processing.")
         val resolutionSummary = referenceResolutionService.summary(analysisRunId)
         val verificationPipelineConfigured = jdbc.queryForObject(
-            """
-            SELECT jsonb_typeof(configuration_snapshot -> 'openAccess') = 'object'
-               AND configuration_snapshot #>> '{referenceResolution,executionStatus}' <> 'NOT_RUN'
-               AND configuration_snapshot #>> '{aggregation,executionStatus}' = 'PENDING'
-               AND jsonb_typeof(configuration_snapshot #> '{aggregation,thresholds}') = 'object'
-              FROM analysis_runs WHERE id = ?
-            """.trimIndent(),
+            "SELECT analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot) FROM analysis_runs WHERE id = ?",
             Boolean::class.java,
             analysisRunId,
         ) == true

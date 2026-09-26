@@ -1,5 +1,6 @@
 package com.papertrail.api.scholarly.acquisition.report
 
+import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.evidence.report.EvidenceIndexingReport
 import java.time.Instant
 

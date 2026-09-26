@@ -75,6 +75,17 @@ function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
   );
 }
 
+function ReportMetric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <Card size="sm">
+      <CardContent className="space-y-1">
+        <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
+        <dd className="m-0 font-mono text-lg font-semibold text-foreground">{value}</dd>
+      </CardContent>
+    </Card>
+  );
+}
+
 function isParsedDocumentReady(status: AnalysisRun["status"] | undefined): boolean {
   return status === "PARSED" || status === "COMPLETED" || status === "COMPLETED_WITH_WARNINGS";
 }
@@ -717,10 +728,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                             ["Incomplete pairs", verificationCounts.incompleteVerifications],
                             ["Comparable conflicts", verificationCounts.evidenceConflicts],
                           ] as const).map(([label, count]) => (
-                            <div key={label} className="rounded-lg border border-border bg-card px-3 py-3">
-                              <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
-                              <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">{count}</dd>
-                            </div>
+                            <ReportMetric key={label} label={label} value={count} />
                           ))}
                         </dl>
                         <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4" aria-label="Counts by final verification status">
@@ -733,10 +741,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                             ["UNRESOLVED", verificationCounts.unresolved],
                             ["UNSUPPORTED_REFERENCE_TYPE", verificationCounts.unsupportedReferenceType],
                           ] as const).map(([label, count]) => (
-                            <div key={label} className="rounded-lg border border-border bg-card px-3 py-3">
-                              <dt className="text-xs leading-relaxed text-muted-foreground">{label.replaceAll("_", " ").toLowerCase()}</dt>
-                              <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">{count}</dd>
-                            </div>
+                            <ReportMetric key={label} label={label.replaceAll("_", " ").toLowerCase()} value={count} />
                           ))}
                         </dl>
                         <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-3">
@@ -774,10 +779,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                             ["Not attempted", counts.notAttempted],
                             ["Processing failed", counts.failed],
                           ] as const).map(([label, count]) => (
-                            <div key={label} className="rounded-lg border border-border bg-card px-3 py-3">
-                              <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
-                              <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">{count}</dd>
-                            </div>
+                            <ReportMetric key={label} label={label} value={count} />
                           ))}
                         </dl>
                         <section className="space-y-3" aria-labelledby="cited-paper-access-heading">
@@ -792,19 +794,16 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                               ["Metadata only", "METADATA_ONLY"],
                               ["Unavailable", "UNAVAILABLE"],
                             ] as const).map(([label, status]) => (
-                              <div key={status} className="rounded-lg border border-border bg-card px-3 py-3">
-                                <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
-                                <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">
-                                  {resolution.entries.filter((entry) => entry.citedPaperAccess?.accessStatus === status).length}
-                                </dd>
-                              </div>
+                              <ReportMetric
+                                key={status}
+                                label={label}
+                                value={resolution.entries.filter((entry) => entry.citedPaperAccess?.accessStatus === status).length}
+                              />
                             ))}
-                            <div className="rounded-lg border border-border bg-card px-3 py-3">
-                              <dt className="text-xs leading-relaxed text-muted-foreground">Not attempted</dt>
-                              <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">
-                                {resolution.entries.filter((entry) => entry.status === "RESOLVED" && !entry.citedPaperAccess).length}
-                              </dd>
-                            </div>
+                            <ReportMetric
+                              label="Not attempted"
+                              value={resolution.entries.filter((entry) => entry.status === "RESOLVED" && !entry.citedPaperAccess).length}
+                            />
                           </dl>
                         </section>
                         {resolution.entries.length === 0 ? (

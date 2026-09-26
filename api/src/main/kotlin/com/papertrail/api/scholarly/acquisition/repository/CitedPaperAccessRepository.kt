@@ -1,9 +1,6 @@
 package com.papertrail.api.scholarly.acquisition.repository
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.papertrail.api.evidence.report.EvidenceIndexingReport
-import com.papertrail.api.evidence.repository.EvidenceReportRepository
-import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessDecision
@@ -12,7 +9,6 @@ import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
-import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.Instant
@@ -22,9 +18,6 @@ import java.util.UUID
 class CitedPaperAccessRepository(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
-    private val transactionTemplate: TransactionTemplate,
-    private val evidenceReportRepository: EvidenceReportRepository,
-    private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
 ) {
     fun accessExists(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM cited_paper_access WHERE analysis_run_id = ? AND bibliography_entry_id = ?)",
@@ -77,46 +70,39 @@ class CitedPaperAccessRepository(
         fullText: AcquiredFullText?,
         language: String?,
         languageDetectorVersion: String?,
-    ): Boolean = transactionTemplate.execute {
-            val contentHash = fullText?.bytes?.let(::sha256Hex)
-            val inserted = jdbc.update(
-                """
-                INSERT INTO cited_paper_access (
-                    analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status,
-                    provider_id, access_reason, metadata_available, abstract_available, source_url, license_identifier,
-                    location_version, location_host_type, discovered_at, object_key, content_sha256,
-                    content_media_type, language, language_detector_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
-                """.trimIndent(),
-                analysisRunId,
-                reference.bibliographyEntryId,
-                reference.canonicalPaperId,
-                decision.accessStatus.name,
-                providerId,
-                accessReason?.name,
-                discovery?.metadataAvailable == true || discovery?.abstractAvailable == true || discovery?.locations?.isNotEmpty() == true || fullText != null,
-                discovery?.abstractAvailable == true,
-                locationUrl,
-                license,
-                version,
-                hostType,
-                Timestamp.from(discoveredAt),
-                objectKey,
-                contentHash,
-                fullText?.mediaType?.substringBefore(';')?.trim()?.lowercase(),
-                language,
-                languageDetectorVersion,
-            )
-            if (inserted == 0) return@execute false
-            claimReferenceVerificationRepository.applyAccessDecision(
-                analysisRunId = analysisRunId,
-                bibliographyEntryId = reference.bibliographyEntryId,
-                canonicalPaperId = reference.canonicalPaperId,
-                decision = decision,
-            )
-            true
-        } ?: false
+    ): Boolean {
+        val contentHash = fullText?.bytes?.let(::sha256Hex)
+        val inserted = jdbc.update(
+            """
+            INSERT INTO cited_paper_access (
+                analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status,
+                provider_id, access_reason, metadata_available, abstract_available, source_url, license_identifier,
+                location_version, location_host_type, discovered_at, object_key, content_sha256,
+                content_media_type, language, language_detector_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
+            """.trimIndent(),
+            analysisRunId,
+            reference.bibliographyEntryId,
+            reference.canonicalPaperId,
+            decision.accessStatus.name,
+            providerId,
+            accessReason?.name,
+            discovery?.metadataAvailable == true || discovery?.abstractAvailable == true || discovery?.locations?.isNotEmpty() == true || fullText != null,
+            discovery?.abstractAvailable == true,
+            locationUrl,
+            license,
+            version,
+            hostType,
+            Timestamp.from(discoveredAt),
+            objectKey,
+            contentHash,
+            fullText?.mediaType?.substringBefore(';')?.trim()?.lowercase(),
+            language,
+            languageDetectorVersion,
+        )
+        return inserted == 1
+    }
 
     fun isObjectKeyReferenced(objectKey: String): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM cited_paper_access WHERE object_key = ?)",
@@ -124,49 +110,42 @@ class CitedPaperAccessRepository(
         objectKey,
     ) == true
 
-    fun reportEntries(analysisRunId: UUID): Map<String, CitedPaperAccessReport> {
-        val indexingByReference = evidenceReportRepository.indexingReportsByReference(analysisRunId)
-        return jdbc.query(
-            """
-            SELECT b.id AS bibliography_entry_id, b.local_reference_key, a.access_status, a.access_reason,
-                   a.provider_id, a.source_url, a.license_identifier, a.location_version, a.location_host_type,
-                   a.discovered_at, a.content_sha256, a.language, a.language_detector_version
-              FROM cited_paper_access a
-              JOIN bibliography_entries b
-                ON b.analysis_run_id = a.analysis_run_id AND b.id = a.bibliography_entry_id
-             WHERE a.analysis_run_id = ?
-             ORDER BY b.entry_order
-            """.trimIndent(),
-            { rs, _ -> rs.toAccessReportEntry(indexingByReference) },
-            analysisRunId,
-        ).associate { it.localReferenceKey to it.report }
-    }
+    fun reportEntries(analysisRunId: UUID): List<CitedPaperAccessReportEntry> = jdbc.query(
+        """
+        SELECT b.id AS bibliography_entry_id, b.local_reference_key, a.access_status, a.access_reason,
+               a.provider_id, a.source_url, a.license_identifier, a.location_version, a.location_host_type,
+               a.discovered_at, a.content_sha256, a.language, a.language_detector_version
+          FROM cited_paper_access a
+          JOIN bibliography_entries b
+            ON b.analysis_run_id = a.analysis_run_id AND b.id = a.bibliography_entry_id
+         WHERE a.analysis_run_id = ?
+         ORDER BY b.entry_order
+        """.trimIndent(),
+        { rs, _ -> rs.toAccessReportEntry() },
+        analysisRunId,
+    )
 
-    private fun ResultSet.toAccessReportEntry(
-        indexingByReference: Map<UUID, EvidenceIndexingReport>,
-    ): AccessReportEntry {
-        val bibliographyEntryId = getObject("bibliography_entry_id", UUID::class.java)
-        return AccessReportEntry(
-            localReferenceKey = getString("local_reference_key"),
-            report = CitedPaperAccessReport(
-                accessStatus = getString("access_status"),
-                accessReason = getString("access_reason"),
-                providerId = getString("provider_id"),
-                sourceUrl = getString("source_url"),
-                license = getString("license_identifier"),
-                version = getString("location_version"),
-                hostType = getString("location_host_type"),
-                discoveredAt = getTimestamp("discovered_at").toInstant(),
-                contentSha256 = getString("content_sha256"),
-                language = getString("language"),
-                languageDetectorVersion = getString("language_detector_version"),
-                evidenceIndexing = indexingByReference[bibliographyEntryId],
-            ),
-        )
-    }
-
-    private data class AccessReportEntry(
-        val localReferenceKey: String,
-        val report: CitedPaperAccessReport,
+    private fun ResultSet.toAccessReportEntry(): CitedPaperAccessReportEntry = CitedPaperAccessReportEntry(
+        bibliographyEntryId = getObject("bibliography_entry_id", UUID::class.java),
+        localReferenceKey = getString("local_reference_key"),
+        report = CitedPaperAccessReport(
+            accessStatus = getString("access_status"),
+            accessReason = getString("access_reason"),
+            providerId = getString("provider_id"),
+            sourceUrl = getString("source_url"),
+            license = getString("license_identifier"),
+            version = getString("location_version"),
+            hostType = getString("location_host_type"),
+            discoveredAt = getTimestamp("discovered_at").toInstant(),
+            contentSha256 = getString("content_sha256"),
+            language = getString("language"),
+            languageDetectorVersion = getString("language_detector_version"),
+        ),
     )
 }
+
+data class CitedPaperAccessReportEntry(
+    val bibliographyEntryId: UUID,
+    val localReferenceKey: String,
+    val report: CitedPaperAccessReport,
+)

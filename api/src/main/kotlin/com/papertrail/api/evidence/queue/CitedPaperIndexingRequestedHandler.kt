@@ -6,7 +6,6 @@ import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.evidence.service.EvidenceRetrievalService
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
-import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
@@ -23,7 +22,6 @@ class CitedPaperIndexingRequestedHandler(
     private val evidenceRetrievalService: EvidenceRetrievalService,
     private val evidenceRetrievalRepository: EvidenceRetrievalRepository,
     private val evidenceVerificationService: EvidenceVerificationService,
-    private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
@@ -84,7 +82,7 @@ class CitedPaperIndexingRequestedHandler(
                     "COMPLETED" -> EVIDENCE_VERIFICATION_RETRIES_EXHAUSTED
                     else -> EVIDENCE_PROCESSING_INCOMPLETE
                 }
-                claimReferenceVerificationRepository.failFullText(
+                evidenceVerificationService.failFullText(
                     event.analysisRunId,
                     event.payload.bibliographyEntryId,
                     failureCode,
