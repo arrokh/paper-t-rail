@@ -65,6 +65,12 @@ paper-trail:
       retention-disclosure: ${CROSSREF_RETENTION_DISCLOSURE:}
       contact-email: ${CROSSREF_CONTACT_EMAIL:}
 
+scalar:
+  enabled: ${API_DOCS_ENABLED:true}
+  path: /scalar
+  url: /v3/api-docs
+  page-title: Paper T-Rail API Reference
+
 springdoc:
   api-docs:
     enabled: ${API_DOCS_ENABLED:true}

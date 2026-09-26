@@ -2766,9 +2766,9 @@ GET /api/v1/providers
 
 Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, `systemOne`, and `scholarlyMetadata`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The default runtime exposes local/mock providers and recorded scholarly-metadata fixtures; Crossref remains disabled by default.
 
-## 40.5 OpenAPI and Swagger UI
+## 40.5 OpenAPI and API Documentation UIs
 
-The Spring API publishes an OpenAPI 3 contract at `/v3/api-docs` (YAML at `/v3/api-docs.yaml`) and its interactive Swagger UI at `/swagger-ui/index.html`. The contract is generated from the implemented Spring controllers and their request/response annotations; it documents only routes that exist in that runtime, not the full future-state API in this design. In local Compose, host access to the API and docs is published on a configurable port bound only to `127.0.0.1`; the worker disables the docs endpoints. Do not expose unauthenticated Swagger UI or API endpoints to public/untrusted networks.
+The Spring API publishes an OpenAPI 3 contract at `/v3/api-docs` (YAML at `/v3/api-docs.yaml`), its interactive Swagger UI at `/swagger-ui/index.html`, and a Scalar API reference at `/scalar` configured to use `/v3/api-docs`. The contract is generated from the implemented Spring controllers and their request/response annotations; it documents only routes that exist in that runtime, not the full future-state API in this design. In local Compose, host access to the API and docs is published on a configurable port bound only to `127.0.0.1`; the worker disables the docs endpoints. Do not expose unauthenticated Swagger UI, Scalar, or API endpoints to public/untrusted networks.
 
 ---
 
