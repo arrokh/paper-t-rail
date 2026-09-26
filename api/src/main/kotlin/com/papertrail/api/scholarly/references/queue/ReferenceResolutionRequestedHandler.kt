@@ -3,6 +3,8 @@ package com.papertrail.api.scholarly.references.queue
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
+import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import org.springframework.jdbc.core.JdbcTemplate
@@ -78,9 +80,68 @@ class ReferenceResolutionRequestedHandler(
                     failureReason,
                     event.analysisRunId,
                 )
+            } else {
+                enqueueAcquisitionIfResolved(event)
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
+    }
+
+    private fun enqueueAcquisitionIfResolved(event: PipelineEvent<ReferenceResolutionRequestedPayload>) {
+        val accessConfigured = jdbc.queryForObject(
+            "SELECT jsonb_exists(configuration_snapshot, 'openAccess') FROM analysis_runs WHERE id = ?",
+            Boolean::class.java,
+            event.analysisRunId,
+        ) == true
+        if (!accessConfigured) return
+        val resolved = jdbc.queryForObject(
+            "SELECT EXISTS (SELECT 1 FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND status = 'RESOLVED')",
+            Boolean::class.java,
+            event.analysisRunId,
+            event.payload.bibliographyEntryId,
+        ) == true
+        if (!resolved) return
+        val alreadyQueued = jdbc.queryForObject(
+            "SELECT EXISTS (SELECT 1 FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? AND payload -> 'payload' ->> 'bibliographyEntryId' = ?)",
+            Boolean::class.java,
+            event.analysisRunId,
+            CITED_PAPER_ACQUISITION_REQUESTED,
+            event.payload.bibliographyEntryId.toString(),
+        ) == true
+        if (alreadyQueued) return
+
+        val acquisitionEvent = PipelineEvent(
+            eventId = UUID.randomUUID(),
+            eventType = CITED_PAPER_ACQUISITION_REQUESTED,
+            schemaVersion = 1,
+            analysisRunId = event.analysisRunId,
+            correlationId = event.correlationId,
+            causationId = event.eventId,
+            occurredAt = Instant.now(),
+            attempt = 0,
+            payload = CitedPaperAcquisitionRequestedPayload(
+                documentId = event.payload.documentId,
+                sourceContentSha256 = event.payload.sourceContentSha256,
+                bibliographyEntryId = event.payload.bibliographyEntryId,
+            ),
+        )
+        jdbc.update(
+            """
+            INSERT INTO outbox_events (
+                event_id, event_type, schema_version, analysis_run_id,
+                correlation_id, causation_id, occurred_at, payload, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
+            """.trimIndent(),
+            acquisitionEvent.eventId,
+            acquisitionEvent.eventType,
+            acquisitionEvent.schemaVersion,
+            acquisitionEvent.analysisRunId,
+            acquisitionEvent.correlationId,
+            acquisitionEvent.causationId,
+            Timestamp.from(acquisitionEvent.occurredAt),
+            objectMapper.writeValueAsString(acquisitionEvent),
+            Timestamp.from(Instant.now()),
+        )
     }
 
     private data class RunProvenance(

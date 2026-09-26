@@ -1,10 +1,11 @@
-export type ProviderRole = "claimExtractor" | "embedding" | "systemOne" | "scholarlyMetadata";
+export type ProviderRole = "claimExtractor" | "embedding" | "systemOne" | "scholarlyMetadata" | "openAccess";
 
 export type ProviderSelections = {
   claimExtractorProvider: string;
   embeddingProvider: string;
   systemOneProvider: string;
   scholarlyMetadataProvider: string;
+  openAccessProvider: string;
 };
 
 export type ProviderOption = {
@@ -45,10 +46,11 @@ export function consentRequirements(
     embedding: selections.embeddingProvider,
     systemOne: selections.systemOneProvider,
     scholarlyMetadata: selections.scholarlyMetadataProvider,
+    openAccess: selections.openAccessProvider,
   };
   const grouped = new Map<string, ProviderConsentRequirement>();
 
-  for (const role of ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata"] as const) {
+  for (const role of ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata", "openAccess"] as const) {
     for (const option of directory.providers[role] ?? []) {
       if (option.providerId !== selectionByRole[role] || option.trustBoundary !== "EXTERNAL") continue;
       const existing = grouped.get(option.providerId);

@@ -10,6 +10,7 @@ export type AnalysisRun = {
     embedding: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     systemOne: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     sourceParser: { provider: string; version: string };
+    openAccess?: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     referenceResolution?: {
       executionStatus: string;
       provider: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] } | null;
@@ -111,6 +112,25 @@ export type ReferenceResolutionReportResponse = {
       canonicalPaper: { id: string; doi: string | null; title: string; authors: string[]; year: number | null } | null;
       confidenceScore: number | null;
       matchMethod: string | null;
+      citedPaperAccess: {
+        accessStatus: "FULL_TEXT_AVAILABLE" | "ABSTRACT_ONLY" | "METADATA_ONLY" | "UNAVAILABLE";
+        accessReason: "ABSTRACT_ONLY" | "NO_LEGAL_FULL_TEXT_LOCATION" | "NO_ACCESSIBLE_METADATA" | "FULL_TEXT_ACQUISITION_FAILED" | null;
+        providerId: string;
+        sourceUrl: string | null;
+        license: string | null;
+        version: string | null;
+        hostType: string | null;
+        discoveredAt: string;
+        contentSha256: string | null;
+        language: string | null;
+        languageDetectorVersion: string | null;
+        verificationOutcomes: Array<{
+          atomicClaimId: string;
+          finalStatus: string | null;
+          verificationScope: "FULL_TEXT" | "ABSTRACT_ONLY" | "NONE";
+          terminalReason: string | null;
+        }>;
+      } | null;
     }>;
   };
 };

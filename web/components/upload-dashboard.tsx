@@ -65,6 +65,7 @@ const DEFAULT_SELECTIONS: ProviderSelections = {
   embeddingProvider: "local",
   systemOneProvider: "mock",
   scholarlyMetadataProvider: "recorded-fixtures",
+  openAccessProvider: "recorded-fixtures",
 };
 
 const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
@@ -257,7 +258,7 @@ export function UploadDashboard() {
       .then(async (response) => {
         if (!response.ok) throw new Error(await readError(response));
         const directory = (await response.json()) as ProviderDirectory;
-        const roles: ProviderRole[] = ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata"];
+        const roles: ProviderRole[] = ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata", "openAccess"];
         if (roles.some((role) => !directory.providers[role]?.length)) {
           throw new Error("The API has no enabled provider for one or more Analysis Run stages.");
         }
@@ -271,6 +272,7 @@ export function UploadDashboard() {
           embeddingProvider: selectAvailable("embedding", current.embeddingProvider),
           systemOneProvider: selectAvailable("systemOne", current.systemOneProvider),
           scholarlyMetadataProvider: selectAvailable("scholarlyMetadata", current.scholarlyMetadataProvider),
+          openAccessProvider: selectAvailable("openAccess", current.openAccessProvider),
         }));
         setProviderError(null);
       })
@@ -376,6 +378,7 @@ export function UploadDashboard() {
       embeddingProvider: role === "embedding" ? providerId : current.embeddingProvider,
       systemOneProvider: role === "systemOne" ? providerId : current.systemOneProvider,
       scholarlyMetadataProvider: role === "scholarlyMetadata" ? providerId : current.scholarlyMetadataProvider,
+      openAccessProvider: role === "openAccess" ? providerId : current.openAccessProvider,
     }));
   }
 
@@ -543,6 +546,7 @@ export function UploadDashboard() {
                   ["embedding", "Embeddings", "embeddingProvider"],
                   ["systemOne", "Evidence assessment", "systemOneProvider"],
                   ["scholarlyMetadata", "Bibliography resolution", "scholarlyMetadataProvider"],
+                  ["openAccess", "Cited full-text access", "openAccessProvider"],
                 ] as const).map(([role, label, selectionField]) => {
                   const selectId = `provider-${role}`;
                   return (
@@ -1056,7 +1060,7 @@ export function UploadDashboard() {
                 <TabsContent value="report" className="space-y-5 outline-none">
                   {coverageReportLoading && (
                     <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-                      <Spinner aria-hidden="true" /> Loading Reference Resolution Report…
+                      <Spinner aria-hidden="true" /> Loading Reference and Cited Paper Access Report…
                     </p>
                   )}
                   {coverageReportError && (
@@ -1072,8 +1076,8 @@ export function UploadDashboard() {
                       <div className="space-y-5">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="space-y-1">
-                            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Reference Resolution Report</p>
-                            <h3 className="font-heading text-lg font-semibold tracking-tight">Bibliography resolution</h3>
+                            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Reference and Cited Paper Access Report</p>
+                            <h3 className="font-heading text-lg font-semibold tracking-tight">Reference resolution and legal access</h3>
                           </div>
                           <Badge variant="secondary" className="font-mono text-xs">
                             {resolution.executionStatus.replaceAll("_", " ").toLowerCase()}
@@ -1104,6 +1108,33 @@ export function UploadDashboard() {
                             </div>
                           ))}
                         </dl>
+                        <section className="space-y-3" aria-labelledby="cited-paper-access-heading">
+                          <div className="space-y-1">
+                            <h4 id="cited-paper-access-heading" className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Cited Paper access outcomes</h4>
+                            <p className="text-sm text-muted-foreground">Access availability is separate from each Claim–Paper Verification status.</p>
+                          </div>
+                          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+                            {([
+                              ["Full text available", "FULL_TEXT_AVAILABLE"],
+                              ["Abstract only", "ABSTRACT_ONLY"],
+                              ["Metadata only", "METADATA_ONLY"],
+                              ["Unavailable", "UNAVAILABLE"],
+                            ] as const).map(([label, status]) => (
+                              <div key={status} className="rounded-lg border border-border bg-card px-3 py-3">
+                                <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
+                                <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">
+                                  {resolution.entries.filter((entry) => entry.citedPaperAccess?.accessStatus === status).length}
+                                </dd>
+                              </div>
+                            ))}
+                            <div className="rounded-lg border border-border bg-card px-3 py-3">
+                              <dt className="text-xs leading-relaxed text-muted-foreground">Not attempted</dt>
+                              <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">
+                                {resolution.entries.filter((entry) => entry.status === "RESOLVED" && !entry.citedPaperAccess).length}
+                              </dd>
+                            </div>
+                          </dl>
+                        </section>
                         {resolution.entries.length === 0 ? (
                           <p className="rounded-lg border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
                             No Bibliography Entries were available for resolution.
@@ -1123,7 +1154,7 @@ export function UploadDashboard() {
                           </ol>
                         )}
                         <p className="text-xs leading-relaxed text-muted-foreground">
-                          Ambiguous and below-threshold matches remain unresolved. The configured threshold is pinned to this run; numeric calibration remains a separate release gate. This report does not claim to complete Atomic Claim or evidence analysis.
+                          Ambiguous and below-threshold matches remain unresolved. Access outcomes do not imply a semantic assessment: abstract-only and unsupported-language papers receive terminal statuses without semantic-provider calls, and English full text remains pending until semantic processing is implemented. The configured reference threshold is pinned to this run; numeric calibration remains a separate release gate.
                         </p>
                       </div>
                     );

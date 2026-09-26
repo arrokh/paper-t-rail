@@ -18,10 +18,23 @@ import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
+import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
+import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepository
+import com.papertrail.api.scholarly.acquisition.client.OpenAccessProvider
+import com.papertrail.api.scholarly.acquisition.client.OpenAccessProviderFactory
+import com.papertrail.api.scholarly.acquisition.client.RecordedFixtureOpenAccessProviderFactory
+import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
+import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
+import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
+import com.papertrail.api.scholarly.acquisition.service.PdfBoxCitedPaperTextExtractor
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedPayload
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
 import com.papertrail.api.infrastructure.messaging.redis.RedisStreamWorker
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedHandler
+import com.papertrail.api.document.validation.DocumentLanguageDetector
+import com.papertrail.api.document.validation.LanguageDetection
 import com.papertrail.api.document.validation.OptimaizeDocumentLanguageDetector
 import com.papertrail.api.citation.claims.service.ClaimExtractionService
 import com.papertrail.api.citation.claims.service.HeuristicClaimExtractor
@@ -34,6 +47,7 @@ import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
+import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.scholarly.references.client.BibliographyReference
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookup
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookupFactory
@@ -211,6 +225,41 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `legacy issue 7 runs do not acquire cited full text without a pinned access provider`() {
+        val created = createQueuedRun(configurationJson = issueSevenConfigurationJson())
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        processReferenceResolutionEvents(created.analysisRunId)
+
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT count(*) FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            Int::class.java,
+            created.analysisRunId,
+            CITED_PAPER_ACQUISITION_REQUESTED,
+        ))
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT count(*) FROM cited_paper_access WHERE analysis_run_id = ?",
+            Int::class.java,
+            created.analysisRunId,
+        ))
+        val entry = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }
+        assertEquals("RESOLVED", entry.status)
+        assertNull(entry.citedPaperAccess)
+        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertTrue(jdbc.queryForObject(
+            "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            created.analysisRunId,
+        )!!.contains("legacy Analysis Run"))
+    }
+
+    @Test
     fun `legacy immutable runs keep reference resolution not run rather than inventing a policy`() {
         val created = createQueuedRun(configurationJson = legacyResolutionConfigurationJson())
         val event = jdbc.queryForObject("SELECT payload::text FROM outbox_events WHERE analysis_run_id = ?", String::class.java, created.analysisRunId)
@@ -254,6 +303,208 @@ class AnalysisRunQueueIntegrationTest {
         val parsed = service.getParsedDocument(created.analysisRunId)
         assertEquals("grobid", parsed.parser.provider)
         assertEquals(created.hash, parsed.sourceContentSha256)
+        val access = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
+        assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
+        assertEquals("recorded-fixtures", access.providerId)
+        assertEquals("en", access.language)
+        assertTrue(access.sourceUrl!!.startsWith("fixture://"))
+        assertEquals(64, access.contentSha256!!.length)
+        assertTrue(access.verificationOutcomes.isNotEmpty())
+        assertTrue(access.verificationOutcomes.all { it.finalStatus == null && it.verificationScope == "FULL_TEXT" })
+    }
+
+    @Test
+    fun `persists available abstract when every legal full-text location fails`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val failedLocation = OpenAccessLocation(
+            "fixture://controlled/unavailable",
+            "CC0-1.0",
+            "publishedVersion",
+            "repository",
+            "recorded-fixtures",
+        )
+        val fetchCalls = AtomicInteger()
+        val factory = controlledOpenAccessFactory(
+            OpenAccessDiscovery(true, true, listOf(failedLocation), "recorded-fixtures", Instant.now()),
+            fullText = null,
+            fetchCalls = fetchCalls,
+        )
+
+        processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
+
+        val access = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
+        assertEquals(1, fetchCalls.get())
+        assertEquals("ABSTRACT_ONLY", access.accessStatus)
+        assertEquals("FULL_TEXT_ACQUISITION_FAILED", access.accessReason)
+        assertEquals(failedLocation.url, access.sourceUrl)
+        assertEquals("CC0-1.0", access.license)
+        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
+    }
+
+    @Test
+    fun `tries the next legally permitted location when an earlier full-text location fails`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val locations = listOf(
+            OpenAccessLocation("fixture://recorded/missing", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures"),
+            OpenAccessLocation("fixture://recorded/available", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures"),
+        )
+        val fetchCalls = AtomicInteger()
+        val factory = object : OpenAccessProviderFactory {
+            override val providerId = "recorded-fixtures"
+
+            override fun forRun(configuration: AnalysisConfigurationSnapshot): OpenAccessProvider = object : OpenAccessProvider {
+                override fun discover(reference: BibliographyReference) =
+                    OpenAccessDiscovery(true, false, locations, providerId, Instant.now())
+
+                override fun fetch(location: OpenAccessLocation): AcquiredFullText {
+                    fetchCalls.incrementAndGet()
+                    check(location.url.endsWith("available")) { "The first recorded location is unavailable." }
+                    return AcquiredFullText("English full-text evidence from the repository.".toByteArray(), "text/plain", location)
+                }
+            }
+        }
+
+        processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
+
+        val access = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
+        assertEquals(2, fetchCalls.get())
+        assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
+        assertNull(access.accessReason)
+        assertEquals("fixture://recorded/available", access.sourceUrl)
+    }
+
+    @Test
+    fun `abstract-only cited access is terminal insufficient evidence and never fetches full text`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val fetched = AtomicInteger()
+        val factory = controlledOpenAccessFactory(
+            discovery = OpenAccessDiscovery(true, true, emptyList(), "recorded-fixtures", Instant.now()),
+            fullText = null,
+            fetchCalls = fetched,
+        )
+
+        processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
+
+        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }
+        val access = reference.citedPaperAccess!!
+        assertEquals("ABSTRACT_ONLY", access.accessStatus)
+        assertEquals("ABSTRACT_ONLY", access.accessReason)
+        assertEquals(0, fetched.get())
+        assertTrue(access.verificationOutcomes.isNotEmpty())
+        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
+        assertTrue(access.verificationOutcomes.all { it.verificationScope == "ABSTRACT_ONLY" })
+        assertTrue(access.verificationOutcomes.all { it.terminalReason == "ABSTRACT_ONLY" })
+    }
+
+    @Test
+    fun `metadata-only access is reported separately from inaccessible verification`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val factory = controlledOpenAccessFactory(
+            OpenAccessDiscovery(true, false, emptyList(), "recorded-fixtures", Instant.now()),
+            fullText = null,
+            fetchCalls = AtomicInteger(),
+        )
+
+        processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
+
+        val access = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
+        assertEquals("METADATA_ONLY", access.accessStatus)
+        assertEquals("NO_LEGAL_FULL_TEXT_LOCATION", access.accessReason)
+        assertTrue(access.verificationOutcomes.isNotEmpty())
+        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INACCESSIBLE" })
+        assertTrue(access.verificationOutcomes.all { it.verificationScope == "NONE" })
+    }
+
+    @Test
+    fun `missing full text and abstract is persisted as inaccessible independently of access status`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val factory = controlledOpenAccessFactory(null, null, AtomicInteger())
+
+        processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
+
+        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }
+        val access = reference.citedPaperAccess!!
+        assertEquals("UNAVAILABLE", access.accessStatus)
+        assertEquals("NO_ACCESSIBLE_METADATA", access.accessReason)
+        assertTrue(access.verificationOutcomes.isNotEmpty())
+        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INACCESSIBLE" })
+        assertTrue(access.verificationOutcomes.all { it.verificationScope == "NONE" })
+    }
+
+    @Test
+    fun `accessible non-English full text remains separate from terminal verification and is not semantically eligible`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val fetched = AtomicInteger()
+        val location = OpenAccessLocation("fixture://controlled/non-english", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures")
+        val factory = controlledOpenAccessFactory(
+            OpenAccessDiscovery(true, false, listOf(location), "recorded-fixtures", Instant.now()),
+            "Texte intégral de l’étude scientifique, résultats et analyse de recherche.".repeat(8),
+            fetched,
+        )
+        val frenchDetector = object : DocumentLanguageDetector {
+            override fun detect(text: String) = LanguageDetection("fr", 0.99)
+        }
+
+        processReferenceResolutionEvents(created.analysisRunId, listOf(factory), frenchDetector)
+
+        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }
+        val access = reference.citedPaperAccess!!
+        assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
+        assertEquals("fr", access.language)
+        assertEquals(1, fetched.get())
+        assertTrue(access.verificationOutcomes.isNotEmpty())
+        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
+        assertTrue(access.verificationOutcomes.all { it.verificationScope == "NONE" })
+        assertTrue(access.verificationOutcomes.all { it.terminalReason == "LANGUAGE_UNSUPPORTED" })
     }
 
     @Test
@@ -572,6 +823,7 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper = objectMapper,
             stream = stream,
             group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
             consumerName = "replacement-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -588,6 +840,8 @@ class AnalysisRunQueueIntegrationTest {
             workerLogger.detachAppender(appender)
         }
 
+        OutboxPublisher(jdbc, redis, stream).publishPending()
+        replacement.poll()
         OutboxPublisher(jdbc, redis, stream).publishPending()
         replacement.poll()
         assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
@@ -623,6 +877,7 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper = objectMapper,
             stream = stream,
             group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
             consumerName = "active-worker",
             reclaimDelayMs = 300,
             batchSize = 10,
@@ -636,6 +891,7 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper = objectMapper,
             stream = stream,
             group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
             consumerName = "replacement-worker",
             reclaimDelayMs = 300,
             batchSize = 10,
@@ -662,6 +918,8 @@ class AnalysisRunQueueIntegrationTest {
         OutboxPublisher(jdbc, redis, stream).publishPending()
         try {
             replacementWorker.poll()
+            OutboxPublisher(jdbc, redis, stream).publishPending()
+            replacementWorker.poll()
         } finally {
             replacementWorker.shutdownLeaseHeartbeat()
         }
@@ -686,6 +944,7 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper = objectMapper,
             stream = stream,
             group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(resolutionService),
             consumerName = "reference-retry-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -727,6 +986,8 @@ class AnalysisRunQueueIntegrationTest {
             }
             redis.opsForHash<String, String>().put("$stream:retry-after", failedMessage.id.value, "0")
             worker.poll()
+            OutboxPublisher(jdbc, redis, stream).publishPending()
+            worker.poll()
 
             assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
             assertEquals(4, jdbc.queryForObject(
@@ -758,6 +1019,7 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper = objectMapper,
             stream = stream,
             group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(resolutionService),
             consumerName = "reference-failure-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -828,6 +1090,7 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper = objectMapper,
             stream = stream,
             group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
             consumerName = "retry-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -885,6 +1148,7 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper = objectMapper,
             stream = stream,
             group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
             consumerName = "malformed-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -1113,6 +1377,7 @@ class AnalysisRunQueueIntegrationTest {
         jdbc,
         objectMapper,
         ReferenceResolutionRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+        CitedPaperAccessRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
         lookupFactories,
     )
 
@@ -1125,6 +1390,58 @@ class AnalysisRunQueueIntegrationTest {
         resolutionService,
     )
 
+    private fun controlledOpenAccessFactory(
+        discovery: OpenAccessDiscovery?,
+        fullText: String?,
+        fetchCalls: AtomicInteger,
+    ): OpenAccessProviderFactory = object : OpenAccessProviderFactory {
+        override val providerId = "recorded-fixtures"
+
+        override fun forRun(configuration: AnalysisConfigurationSnapshot): OpenAccessProvider = object : OpenAccessProvider {
+            override fun discover(reference: BibliographyReference): OpenAccessDiscovery? = discovery
+
+            override fun fetch(location: OpenAccessLocation): AcquiredFullText {
+                fetchCalls.incrementAndGet()
+                return AcquiredFullText(
+                    bytes = requireNotNull(fullText) { "Unexpected full-text fetch for a controlled access result." }.toByteArray(Charsets.UTF_8),
+                    mediaType = "text/plain",
+                    location = location,
+                )
+            }
+        }
+    }
+
+    private fun citedPaperAccessService(
+        providerFactories: List<OpenAccessProviderFactory> = listOf(RecordedFixtureOpenAccessProviderFactory(
+            objectMapper,
+            ProviderCallGate(ProviderCatalog.safeDefaults()),
+        )),
+        languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
+    ) = CitedPaperAccessService(
+        jdbc = jdbc,
+        objectMapper = objectMapper,
+        repository = CitedPaperAccessRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+        objectStore = objectStore,
+        languageDetector = languageDetector,
+        textExtractor = PdfBoxCitedPaperTextExtractor(5_000_000),
+        providerFactories = providerFactories,
+    )
+
+    private fun citedPaperAccessEventHandler(
+        resolutionService: ReferenceResolutionService = referenceResolutionService(),
+        providerFactories: List<OpenAccessProviderFactory> = listOf(RecordedFixtureOpenAccessProviderFactory(
+            objectMapper,
+            ProviderCallGate(ProviderCatalog.safeDefaults()),
+        )),
+        languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
+    ) = CitedPaperAcquisitionRequestedHandler(
+        jdbc,
+        TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        objectMapper,
+        citedPaperAccessService(providerFactories, languageDetector),
+        stageCompletionService(resolutionService),
+    )
+
     private fun referenceResolutionEventHandler(
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
     ) = ReferenceResolutionRequestedHandler(
@@ -1135,7 +1452,14 @@ class AnalysisRunQueueIntegrationTest {
         stageCompletionService(resolutionService),
     )
 
-    private fun processReferenceResolutionEvents(analysisRunId: UUID) {
+    private fun processReferenceResolutionEvents(
+        analysisRunId: UUID,
+        providerFactories: List<OpenAccessProviderFactory> = listOf(RecordedFixtureOpenAccessProviderFactory(
+            objectMapper,
+            ProviderCallGate(ProviderCatalog.safeDefaults()),
+        )),
+        languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
+    ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
             { rs, _ -> rs.getString(1) },
@@ -1144,6 +1468,31 @@ class AnalysisRunQueueIntegrationTest {
         )
         val handler = referenceResolutionEventHandler()
         events.forEach(handler::handle)
+        processCitedPaperAcquisitionEvents(analysisRunId, providerFactories, languageDetector)
+    }
+
+    private fun processCitedPaperAcquisitionEvents(
+        analysisRunId: UUID,
+        providerFactories: List<OpenAccessProviderFactory>,
+        languageDetector: DocumentLanguageDetector,
+    ) {
+        val events = jdbc.query(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
+            { rs, _ -> rs.getString(1) },
+            analysisRunId,
+            CITED_PAPER_ACQUISITION_REQUESTED,
+        )
+        val handler = citedPaperAccessEventHandler(
+            providerFactories = providerFactories,
+            languageDetector = languageDetector,
+        )
+        events.forEach(handler::handle)
+    }
+
+    private fun issueSevenConfigurationJson(): String {
+        val configuration = objectMapper.readTree(objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest()))) as ObjectNode
+        configuration.remove(listOf("openAccess", "openAccessProviderConfigurationFingerprint", "openAccessRetentionDisclosure"))
+        return configuration.toString()
     }
 
     private fun legacyResolutionConfigurationJson(): String {
@@ -1247,7 +1596,7 @@ class AnalysisRunQueueIntegrationTest {
             jdbc = JdbcTemplate(dataSource)
             val migrationDirectory = listOf(Path.of("db/deploy"), Path.of("api/db/deploy"))
                 .firstOrNull(Files::isDirectory) ?: error("Could not locate Sqitch deployment directory")
-            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql", "conservative_reference_resolution.sql").forEach { filename ->
+            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql", "conservative_reference_resolution.sql", "cited_paper_access.sql").forEach { filename ->
                 val migration = migrationDirectory.resolve(filename)
                 dataSource.connection.use { connection ->
                     connection.createStatement().use { statement -> statement.execute(Files.readString(migration)) }
@@ -1260,6 +1609,10 @@ class AnalysisRunQueueIntegrationTest {
             val referenceResolutionMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("conservative_reference_resolution.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(referenceResolutionMigrationVerification)) }
+            }
+            val citedPaperAccessMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("cited_paper_access.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(citedPaperAccessMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

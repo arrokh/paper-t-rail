@@ -13,6 +13,8 @@ data class RunConfigurationRequest(
     val systemOneProvider: String = "mock",
     @field:Schema(description = "Scholarly metadata provider used for conservative bibliography resolution.", defaultValue = "recorded-fixtures", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val scholarlyMetadataProvider: String = "recorded-fixtures",
+    @field:Schema(description = "Provider used to discover and acquire legal cited full text.", defaultValue = "recorded-fixtures", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+    val openAccessProvider: String = "recorded-fixtures",
     @field:Schema(description = "Provider-specific data categories explicitly approved for this run.", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val externalProviderConsents: List<ExternalProviderConsentSnapshot> = emptyList(),
 )

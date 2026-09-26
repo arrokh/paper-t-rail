@@ -60,6 +60,28 @@ const directory = {
         retentionDisclosure: null,
       },
     ],
+    openAccess: [
+      {
+        role: "openAccess",
+        providerId: "recorded-fixtures",
+        displayName: "Recorded open-access fixtures",
+        version: "v1",
+        model: null,
+        trustBoundary: "LOCAL",
+        dataCategories: ["bibliographic_metadata", "cited_paper_location"],
+        retentionDisclosure: null,
+      },
+      {
+        role: "openAccess",
+        providerId: "unpaywall",
+        displayName: "Unpaywall and discovered open-access hosts",
+        version: "v2",
+        model: null,
+        trustBoundary: "EXTERNAL",
+        dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"],
+        retentionDisclosure: "Reviewed Unpaywall request and retention disclosure.",
+      },
+    ],
     scholarlyMetadata: [
       {
         role: "scholarlyMetadata",
@@ -91,6 +113,7 @@ const localSelections = {
   embeddingProvider: "local",
   systemOneProvider: "mock",
   scholarlyMetadataProvider: "recorded-fixtures",
+  openAccessProvider: "recorded-fixtures",
 };
 
 test("local defaults have no external provider consent requirements", () => {
@@ -125,6 +148,19 @@ test("external provider disclosure and saved consent include every selected requ
     providerId: "hosted-ai",
     dataCategories: ["citation_context", "cited_paper_chunks", "embedding_input"],
   }]);
+});
+
+test("Open-access discovery and acquisition require consent for the actual metadata, contact email, and content location", () => {
+  const selections = { ...localSelections, openAccessProvider: "unpaywall" };
+  const requirements = consentRequirements(directory, selections);
+
+  assert.deepEqual(requirements, [{
+    providerId: "unpaywall",
+    displayName: "Unpaywall and discovered open-access hosts",
+    dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"],
+    retentionDisclosure: "Reviewed Unpaywall request and retention disclosure.",
+  }]);
+  assert.deepEqual(missingConsents(requirements, {}), requirements);
 });
 
 test("Crossref selection requires explicit per-run consent for bibliographic metadata", () => {

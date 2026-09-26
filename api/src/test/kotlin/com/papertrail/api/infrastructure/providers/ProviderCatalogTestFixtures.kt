@@ -3,6 +3,16 @@ package com.papertrail.api.infrastructure.providers
 fun reviewedExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
     listOf(
         ProviderRegistration(
+            OPEN_ACCESS_ROLE,
+            "recorded-fixtures",
+            "Recorded open-access fixtures",
+            "v1",
+            null,
+            ProviderTrustBoundary.LOCAL,
+            true,
+            setOf(DataCategory.BIBLIOGRAPHIC_METADATA, DataCategory.CITED_PAPER_LOCATION),
+        ),
+        ProviderRegistration(
             SCHOLARLY_METADATA_ROLE,
             "recorded-fixtures",
             "Recorded metadata fixtures",

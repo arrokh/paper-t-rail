@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedHandler
+import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
+import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_HANDLER
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedHandler
@@ -38,6 +41,7 @@ class RedisStreamWorker(
     private val redis: StringRedisTemplate,
     private val handler: DocumentAnalysisRequestedHandler,
     private val referenceResolutionHandler: ReferenceResolutionRequestedHandler,
+    private val citedPaperAcquisitionHandler: CitedPaperAcquisitionRequestedHandler,
     private val objectMapper: ObjectMapper,
     @Value("\${paper-trail.queue.stream}") private val stream: String,
     @Value("\${paper-trail.queue.group}") private val group: String,
@@ -186,6 +190,20 @@ class RedisStreamWorker(
                     workDescription = "bibliography reference resolution",
                     handle = { referenceResolutionHandler.handle(serialized) },
                     markFailed = { reason -> referenceResolutionHandler.markFailed(typedEvent, reason) },
+                )
+            }
+            CITED_PAPER_ACQUISITION_REQUESTED -> {
+                val typedEvent: PipelineEvent<CitedPaperAcquisitionRequestedPayload> = try {
+                    objectMapper.readValue(serialized)
+                } catch (exception: Exception) {
+                    deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The cited-paper access event payload could not be parsed.")
+                    return
+                }
+                processTypedEvent(
+                    record = record,
+                    workDescription = "cited-paper access",
+                    handle = { citedPaperAcquisitionHandler.handle(serialized) },
+                    markFailed = { reason -> citedPaperAcquisitionHandler.markFailed(typedEvent, reason) },
                 )
             }
             else -> deadLetter(record, "UNSUPPORTED_EVENT_TYPE", "No handler is registered for event type '${event.eventType}'.")
