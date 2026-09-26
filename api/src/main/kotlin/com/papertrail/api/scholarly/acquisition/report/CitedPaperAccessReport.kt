@@ -15,6 +15,6 @@ data class CitedPaperAccessReport(
     val contentSha256: String?,
     val language: String?,
     val languageDetectorVersion: String?,
-    val verificationOutcomes: List<CitedReferenceVerificationOutcome>,
+    val verificationOutcomes: List<CitedReferenceVerificationOutcome> = emptyList(),
     val evidenceIndexing: EvidenceIndexingReport? = null,
 )

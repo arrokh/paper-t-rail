@@ -61,13 +61,19 @@ class RunConfigurationFactoryTest {
         assertEquals(listOf("bibliographic_metadata"), metadataProvider.dataCategories)
         assertEquals("title-author-year-weighted-edit-similarity-v1", snapshot.referenceResolution.scorePolicyVersion)
         assertEquals(0.9, snapshot.referenceResolution.confidenceThreshold)
-        assertEquals("NOT_RUN", snapshot.aggregation.executionStatus)
+        assertEquals("PENDING", snapshot.aggregation.executionStatus)
+        assertEquals("weighted-evidence-role-scope-design-v1", snapshot.aggregation.verificationPolicyVersion)
+        assertEquals("conflict-aware-evidence-strength-v1", snapshot.aggregation.aggregationPolicyVersion)
+        assertEquals(0.8, snapshot.aggregation.thresholds?.get("directSupport"))
+        assertEquals(0.7, snapshot.aggregation.thresholds?.get("partialSupport"))
+        assertEquals(0.8, snapshot.aggregation.thresholds?.get("contradiction"))
+        assertEquals(0.08, snapshot.aggregation.thresholds?.get("comparabilityMargin"))
         assertEquals(0, snapshot.externalProviderConsents.size)
         val json = jacksonObjectMapper().readTree(factory.toJson(snapshot))
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
         assertEquals(0.9, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"].has("thresholds"))
-        assertTrue(json["aggregation"]["thresholds"].isNull)
+        assertEquals(0.8, json["aggregation"]["thresholds"]["directSupport"].asDouble())
     }
 
     @Test
@@ -91,7 +97,7 @@ class RunConfigurationFactoryTest {
     fun `loads immutable pre-resolution run snapshots without inventing a policy`() {
         val objectMapper = jacksonObjectMapper()
         val legacyTree = objectMapper.readTree(factory.toJson(factory.from(RunConfigurationRequest()))) as ObjectNode
-        legacyTree.remove("referenceResolution")
+        legacyTree.remove(listOf("referenceResolution", "aggregation"))
 
         val legacySnapshot = objectMapper.treeToValue(legacyTree, AnalysisConfigurationSnapshot::class.java)
 
@@ -99,6 +105,8 @@ class RunConfigurationFactoryTest {
         assertEquals(null, legacySnapshot.referenceResolution.provider)
         assertEquals(null, legacySnapshot.referenceResolution.scorePolicyVersion)
         assertEquals(null, legacySnapshot.referenceResolution.confidenceThreshold)
+        assertEquals("NOT_RUN", legacySnapshot.aggregation.executionStatus)
+        assertEquals(null, legacySnapshot.aggregation.thresholds)
     }
 
     @Test

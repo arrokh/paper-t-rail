@@ -12,8 +12,11 @@ import com.papertrail.api.scholarly.references.report.ReferenceResolutionReportR
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
+import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
 import com.papertrail.api.scholarly.acquisition.report.CitedReferenceVerificationOutcome
+import com.papertrail.api.evidence.report.EvidenceCoverageReport
+import com.papertrail.api.evidence.report.EvidenceCoverageSummary
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import com.papertrail.api.analysis.http.AnalysisRunPage
 import com.papertrail.api.analysis.http.AnalysisRunSummary
@@ -369,10 +372,34 @@ class OpenApiDocumentationTest {
     @Test
     fun `report endpoint exposes persisted reference outcomes and pinned policy`() {
         val runId = UUID.randomUUID()
+        val outcome = CitedReferenceVerificationOutcome(
+            id = UUID.randomUUID(),
+            atomicClaimId = UUID.randomUUID(),
+            claimText = "The study reports an outcome.",
+            claimSourceStartOffset = 0,
+            claimSourceEndOffset = 32,
+            citationContextText = "The study reports an outcome [1].",
+            citationMarkers = listOf("[1]"),
+            associationKind = "INFERRED_PROVISIONAL",
+            processingStatus = "COMPLETED",
+            processingFailureReason = null,
+            finalStatus = "INSUFFICIENT_EVIDENCE",
+            verificationScope = "ABSTRACT_ONLY",
+            terminalReason = "ABSTRACT_ONLY",
+            evidenceConflict = false,
+            aggregatorVersion = "conflict-aware-evidence-strength-v1",
+        )
         Mockito.`when`(referenceResolutionService.report(runId)).thenReturn(
             ReferenceResolutionReportResponse(
                 analysisRunId = runId,
-                runStatus = "PARSED",
+                runStatus = "COMPLETED",
+                evidenceCoverage = EvidenceCoverageReport(
+                    executionStatus = "COMPLETED",
+                    verificationPolicyVersion = "weighted-evidence-role-scope-design-v1",
+                    aggregationPolicyVersion = "conflict-aware-evidence-strength-v1",
+                    thresholds = mapOf("directSupport" to 0.8, "partialSupport" to 0.7, "contradiction" to 0.8, "comparabilityMargin" to 0.08),
+                    summary = EvidenceCoverageSummary(totalVerifications = 1, completedVerifications = 1, insufficientEvidence = 1),
+                ),
                 referenceResolution = ReferenceResolutionReport(
                     executionStatus = "COMPLETED",
                     scorePolicyVersion = "title-author-year-weighted-edit-similarity-v1",
@@ -390,7 +417,13 @@ class OpenApiDocumentationTest {
                             referenceType = "JOURNAL_ARTICLE",
                             status = "RESOLVED",
                             reasonCode = null,
-                            canonicalPaper = null,
+                            canonicalPaper = ReportCanonicalPaper(
+                                id = UUID.randomUUID(),
+                                doi = "10.1234/example",
+                                title = "Canonical Example Paper",
+                                authors = listOf("Riley Example"),
+                                year = 2024,
+                            ),
                             confidenceScore = 1.0,
                             matchMethod = "DOI",
                             citedPaperAccess = CitedPaperAccessReport(
@@ -405,16 +438,9 @@ class OpenApiDocumentationTest {
                                 contentSha256 = null,
                                 language = null,
                                 languageDetectorVersion = null,
-                                verificationOutcomes = listOf(
-                                    CitedReferenceVerificationOutcome(
-                                        atomicClaimId = UUID.randomUUID(),
-                                        claimText = "The study reports an outcome.",
-                                        finalStatus = "INSUFFICIENT_EVIDENCE",
-                                        verificationScope = "ABSTRACT_ONLY",
-                                        terminalReason = "ABSTRACT_ONLY",
-                                    ),
-                                ),
+                                verificationOutcomes = listOf(outcome),
                             ),
+                            verificationOutcomes = listOf(outcome),
                         ),
                     ),
                 ),
@@ -423,6 +449,10 @@ class OpenApiDocumentationTest {
 
         mockMvc.perform(get("/api/v1/analysis-runs/$runId/report"))
             .andExpect(status().isOk)
+            .andExpect(jsonPath("$.evidenceCoverage.executionStatus").value("COMPLETED"))
+            .andExpect(jsonPath("$.evidenceCoverage.summary.totalVerifications").value(1))
+            .andExpect(jsonPath("$.evidenceCoverage.summary.incompleteVerifications").value(0))
+            .andExpect(jsonPath("$.evidenceCoverage.triageDisclaimer").exists())
             .andExpect(jsonPath("$.referenceResolution.executionStatus").value("COMPLETED"))
             .andExpect(jsonPath("$.referenceResolution.scorePolicyVersion").value("title-author-year-weighted-edit-similarity-v1"))
             .andExpect(jsonPath("$.referenceResolution.confidenceThreshold").value(0.9))
@@ -431,7 +461,11 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessStatus").value("ABSTRACT_ONLY"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessReason").value("ABSTRACT_ONLY"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.verificationOutcomes[0].claimText").value("The study reports an outcome."))
-            .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.verificationOutcomes[0].finalStatus").value("INSUFFICIENT_EVIDENCE"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].canonicalPaper.title").value("Canonical Example Paper"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].verificationOutcomes[0].claimText").value("The study reports an outcome."))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].verificationOutcomes[0].finalStatus").value("INSUFFICIENT_EVIDENCE"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].verificationOutcomes[0].citationMarkers[0]").value("[1]"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].verificationOutcomes[0].processingStatus").value("COMPLETED"))
     }
 
     @Test

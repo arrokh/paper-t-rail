@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
+import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
 import org.springframework.jdbc.core.JdbcTemplate
@@ -20,6 +21,7 @@ class CitedPaperAcquisitionRequestedHandler(
     private val objectMapper: ObjectMapper,
     private val citedPaperAccessService: CitedPaperAccessService,
     private val citedPaperIndexingQueue: CitedPaperIndexingQueue,
+    private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
@@ -73,6 +75,11 @@ class CitedPaperAcquisitionRequestedHandler(
             )
             if (inserted == 0) return@executeWithoutResult
             if (failureReason != null) {
+                claimReferenceVerificationRepository.failReference(
+                    event.analysisRunId,
+                    event.payload.bibliographyEntryId,
+                    CITED_PAPER_ACCESS_RETRIES_EXHAUSTED,
+                )
                 jdbc.update(
                     "UPDATE analysis_runs SET failure_reason = COALESCE(failure_reason, ?), updated_at = now() WHERE id = ? AND status = 'PROCESSING'",
                     failureReason,
@@ -90,6 +97,10 @@ class CitedPaperAcquisitionRequestedHandler(
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
+    }
+
+    companion object {
+        const val CITED_PAPER_ACCESS_RETRIES_EXHAUSTED = "CITED_PAPER_ACCESS_RETRIES_EXHAUSTED"
     }
 
     private data class RunProvenance(

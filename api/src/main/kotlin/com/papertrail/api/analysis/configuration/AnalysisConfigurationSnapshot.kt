@@ -12,6 +12,11 @@ data class AnalysisConfigurationSnapshot(
     val openAccess: ProviderSelection = ProviderSelection("recorded-fixtures", "v1"),
     val openAccessProviderConfigurationFingerprint: String? = null,
     val openAccessRetentionDisclosure: String? = null,
-    val aggregation: AggregationPolicySnapshot,
+    val aggregation: AggregationPolicySnapshot = AggregationPolicySnapshot(
+        executionStatus = "NOT_RUN",
+        verificationPolicyVersion = null,
+        aggregationPolicyVersion = null,
+        thresholds = null,
+    ),
     val externalProviderConsents: List<ExternalProviderConsentSnapshot>,
 )

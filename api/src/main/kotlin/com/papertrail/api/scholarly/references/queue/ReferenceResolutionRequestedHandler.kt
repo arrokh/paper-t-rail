@@ -7,6 +7,7 @@ import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_RE
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
+import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
@@ -20,6 +21,7 @@ class ReferenceResolutionRequestedHandler(
     private val transactionTemplate: TransactionTemplate,
     private val objectMapper: ObjectMapper,
     private val referenceResolutionService: ReferenceResolutionService,
+    private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
@@ -75,6 +77,11 @@ class ReferenceResolutionRequestedHandler(
             )
             if (inserted == 0) return@executeWithoutResult
             if (failureReason != null) {
+                claimReferenceVerificationRepository.failReference(
+                    event.analysisRunId,
+                    event.payload.bibliographyEntryId,
+                    REFERENCE_RESOLUTION_RETRIES_EXHAUSTED,
+                )
                 jdbc.update(
                     "UPDATE analysis_runs SET failure_reason = COALESCE(failure_reason, ?), updated_at = now() WHERE id = ? AND status = 'PROCESSING'",
                     failureReason,
@@ -89,7 +96,7 @@ class ReferenceResolutionRequestedHandler(
 
     private fun enqueueAcquisitionIfResolved(event: PipelineEvent<ReferenceResolutionRequestedPayload>) {
         val accessConfigured = jdbc.queryForObject(
-            "SELECT jsonb_exists(configuration_snapshot, 'openAccess') FROM analysis_runs WHERE id = ?",
+            "SELECT jsonb_typeof(configuration_snapshot -> 'openAccess') = 'object' FROM analysis_runs WHERE id = ?",
             Boolean::class.java,
             event.analysisRunId,
         ) == true
@@ -142,6 +149,10 @@ class ReferenceResolutionRequestedHandler(
             objectMapper.writeValueAsString(acquisitionEvent),
             Timestamp.from(Instant.now()),
         )
+    }
+
+    companion object {
+        const val REFERENCE_RESOLUTION_RETRIES_EXHAUSTED = "REFERENCE_RESOLUTION_RETRIES_EXHAUSTED"
     }
 
     private data class RunProvenance(

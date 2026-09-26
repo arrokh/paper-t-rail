@@ -6,6 +6,7 @@ import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
+import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -50,6 +51,10 @@ class RunConfigurationFactoryConfiguration {
         @Value("\${paper-trail.analysis.retrieval.lexical-candidates}") lexicalCandidateLimit: Int,
         @Value("\${paper-trail.analysis.retrieval.final-candidates}") finalCandidateLimit: Int,
         @Value("\${paper-trail.analysis.retrieval.rrf-constant}") reciprocalRankFusionConstant: Int,
+        @Value("\${paper-trail.analysis.aggregation.direct-support-threshold}") directSupportThreshold: Double,
+        @Value("\${paper-trail.analysis.aggregation.partial-support-threshold}") partialSupportThreshold: Double,
+        @Value("\${paper-trail.analysis.aggregation.contradiction-threshold}") contradictionThreshold: Double,
+        @Value("\${paper-trail.analysis.aggregation.comparability-margin}") comparabilityMargin: Double,
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = objectMapper,
         providerCatalog = providerCatalog,
@@ -70,5 +75,11 @@ class RunConfigurationFactoryConfiguration {
         lexicalCandidateLimit = lexicalCandidateLimit,
         finalCandidateLimit = finalCandidateLimit,
         reciprocalRankFusionConstant = reciprocalRankFusionConstant,
+        evidenceAggregationThresholds = EvidenceAggregationThresholds(
+            directSupport = directSupportThreshold,
+            partialSupport = partialSupportThreshold,
+            contradiction = contradictionThreshold,
+            comparabilityMargin = comparabilityMargin,
+        ),
     )
 }

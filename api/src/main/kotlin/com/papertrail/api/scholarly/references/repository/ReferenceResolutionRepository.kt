@@ -7,6 +7,7 @@ import com.papertrail.api.scholarly.references.report.BibliographyResolutionRepo
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
 import com.papertrail.api.scholarly.references.resolver.ReferenceResolutionDecision
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
+import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
@@ -20,6 +21,7 @@ class ReferenceResolutionRepository(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
     private val transactionTemplate: TransactionTemplate,
+    private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
 ) {
     fun pendingEntry(analysisRunId: UUID, bibliographyEntryId: UUID): StoredBibliographyReference? = jdbc.query(
         """
@@ -78,6 +80,13 @@ class ReferenceResolutionRepository(
                 decision.score,
                 decision.matchMethod,
                 providerId,
+            )
+            claimReferenceVerificationRepository.applyResolution(
+                analysisRunId = analysisRunId,
+                bibliographyEntryId = reference.id,
+                status = decision.status,
+                reason = decision.reasonCode,
+                canonicalPaperId = canonicalPaperId,
             )
         }
     }

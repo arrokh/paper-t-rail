@@ -5,6 +5,7 @@ import com.papertrail.api.citation.claims.service.ClaimExtractionService
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
@@ -30,6 +31,7 @@ class AnalysisRunProcessingService(
     private val scientificDocumentParser: ScientificDocumentParser,
     private val parsedDocumentRepository: ParsedDocumentRepository,
     private val claimExtractionService: ClaimExtractionService,
+    private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val referenceResolutionService: ReferenceResolutionService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
 ) {
@@ -75,6 +77,7 @@ class AnalysisRunProcessingService(
         if (sha256Hex(content) != run.sourceHash) {
             throw IllegalStateException("Stored Source Document failed its SHA-256 integrity check.")
         }
+        val verificationPipelineConfigured = verificationPipelineConfigured(event.analysisRunId)
 
         val shouldParse = transactionTemplate.execute {
             val updated = jdbc.update(
@@ -120,6 +123,9 @@ class AnalysisRunProcessingService(
             try {
                 transactionTemplate.executeWithoutResult {
                     parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, extractedClaims)
+                    if (verificationPipelineConfigured) {
+                        claimReferenceVerificationRepository.initializeExpectedPairs(event.analysisRunId)
+                    }
                     val updated = jdbc.update(
                         """
                         UPDATE analysis_runs
@@ -226,6 +232,18 @@ class AnalysisRunProcessingService(
             )
         }
     }
+
+    private fun verificationPipelineConfigured(analysisRunId: UUID): Boolean = jdbc.queryForObject(
+        """
+        SELECT jsonb_typeof(configuration_snapshot -> 'openAccess') = 'object'
+           AND configuration_snapshot #>> '{referenceResolution,executionStatus}' <> 'NOT_RUN'
+           AND configuration_snapshot #>> '{aggregation,executionStatus}' = 'PENDING'
+           AND jsonb_typeof(configuration_snapshot #> '{aggregation,thresholds}') = 'object'
+          FROM analysis_runs WHERE id = ?
+        """.trimIndent(),
+        Boolean::class.java,
+        analysisRunId,
+    ) == true
 
     private fun insertOutboxEvent(event: PipelineEvent<ReferenceResolutionRequestedPayload>) {
         jdbc.update(
