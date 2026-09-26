@@ -105,19 +105,36 @@ class AnalysisRunStageCompletionService(
         val parsed = parsedDocumentRepository.find(analysisRunId)
             ?: throw IllegalStateException("Persisted parsed document structure is missing after reference processing.")
         val resolutionSummary = referenceResolutionService.summary(analysisRunId)
-        val citedPaperAccessConfigured = jdbc.queryForObject(
-            "SELECT jsonb_exists(configuration_snapshot, 'openAccess') AND configuration_snapshot #>> '{referenceResolution,executionStatus}' <> 'NOT_RUN' FROM analysis_runs WHERE id = ?",
+        val verificationPipelineConfigured = jdbc.queryForObject(
+            "SELECT analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot) FROM analysis_runs WHERE id = ?",
             Boolean::class.java,
             analysisRunId,
         ) == true
+        if (verificationPipelineConfigured) markOrphanedPendingVerifications(analysisRunId)
+        val verificationCounts = jdbc.queryForObject(
+            """
+            SELECT count(*)::integer AS total,
+                   count(*) FILTER (WHERE processing_status = 'COMPLETED')::integer AS completed,
+                   count(*) FILTER (WHERE processing_status <> 'COMPLETED')::integer AS incomplete
+              FROM claim_paper_verifications WHERE analysis_run_id = ?
+            """.trimIndent(),
+            { rs, _ -> VerificationCounts(rs.getInt("total"), rs.getInt("completed"), rs.getInt("incomplete")) },
+            analysisRunId,
+        ) ?: VerificationCounts(0, 0, 0)
         val atomicClaims = parsed.citationContexts.flatMap { it.atomicClaims }
         val inferredClaimTargetLinkCount = atomicClaims.sumOf { it.citationTargets.size }
-        val warning = failedTaskCount > 0
-        val finalStatus = if (warning) "COMPLETED_WITH_WARNINGS" else "PARSED"
+        val warning = failedTaskCount > 0 || (verificationPipelineConfigured && verificationCounts.incomplete > 0)
+        val finalStatus = when {
+            verificationPipelineConfigured && warning -> "COMPLETED_WITH_WARNINGS"
+            verificationPipelineConfigured -> "COMPLETED"
+            warning -> "COMPLETED_WITH_WARNINGS"
+            else -> "PARSED"
+        }
         val progressMessage = when {
+            verificationPipelineConfigured && warning -> "The Evidence Coverage Report is ready, but ${verificationCounts.incomplete} Claim–Reference Verification pair(s) are incomplete after processing failures."
+            verificationPipelineConfigured -> "The Evidence Coverage Report is complete for ${verificationCounts.total} Claim–Reference Verification pair(s)."
             warning -> "Parsed structure is ready, but $failedTaskCount reference-resolution, cited-paper access, or Evidence Passage indexing task(s) failed; semantic verification has not run."
-            citedPaperAccessConfigured -> "Parsed structure, reference resolution, legal cited-paper access, language eligibility, and eligible Evidence Passage retrieval are ready; semantic verification has not run."
-            else -> "Parsed structure and reference resolution are ready; cited-paper access and semantic verification were not run for this legacy Analysis Run."
+            else -> "Parsed structure and reference resolution are ready; semantic verification was not configured for this legacy Analysis Run."
         }
         val updated = jdbc.update(
             """
@@ -141,10 +158,13 @@ class AnalysisRunStageCompletionService(
                        'acquiredCitedPaperCount', ?,
                        'failedCitedPaperAcquisitionCount', ?,
                        'indexedCitedPaperCount', ?,
-                       'failedEvidenceIndexingCount', ?
+                       'failedEvidenceIndexingCount', ?,
+                       'totalVerifications', ?,
+                       'completedVerifications', ?,
+                       'incompleteVerifications', ?
                    ),
-                   failure_reason = CASE WHEN ? > 0 THEN ? ELSE NULL END,
-                   completed_at = CASE WHEN ? > 0 THEN now() ELSE completed_at END,
+                   failure_reason = CASE WHEN ? THEN ? ELSE NULL END,
+                   completed_at = CASE WHEN ? THEN now() ELSE completed_at END,
                    updated_at = now()
              WHERE id = ? AND status = 'PROCESSING'
             """.trimIndent(),
@@ -166,12 +186,54 @@ class AnalysisRunStageCompletionService(
             failedAcquisitionTaskCount,
             jdbc.queryForObject("SELECT count(*) FROM cited_paper_indexing WHERE analysis_run_id = ? AND status = 'COMPLETED'", Int::class.java, analysisRunId) ?: 0,
             failedEvidenceIndexingCount,
-            failedTaskCount,
-            "One or more reference-resolution, cited-paper access, or Evidence Passage indexing tasks failed.",
-            failedTaskCount,
+            verificationCounts.total,
+            verificationCounts.completed,
+            verificationCounts.incomplete,
+            warning,
+            if (verificationCounts.incomplete > 0) {
+                "One or more Claim–Reference Verification pairs are incomplete because processing did not finish."
+            } else {
+                "One or more reference-resolution, cited-paper access, or Evidence Passage indexing tasks failed."
+            },
+            verificationPipelineConfigured || warning,
             analysisRunId,
         )
         if (updated != 1) throw IllegalStateException("Analysis Run could not complete its parsed stage.")
         true
     } ?: false
+
+    private fun markOrphanedPendingVerifications(analysisRunId: UUID) {
+        jdbc.update(
+            """
+            UPDATE claim_paper_verifications verification
+               SET processing_status = 'FAILED',
+                   processing_failure_reason = CASE
+                       WHEN resolution.bibliography_entry_id IS NULL THEN 'REFERENCE_RESOLUTION_INCOMPLETE'
+                       WHEN access.bibliography_entry_id IS NULL THEN 'CITED_PAPER_ACCESS_INCOMPLETE'
+                       WHEN verification.verification_scope = 'FULL_TEXT' AND indexing.status IS NULL THEN 'EVIDENCE_INDEXING_INCOMPLETE'
+                       WHEN verification.verification_scope = 'FULL_TEXT' AND indexing.status = 'COMPLETED' THEN 'SYSTEM_ONE_INCOMPLETE'
+                       WHEN indexing.status = 'FAILED' THEN 'INDEXING_RETRIES_EXHAUSTED'
+                       ELSE 'VERIFICATION_INCOMPLETE'
+                   END,
+                   updated_at = now()
+              FROM bibliography_entries reference
+              LEFT JOIN bibliography_entry_resolutions resolution
+                ON resolution.analysis_run_id = reference.analysis_run_id
+               AND resolution.bibliography_entry_id = reference.id
+              LEFT JOIN cited_paper_access access
+                ON access.analysis_run_id = reference.analysis_run_id
+               AND access.bibliography_entry_id = reference.id
+              LEFT JOIN cited_paper_indexing indexing
+                ON indexing.analysis_run_id = reference.analysis_run_id
+               AND indexing.bibliography_entry_id = reference.id
+             WHERE verification.analysis_run_id = ?
+               AND reference.analysis_run_id = verification.analysis_run_id
+               AND reference.id = verification.bibliography_entry_id
+               AND verification.processing_status = 'PENDING'
+            """.trimIndent(),
+            analysisRunId,
+        )
+    }
+
+    private data class VerificationCounts(val total: Int, val completed: Int, val incomplete: Int)
 }

@@ -5,6 +5,7 @@ import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
 import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
+import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 
 type ReferenceResolutionEntry = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number];
 
@@ -139,6 +140,26 @@ export function ReferenceResolutionEntryCard({
         )}
 
         <CitedPaperAccessSummary access={entry.citedPaperAccess} />
+
+        <section className="space-y-3 border-t border-border p-4" aria-label={`Claim–Reference Verifications for ${entry.localReferenceKey}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h5 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Atomic Claim × Cited Reference verifications</h5>
+            <span className="font-mono text-xs text-muted-foreground">{entry.verificationOutcomes.length}</span>
+          </div>
+          {entry.verificationOutcomes.length === 0 ? (
+            <p className="m-0 text-sm text-muted-foreground">No Atomic Claim is linked to this Cited Reference.</p>
+          ) : (
+            <ul className="space-y-3">
+              {entry.verificationOutcomes.map((outcome) => (
+                <ClaimEvidencePassages
+                  key={outcome.id}
+                  outcome={outcome}
+                  indexingStatus={entry.citedPaperAccess?.evidenceIndexing?.status ?? null}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
       </article>
     </li>
   );

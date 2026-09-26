@@ -1,6 +1,7 @@
 package com.papertrail.api.evidence.repository
 
 import com.papertrail.api.evidence.report.EvidenceIndexingReport
+import com.papertrail.api.evidence.report.EvidenceJudgementReport
 import com.papertrail.api.evidence.report.EvidencePassageReport
 import com.papertrail.api.evidence.report.EvidenceRetrievalProfileReport
 import org.springframework.jdbc.core.JdbcTemplate
@@ -89,7 +90,18 @@ class EvidenceReportRepository(
                indexing.embedding_model,
                indexing.embedding_version,
                indexing.embedding_dimension,
-               candidate.profile_hash AS embedding_profile_hash
+               candidate.profile_hash AS embedding_profile_hash,
+               judgement.system_one_provider,
+               judgement.system_one_model,
+               judgement.system_one_version,
+               judgement.judgement,
+               judgement.evidence_role,
+               judgement.confidence,
+               judgement.directness,
+               judgement.claim_scope_match,
+               judgement.study_design_quality,
+               judgement.relevance,
+               (judgement.raw_scores ->> 'calibratedStrength')::double precision AS calibrated_strength
           FROM evidence_candidates candidate
           JOIN paper_chunks chunk
             ON chunk.id = candidate.paper_chunk_id
@@ -107,6 +119,9 @@ class EvidenceReportRepository(
           JOIN cited_paper_indexing indexing
             ON indexing.analysis_run_id = candidate.analysis_run_id
            AND indexing.bibliography_entry_id = candidate.bibliography_entry_id
+          LEFT JOIN evidence_judgements judgement
+            ON judgement.evidence_candidate_id = candidate.id
+           AND judgement.verification_id = candidate.verification_id
          WHERE candidate.analysis_run_id = ?
          ORDER BY candidate.verification_id, candidate.fused_rank
         """.trimIndent(),
@@ -130,6 +145,21 @@ class EvidenceReportRepository(
                 language = rs.getString("language"),
                 languageDetectorVersion = rs.getString("language_detector_version"),
                 retrievalProfile = rs.toRetrievalProfileReport(),
+                evidenceJudgement = rs.getString("system_one_provider")?.let {
+                    EvidenceJudgementReport(
+                        providerId = it,
+                        modelId = rs.getString("system_one_model"),
+                        providerVersion = rs.getString("system_one_version"),
+                        judgement = rs.getString("judgement"),
+                        evidenceRole = rs.getString("evidence_role"),
+                        confidence = rs.getDouble("confidence"),
+                        directness = rs.getDouble("directness"),
+                        claimScopeMatch = rs.getDouble("claim_scope_match"),
+                        studyDesignQuality = rs.getDouble("study_design_quality"),
+                        relevance = rs.getDouble("relevance"),
+                        calibratedStrength = rs.getDouble("calibrated_strength"),
+                    )
+                },
             )
         },
         analysisRunId,

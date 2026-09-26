@@ -14,6 +14,9 @@ import com.papertrail.api.infrastructure.providers.SCHOLARLY_METADATA_ROLE
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
 import com.papertrail.api.evidence.domain.EmbeddingProfile
 import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
+import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
+import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
+import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 
 class RunConfigurationFactory(
     private val objectMapper: ObjectMapper,
@@ -29,6 +32,7 @@ class RunConfigurationFactory(
     private val lexicalCandidateLimit: Int = 10,
     private val finalCandidateLimit: Int = 5,
     private val reciprocalRankFusionConstant: Int = 60,
+    private val evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
 ) {
     init {
         require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
@@ -143,10 +147,10 @@ class RunConfigurationFactory(
                 confidenceThreshold = referenceResolutionConfidenceThreshold,
             ),
             aggregation = AggregationPolicySnapshot(
-                executionStatus = "NOT_RUN",
-                verificationPolicyVersion = null,
-                aggregationPolicyVersion = null,
-                thresholds = null,
+                executionStatus = if (evidenceAggregationThresholds == null) "NOT_RUN" else "PENDING",
+                verificationPolicyVersion = evidenceAggregationThresholds?.let { EvidenceJudgement.STRENGTH_RUBRIC_VERSION },
+                aggregationPolicyVersion = evidenceAggregationThresholds?.let { EvidenceAggregationPolicy.POLICY_VERSION },
+                thresholds = evidenceAggregationThresholds?.asMap(),
             ),
             externalProviderConsents = consentSnapshots,
         )

@@ -6,6 +6,7 @@ import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.evidence.service.EvidenceRetrievalService
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
+import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
@@ -20,6 +21,7 @@ class CitedPaperIndexingRequestedHandler(
     private val objectMapper: ObjectMapper,
     private val evidenceRetrievalService: EvidenceRetrievalService,
     private val evidenceRetrievalRepository: EvidenceRetrievalRepository,
+    private val evidenceVerificationService: EvidenceVerificationService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
@@ -48,6 +50,7 @@ class CitedPaperIndexingRequestedHandler(
         if (run.status != "PROCESSING") throw IllegalStateException("Analysis Run is not accepting Cited Paper indexing work.")
 
         evidenceRetrievalService.retrieve(event.analysisRunId, event.payload.bibliographyEntryId)
+        evidenceVerificationService.verifyReference(event.analysisRunId, event.payload.bibliographyEntryId)
         recordProcessed(event)
         return event.eventId
     }
@@ -67,14 +70,26 @@ class CitedPaperIndexingRequestedHandler(
             )
             if (inserted == 0) return@executeWithoutResult
             if (failureReason != null) {
-                evidenceRetrievalRepository.markFailed(
+                val failureCode = when (evidenceRetrievalRepository.status(event.analysisRunId, event.payload.bibliographyEntryId)) {
+                    "PENDING" -> {
+                        evidenceRetrievalRepository.markFailed(
+                            event.analysisRunId,
+                            event.payload.bibliographyEntryId,
+                            INDEXING_RETRIES_EXHAUSTED,
+                        )
+                        INDEXING_RETRIES_EXHAUSTED
+                    }
+                    "COMPLETED" -> EVIDENCE_VERIFICATION_RETRIES_EXHAUSTED
+                    else -> EVIDENCE_PROCESSING_INCOMPLETE
+                }
+                evidenceVerificationService.failFullText(
                     event.analysisRunId,
                     event.payload.bibliographyEntryId,
-                    INDEXING_RETRIES_EXHAUSTED,
+                    failureCode,
                 )
                 jdbc.update(
                     "UPDATE analysis_runs SET failure_reason = COALESCE(failure_reason, ?), updated_at = now() WHERE id = ? AND status = 'PROCESSING'",
-                    "One or more cited-paper indexing tasks exhausted retries.",
+                    failureReason,
                     event.analysisRunId,
                 )
             }
@@ -86,5 +101,7 @@ class CitedPaperIndexingRequestedHandler(
 
     companion object {
         const val INDEXING_RETRIES_EXHAUSTED = "INDEXING_RETRIES_EXHAUSTED"
+        const val EVIDENCE_VERIFICATION_RETRIES_EXHAUSTED = "EVIDENCE_VERIFICATION_RETRIES_EXHAUSTED"
+        const val EVIDENCE_PROCESSING_INCOMPLETE = "EVIDENCE_PROCESSING_INCOMPLETE"
     }
 }

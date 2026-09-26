@@ -22,10 +22,21 @@ import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_RE
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
 import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
 import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedHandler
+import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedPayload
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.evidence.service.EvidenceRetrievalService
 import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
 import com.papertrail.api.evidence.repository.EvidenceReportRepository
+import com.papertrail.api.evidence.report.EvidenceCoverageReportRepository
+import com.papertrail.api.evidence.verification.provider.MockSystemOneProvider
+import com.papertrail.api.evidence.verification.provider.SystemOneProvider
+import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
+import com.papertrail.api.evidence.verification.domain.SemanticJudgementRequest
+import com.papertrail.api.evidence.verification.domain.SemanticJudgementResult
+import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
+import com.papertrail.api.evidence.verification.repository.JdbcClaimReferenceVerificationRepository
+import com.papertrail.api.evidence.verification.repository.EvidenceJudgementRepository
+import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
 import com.papertrail.api.evidence.embedding.FeatureHashEmbeddingProvider
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
 import com.papertrail.api.evidence.retrieval.PostgresHybridEvidenceRetriever
@@ -272,7 +283,7 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
-    fun `legacy immutable runs keep reference resolution not run rather than inventing a policy`() {
+    fun `legacy immutable runs without coverage configuration remain not run rather than inventing a policy`() {
         val created = createQueuedRun(configurationJson = legacyResolutionConfigurationJson())
         val event = jdbc.queryForObject("SELECT payload::text FROM outbox_events WHERE analysis_run_id = ?", String::class.java, created.analysisRunId)
 
@@ -315,15 +326,91 @@ class AnalysisRunQueueIntegrationTest {
         val parsed = service.getParsedDocument(created.analysisRunId)
         assertEquals("grobid", parsed.parser.provider)
         assertEquals(created.hash, parsed.sourceContentSha256)
-        val access = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
-            .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
+        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }
+        val access = reference.citedPaperAccess!!
         assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
         assertEquals("recorded-fixtures", access.providerId)
         assertEquals("en", access.language)
         assertTrue(access.sourceUrl!!.startsWith("fixture://"))
         assertEquals(64, access.contentSha256!!.length)
-        assertTrue(access.verificationOutcomes.isNotEmpty())
-        assertTrue(access.verificationOutcomes.all { it.finalStatus == null && it.verificationScope == "FULL_TEXT" })
+        assertTrue(reference.verificationOutcomes.isNotEmpty())
+        assertEquals(reference.verificationOutcomes, access.verificationOutcomes)
+        assertTrue(reference.verificationOutcomes.all {
+            it.processingStatus == "COMPLETED" && it.finalStatus == "INSUFFICIENT_EVIDENCE" && it.verificationScope == "FULL_TEXT"
+        })
+        val judgements = reference.verificationOutcomes.flatMap { it.evidencePassages }.mapNotNull { it.evidenceJudgement }
+        assertTrue(judgements.isNotEmpty())
+        assertTrue(judgements.all { it.providerId == "mock" && it.judgement == "INSUFFICIENT" })
+    }
+
+    @Test
+    fun `mock semantic fixture markers exercise conflict aggregation through the pipeline`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val location = OpenAccessLocation(
+            "fixture://controlled/conflicting-evidence",
+            "CC0-1.0",
+            "publishedVersion",
+            "repository",
+            "recorded-fixtures",
+        )
+        val fetchCalls = AtomicInteger()
+        val fullText = """
+            ${MockSystemOneProvider.DIRECT_SUPPORT_FIXTURE_MARKER} Prior results support and reproduce the method in the treatment group.
+
+            ${MockSystemOneProvider.CONTRADICTION_FIXTURE_MARKER} Later results do not support or reproduce the method in the treatment group.
+        """.trimIndent()
+        val citedPaperParser = object : CitedPaperParser {
+            override fun parse(content: ByteArray, mediaType: String): ParsedScientificDocument {
+                val text = content.toString(Charsets.UTF_8)
+                val separator = "\n\n"
+                val firstEnd = text.indexOf(separator)
+                val secondStart = firstEnd + separator.length
+                return ParsedScientificDocument(
+                    parserId = "fixture-cited-paper-parser",
+                    parserVersion = "v7",
+                    normalizedSourceText = text,
+                    sections = listOf(
+                        ParsedSection(0, "Results", text.substring(0, firstEnd), 0, firstEnd),
+                        ParsedSection(1, "Discussion", text.substring(secondStart), secondStart, text.length),
+                    ),
+                    citationContexts = emptyList(),
+                    bibliographyEntries = emptyList(),
+                )
+            }
+        }
+
+        processReferenceResolutionEvents(
+            analysisRunId = created.analysisRunId,
+            providerFactories = listOf(
+                controlledOpenAccessFactory(
+                    OpenAccessDiscovery(true, false, listOf(location), "recorded-fixtures", Instant.now()),
+                    fullText,
+                    fetchCalls,
+                ),
+            ),
+            citedPaperParser = citedPaperParser,
+        )
+
+        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }
+        val outcomes = reference.verificationOutcomes
+        assertEquals(1, fetchCalls.get())
+        assertTrue(outcomes.isNotEmpty())
+        assertTrue(outcomes.all { it.processingStatus == "COMPLETED" }, outcomes.toString())
+        assertTrue(outcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" }, outcomes.toString())
+        assertTrue(outcomes.all { it.evidenceConflict }, outcomes.toString())
+        val judgements = outcomes.flatMap { it.evidencePassages }.mapNotNull { it.evidenceJudgement }
+        assertTrue(judgements.any { it.judgement == "DIRECT_SUPPORT" })
+        assertTrue(judgements.any { it.judgement == "CONTRADICTS" })
+        assertTrue(judgements.all { it.providerId == "mock" && it.confidence == 0.96 })
     }
 
     @Test
@@ -359,7 +446,9 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("FULL_TEXT_ACQUISITION_FAILED", access.accessReason)
         assertEquals(failedLocation.url, access.sourceUrl)
         assertEquals("CC0-1.0", access.license)
-        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
+        val outcomes = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        assertTrue(outcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
     }
 
     @Test
@@ -427,10 +516,10 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("ABSTRACT_ONLY", access.accessStatus)
         assertEquals("ABSTRACT_ONLY", access.accessReason)
         assertEquals(0, fetched.get())
-        assertTrue(access.verificationOutcomes.isNotEmpty())
-        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
-        assertTrue(access.verificationOutcomes.all { it.verificationScope == "ABSTRACT_ONLY" })
-        assertTrue(access.verificationOutcomes.all { it.terminalReason == "ABSTRACT_ONLY" })
+        assertTrue(reference.verificationOutcomes.isNotEmpty())
+        assertTrue(reference.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
+        assertTrue(reference.verificationOutcomes.all { it.verificationScope == "ABSTRACT_ONLY" })
+        assertTrue(reference.verificationOutcomes.all { it.terminalReason == "ABSTRACT_ONLY" })
     }
 
     @Test
@@ -455,9 +544,11 @@ class AnalysisRunQueueIntegrationTest {
             .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
         assertEquals("METADATA_ONLY", access.accessStatus)
         assertEquals("NO_LEGAL_FULL_TEXT_LOCATION", access.accessReason)
-        assertTrue(access.verificationOutcomes.isNotEmpty())
-        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INACCESSIBLE" })
-        assertTrue(access.verificationOutcomes.all { it.verificationScope == "NONE" })
+        val outcomes = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        assertTrue(outcomes.isNotEmpty())
+        assertTrue(outcomes.all { it.finalStatus == "INACCESSIBLE" })
+        assertTrue(outcomes.all { it.verificationScope == "NONE" })
     }
 
     @Test
@@ -479,9 +570,11 @@ class AnalysisRunQueueIntegrationTest {
         val access = reference.citedPaperAccess!!
         assertEquals("UNAVAILABLE", access.accessStatus)
         assertEquals("NO_ACCESSIBLE_METADATA", access.accessReason)
-        assertTrue(access.verificationOutcomes.isNotEmpty())
-        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INACCESSIBLE" })
-        assertTrue(access.verificationOutcomes.all { it.verificationScope == "NONE" })
+        val outcomes = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        assertTrue(outcomes.isNotEmpty())
+        assertTrue(outcomes.all { it.finalStatus == "INACCESSIBLE" })
+        assertTrue(outcomes.all { it.verificationScope == "NONE" })
     }
 
     @Test
@@ -514,10 +607,10 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("fr", access.language)
         assertEquals(1, fetched.get())
         assertNull(access.evidenceIndexing)
-        assertTrue(access.verificationOutcomes.isNotEmpty())
-        assertTrue(access.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
-        assertTrue(access.verificationOutcomes.all { it.verificationScope == "NONE" })
-        assertTrue(access.verificationOutcomes.all { it.terminalReason == "LANGUAGE_UNSUPPORTED" })
+        assertTrue(reference.verificationOutcomes.isNotEmpty())
+        assertTrue(reference.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
+        assertTrue(reference.verificationOutcomes.all { it.verificationScope == "NONE" })
+        assertTrue(reference.verificationOutcomes.all { it.terminalReason == "LANGUAGE_UNSUPPORTED" })
     }
 
     @Test
@@ -623,10 +716,10 @@ class AnalysisRunQueueIntegrationTest {
         )
 
         val entries = resolutionService.report(created.analysisRunId)!!.referenceResolution.entries.associateBy { it.localReferenceKey }
-        val alpha = entries.getValue("ref-alpha").citedPaperAccess!!
-        val beta = entries.getValue("ref-beta").citedPaperAccess!!
-        assertEquals("COMPLETED", alpha.evidenceIndexing?.status)
-        assertEquals("COMPLETED", beta.evidenceIndexing?.status)
+        val alpha = entries.getValue("ref-alpha")
+        val beta = entries.getValue("ref-beta")
+        assertEquals("COMPLETED", alpha.citedPaperAccess?.evidenceIndexing?.status)
+        assertEquals("COMPLETED", beta.citedPaperAccess?.evidenceIndexing?.status)
         assertEquals(claimOne, alpha.verificationOutcomes.single().claimText)
         assertEquals(claimTwo, beta.verificationOutcomes.single().claimText)
         val alphaPassage = alpha.verificationOutcomes.single().evidencePassages.single()
@@ -635,8 +728,8 @@ class AnalysisRunQueueIntegrationTest {
         assertFalse(alphaPassage.text.contains("Beta-only marker: 9d7f"))
         assertTrue(betaPassage.text.contains("Beta-only marker: 9d7f"))
         assertFalse(betaPassage.text.contains("Alpha-only marker: 4c2a"))
-        assertEquals(alpha.evidenceIndexing?.assetId, alphaPassage.sourceAssetId)
-        assertEquals(beta.evidenceIndexing?.assetId, betaPassage.sourceAssetId)
+        assertEquals(alpha.citedPaperAccess?.evidenceIndexing?.assetId, alphaPassage.sourceAssetId)
+        assertEquals(beta.citedPaperAccess?.evidenceIndexing?.assetId, betaPassage.sourceAssetId)
         assertEquals(expectedSha256(paperTexts.getValue("fixture://cited/alpha").toByteArray(Charsets.UTF_8)), alphaPassage.contentSha256)
         assertEquals(expectedSha256(paperTexts.getValue("fixture://cited/beta").toByteArray(Charsets.UTF_8)), betaPassage.contentSha256)
         assertEquals("fixture-cited-paper-parser", alphaPassage.parserProvider)
@@ -661,6 +754,74 @@ class AnalysisRunQueueIntegrationTest {
         assertTrue(alphaPassage.retrievalProfile.embeddingProfileHash.matches(Regex("[0-9a-f]{64}")))
         assertTrue(alphaPassage.fusionScore > 0)
         assertNotEquals(alphaPassage.sourceAssetId, betaPassage.sourceAssetId)
+    }
+
+    @Test
+    fun `System One processing failure leaves each pair incomplete and completes with warnings`() {
+        val created = createQueuedRun()
+        val resolutionService = referenceResolutionService()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler(resolutionService = resolutionService).handle(documentEvent)
+
+        val resolutionEvents = jdbc.query(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
+            { rs, _ -> rs.getString(1) },
+            created.analysisRunId,
+            REFERENCE_RESOLUTION_REQUESTED,
+        )
+        val resolutionHandler = referenceResolutionEventHandler(resolutionService)
+        resolutionEvents.forEach(resolutionHandler::handle)
+
+        val acquisitionEvents = jdbc.query(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
+            { rs, _ -> rs.getString(1) },
+            created.analysisRunId,
+            CITED_PAPER_ACQUISITION_REQUESTED,
+        )
+        val acquisitionHandler = citedPaperAccessEventHandler(resolutionService)
+        acquisitionEvents.forEach(acquisitionHandler::handle)
+
+        val serializedIndexingEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            CITED_PAPER_INDEXING_REQUESTED,
+        )!!
+        val indexingEvent: PipelineEvent<CitedPaperIndexingRequestedPayload> = objectMapper.readValue(serializedIndexingEvent)
+        val failingProvider = object : SystemOneProvider {
+            override val providerId = "mock"
+            override val version = "v1"
+            override val modelId = "mock-v1"
+            override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult =
+                throw IllegalStateException("Simulated System One outage.")
+        }
+        val indexingHandler = citedPaperIndexingEventHandler(
+            resolutionService = resolutionService,
+            systemOneProvider = failingProvider,
+        )
+
+        assertThrows(IllegalStateException::class.java) { indexingHandler.handle(serializedIndexingEvent) }
+        indexingHandler.markFailed(indexingEvent, "System One retry limit reached.")
+
+        val report = resolutionService.report(created.analysisRunId)!!
+        val failedPairs = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        assertEquals(2, failedPairs.size)
+        assertTrue(failedPairs.all { it.processingStatus == "INCOMPLETE" })
+        assertTrue(failedPairs.all { it.processingFailureReason == "EVIDENCE_VERIFICATION_RETRIES_EXHAUSTED" })
+        assertTrue(failedPairs.all { it.finalStatus == null })
+        assertEquals("COMPLETED_WITH_WARNINGS", report.runStatus)
+        assertEquals("COMPLETED_WITH_WARNINGS", report.evidenceCoverage.executionStatus)
+        assertEquals(2, report.evidenceCoverage.summary.incompleteVerifications)
+        assertEquals("COMPLETED_WITH_WARNINGS", jdbc.queryForObject(
+            "SELECT status FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            created.analysisRunId,
+        ))
     }
 
     @Test
@@ -814,10 +975,10 @@ class AnalysisRunQueueIntegrationTest {
         processReferenceResolutionEvents(created.analysisRunId)
 
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = (SELECT event_id FROM outbox_events WHERE analysis_run_id = ? AND event_type = 'DocumentAnalysisRequested')", Int::class.java, created.analysisRunId))
-        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
-        assertNull(jdbc.queryForObject("SELECT completed_at FROM analysis_runs WHERE id = ?", Timestamp::class.java, created.analysisRunId))
+        assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertNotEquals(null, jdbc.queryForObject("SELECT completed_at FROM analysis_runs WHERE id = ?", Timestamp::class.java, created.analysisRunId))
         assertEquals(
-            "PARSED",
+            "COMPLETED",
             jdbc.queryForObject("SELECT progress ->> 'stage' FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId),
         )
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM parsed_document_sections WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
@@ -951,7 +1112,7 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
         val processedEvent: PipelineEvent<DocumentAnalysisRequestedPayload> = objectMapper.readValue(envelope)
         handler.markFailed(processedEvent, "A stale retry must not overwrite a committed success.")
-        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         assertTrue(jdbc.queryForObject("SELECT failure_reason IS NULL FROM analysis_runs WHERE id = ?", Boolean::class.java, created.analysisRunId) == true)
     }
 
@@ -1003,7 +1164,7 @@ class AnalysisRunQueueIntegrationTest {
         replacement.poll()
         OutboxPublisher(jdbc, redis, stream).publishPending()
         replacement.poll()
-        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         val processedEvent = objectMapper.readTree(abandoned.value.getValue("event"))
         val workerLog = appender.list.single { it.message == "Pipeline event processed" }
         val mdc = workerLog.mdcPropertyMap
@@ -1086,7 +1247,7 @@ class AnalysisRunQueueIntegrationTest {
         } finally {
             replacementWorker.shutdownLeaseHeartbeat()
         }
-        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
     }
 
@@ -1155,7 +1316,7 @@ class AnalysisRunQueueIntegrationTest {
             OutboxPublisher(jdbc, redis, stream).publishPending()
             worker.poll()
 
-            assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+            assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
             assertEquals(4, jdbc.queryForObject(
                 "SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?",
                 Int::class.java,
@@ -1538,20 +1699,21 @@ class AnalysisRunQueueIntegrationTest {
         parserVersion = "0.9.1-crf",
         languageDetectorVersion = "0.6",
         limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
+        evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
     )
+
+    private fun claimReferenceVerificationRepository(): ClaimReferenceVerificationRepository = JdbcClaimReferenceVerificationRepository(jdbc)
 
     private fun referenceResolutionService(
         lookupFactories: List<ScholarlyMetadataLookupFactory> = listOf(RecordedFixtureScholarlyMetadataLookupFactory(objectMapper)),
     ) = ReferenceResolutionService(
         jdbc,
         objectMapper,
-        ReferenceResolutionRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
-        CitedPaperAccessRepository(
-            jdbc,
-            objectMapper,
-            TransactionTemplate(DataSourceTransactionManager(dataSource)),
-            EvidenceReportRepository(jdbc),
-        ),
+        TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        claimReferenceVerificationRepository(),
+        ReferenceResolutionRepository(jdbc, objectMapper),
+        CitedPaperAccessRepository(jdbc, objectMapper),
+        EvidenceCoverageReportRepository(jdbc, EvidenceReportRepository(jdbc)),
         lookupFactories,
     )
 
@@ -1594,12 +1756,9 @@ class AnalysisRunQueueIntegrationTest {
     ) = CitedPaperAccessService(
         jdbc = jdbc,
         objectMapper = objectMapper,
-        repository = CitedPaperAccessRepository(
-            jdbc,
-            objectMapper,
-            TransactionTemplate(DataSourceTransactionManager(dataSource)),
-            EvidenceReportRepository(jdbc),
-        ),
+        transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        claimReferenceVerificationRepository = claimReferenceVerificationRepository(),
+        repository = CitedPaperAccessRepository(jdbc, objectMapper),
         objectStore = objectStore,
         languageDetector = languageDetector,
         textExtractor = PdfBoxCitedPaperTextExtractor(5_000_000),
@@ -1625,6 +1784,7 @@ class AnalysisRunQueueIntegrationTest {
     private fun citedPaperIndexingEventHandler(
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
         parser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
+        systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
     ): CitedPaperIndexingRequestedHandler {
         val repository = EvidenceRetrievalRepository(
             jdbc,
@@ -1645,6 +1805,14 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper,
             retrievalService,
             repository,
+            EvidenceVerificationService(
+                jdbc,
+                objectMapper,
+                ProviderCallGate(ProviderCatalog.safeDefaults()),
+                listOf(systemOneProvider),
+                EvidenceJudgementRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+                claimReferenceVerificationRepository(),
+            ),
             stageCompletionService(resolutionService),
         )
     }
@@ -1721,6 +1889,7 @@ class AnalysisRunQueueIntegrationTest {
             "referenceResolution",
             objectMapper.readTree("""{"executionStatus":"NOT_RUN","scorePolicyVersion":null,"confidenceThreshold":null}"""),
         )
+        configuration.remove("aggregation")
         return configuration.toString()
     }
 
@@ -1737,6 +1906,7 @@ class AnalysisRunQueueIntegrationTest {
             parser,
             ParsedDocumentRepository(jdbc, objectMapper),
             ClaimExtractionService(ProviderCatalog.safeDefaults(), listOf(HeuristicClaimExtractor())),
+            claimReferenceVerificationRepository(),
             resolutionService,
             stageCompletionService(resolutionService),
         )
@@ -1837,6 +2007,14 @@ class AnalysisRunQueueIntegrationTest {
             val evidenceRetrievalMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("traceable_evidence_retrieval.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(evidenceRetrievalMigrationVerification)) }
+            }
+            val evidenceCoverageMigration = migrationDirectory.resolve("conflict_aware_evidence_coverage.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(evidenceCoverageMigration)) }
+            }
+            val evidenceCoverageMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("conflict_aware_evidence_coverage.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(evidenceCoverageMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

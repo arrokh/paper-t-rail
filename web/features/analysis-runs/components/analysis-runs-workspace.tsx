@@ -75,6 +75,17 @@ function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
   );
 }
 
+function ReportMetric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <Card size="sm">
+      <CardContent className="space-y-1">
+        <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
+        <dd className="m-0 font-mono text-lg font-semibold text-foreground">{value}</dd>
+      </CardContent>
+    </Card>
+  );
+}
+
 function isParsedDocumentReady(status: AnalysisRun["status"] | undefined): boolean {
   return status === "PARSED" || status === "COMPLETED" || status === "COMPLETED_WITH_WARNINGS";
 }
@@ -681,7 +692,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                 <TabsContent value="report" className="space-y-5 outline-none">
                   {coverageReportLoading && (
                     <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-                      <Spinner aria-hidden="true" /> Loading Reference and Cited Paper Access Report…
+                      <Spinner aria-hidden="true" /> Loading Evidence Coverage Report…
                     </p>
                   )}
                   {coverageReportError && (
@@ -693,17 +704,62 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                   {coverageReport && (() => {
                     const resolution = coverageReport.referenceResolution;
                     const counts = resolution.summary;
+                    const coverage = coverageReport.evidenceCoverage;
+                    const verificationCounts = coverage.summary;
                     return (
                       <div className="space-y-5">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="space-y-1">
-                            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Reference and Cited Paper Access Report</p>
-                            <h3 className="font-heading text-lg font-semibold tracking-tight">Reference resolution and legal access</h3>
+                            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Evidence Coverage Report</p>
+                            <h3 className="font-heading text-lg font-semibold tracking-tight">Traceable claim and cited-reference outcomes</h3>
                           </div>
                           <Badge variant="secondary" className="font-mono text-xs">
-                            {resolution.executionStatus.replaceAll("_", " ").toLowerCase()}
+                            {coverage.executionStatus.replaceAll("_", " ").toLowerCase()}
                           </Badge>
                         </div>
+                        <Alert>
+                          <AlertTitle>Conservative research triage</AlertTitle>
+                          <AlertDescription>{coverage.triageDisclaimer}</AlertDescription>
+                        </Alert>
+                        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                          {([
+                            ["Claim–Reference pairs", verificationCounts.totalVerifications],
+                            ["Completed pairs", verificationCounts.completedVerifications],
+                            ["Incomplete pairs", verificationCounts.incompleteVerifications],
+                            ["Comparable conflicts", verificationCounts.evidenceConflicts],
+                          ] as const).map(([label, count]) => (
+                            <ReportMetric key={label} label={label} value={count} />
+                          ))}
+                        </dl>
+                        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4" aria-label="Counts by final verification status">
+                          {([
+                            ["SUPPORTED", verificationCounts.supported],
+                            ["PARTIALLY_SUPPORTED", verificationCounts.partiallySupported],
+                            ["CONTRADICTED", verificationCounts.contradicted],
+                            ["INSUFFICIENT_EVIDENCE", verificationCounts.insufficientEvidence],
+                            ["INACCESSIBLE", verificationCounts.inaccessible],
+                            ["UNRESOLVED", verificationCounts.unresolved],
+                            ["UNSUPPORTED_REFERENCE_TYPE", verificationCounts.unsupportedReferenceType],
+                          ] as const).map(([label, count]) => (
+                            <ReportMetric key={label} label={label.replaceAll("_", " ").toLowerCase()} value={count} />
+                          ))}
+                        </dl>
+                        <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-3">
+                          <div className="space-y-1">
+                            <dt className="font-mono text-xs uppercase text-muted-foreground">Evidence-strength rubric</dt>
+                            <dd className="m-0 break-words font-mono text-xs text-foreground">{coverage.verificationPolicyVersion ?? "Not configured for this run"}</dd>
+                          </div>
+                          <div className="space-y-1">
+                            <dt className="font-mono text-xs uppercase text-muted-foreground">Aggregation policy</dt>
+                            <dd className="m-0 break-words font-mono text-xs text-foreground">{coverage.aggregationPolicyVersion ?? "Not configured for this run"}</dd>
+                          </div>
+                          <div className="space-y-1">
+                            <dt className="font-mono text-xs uppercase text-muted-foreground">Pinned thresholds</dt>
+                            <dd className="m-0 break-words font-mono text-xs text-foreground">
+                              {coverage.thresholds ? Object.entries(coverage.thresholds).map(([key, value]) => `${key}: ${value.toFixed(2)}`).join(" · ") : "Not configured for this run"}
+                            </dd>
+                          </div>
+                        </dl>
                         <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-2">
                           <div className="space-y-1">
                             <dt className="font-mono text-xs uppercase text-muted-foreground">Score policy</dt>
@@ -723,16 +779,13 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                             ["Not attempted", counts.notAttempted],
                             ["Processing failed", counts.failed],
                           ] as const).map(([label, count]) => (
-                            <div key={label} className="rounded-lg border border-border bg-card px-3 py-3">
-                              <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
-                              <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">{count}</dd>
-                            </div>
+                            <ReportMetric key={label} label={label} value={count} />
                           ))}
                         </dl>
                         <section className="space-y-3" aria-labelledby="cited-paper-access-heading">
                           <div className="space-y-1">
                             <h4 id="cited-paper-access-heading" className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Cited Paper access outcomes</h4>
-                            <p className="text-sm text-muted-foreground">Access availability is separate from each Claim–Paper Verification status.</p>
+                            <p className="text-sm text-muted-foreground">Access availability is separate from each Claim–Reference Verification status.</p>
                           </div>
                           <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
                             {([
@@ -741,19 +794,16 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                               ["Metadata only", "METADATA_ONLY"],
                               ["Unavailable", "UNAVAILABLE"],
                             ] as const).map(([label, status]) => (
-                              <div key={status} className="rounded-lg border border-border bg-card px-3 py-3">
-                                <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
-                                <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">
-                                  {resolution.entries.filter((entry) => entry.citedPaperAccess?.accessStatus === status).length}
-                                </dd>
-                              </div>
+                              <ReportMetric
+                                key={status}
+                                label={label}
+                                value={resolution.entries.filter((entry) => entry.citedPaperAccess?.accessStatus === status).length}
+                              />
                             ))}
-                            <div className="rounded-lg border border-border bg-card px-3 py-3">
-                              <dt className="text-xs leading-relaxed text-muted-foreground">Not attempted</dt>
-                              <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">
-                                {resolution.entries.filter((entry) => entry.status === "RESOLVED" && !entry.citedPaperAccess).length}
-                              </dd>
-                            </div>
+                            <ReportMetric
+                              label="Not attempted"
+                              value={resolution.entries.filter((entry) => entry.status === "RESOLVED" && !entry.citedPaperAccess).length}
+                            />
                           </dl>
                         </section>
                         {resolution.entries.length === 0 ? (
@@ -775,7 +825,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                           </ol>
                         )}
                         <p className="text-xs leading-relaxed text-muted-foreground">
-                          Ambiguous and below-threshold matches remain unresolved. Access outcomes do not imply a semantic assessment: abstract-only and unsupported-language papers receive terminal statuses without semantic-provider calls, and English full text remains pending until semantic processing is implemented. The configured reference threshold is pinned to this run; numeric calibration remains a separate release gate.
+                          Ambiguous and below-threshold matches remain unresolved. Access provenance does not itself imply support: abstract-only and unsupported-language references receive conservative terminal statuses without semantic-provider calls. Processing failures remain incomplete pairs and never enter the seven domain-status counts.
                         </p>
                       </div>
                     );

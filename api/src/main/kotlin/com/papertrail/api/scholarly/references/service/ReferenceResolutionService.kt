@@ -14,16 +14,23 @@ import com.papertrail.api.scholarly.references.resolver.ConservativeReferenceRes
 import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.ReferenceResolutionSnapshot
+import com.papertrail.api.evidence.report.EvidenceCoverageReport
+import com.papertrail.api.evidence.report.EvidenceCoverageReportRepository
+import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
+import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 
 @Service
 class ReferenceResolutionService(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
+    private val transactionTemplate: TransactionTemplate,
+    private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val repository: ReferenceResolutionRepository,
     private val citedPaperAccessRepository: CitedPaperAccessRepository,
+    private val evidenceCoverageReportRepository: EvidenceCoverageReportRepository,
     private val lookupFactories: List<ScholarlyMetadataLookupFactory>,
 ) {
     fun isResolutionConfigured(analysisRunId: UUID): Boolean {
@@ -56,7 +63,20 @@ class ReferenceResolutionService(
         val decision = resolver.resolve(
             BibliographyReference(stored.title, stored.authors, stored.year, stored.doi, stored.referenceType),
         )
-        repository.save(analysisRunId, stored, decision, providerId)
+        transactionTemplate.executeWithoutResult {
+            val canonicalPaperId = repository.save(analysisRunId, stored, decision, providerId)
+            claimReferenceVerificationRepository.applyResolution(
+                analysisRunId = analysisRunId,
+                bibliographyEntryId = stored.id,
+                status = decision.status,
+                reason = decision.reasonCode,
+                canonicalPaperId = canonicalPaperId,
+            )
+        }
+    }
+
+    fun failResolution(analysisRunId: UUID, bibliographyEntryId: UUID, reason: String) {
+        claimReferenceVerificationRepository.failReference(analysisRunId, bibliographyEntryId, reason)
     }
 
     fun summary(analysisRunId: UUID): ReferenceResolutionSummary = summarize(repository.reportEntries(analysisRunId))
@@ -64,14 +84,40 @@ class ReferenceResolutionService(
     fun report(analysisRunId: UUID): ReferenceResolutionReportResponse? {
         val context = loadRun(analysisRunId) ?: return null
         val entries = repository.reportEntries(analysisRunId)
-        val accessByReference = citedPaperAccessRepository.reportEntries(analysisRunId)
-        val reportEntries = entries.map { entry -> entry.copy(citedPaperAccess = accessByReference[entry.localReferenceKey]) }
+        val indexingByReference = evidenceCoverageReportRepository.indexingReportsByReference(analysisRunId)
+        val accessByReference = citedPaperAccessRepository.reportEntries(analysisRunId).associate { accessEntry ->
+            accessEntry.localReferenceKey to accessEntry.report.copy(
+                evidenceIndexing = indexingByReference[accessEntry.bibliographyEntryId],
+            )
+        }
+        val outcomesByReference = evidenceCoverageReportRepository.outcomesByReference(analysisRunId)
+        val reportEntries = entries.map { entry ->
+            val outcomes = outcomesByReference[entry.localReferenceKey].orEmpty()
+            entry.copy(
+                citedPaperAccess = accessByReference[entry.localReferenceKey]?.copy(verificationOutcomes = outcomes),
+                verificationOutcomes = outcomes,
+            )
+        }
         val summary = summarize(entries)
+        val aggregation = context.configuration.aggregation
         val configuration = context.configuration.referenceResolution
         val policyConfigured = configuration.provider != null && !configuration.scorePolicyVersion.isNullOrBlank() && configuration.confidenceThreshold != null
         return ReferenceResolutionReportResponse(
             analysisRunId = analysisRunId,
             runStatus = context.runStatus,
+            evidenceCoverage = EvidenceCoverageReport(
+                executionStatus = when {
+                    !context.semanticPipelineConfigured -> "NOT_RUN"
+                    context.runStatus == "COMPLETED" -> "COMPLETED"
+                    context.runStatus == "COMPLETED_WITH_WARNINGS" -> "COMPLETED_WITH_WARNINGS"
+                    context.runStatus == "FAILED" -> "FAILED"
+                    else -> "PENDING"
+                },
+                verificationPolicyVersion = aggregation.verificationPolicyVersion,
+                aggregationPolicyVersion = aggregation.aggregationPolicyVersion,
+                thresholds = aggregation.thresholds,
+                summary = evidenceCoverageReportRepository.summary(analysisRunId),
+            ),
             referenceResolution = ReferenceResolutionReport(
                 executionStatus = when {
                     !policyConfigured || configuration.executionStatus == "NOT_RUN" -> "NOT_RUN"
@@ -100,11 +146,17 @@ class ReferenceResolutionService(
         provider?.provider != null && !scorePolicyVersion.isNullOrBlank() && confidenceThreshold != null && executionStatus != "NOT_RUN"
 
     private fun loadRun(analysisRunId: UUID): RunResolutionContext? = jdbc.query(
-        "SELECT status, configuration_snapshot::text AS configuration FROM analysis_runs WHERE id = ?",
+        """
+        SELECT status,
+               configuration_snapshot::text AS configuration,
+               analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot) AS semantic_pipeline_configured
+          FROM analysis_runs WHERE id = ?
+        """.trimIndent(),
         { rs, _ ->
             RunResolutionContext(
                 runStatus = rs.getString("status"),
                 configuration = objectMapper.readValue(rs.getString("configuration"), AnalysisConfigurationSnapshot::class.java),
+                semanticPipelineConfigured = rs.getBoolean("semantic_pipeline_configured"),
             )
         },
         analysisRunId,
@@ -113,5 +165,6 @@ class ReferenceResolutionService(
     private data class RunResolutionContext(
         val runStatus: String,
         val configuration: AnalysisConfigurationSnapshot,
+        val semanticPipelineConfigured: Boolean,
     )
 }

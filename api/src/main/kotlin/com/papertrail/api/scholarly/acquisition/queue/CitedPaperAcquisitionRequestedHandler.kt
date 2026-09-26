@@ -73,6 +73,11 @@ class CitedPaperAcquisitionRequestedHandler(
             )
             if (inserted == 0) return@executeWithoutResult
             if (failureReason != null) {
+                citedPaperAccessService.failAccess(
+                    event.analysisRunId,
+                    event.payload.bibliographyEntryId,
+                    CITED_PAPER_ACCESS_RETRIES_EXHAUSTED,
+                )
                 jdbc.update(
                     "UPDATE analysis_runs SET failure_reason = COALESCE(failure_reason, ?), updated_at = now() WHERE id = ? AND status = 'PROCESSING'",
                     failureReason,
@@ -90,6 +95,10 @@ class CitedPaperAcquisitionRequestedHandler(
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
+    }
+
+    companion object {
+        const val CITED_PAPER_ACCESS_RETRIES_EXHAUSTED = "CITED_PAPER_ACCESS_RETRIES_EXHAUSTED"
     }
 
     private data class RunProvenance(
