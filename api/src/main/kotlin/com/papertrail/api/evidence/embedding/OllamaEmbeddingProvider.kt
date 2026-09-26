@@ -43,7 +43,7 @@ class OllamaEmbeddingProvider(
         if (!settings.isConfigurationValid || settings.endpointUri == null || settings.configurationFingerprint == null) {
             throw OllamaEmbeddingException("Ollama embedding is not configured with a valid endpoint, model, and dimension.")
         }
-        require(context.inputCategory in EMBEDDING_INPUT_CATEGORIES) {
+        require(context.inputCategory in EmbeddingRequestContext.SUPPORTED_INPUT_CATEGORIES) {
             "Ollama embedding input category is not supported."
         }
 
@@ -184,6 +184,5 @@ class OllamaEmbeddingProvider(
 
     companion object {
         private const val CONNECT_TIMEOUT_SECONDS = 5L
-        private val EMBEDDING_INPUT_CATEGORIES = setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.ATOMIC_CLAIMS)
     }
 }

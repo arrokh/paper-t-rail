@@ -1,7 +1,6 @@
 package com.papertrail.api.evidence.embedding
 
 import com.papertrail.api.evidence.domain.EmbeddingProfile
-import com.papertrail.api.infrastructure.providers.DataCategory
 import org.springframework.stereotype.Component
 import java.security.MessageDigest
 import java.util.Locale
@@ -17,7 +16,7 @@ class FeatureHashEmbeddingProvider : EmbeddingProvider {
     override val dimension = EmbeddingProfile.DIMENSION
 
     override fun embed(text: String, context: EmbeddingRequestContext): FloatArray {
-        require(context.inputCategory in setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.ATOMIC_CLAIMS)) {
+        require(context.inputCategory in EmbeddingRequestContext.SUPPORTED_INPUT_CATEGORIES) {
             "Local embedding input category is not supported."
         }
         return embed(text)
