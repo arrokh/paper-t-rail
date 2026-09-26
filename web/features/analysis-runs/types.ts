@@ -1,3 +1,16 @@
+export type EvidenceRetrievalProfile = {
+  profileId: string;
+  vectorCandidateLimit: number;
+  lexicalCandidateLimit: number;
+  finalCandidateLimit: number;
+  reciprocalRankFusionConstant: number;
+  embeddingProvider: string;
+  embeddingModel: string;
+  embeddingVersion: string;
+  embeddingDimension: number;
+  embeddingProfileHash: string;
+};
+
 export type AnalysisRun = {
   id: string;
   documentId: string;
@@ -8,6 +21,14 @@ export type AnalysisRun = {
   configuration: {
     claimExtractor: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     embedding: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
+    retrieval: {
+      profileId: string;
+      vectorCandidateLimit: number;
+      lexicalCandidateLimit: number;
+      finalCandidateLimit: number;
+      reciprocalRankFusionConstant: number;
+      embeddingProfileHash: string;
+    };
     systemOne: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     sourceParser: { provider: string; version: string };
     openAccess?: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
@@ -124,11 +145,43 @@ export type ReferenceResolutionReportResponse = {
         contentSha256: string | null;
         language: string | null;
         languageDetectorVersion: string | null;
+        evidenceIndexing: {
+          status: "PENDING" | "COMPLETED" | "FAILED";
+          failureReason: string | null;
+          assetId: string | null;
+          parserProvider: string | null;
+          parserVersion: string | null;
+          contentSha256: string | null;
+          language: string | null;
+          languageDetectorVersion: string | null;
+          retrievalProfile: EvidenceRetrievalProfile;
+        } | null;
         verificationOutcomes: Array<{
           atomicClaimId: string;
+          claimText: string;
           finalStatus: string | null;
           verificationScope: "FULL_TEXT" | "ABSTRACT_ONLY" | "NONE";
           terminalReason: string | null;
+          evidencePassages: Array<{
+            id: string;
+            text: string;
+            sectionOrder: number;
+            sectionHeading: string | null;
+            paragraphStart: number;
+            paragraphEnd: number;
+            pageNumber: number | null;
+            vectorRank: number | null;
+            lexicalRank: number | null;
+            fusedRank: number;
+            fusionScore: number;
+            sourceAssetId: string;
+            contentSha256: string;
+            parserProvider: string;
+            parserVersion: string;
+            language: string;
+            languageDetectorVersion: string;
+            retrievalProfile: EvidenceRetrievalProfile;
+          }>;
         }>;
       } | null;
     }>;

@@ -230,9 +230,9 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                 ProviderRegistration(
                     role = EMBEDDING_ROLE,
                     providerId = "local",
-                    displayName = "Local embeddings",
+                    displayName = "Local feature-hash embeddings",
                     version = "v1",
-                    model = "e5-small-v2",
+                    model = "feature-hash-384-v1",
                     trustBoundary = ProviderTrustBoundary.LOCAL,
                     enabled = true,
                     dataCategories = setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.EMBEDDING_INPUT),

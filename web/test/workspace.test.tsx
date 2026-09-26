@@ -42,7 +42,15 @@ function analysisRun(id: string, message: string, status: "QUEUED" | "PROCESSING
     progress: { message },
     configuration: {
       claimExtractor: { provider: "heuristic", version: "v1" },
-      embedding: { provider: "local", version: "v1" },
+      embedding: { provider: "local", model: "feature-hash-384-v1", version: "v1" },
+      retrieval: {
+        profileId: "postgres-hybrid-rrf-v1",
+        vectorCandidateLimit: 10,
+        lexicalCandidateLimit: 10,
+        finalCandidateLimit: 5,
+        reciprocalRankFusionConstant: 60,
+        embeddingProfileHash: "b".repeat(64),
+      },
       systemOne: { provider: "mock", version: "v1" },
       openAccess: { provider: "recorded-fixtures", version: "v1" },
       sourceParser: { provider: "grobid", version: "v1" },

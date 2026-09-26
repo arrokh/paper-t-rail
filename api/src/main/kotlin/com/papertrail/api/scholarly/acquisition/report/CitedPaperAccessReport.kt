@@ -15,4 +15,5 @@ data class CitedPaperAccessReport(
     val language: String?,
     val languageDetectorVersion: String?,
     val verificationOutcomes: List<CitedReferenceVerificationOutcome>,
+    val evidenceIndexing: EvidenceIndexingReport? = null,
 )

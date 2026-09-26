@@ -406,7 +406,13 @@ class OpenApiDocumentationTest {
                                 language = null,
                                 languageDetectorVersion = null,
                                 verificationOutcomes = listOf(
-                                    CitedReferenceVerificationOutcome(UUID.randomUUID(), "INSUFFICIENT_EVIDENCE", "ABSTRACT_ONLY", "ABSTRACT_ONLY"),
+                                    CitedReferenceVerificationOutcome(
+                                        atomicClaimId = UUID.randomUUID(),
+                                        claimText = "The study reports an outcome.",
+                                        finalStatus = "INSUFFICIENT_EVIDENCE",
+                                        verificationScope = "ABSTRACT_ONLY",
+                                        terminalReason = "ABSTRACT_ONLY",
+                                    ),
                                 ),
                             ),
                         ),
@@ -424,6 +430,7 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.summary.failed").value(0))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessStatus").value("ABSTRACT_ONLY"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessReason").value("ABSTRACT_ONLY"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.verificationOutcomes[0].claimText").value("The study reports an outcome."))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.verificationOutcomes[0].finalStatus").value("INSUFFICIENT_EVIDENCE"))
     }
 

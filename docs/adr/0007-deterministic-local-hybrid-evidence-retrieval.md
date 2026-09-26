@@ -1,0 +1,7 @@
+# Use Deterministic Local Hybrid Retrieval for Evidence Passages
+
+Issue #9 retrieves Evidence Passages independently for each Atomic Claim × Cited Reference, and only from the exact immutable Cited Paper access record pinned to that Analysis Run. The access record's source asset identity and SHA-256 bind the parser output; chunks and candidates keep composite run/reference foreign keys so retrieval cannot mix passages from another cited work. Parser/language provenance, embedding profile, retrieval settings, and vector/lexical/fused ranks are persisted and exposed for diagnosis.
+
+V1 combines PostgreSQL full-text candidates with pgvector candidates using deterministic reciprocal-rank fusion. Its local `feature-hash-384-v1` vectorizer hashes word unigrams and bigrams; it is lexical feature retrieval, not a trained semantic model. We choose it to keep the default fully local, deterministic, reproducible, and operable without model downloads or external calls. Retrieval limits, fusion constant, and profile identity are deployment-configurable and snapshotted per run. The final passage limit bounds stored candidates and report size.
+
+This does not make a semantic Evidence Judgement or final Claim–Paper Verification. Those remain separate work: retrieved passages are auditable candidates for a later assessment. A future trained/local or external embedding provider must have a distinct versioned profile and retain exact asset, consent, and provenance boundaries; changing a profile never rewrites earlier runs.

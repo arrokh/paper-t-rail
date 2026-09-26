@@ -11,7 +11,7 @@ data class AnalysisRunSummary(
     val documentId: UUID,
     val filename: String,
     val sourceContentSha256: String,
-    @field:Schema(description = "PARSED means parsed citation structure, Atomic Claims, inferred Citation Target links, and conservative bibliography-resolution outcomes are persisted; evidence verification has not run.")
+    @field:Schema(description = "PARSED means citation structure, Atomic Claims, inferred Citation Target links, reference-resolution outcomes, and eligible Cited Paper Evidence Passage retrieval are ready; semantic Evidence Judgements against retrieved full-text passages have not run, though access-based terminal outcomes may be recorded.")
     val status: String,
     @field:Schema(implementation = AnalysisRunProgress::class, description = "Persisted run progress.")
     val progress: JsonNode,

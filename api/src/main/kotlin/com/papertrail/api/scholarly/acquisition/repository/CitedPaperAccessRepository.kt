@@ -7,6 +7,8 @@ import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessReason
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
 import com.papertrail.api.scholarly.acquisition.report.CitedReferenceVerificationOutcome
+import com.papertrail.api.scholarly.acquisition.report.EvidenceIndexingReport
+import com.papertrail.api.scholarly.acquisition.report.EvidencePassageReport
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -81,8 +83,8 @@ class CitedPaperAccessRepository(
                     analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status,
                     provider_id, access_reason, metadata_available, abstract_available, source_url, license_identifier,
                     location_version, location_host_type, discovered_at, object_key, content_sha256,
-                    language, language_detector_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    content_media_type, language, language_detector_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
                 """.trimIndent(),
                 analysisRunId,
@@ -100,6 +102,7 @@ class CitedPaperAccessRepository(
                 Timestamp.from(discoveredAt),
                 objectKey,
                 contentHash,
+                fullText?.mediaType?.substringBefore(';')?.trim()?.lowercase(),
                 language,
                 languageDetectorVersion,
             )
@@ -141,38 +144,151 @@ class CitedPaperAccessRepository(
         objectKey,
     ) == true
 
-    fun reportEntries(analysisRunId: UUID): Map<String, CitedPaperAccessReport> = jdbc.query(
-        """
-        SELECT b.local_reference_key, a.access_status, a.access_reason, a.provider_id, a.source_url, a.license_identifier,
-               a.location_version, a.location_host_type, a.discovered_at, a.object_key, a.content_sha256,
-               a.language, a.language_detector_version,
-               COALESCE(
-                   jsonb_agg(jsonb_build_object(
-                       'atomicClaimId', verification.atomic_claim_id,
-                       'finalStatus', verification.final_status,
-                       'verificationScope', verification.verification_scope,
-                       'terminalReason', verification.terminal_reason
-                   ) ORDER BY verification.atomic_claim_id) FILTER (WHERE verification.id IS NOT NULL),
-                   '[]'::jsonb
-               )::text AS verification_outcomes
-          FROM cited_paper_access a
-          JOIN bibliography_entries b
-            ON b.analysis_run_id = a.analysis_run_id AND b.id = a.bibliography_entry_id
-          LEFT JOIN claim_paper_verifications verification
-            ON verification.analysis_run_id = a.analysis_run_id
-           AND verification.bibliography_entry_id = a.bibliography_entry_id
-         WHERE a.analysis_run_id = ?
-         GROUP BY b.local_reference_key, a.access_status, a.access_reason, a.provider_id, a.source_url, a.license_identifier,
-                  a.location_version, a.location_host_type, a.discovered_at, a.object_key, a.content_sha256,
-                  a.language, a.language_detector_version
-        """.trimIndent(),
-        { rs, _ -> rs.toAccessReportEntry() },
-        analysisRunId,
-    ).associate { it.localReferenceKey to it.report }
+    fun reportEntries(analysisRunId: UUID): Map<String, CitedPaperAccessReport> {
+        val outcomesByReference = verificationOutcomes(analysisRunId)
+        return jdbc.query(
+            """
+            SELECT b.id AS bibliography_entry_id, b.local_reference_key, a.access_status, a.access_reason,
+                   a.provider_id, a.source_url, a.license_identifier, a.location_version, a.location_host_type,
+                   a.discovered_at, a.content_sha256, a.language, a.language_detector_version,
+                   CASE WHEN indexing.analysis_run_id IS NULL THEN NULL ELSE jsonb_build_object(
+                       'status', indexing.status,
+                       'failureReason', indexing.failure_reason,
+                       'assetId', a.asset_id,
+                       'parserProvider', asset.parser_id,
+                       'parserVersion', asset.parser_version,
+                       'contentSha256', asset.content_sha256,
+                       'language', asset.language,
+                       'languageDetectorVersion', asset.language_detector_version,
+                       'retrievalProfile', jsonb_build_object(
+                           'profileId', indexing.retrieval_profile_id,
+                           'vectorCandidateLimit', indexing.vector_candidate_limit,
+                           'lexicalCandidateLimit', indexing.lexical_candidate_limit,
+                           'finalCandidateLimit', indexing.final_candidate_limit,
+                           'reciprocalRankFusionConstant', indexing.reciprocal_rank_fusion_constant,
+                           'embeddingProvider', indexing.embedding_provider,
+                           'embeddingModel', indexing.embedding_model,
+                           'embeddingVersion', indexing.embedding_version,
+                           'embeddingDimension', indexing.embedding_dimension,
+                           'embeddingProfileHash', indexing.embedding_profile_hash
+                       )
+                   ) END::text AS evidence_indexing
+              FROM cited_paper_access a
+              JOIN bibliography_entries b
+                ON b.analysis_run_id = a.analysis_run_id AND b.id = a.bibliography_entry_id
+              LEFT JOIN cited_paper_indexing indexing
+                ON indexing.analysis_run_id = a.analysis_run_id
+               AND indexing.bibliography_entry_id = a.bibliography_entry_id
+              LEFT JOIN cited_paper_parses asset
+                ON asset.id = indexing.cited_paper_parse_id
+               AND asset.analysis_run_id = indexing.analysis_run_id
+               AND asset.bibliography_entry_id = indexing.bibliography_entry_id
+             WHERE a.analysis_run_id = ?
+             ORDER BY b.entry_order
+            """.trimIndent(),
+            { rs, _ -> rs.toAccessReportEntry(outcomesByReference) },
+            analysisRunId,
+        ).associate { it.localReferenceKey to it.report }
+    }
 
-    private fun ResultSet.toAccessReportEntry(): AccessReportEntry {
-        val outcomeType = objectMapper.typeFactory.constructCollectionType(List::class.java, CitedReferenceVerificationOutcome::class.java)
-        val outcomes = objectMapper.readValue<List<CitedReferenceVerificationOutcome>>(getString("verification_outcomes"), outcomeType)
+    private fun verificationOutcomes(analysisRunId: UUID): Map<UUID, List<CitedReferenceVerificationOutcome>> {
+        val passageType = objectMapper.typeFactory.constructCollectionType(List::class.java, EvidencePassageReport::class.java)
+        return jdbc.query(
+            """
+            SELECT verification.bibliography_entry_id, verification.atomic_claim_id, claim.claim_text,
+                   verification.final_status, verification.verification_scope, verification.terminal_reason,
+                   COALESCE(jsonb_agg(jsonb_build_object(
+                       'id', candidate.id,
+                       'text', chunk.text,
+                       'sectionOrder', chunk.section_order,
+                       'sectionHeading', chunk.section_heading,
+                       'paragraphStart', chunk.paragraph_start,
+                       'paragraphEnd', chunk.paragraph_end,
+                       'pageNumber', chunk.page_number,
+                       'vectorRank', candidate.vector_rank,
+                       'lexicalRank', candidate.lexical_rank,
+                       'fusedRank', candidate.fused_rank,
+                       'fusionScore', candidate.fusion_score,
+                       'sourceAssetId', source_asset.asset_id,
+                       'contentSha256', asset.content_sha256,
+                       'parserProvider', asset.parser_id,
+                       'parserVersion', asset.parser_version,
+                       'language', asset.language,
+                       'languageDetectorVersion', asset.language_detector_version,
+                       'retrievalProfile', jsonb_build_object(
+                           'profileId', candidate.retrieval_profile_id,
+                           'vectorCandidateLimit', indexing.vector_candidate_limit,
+                           'lexicalCandidateLimit', indexing.lexical_candidate_limit,
+                           'finalCandidateLimit', indexing.final_candidate_limit,
+                           'reciprocalRankFusionConstant', indexing.reciprocal_rank_fusion_constant,
+                           'embeddingProvider', indexing.embedding_provider,
+                           'embeddingModel', indexing.embedding_model,
+                           'embeddingVersion', indexing.embedding_version,
+                           'embeddingDimension', indexing.embedding_dimension,
+                           'embeddingProfileHash', candidate.profile_hash
+                       )
+                   ) ORDER BY candidate.fused_rank) FILTER (WHERE candidate.id IS NOT NULL), '[]'::jsonb)::text AS evidence_passages
+              FROM claim_paper_verifications verification
+              JOIN atomic_claims claim
+                ON claim.analysis_run_id = verification.analysis_run_id
+               AND claim.id = verification.atomic_claim_id
+              LEFT JOIN cited_paper_indexing indexing
+                ON indexing.analysis_run_id = verification.analysis_run_id
+               AND indexing.bibliography_entry_id = verification.bibliography_entry_id
+              LEFT JOIN evidence_candidates candidate
+                ON candidate.verification_id = verification.id
+               AND candidate.analysis_run_id = verification.analysis_run_id
+               AND candidate.bibliography_entry_id = verification.bibliography_entry_id
+              LEFT JOIN paper_chunks chunk
+                ON chunk.id = candidate.paper_chunk_id
+               AND chunk.analysis_run_id = candidate.analysis_run_id
+               AND chunk.bibliography_entry_id = candidate.bibliography_entry_id
+              LEFT JOIN cited_paper_parses asset
+                ON asset.id = chunk.cited_paper_parse_id
+               AND asset.analysis_run_id = chunk.analysis_run_id
+               AND asset.bibliography_entry_id = chunk.bibliography_entry_id
+              LEFT JOIN cited_paper_access source_asset
+                ON source_asset.analysis_run_id = asset.analysis_run_id
+               AND source_asset.bibliography_entry_id = asset.bibliography_entry_id
+               AND source_asset.canonical_paper_id = asset.canonical_paper_id
+               AND source_asset.content_sha256 = asset.content_sha256
+             WHERE verification.analysis_run_id = ?
+             GROUP BY verification.id, verification.bibliography_entry_id, verification.atomic_claim_id,
+                      claim.claim_text, claim.source_start_offset, verification.final_status,
+                      verification.verification_scope, verification.terminal_reason,
+                      indexing.vector_candidate_limit, indexing.lexical_candidate_limit, indexing.final_candidate_limit,
+                      indexing.reciprocal_rank_fusion_constant, indexing.embedding_provider, indexing.embedding_model,
+                      indexing.embedding_version, indexing.embedding_dimension
+             ORDER BY claim.source_start_offset, verification.atomic_claim_id
+            """.trimIndent(),
+            { rs, _ ->
+                val passages = objectMapper.readValue<List<EvidencePassageReport>>(
+                    rs.getString("evidence_passages"),
+                    passageType,
+                )
+                VerificationOutcomeRow(
+                    bibliographyEntryId = rs.getObject("bibliography_entry_id", UUID::class.java),
+                    outcome = CitedReferenceVerificationOutcome(
+                        atomicClaimId = rs.getObject("atomic_claim_id", UUID::class.java),
+                        claimText = rs.getString("claim_text"),
+                        finalStatus = rs.getString("final_status"),
+                        verificationScope = rs.getString("verification_scope"),
+                        terminalReason = rs.getString("terminal_reason"),
+                        evidencePassages = passages,
+                    ),
+                )
+            },
+            analysisRunId,
+        ).groupBy(VerificationOutcomeRow::bibliographyEntryId)
+            .mapValues { (_, rows) -> rows.map(VerificationOutcomeRow::outcome) }
+    }
+
+    private fun ResultSet.toAccessReportEntry(
+        outcomesByReference: Map<UUID, List<CitedReferenceVerificationOutcome>>,
+    ): AccessReportEntry {
+        val bibliographyEntryId = getObject("bibliography_entry_id", UUID::class.java)
+        val indexingJson = getString("evidence_indexing")
+        val indexing = indexingJson?.let { objectMapper.readValue(it, EvidenceIndexingReport::class.java) }
         return AccessReportEntry(
             localReferenceKey = getString("local_reference_key"),
             report = CitedPaperAccessReport(
@@ -187,11 +303,16 @@ class CitedPaperAccessRepository(
                 contentSha256 = getString("content_sha256"),
                 language = getString("language"),
                 languageDetectorVersion = getString("language_detector_version"),
-                verificationOutcomes = outcomes,
+                verificationOutcomes = outcomesByReference[bibliographyEntryId].orEmpty(),
+                evidenceIndexing = indexing,
             ),
         )
     }
 
+    private data class VerificationOutcomeRow(
+        val bibliographyEntryId: UUID,
+        val outcome: CitedReferenceVerificationOutcome,
+    )
 
     private data class AccessReportEntry(
         val localReferenceKey: String,

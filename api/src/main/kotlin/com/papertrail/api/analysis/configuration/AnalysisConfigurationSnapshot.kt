@@ -3,6 +3,7 @@ package com.papertrail.api.analysis.configuration
 data class AnalysisConfigurationSnapshot(
     val claimExtractor: ProviderSelection,
     val embedding: ProviderSelection,
+    val retrieval: RetrievalConfigurationSnapshot = RetrievalConfigurationSnapshot(),
     val systemOne: ProviderSelection,
     val sourceParser: ProviderSelection,
     val languageDetector: ProviderSelection,

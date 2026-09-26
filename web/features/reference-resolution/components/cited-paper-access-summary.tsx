@@ -1,5 +1,6 @@
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 import { Badge } from "@/components/ui/badge";
+import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import { cn } from "@/lib/utils";
 
 type CitedPaperAccess = NonNullable<ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["citedPaperAccess"]>;
@@ -97,25 +98,56 @@ export function CitedPaperAccessSummary({ access }: { access: CitedPaperAccess |
         )}
       </dl>
 
+      {access.evidenceIndexing && (
+        <div className="space-y-2 border-t border-border/70 pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h6 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Evidence Passage indexing</h6>
+            <Badge variant="outline" className="capitalize">{access.evidenceIndexing.status.toLowerCase()}</Badge>
+          </div>
+          {access.evidenceIndexing.failureReason && (
+            <p className="m-0 text-sm text-destructive">Indexing failure: {access.evidenceIndexing.failureReason.replaceAll("_", " ").toLowerCase()}</p>
+          )}
+          <dl className="grid gap-3 text-xs sm:grid-cols-2">
+            {access.evidenceIndexing.assetId && (
+              <div className="min-w-0 space-y-1">
+                <dt className="font-mono uppercase text-muted-foreground">Pinned source asset ID</dt>
+                <dd className="m-0 break-all font-mono">{access.evidenceIndexing.assetId}</dd>
+              </div>
+            )}
+            {access.evidenceIndexing.parserProvider && access.evidenceIndexing.parserVersion && (
+              <div className="space-y-1">
+                <dt className="font-mono uppercase text-muted-foreground">Cited Paper parser</dt>
+                <dd className="m-0">{access.evidenceIndexing.parserProvider} · {access.evidenceIndexing.parserVersion}</dd>
+              </div>
+            )}
+            <div className="space-y-1">
+              <dt className="font-mono uppercase text-muted-foreground">Hybrid retrieval profile</dt>
+              <dd className="m-0 break-words">{access.evidenceIndexing.retrievalProfile.profileId} · vector top {access.evidenceIndexing.retrievalProfile.vectorCandidateLimit} · lexical top {access.evidenceIndexing.retrievalProfile.lexicalCandidateLimit} · final {access.evidenceIndexing.retrievalProfile.finalCandidateLimit} · RRF {access.evidenceIndexing.retrievalProfile.reciprocalRankFusionConstant}</dd>
+            </div>
+            <div className="space-y-1">
+              <dt className="font-mono uppercase text-muted-foreground">Embedding model</dt>
+              <dd className="m-0 break-words">{access.evidenceIndexing.retrievalProfile.embeddingProvider} · {access.evidenceIndexing.retrievalProfile.embeddingModel} · {access.evidenceIndexing.retrievalProfile.embeddingVersion} · {access.evidenceIndexing.retrievalProfile.embeddingDimension} dimensions</dd>
+            </div>
+            <div className="min-w-0 space-y-1 sm:col-span-2">
+              <dt className="font-mono uppercase text-muted-foreground">Embedding profile SHA-256</dt>
+              <dd className="m-0 break-all font-mono">{access.evidenceIndexing.retrievalProfile.embeddingProfileHash}</dd>
+            </div>
+          </dl>
+        </div>
+      )}
+
       <div className="space-y-2 border-t border-border/70 pt-3">
-        <h6 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Terminal verification status</h6>
+        <h6 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Claim–Paper Verification and Evidence Passages</h6>
         {access.verificationOutcomes.length === 0 ? (
           <p className="text-sm text-muted-foreground">No Atomic Claim is linked to this Cited Reference.</p>
         ) : (
           <ul className="space-y-2">
             {access.verificationOutcomes.map((outcome) => (
-              <li key={outcome.atomicClaimId} className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="font-mono text-xs text-muted-foreground">Claim {outcome.atomicClaimId.slice(0, 8)}</span>
-                <Badge variant="outline" className="capitalize">
-                  {outcome.finalStatus
-                    ? outcome.finalStatus.replaceAll("_", " ").toLowerCase()
-                    : "pending semantic assessment"}
-                </Badge>
-                <span className="text-muted-foreground">Scope: {outcome.verificationScope.replaceAll("_", " ").toLowerCase()}</span>
-                {outcome.terminalReason && (
-                  <span className="text-muted-foreground">· {outcome.terminalReason.replaceAll("_", " ").toLowerCase()}</span>
-                )}
-              </li>
+              <ClaimEvidencePassages
+                key={outcome.atomicClaimId}
+                outcome={outcome}
+                indexingStatus={access.evidenceIndexing?.status ?? null}
+              />
             ))}
           </ul>
         )}

@@ -30,6 +30,10 @@ _Avoid_: canonical paper when referring to the raw entry.
 A scholarly work named by a Bibliography Entry and used as a candidate evidence source for an Atomic Claim.
 _Avoid_: source paper when referring to a cited work.
 
+**Cited Paper Asset**:
+One exact acquired full-text version of a Cited Paper, identified by its immutable source-asset ID and content hash and linked to parser and language-detection provenance. An Analysis Run's Claim–Paper Verification uses only the asset pinned to its Cited Reference.
+_Avoid_: Cited Paper when referring to a particular acquired version.
+
 **Canonical Paper**:
 The normalized identity of a Cited Paper, distinct from the Bibliography Entry that describes it.
 _Avoid_: reference when referring to the work itself.
@@ -44,8 +48,12 @@ A proposition that can be assessed independently; splitting compound claims pres
 _Avoid_: sentence when referring to a proposition extracted from a sentence.
 
 **Evidence Passage**:
-A passage from a Cited Paper considered as evidence for or against an Atomic Claim.
+A ranked passage from the exact Cited Paper Asset retrieved for one Atomic Claim × Cited Reference; retrieval makes it a candidate, not a semantic judgement.
 _Avoid_: evidence when referring to a passage whose source or location is not identified.
+
+**Evidence Retrieval Profile**:
+The immutable identity and parameters of the vectorizer, lexical/vector candidate limits, and fusion method used to rank Evidence Passages for an Analysis Run.
+_Avoid_: embedding model alone when referring to the complete reproducible retrieval configuration.
 
 **Evidence Role**:
 Whether an Evidence Passage reports the Cited Paper's own finding, the authors' synthesis, or a result attributed to another work. Role, directness, claim-scope match, study design, relevance, and calibrated judgement inform evidence-strength comparisons; model confidence alone is not decisive.

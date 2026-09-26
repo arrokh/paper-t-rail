@@ -59,7 +59,7 @@ const directory = {
         providerId: "local",
         displayName: "Local embeddings",
         version: "v1",
-        model: "e5-small-v2",
+        model: "feature-hash-384-v1",
         trustBoundary: "LOCAL",
         dataCategories: ["cited_paper_chunks", "embedding_input"],
         retentionDisclosure: null,

@@ -1,6 +1,7 @@
 package com.papertrail.api.analysis.service
 
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
+import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
@@ -48,7 +49,19 @@ class AnalysisRunStageCompletionService(
             analysisRunId,
             CITED_PAPER_ACQUISITION_REQUESTED,
         ) ?: 0L
-        if (pendingTaskCount > 0 || pendingAcquisitionCount > 0) return@execute false
+        val pendingIndexingCount = jdbc.queryForObject(
+            """
+            SELECT count(*)
+              FROM outbox_events task
+             WHERE task.analysis_run_id = ?
+               AND task.event_type = ?
+               AND NOT EXISTS (SELECT 1 FROM inbox_events completed WHERE completed.event_id = task.event_id)
+            """.trimIndent(),
+            Long::class.java,
+            analysisRunId,
+            CITED_PAPER_INDEXING_REQUESTED,
+        ) ?: 0L
+        if (pendingTaskCount > 0 || pendingAcquisitionCount > 0 || pendingIndexingCount > 0) return@execute false
 
         val failedReferenceTaskCount = jdbc.queryForObject(
             """
@@ -83,7 +96,12 @@ class AnalysisRunStageCompletionService(
             analysisRunId,
             CITED_PAPER_ACQUISITION_REQUESTED,
         ) ?: 0L
-        val failedTaskCount = failedReferenceTaskCount + failedAcquisitionTaskCount
+        val failedEvidenceIndexingCount = jdbc.queryForObject(
+            "SELECT count(*) FROM cited_paper_indexing WHERE analysis_run_id = ? AND status = 'FAILED'",
+            Long::class.java,
+            analysisRunId,
+        ) ?: 0L
+        val failedTaskCount = failedReferenceTaskCount + failedAcquisitionTaskCount + failedEvidenceIndexingCount
         val parsed = parsedDocumentRepository.find(analysisRunId)
             ?: throw IllegalStateException("Persisted parsed document structure is missing after reference processing.")
         val resolutionSummary = referenceResolutionService.summary(analysisRunId)
@@ -97,8 +115,8 @@ class AnalysisRunStageCompletionService(
         val warning = failedTaskCount > 0
         val finalStatus = if (warning) "COMPLETED_WITH_WARNINGS" else "PARSED"
         val progressMessage = when {
-            warning -> "Parsed structure is ready, but $failedTaskCount reference-resolution or cited-paper access task(s) exhausted retries; semantic verification has not run."
-            citedPaperAccessConfigured -> "Parsed structure, reference resolution, legal cited-paper access outcomes, and language eligibility are ready; semantic verification has not run."
+            warning -> "Parsed structure is ready, but $failedTaskCount reference-resolution, cited-paper access, or Evidence Passage indexing task(s) failed; semantic verification has not run."
+            citedPaperAccessConfigured -> "Parsed structure, reference resolution, legal cited-paper access, language eligibility, and eligible Evidence Passage retrieval are ready; semantic verification has not run."
             else -> "Parsed structure and reference resolution are ready; cited-paper access and semantic verification were not run for this legacy Analysis Run."
         }
         val updated = jdbc.update(
@@ -121,7 +139,9 @@ class AnalysisRunStageCompletionService(
                        'notAttemptedReferenceCount', ?,
                        'failedReferenceResolutionCount', ?,
                        'acquiredCitedPaperCount', ?,
-                       'failedCitedPaperAcquisitionCount', ?
+                       'failedCitedPaperAcquisitionCount', ?,
+                       'indexedCitedPaperCount', ?,
+                       'failedEvidenceIndexingCount', ?
                    ),
                    failure_reason = CASE WHEN ? > 0 THEN ? ELSE NULL END,
                    completed_at = CASE WHEN ? > 0 THEN now() ELSE completed_at END,
@@ -144,8 +164,10 @@ class AnalysisRunStageCompletionService(
             resolutionSummary.failed,
             jdbc.queryForObject("SELECT count(*) FROM cited_paper_access WHERE analysis_run_id = ? AND access_status = 'FULL_TEXT_AVAILABLE'", Int::class.java, analysisRunId) ?: 0,
             failedAcquisitionTaskCount,
+            jdbc.queryForObject("SELECT count(*) FROM cited_paper_indexing WHERE analysis_run_id = ? AND status = 'COMPLETED'", Int::class.java, analysisRunId) ?: 0,
+            failedEvidenceIndexingCount,
             failedTaskCount,
-            "One or more reference-resolution or cited-paper access tasks exhausted their retries.",
+            "One or more reference-resolution, cited-paper access, or Evidence Passage indexing tasks failed.",
             failedTaskCount,
             analysisRunId,
         )
