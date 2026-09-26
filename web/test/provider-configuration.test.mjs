@@ -61,7 +61,7 @@ const directory = {
         version: "v1",
         model: "feature-hash-384-v1",
         trustBoundary: "LOCAL",
-        dataCategories: ["cited_paper_chunks", "embedding_input"],
+        dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"],
         retentionDisclosure: null,
       },
       {
@@ -71,7 +71,7 @@ const directory = {
         version: "v2",
         model: "embed-2",
         trustBoundary: "EXTERNAL",
-        dataCategories: ["cited_paper_chunks", "embedding_input", "citation_context"],
+        dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"],
         retentionDisclosure: "Provider retention terms reviewed for this deployment.",
       },
     ],
@@ -180,7 +180,7 @@ test("one external provider selected for multiple roles receives the deduplicate
     embeddingProvider: "hosted-ai",
   });
   const requirements = consentRequirements(directory, selections);
-  const expectedCategories = ["citation_context", "cited_paper_chunks", "embedding_input"];
+  const expectedCategories = ["atomic_claims", "citation_context", "cited_paper_chunks", "embedding_input"];
   assert.deepEqual(requirements, [{
     providerId: "hosted-ai",
     displayName: "Hosted AI",

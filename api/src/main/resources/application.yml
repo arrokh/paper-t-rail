@@ -78,6 +78,16 @@ paper-trail:
       enablement-reviewed: ${UNPAYWALL_ENABLEMENT_REVIEWED:true}
       retention-disclosure: "${UNPAYWALL_RETENTION_DISCLOSURE:Unpaywall menerima DOI dan alamat kontak layanan; kebijakannya menyebut data permintaan dapat disimpan hingga enam bulan setelah penggunaan layanan berakhir. Repositori/host konten yang ditemukan memiliki ketentuan retensi tersendiri.}"
       contact-email: ${UNPAYWALL_CONTACT_EMAIL:test@ptr.test}
+    ollama:
+      enabled: ${OLLAMA_ENABLED:false}
+      base-url: ${OLLAMA_BASE_URL:}
+      model: ${OLLAMA_MODEL:}
+      dimension: ${OLLAMA_DIMENSION:768}
+      api-key: ${OLLAMA_API_KEY:}
+      trusted-hosts: ${OLLAMA_TRUSTED_HOSTS:localhost,127.0.0.1}
+      request-timeout-millis: ${OLLAMA_REQUEST_TIMEOUT_MILLIS:60000}
+      external-enablement-reviewed: ${OLLAMA_EXTERNAL_ENABLEMENT_REVIEWED:false}
+      external-retention-disclosure: "${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:}"
 
 scalar:
   enabled: ${API_DOCS_ENABLED:true}

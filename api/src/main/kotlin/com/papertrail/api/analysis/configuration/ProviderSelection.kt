@@ -8,4 +8,6 @@ data class ProviderSelection(
     val model: String? = null,
     val trustBoundary: String = ProviderTrustBoundary.LOCAL.id,
     val dataCategories: List<String> = emptyList(),
+    val configurationFingerprint: String? = null,
+    val embeddingDimension: Int? = null,
 )

@@ -143,7 +143,7 @@ export function ProviderConfigurationCard({
             <div className="flex gap-3 rounded-lg border border-primary/15 bg-primary/5 p-4 text-sm" role="note" aria-live="polite">
               <LockKeyhole className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
               <div className="space-y-1">
-                <p className="font-medium text-foreground">Local/mock providers selected</p>
+                <p className="font-medium text-foreground">Local providers selected</p>
                 <p className="text-sm leading-relaxed text-muted-foreground">
                   No external provider receives document content for this run.
                 </p>

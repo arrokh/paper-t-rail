@@ -12,8 +12,9 @@ const providerDirectory = {
       { role: "claimExtractor", providerId: "unclassified-ai", displayName: "Unclassified AI", version: "v1", model: null, trustBoundary: "UNREVIEWED", dataCategories: ["citation_context"], retentionDisclosure: null },
     ],
     embedding: [
-      { role: "embedding", providerId: "local", displayName: "Local", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["cited_paper_chunks", "embedding_input"], retentionDisclosure: null },
-      { role: "embedding", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "embed-2", trustBoundary: "EXTERNAL", dataCategories: ["citation_context", "cited_paper_chunks", "embedding_input"], retentionDisclosure: "Provider retention terms reviewed for this deployment." },
+      { role: "embedding", providerId: "local", displayName: "Local", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null },
+      { role: "embedding", providerId: "ollama", displayName: "Ollama embeddings (nomic-embed-text)", version: "v1", model: "nomic-embed-text", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null },
+      { role: "embedding", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "embed-2", trustBoundary: "EXTERNAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: "Provider retention terms reviewed for this deployment." },
     ],
     systemOne: [{ role: "systemOne", providerId: "mock", displayName: "Mock", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null }],
     scholarlyMetadata: [{ role: "scholarlyMetadata", providerId: "recorded-fixtures", displayName: "Recorded fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: null }],
@@ -24,6 +25,7 @@ const providerDirectory = {
   },
   dataCategories: [
     { id: "citation_context", label: "Citation Context", description: "The citation-bearing clause or sentence." },
+    { id: "atomic_claims", label: "Atomic Claims", description: "Individual propositions submitted for assessment." },
     { id: "cited_paper_chunks", label: "Cited Paper chunks", description: "Text chunks from an acquired Cited Paper." },
     { id: "embedding_input", label: "Embedding input", description: "Text submitted to calculate embeddings." },
     { id: "bibliographic_metadata", label: "Bibliographic metadata", description: "DOIs and minimum lookup fields." },
@@ -141,7 +143,7 @@ describe("interactive workspace remote state", () => {
     }));
 
     const { container } = renderWorkspace();
-    await screen.findByText("Local/mock providers selected");
+    await screen.findByText("Local providers selected");
     const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
     expect(fileInput).toBeTruthy();
     fireEvent.change(fileInput!, {
@@ -162,6 +164,49 @@ describe("interactive workspace remote state", () => {
     expect(requests.every(({ url }) => url.startsWith("/api/v1/"))).toBe(true);
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "source.pdf" })).toBeTruthy());
+  });
+
+  it("offers trusted Ollama embeddings without external-provider consent", async () => {
+    let submittedConfiguration: Record<string, unknown> | null = null;
+    const runs: ReturnType<typeof analysisRun>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
+      const path = String(url);
+      if (path === "/api/v1/providers") return jsonResponse(providerDirectory);
+      if (path.startsWith("/api/v1/analysis-runs?") && (options.method ?? "GET") === "GET") {
+        return jsonResponse({ items: runs, nextCursor: null });
+      }
+      if (path === "/api/v1/analysis-runs" && options.method === "POST") {
+        const form = options.body as FormData;
+        submittedConfiguration = JSON.parse(String(form.get("configuration"))) as Record<string, unknown>;
+        runs.push(analysisRun("run-ollama", "The Ollama-backed Analysis Run is selected."));
+        return jsonResponse({
+          documentId: "document-1",
+          analysisRunId: "run-ollama",
+          filename: "source.pdf",
+          sourceContentSha256: "a".repeat(64),
+          status: "QUEUED",
+          createdAt: "2025-01-01T00:00:00Z",
+        });
+      }
+      throw new Error(`Unexpected browser request: ${options.method ?? "GET"} ${path}`);
+    }));
+
+    const { container } = renderWorkspace();
+    await screen.findByText("Local providers selected");
+    fireEvent.change(screen.getByLabelText("Embeddings"), { target: { value: "ollama" } });
+    expect(screen.getByText("No external provider receives document content for this run.")).toBeTruthy();
+
+    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
+    expect(fileInput).toBeTruthy();
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload & start Analysis Run" }));
+
+    await waitFor(() => expect(submittedConfiguration).toMatchObject({
+      embeddingProvider: "ollama",
+      externalProviderConsents: [],
+    }));
   });
 
   it("recalculates provider consent on selection changes and requires fresh consent for each Analysis Run", async () => {
@@ -203,7 +248,7 @@ describe("interactive workspace remote state", () => {
     }));
 
     const { container } = renderWorkspace();
-    await screen.findByText("Local/mock providers selected");
+    await screen.findByText("Local providers selected");
     const claimExtractor = screen.getByLabelText("Claim extraction");
     fireEvent.change(claimExtractor, { target: { value: "hosted-ai" } });
 
@@ -271,7 +316,7 @@ describe("interactive workspace remote state", () => {
     }));
 
     const { container } = renderWorkspace();
-    await screen.findByText("Local/mock providers selected");
+    await screen.findByText("Local providers selected");
     fireEvent.change(screen.getByLabelText("Cited full-text access"), { target: { value: "unpaywall" } });
 
     const categories = [
@@ -347,7 +392,7 @@ describe("interactive workspace remote state", () => {
     }));
 
     const { container } = renderWorkspace();
-    await screen.findByText("Local/mock providers selected");
+    await screen.findByText("Local providers selected");
     fireEvent.click(await screen.findByRole("button", { name: /source\.pdf/ }));
     fireEvent.click(screen.getByRole("button", { name: /Create a new run from this document/ }));
     expect(await screen.findByText("The selected provider configuration is not allowed.")).toBeTruthy();

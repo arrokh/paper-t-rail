@@ -64,7 +64,7 @@ fun reviewedExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
             "feature-hash-384-v1",
             ProviderTrustBoundary.LOCAL,
             true,
-            setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.EMBEDDING_INPUT),
+            setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.ATOMIC_CLAIMS, DataCategory.EMBEDDING_INPUT),
         ),
         ProviderRegistration(
             SYSTEM_ONE_ROLE,

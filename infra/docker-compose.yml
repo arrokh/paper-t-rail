@@ -109,6 +109,15 @@ services:
       UNPAYWALL_ENABLEMENT_REVIEWED: ${UNPAYWALL_ENABLEMENT_REVIEWED:-true}
       UNPAYWALL_RETENTION_DISCLOSURE: ${UNPAYWALL_RETENTION_DISCLOSURE:-Unpaywall menerima DOI dan alamat kontak layanan; kebijakannya menyebut data permintaan dapat disimpan hingga enam bulan setelah penggunaan layanan berakhir. Repositori/host konten yang ditemukan memiliki ketentuan retensi tersendiri.}
       UNPAYWALL_CONTACT_EMAIL: ${UNPAYWALL_CONTACT_EMAIL:-test@ptr.test}
+      OLLAMA_ENABLED: ${OLLAMA_ENABLED:-false}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      OLLAMA_DIMENSION: ${OLLAMA_DIMENSION:-768}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      OLLAMA_TRUSTED_HOSTS: ${OLLAMA_TRUSTED_HOSTS:-localhost,127.0.0.1}
+      OLLAMA_REQUEST_TIMEOUT_MILLIS: ${OLLAMA_REQUEST_TIMEOUT_MILLIS:-60000}
+      OLLAMA_EXTERNAL_ENABLEMENT_REVIEWED: ${OLLAMA_EXTERNAL_ENABLEMENT_REVIEWED:-false}
+      OLLAMA_EXTERNAL_RETENTION_DISCLOSURE: ${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:-}
       GROBID_BASE_URL: ${GROBID_BASE_URL:-http://grobid:8070}
     ports:
       - "127.0.0.1:${API_HOST_PORT:-8080}:8080"

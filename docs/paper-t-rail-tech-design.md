@@ -1724,7 +1724,7 @@ Create a new Analysis Run. For reproducibility, each run must retain the source 
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines a conservative deployment profile for implemented stages. The issue #6 runtime persists run-scoped Atomic Claims with source spans and context-scoped Citation Target links; issue #7 resolves bibliography entries conservatively; issue #8 records run-scoped legal cited-paper access and language eligibility. Recorded fixtures remain the selected defaults for scholarly metadata and open-access discovery. For local consent-flow testing, the repository configuration offers reviewed Crossref and Unpaywall options; deployments must verify current terms, configure deployment-specific disclosures/contact, or disable both adapters (see [ADR 0006](adr/0006-reviewed-provider-options-in-local-default-configuration.md)). Embeddings and System One are not invoked by the current pipeline, and their selections must not be represented as though those stages ran. The immutable run snapshot pins the selected open-access provider, a fingerprint of its request settings (including the configured Unpaywall contact address without storing the address itself), the reviewed retention disclosure, claim extraction, reference-resolution policy/threshold, and the exact external-provider consent categories. Aggregation remains `NOT_RUN` without calibrated thresholds. A stage that was not executed must not be represented as though it used a default policy.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines a conservative deployment profile for implemented stages. The issue #6 runtime persists run-scoped Atomic Claims with source spans and context-scoped Citation Target links; issue #7 resolves bibliography entries conservatively; issue #8 records run-scoped legal cited-paper access and language eligibility. Recorded fixtures remain the selected defaults for scholarly metadata and open-access discovery. For local consent-flow testing, the repository configuration offers reviewed Crossref and Unpaywall options; deployments must verify current terms, configure deployment-specific disclosures/contact, or disable both adapters (see [ADR 0006](adr/0006-reviewed-provider-options-in-local-default-configuration.md)). Embedding generation is invoked for local hybrid retrieval, using either the default feature-hash provider or configured Ollama. System One is not invoked by this pipeline, and its selection must not be represented as though it ran. The immutable run snapshot pins the selected embedding provider/profile alongside the selected open-access provider, a fingerprint of its request settings (including the configured Unpaywall contact address without storing the address itself), the reviewed retention disclosure, claim extraction, reference-resolution policy/threshold, and the exact external-provider consent categories. Aggregation remains `NOT_RUN` without calibrated thresholds. A stage that was not executed must not be represented as though it used a default policy.
 
 Conservative deployment example:
 
@@ -1760,6 +1760,15 @@ providers:
     google-vertex-ai:
       enabled: false
       model: example-embedding-model
+    ollama:
+      enabled: ${OLLAMA_ENABLED:false}
+      base-url: ${OLLAMA_BASE_URL:}
+      model: ${OLLAMA_MODEL:}
+      dimension: ${OLLAMA_DIMENSION:768}
+      api-key: ${OLLAMA_API_KEY:}  # server-side only; never returned or snapshotted
+      trusted-hosts: ${OLLAMA_TRUSTED_HOSTS:localhost,127.0.0.1}  # other hosts classify as EXTERNAL
+      external-enablement-reviewed: ${OLLAMA_EXTERNAL_ENABLEMENT_REVIEWED:false}
+      external-retention-disclosure: ${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:}
 
   scholarly-metadata:
     default: recorded-fixtures
@@ -2797,7 +2806,7 @@ Request:
 GET /api/v1/providers
 ```
 
-Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, `systemOne`, `scholarlyMetadata`, and `openAccess`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The local default runtime selects local/mock providers and recorded scholarly-metadata/OA fixtures; it also offers Crossref and Unpaywall for consent-flow testing, but they require explicit selection and fresh per-run consent.
+Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, `systemOne`, `scholarlyMetadata`, and `openAccess`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog; API endpoint URLs, credentials, and configuration fingerprints are never returned. Disabled and unreviewed providers are not offered by the UI. Ollama is offered only when its API-side endpoint/model/dimension configuration is valid; its endpoint host is `LOCAL` only when it matches the operator's trusted-host list, and other hosts are `EXTERNAL` with reviewed disclosure and per-run consent required. The local default runtime retains feature-hash embeddings; Crossref and Unpaywall require explicit selection and fresh per-run consent.
 
 ## 40.5 OpenAPI and API Documentation UIs
 
@@ -2963,7 +2972,8 @@ Create a deterministic profile key from:
 ```text
 provider
 model
-relevant configuration
+expected vector dimension
+relevant non-secret configuration (for Ollama, a fingerprint of the configured endpoint)
 ```
 
 Example:
@@ -2987,7 +2997,7 @@ same embedding configuration
 → reuse existing chunk embeddings
 ```
 
-A different model creates a different embedding profile.
+A different model, dimension, or configured Ollama endpoint creates a different embedding profile. Ollama API credentials are not included in the profile or run snapshot.
 
 ---
 
@@ -3260,7 +3270,7 @@ V1 is single-user/no-auth, but still:
 - do not bypass publisher authentication/paywalls,
 - store provenance for acquired full text,
 - require explicit consent per external provider and Analysis Run; use stable data-category identifiers (`source_document_text`, `bibliographic_metadata`, `citation_context`, `cited_paper_chunks`, `atomic_claims`, `evidence_passages`, `embedding_input`, `provider_contact_email`, `cited_paper_location`), disclose the categories each provider receives, and send only the minimum necessary content; `provider_contact_email` covers provider-required or configured contact email fields (for example, polite-pool identification); any newly introduced payload category requires matching consent,
-- default payload mapping: Crossref/Semantic Scholar/OA discovery → `bibliographic_metadata`; provider-required/configured contact email → `provider_contact_email`; OA content-host GET target URL → `cited_paper_location`; LLM claim extraction → `citation_context`; embedding services → `cited_paper_chunks` + `embedding_input`; System One → `atomic_claims` + `evidence_passages`; GROBID consolidation → `bibliographic_metadata` and remains disabled by default,
+- default payload mapping: Crossref/Semantic Scholar/OA discovery → `bibliographic_metadata`; provider-required/configured contact email → `provider_contact_email`; OA content-host GET target URL → `cited_paper_location`; LLM claim extraction → `citation_context`; embedding chunk inputs → `cited_paper_chunks` + `embedding_input`; embedding retrieval-query inputs → `atomic_claims` + `embedding_input`; System One → `atomic_claims` + `evidence_passages`; GROBID consolidation → `bibliographic_metadata` and remains disabled by default,
 - make clear that deleting local data cannot retract content already transmitted to an external provider; verify and disclose each provider's retention/deletion terms before enabling it,
 - because V1 has no authentication, bind the web/API to localhost or a trusted private network; do not expose it to an untrusted/public network until authentication and authorization are added,
 - provide a document deletion action that first tombstones the document and cancels/invalidates pending work, then removes the source file, document-scoped acquired assets, parsed text/chunks, embeddings, analysis results, Human Reviews, per-run provider-consent/configuration snapshots, and content-bearing logs; workers must check the tombstone before starting new provider calls and before committing results so pending events cannot resurrect deleted data. A provider call already in flight cannot be retracted. Retain shared cited-paper assets only while another non-deleted document/run references them; retain otherwise only a content-free deletion tombstone where needed for operational audit. This explicit deletion is the privacy exception to normal AnalysisRun immutability,
@@ -3338,7 +3348,7 @@ claim extractor:
 heuristic
 
 embedding:
-local `feature-hash-384-v1` word unigram/bigram vectors (deterministic; not a trained semantic model)
+local `feature-hash-384-v1` word unigram/bigram vectors (deterministic; not a trained semantic model); optional Ollama embeddings are disabled unless an API-side endpoint, model, and dimension are configured, and do not replace the default
 
 system one:
 mock
@@ -3404,6 +3414,8 @@ Laya adapter
 Jev adapter
 Embedding adapters
 ```
+
+The Ollama embedding contract uses a controlled Ollama-compatible test server and covers successful embedding, unavailable endpoint, response-body timeout and size limits, malformed response, dimension mismatch, and the external per-run consent gate. It must never silently fall back to another provider.
 
 Use recorded/mock responses. In the private-GROBID implementation, the adapter contract asserts that both external consolidation options are explicitly disabled on every request. Claim-extraction behavior tests cover qualifier preservation, source spans, and conservative handling of ambiguous negation; database integration tests enforce same-context target links and source-span uniqueness. A future consent-enabled external-consolidation path must be a separate, explicitly reviewed change with its own consent and contract tests.
 
