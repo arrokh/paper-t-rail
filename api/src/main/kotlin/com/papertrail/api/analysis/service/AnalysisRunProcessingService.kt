@@ -77,7 +77,7 @@ class AnalysisRunProcessingService(
         if (sha256Hex(content) != run.sourceHash) {
             throw IllegalStateException("Stored Source Document failed its SHA-256 integrity check.")
         }
-        val verificationPipelineConfigured = verificationPipelineConfigured(event.analysisRunId)
+        val evidenceRetrievalConfigured = evidenceRetrievalConfigured(event.analysisRunId)
 
         val shouldParse = transactionTemplate.execute {
             val updated = jdbc.update(
@@ -123,7 +123,7 @@ class AnalysisRunProcessingService(
             try {
                 transactionTemplate.executeWithoutResult {
                     parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, extractedClaims)
-                    if (verificationPipelineConfigured) {
+                    if (evidenceRetrievalConfigured) {
                         claimReferenceVerificationRepository.initializeExpectedPairs(event.analysisRunId)
                     }
                     val updated = jdbc.update(
@@ -233,8 +233,19 @@ class AnalysisRunProcessingService(
         }
     }
 
-    private fun verificationPipelineConfigured(analysisRunId: UUID): Boolean = jdbc.queryForObject(
-        "SELECT analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot) FROM analysis_runs WHERE id = ?",
+    private fun evidenceRetrievalConfigured(analysisRunId: UUID): Boolean = jdbc.queryForObject(
+        """
+        SELECT COALESCE(
+            jsonb_typeof(configuration_snapshot -> 'openAccess') = 'object'
+            AND jsonb_typeof(configuration_snapshot -> 'referenceResolution') = 'object'
+            AND configuration_snapshot #>> '{referenceResolution,executionStatus}' <> 'NOT_RUN'
+            AND jsonb_typeof(configuration_snapshot -> 'embedding') = 'object'
+            AND jsonb_typeof(configuration_snapshot -> 'retrieval') = 'object',
+            FALSE
+        )
+          FROM analysis_runs
+         WHERE id = ?
+        """.trimIndent(),
         Boolean::class.java,
         analysisRunId,
     ) == true

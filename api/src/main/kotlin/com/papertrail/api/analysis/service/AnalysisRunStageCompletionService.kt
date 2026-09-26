@@ -134,7 +134,7 @@ class AnalysisRunStageCompletionService(
             verificationPipelineConfigured && warning -> "The Evidence Coverage Report is ready, but ${verificationCounts.incomplete} Claim–Reference Verification pair(s) are incomplete after processing failures."
             verificationPipelineConfigured -> "The Evidence Coverage Report is complete for ${verificationCounts.total} Claim–Reference Verification pair(s)."
             warning -> "Parsed structure is ready, but $failedTaskCount reference-resolution, cited-paper access, or Evidence Passage indexing task(s) failed; semantic verification has not run."
-            else -> "Parsed structure and reference resolution are ready; semantic verification was not configured for this legacy Analysis Run."
+            else -> "Parsed structure and reference resolution are ready; semantic verification was not configured for this Analysis Run."
         }
         val updated = jdbc.update(
             """

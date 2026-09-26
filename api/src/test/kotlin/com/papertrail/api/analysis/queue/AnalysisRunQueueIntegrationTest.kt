@@ -7,6 +7,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.papertrail.api.analysis.configuration.AggregationPolicySnapshot
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
@@ -37,7 +38,10 @@ import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerific
 import com.papertrail.api.evidence.verification.repository.JdbcClaimReferenceVerificationRepository
 import com.papertrail.api.evidence.verification.repository.EvidenceJudgementRepository
 import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
+import com.papertrail.api.evidence.embedding.EmbeddingProvider
+import com.papertrail.api.evidence.embedding.EmbeddingRequestContext
 import com.papertrail.api.evidence.embedding.FeatureHashEmbeddingProvider
+import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
 import com.papertrail.api.evidence.retrieval.PostgresHybridEvidenceRetriever
 import com.papertrail.api.evidence.retrieval.ReciprocalRankFusion
@@ -69,6 +73,7 @@ import com.papertrail.api.citation.parsing.ParsedDocumentRepository
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
+import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.scholarly.references.client.BibliographyReference
@@ -279,7 +284,7 @@ class AnalysisRunQueueIntegrationTest {
             "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
             String::class.java,
             created.analysisRunId,
-        )!!.contains("legacy Analysis Run"))
+        )!!.contains("semantic verification was not configured"))
     }
 
     @Test
@@ -611,6 +616,77 @@ class AnalysisRunQueueIntegrationTest {
         assertTrue(reference.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
         assertTrue(reference.verificationOutcomes.all { it.verificationScope == "NONE" })
         assertTrue(reference.verificationOutcomes.all { it.terminalReason == "LANGUAGE_UNSUPPORTED" })
+    }
+
+    @Test
+    fun `indexes eligible full text with Ollama while semantic aggregation remains disabled`() {
+        val ollamaSettings = OllamaEmbeddingSettings(
+            enabled = true,
+            baseUrl = "http://ollama:11434",
+            modelId = "nomic-embed-text",
+            dimension = 768,
+            trustedHosts = setOf("ollama"),
+        )
+        val providerCatalog = ProviderCatalog.safeDefaults(ollamaEmbeddingSettings = ollamaSettings)
+        val configuration = configurationFactory(providerCatalog)
+            .from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.PROVIDER_ID))
+            .copy(aggregation = AggregationPolicySnapshot("NOT_RUN", null, null, null))
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val embeddingCategories = mutableListOf<DataCategory>()
+        val ollamaProvider = object : EmbeddingProvider {
+            override val providerId = OllamaEmbeddingSettings.PROVIDER_ID
+            override val modelId = "nomic-embed-text"
+            override val version = OllamaEmbeddingSettings.VERSION
+            override val dimension = 768
+
+            override fun embed(text: String, context: EmbeddingRequestContext): FloatArray {
+                embeddingCategories += context.inputCategory
+                return FloatArray(dimension).apply { this[0] = 1.0f }
+            }
+        }
+        val resolutionService = referenceResolutionService()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler(resolutionService = resolutionService).handle(documentEvent)
+
+        processReferenceResolutionEvents(
+            analysisRunId = created.analysisRunId,
+            resolutionService = resolutionService,
+            embeddingProviders = listOf(ollamaProvider),
+        )
+
+        val report = resolutionService.report(created.analysisRunId)!!
+        val reference = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }
+        val retrievalProfile = requireNotNull(reference.citedPaperAccess?.evidenceIndexing).retrievalProfile
+        assertEquals("PARSED", report.runStatus)
+        assertEquals("NOT_RUN", report.evidenceCoverage.executionStatus)
+        assertEquals("COMPLETED", reference.citedPaperAccess?.evidenceIndexing?.status)
+        assertEquals("ollama", retrievalProfile.embeddingProvider)
+        assertEquals("nomic-embed-text", retrievalProfile.embeddingModel)
+        assertEquals(768, retrievalProfile.embeddingDimension)
+        assertTrue(embeddingCategories.contains(DataCategory.CITED_PAPER_CHUNKS))
+        assertTrue(embeddingCategories.contains(DataCategory.ATOMIC_CLAIMS))
+        assertTrue(reference.verificationOutcomes.flatMap { it.evidencePassages }.isNotEmpty())
+        assertTrue(reference.verificationOutcomes.flatMap { it.evidencePassages }.all { it.evidenceJudgement == null })
+        assertEquals(
+            0L,
+            jdbc.queryForObject(
+                "SELECT count(*) FROM evidence_judgements WHERE analysis_run_id = ?",
+                Long::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertTrue(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM paper_chunk_embeddings WHERE analysis_run_id = ? AND provider_id = 'ollama' AND model_id = 'nomic-embed-text' AND dimension = 768",
+                Long::class.java,
+                created.analysisRunId,
+            )!! > 0,
+        )
     }
 
     @Test
@@ -1785,6 +1861,7 @@ class AnalysisRunQueueIntegrationTest {
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
         parser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
         systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
+        embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
     ): CitedPaperIndexingRequestedHandler {
         val repository = EvidenceRetrievalRepository(
             jdbc,
@@ -1796,7 +1873,7 @@ class AnalysisRunQueueIntegrationTest {
             objectStore,
             parser,
             SectionAwareEvidenceChunker(),
-            listOf(FeatureHashEmbeddingProvider()),
+            embeddingProviders,
             repository,
         )
         return CitedPaperIndexingRequestedHandler(
@@ -1836,6 +1913,7 @@ class AnalysisRunQueueIntegrationTest {
         languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
         citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
+        embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -1845,7 +1923,14 @@ class AnalysisRunQueueIntegrationTest {
         )
         val handler = referenceResolutionEventHandler(resolutionService)
         events.forEach(handler::handle)
-        processCitedPaperAcquisitionEvents(analysisRunId, providerFactories, languageDetector, citedPaperParser, resolutionService)
+        processCitedPaperAcquisitionEvents(
+            analysisRunId,
+            providerFactories,
+            languageDetector,
+            citedPaperParser,
+            resolutionService,
+            embeddingProviders,
+        )
     }
 
     private fun processCitedPaperAcquisitionEvents(
@@ -1854,6 +1939,7 @@ class AnalysisRunQueueIntegrationTest {
         languageDetector: DocumentLanguageDetector,
         citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
+        embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -1873,7 +1959,11 @@ class AnalysisRunQueueIntegrationTest {
             analysisRunId,
             CITED_PAPER_INDEXING_REQUESTED,
         )
-        val indexingHandler = citedPaperIndexingEventHandler(resolutionService = resolutionService, parser = citedPaperParser)
+        val indexingHandler = citedPaperIndexingEventHandler(
+            resolutionService = resolutionService,
+            parser = citedPaperParser,
+            embeddingProviders = embeddingProviders,
+        )
         indexingEvents.forEach(indexingHandler::handle)
     }
 
