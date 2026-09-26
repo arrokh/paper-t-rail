@@ -8,7 +8,7 @@ import {
   useUploadAnalysisRun,
 } from "@/features/analysis-runs/queries/analysis-run-queries";
 import { useProviderConfiguration } from "@/features/providers/provider-configuration-context";
-import type { ProviderRole } from "@/features/providers/provider-configuration";
+import { selectableProviderOptions } from "@/features/providers/provider-configuration";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -49,9 +49,9 @@ export function ProviderConfigurationCard({
     selections,
     consentRequirements,
     approvedCategories,
+    configurationReady,
     selectProvider,
     approveCategory,
-    resetApprovedCategories,
     createConfiguration,
   } = useProviderConfiguration();
   const uploadMutation = useUploadAnalysisRun();
@@ -85,7 +85,6 @@ export function ProviderConfigurationCard({
         setSelectedFileName(null);
         onRunCreated(created.analysisRunId);
       },
-      onSettled: resetApprovedCategories,
     });
   }
 
@@ -118,9 +117,9 @@ export function ProviderConfigurationCard({
                     className="w-full [&_[data-slot=native-select]]:h-11"
                     value={selections[selectionField]}
                     disabled={busy || !directory}
-                    onChange={(event) => selectProvider(role as ProviderRole, event.target.value)}
+                    onChange={(event) => selectProvider(role, event.target.value)}
                   >
-                    {directory ? directory.providers[role]?.map((provider) => (
+                    {directory ? selectableProviderOptions(directory, role).map((provider) => (
                       <NativeSelectOption key={provider.providerId} value={provider.providerId}>
                         {provider.displayName}
                       </NativeSelectOption>
@@ -229,7 +228,7 @@ export function ProviderConfigurationCard({
             <FieldDescription id="source-file-description">English PDFs with selectable text only.</FieldDescription>
           </Field>
 
-          <Button type="submit" size="lg" className="min-h-11 w-full justify-between" disabled={busy || !directory}>
+          <Button type="submit" size="lg" className="min-h-11 w-full justify-between" disabled={busy || !configurationReady}>
             <span className="inline-flex items-center gap-2">
               {uploadMutation.isPending && <Spinner aria-hidden="true" />}
               {uploadMutation.isPending ? "Starting run…" : "Upload & start Analysis Run"}

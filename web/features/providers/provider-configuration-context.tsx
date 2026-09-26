@@ -5,7 +5,10 @@ import {
   availableProviderSelections,
   consentRequirements,
   createRunConfiguration,
-  missingConsents,
+  DEFAULT_PROVIDER_SELECTIONS,
+  isRunConfigurationReady,
+  retainRequiredApprovals,
+  selectableProviderOptions,
   type ProviderDirectory,
   type ProviderRole,
   type ProviderSelections,
@@ -13,11 +16,9 @@ import {
 import { useProviderDirectory } from "./provider-directory-query.ts";
 import type { AnalysisRunConfiguration } from "../analysis-runs/types.ts";
 
-const DEFAULT_SELECTIONS: ProviderSelections = {
-  claimExtractorProvider: "heuristic",
-  embeddingProvider: "local",
-  systemOneProvider: "mock",
-  scholarlyMetadataProvider: "recorded-fixtures",
+type ProviderConfigurationDraft = {
+  selections: ProviderSelections;
+  approvedCategories: Record<string, string[]>;
 };
 
 type ProviderConfigurationContextValue = {
@@ -27,9 +28,9 @@ type ProviderConfigurationContextValue = {
   selections: ProviderSelections;
   consentRequirements: ReturnType<typeof consentRequirements>;
   approvedCategories: Record<string, string[]>;
+  configurationReady: boolean;
   selectProvider: (role: ProviderRole, providerId: string) => void;
   approveCategory: (providerId: string, category: string, approved: boolean) => void;
-  resetApprovedCategories: () => void;
   createConfiguration: () => AnalysisRunConfiguration;
 };
 
@@ -38,44 +39,61 @@ const ProviderConfigurationContext = createContext<ProviderConfigurationContextV
 export function ProviderConfigurationProvider({ children }: { children: ReactNode }) {
   const providerQuery = useProviderDirectory();
   const directory = providerQuery.data ?? null;
-  const [selectionsDraft, setSelectionsDraft] = useState(DEFAULT_SELECTIONS);
-  const [approvedCategories, setApprovedCategories] = useState<Record<string, string[]>>({});
+  const [draft, setDraft] = useState<ProviderConfigurationDraft>(() => ({
+    selections: { ...DEFAULT_PROVIDER_SELECTIONS },
+    approvedCategories: {},
+  }));
   const selections = useMemo(
-    () => directory ? availableProviderSelections(directory, selectionsDraft) : selectionsDraft,
-    [directory, selectionsDraft],
+    () => directory ? availableProviderSelections(directory, draft.selections) : draft.selections,
+    [directory, draft.selections],
   );
   const requirements = useMemo(
     () => directory ? consentRequirements(directory, selections) : [],
     [directory, selections],
   );
+  const configurationReady = isRunConfigurationReady(directory, selections, draft.approvedCategories);
 
   const selectProvider = useCallback((role: ProviderRole, providerId: string) => {
-    setSelectionsDraft((current) => ({
-      ...current,
-      claimExtractorProvider: role === "claimExtractor" ? providerId : current.claimExtractorProvider,
-      embeddingProvider: role === "embedding" ? providerId : current.embeddingProvider,
-      systemOneProvider: role === "systemOne" ? providerId : current.systemOneProvider,
-      scholarlyMetadataProvider: role === "scholarlyMetadata" ? providerId : current.scholarlyMetadataProvider,
-    }));
-  }, []);
+    if (!directory || !selectableProviderOptions(directory, role).some((provider) => provider.providerId === providerId)) return;
+
+    setDraft((current) => {
+      const currentSelections = availableProviderSelections(directory, current.selections);
+      const nextSelections = {
+        ...currentSelections,
+        claimExtractorProvider: role === "claimExtractor" ? providerId : currentSelections.claimExtractorProvider,
+        embeddingProvider: role === "embedding" ? providerId : currentSelections.embeddingProvider,
+        systemOneProvider: role === "systemOne" ? providerId : currentSelections.systemOneProvider,
+        scholarlyMetadataProvider: role === "scholarlyMetadata" ? providerId : currentSelections.scholarlyMetadataProvider,
+      };
+      const nextRequirements = consentRequirements(directory, nextSelections);
+      return {
+        selections: nextSelections,
+        approvedCategories: retainRequiredApprovals(nextRequirements, current.approvedCategories),
+      };
+    });
+  }, [directory]);
 
   const approveCategory = useCallback((providerId: string, category: string, approved: boolean) => {
-    setApprovedCategories((current) => {
-      const existing = new Set(current[providerId] ?? []);
+    if (!requirements.some((provider) => provider.providerId === providerId && provider.dataCategories.includes(category))) return;
+
+    setDraft((current) => {
+      const existing = new Set(current.approvedCategories[providerId] ?? []);
       if (approved) existing.add(category);
       else existing.delete(category);
-      return { ...current, [providerId]: [...existing] };
+      const nextApprovals = { ...current.approvedCategories };
+      if (existing.size > 0) nextApprovals[providerId] = [...existing];
+      else delete nextApprovals[providerId];
+      return { ...current, approvedCategories: nextApprovals };
     });
-  }, []);
-  const resetApprovedCategories = useCallback(() => setApprovedCategories({}), []);
+  }, [requirements]);
 
   const createConfiguration = useCallback((): AnalysisRunConfiguration => {
     if (!directory) throw new Error("Available providers have not loaded yet.");
-    if (missingConsents(requirements, approvedCategories).length > 0) {
-      throw new Error("Approve every disclosed data category for each selected external provider, or choose a local provider.");
-    }
-    return createRunConfiguration(selections, requirements, approvedCategories);
-  }, [directory, requirements, approvedCategories, selections]);
+
+    const configuration = createRunConfiguration(directory, selections, draft.approvedCategories);
+    setDraft((current) => ({ ...current, approvedCategories: {} }));
+    return configuration;
+  }, [directory, selections, draft.approvedCategories]);
 
   const value = useMemo<ProviderConfigurationContextValue>(() => ({
     directory,
@@ -87,12 +105,12 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
         : null,
     selections,
     consentRequirements: requirements,
-    approvedCategories,
+    approvedCategories: draft.approvedCategories,
+    configurationReady,
     selectProvider,
     approveCategory,
-    resetApprovedCategories,
     createConfiguration,
-  }), [directory, providerQuery.isPending, providerQuery.error, selections, requirements, approvedCategories, selectProvider, approveCategory, resetApprovedCategories, createConfiguration]);
+  }), [directory, providerQuery.isPending, providerQuery.error, selections, requirements, draft.approvedCategories, configurationReady, selectProvider, approveCategory, createConfiguration]);
 
   return <ProviderConfigurationContext.Provider value={value}>{children}</ProviderConfigurationContext.Provider>;
 }

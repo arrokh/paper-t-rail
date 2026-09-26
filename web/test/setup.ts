@@ -8,6 +8,7 @@ class TestResizeObserver implements ResizeObserver {
 }
 
 globalThis.ResizeObserver = TestResizeObserver;
+globalThis.PointerEvent ??= MouseEvent as unknown as typeof PointerEvent;
 window.requestAnimationFrame = (callback) => window.setTimeout(() => callback(performance.now()), 0);
 window.cancelAnimationFrame = (handle) => window.clearTimeout(handle);
 window.matchMedia = (query) => ({

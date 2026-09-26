@@ -2787,6 +2787,8 @@ Minimum screens:
 - before a run uses an external provider, disclose the provider and actual data categories and obtain per-run, per-provider consent.
 - provide a document deletion control with confirmation explaining local deletion scope, shared cited-paper asset reuse, and the limit on retracting data already sent externally.
 
+The provider feature keeps the enabled, classified provider directory as TanStack Query remote data and keeps draft role selections and category approvals in local, in-memory feature state. It reconciles defaults against available choices, derives each selected external provider's deduplicated disclosed-category requirements, and is the only place that decides whether those approvals form a valid Analysis Run configuration. Changing a selection recalculates requirements and discards approvals that are no longer required. Creating a valid configuration for submission consumes the draft approvals; each later run, including re-analysis or a retry, requires fresh explicit approval for every required category. Consent is never persisted in browser storage or inferred from a previous Analysis Run, in accordance with [ADR 0003](adr/0003-explicit-provider-consent-and-data-retention.md).
+
 ## 41.2 Analysis Progress
 
 The current workspace uses three cards: **01 Source Document** on the left and **02 Persisted Progress** on the right, with **03 Parsed Document** full-width below them; narrow screens stack the cards. The run list uses cursor pagination with 25 runs per page in `created_at DESC, id DESC` order. Selecting a run scrolls to its details. The details card has tabs for Run Progress and Parsed Document plus a next/previous arrow control; the Parsed Document tab and forward arrow are unavailable until the run is parsed.
