@@ -426,4 +426,17 @@ class OpenApiDocumentationTest {
             .andExpect(status().isOk)
             .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
     }
+
+    @Test
+    fun `Scalar API reference is available and uses the generated OpenAPI document`() {
+        val response = mockMvc.perform(get("/scalar"))
+            .andExpect(status().isOk)
+            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+            .andReturn()
+            .response
+            .contentAsString
+
+        assertTrue(response.contains("/v3/api-docs"))
+        assertTrue(response.contains("Paper T-Rail API Reference"))
+    }
 }
