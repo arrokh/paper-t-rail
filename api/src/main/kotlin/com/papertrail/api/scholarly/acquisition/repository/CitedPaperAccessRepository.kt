@@ -1,13 +1,16 @@
 package com.papertrail.api.scholarly.acquisition.repository
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.evidence.report.EvidenceIndexingReport
+import com.papertrail.api.evidence.report.EvidencePassageReport
+import com.papertrail.api.evidence.repository.EvidenceReportRepository
+import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessDecision
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessReason
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
 import com.papertrail.api.scholarly.acquisition.report.CitedReferenceVerificationOutcome
-import com.papertrail.api.infrastructure.crypto.sha256Hex
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
@@ -21,6 +24,7 @@ class CitedPaperAccessRepository(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
     private val transactionTemplate: TransactionTemplate,
+    private val evidenceReportRepository: EvidenceReportRepository,
 ) {
     fun accessExists(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM cited_paper_access WHERE analysis_run_id = ? AND bibliography_entry_id = ?)",
@@ -81,8 +85,8 @@ class CitedPaperAccessRepository(
                     analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status,
                     provider_id, access_reason, metadata_available, abstract_available, source_url, license_identifier,
                     location_version, location_host_type, discovered_at, object_key, content_sha256,
-                    language, language_detector_version
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    content_media_type, language, language_detector_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
                 """.trimIndent(),
                 analysisRunId,
@@ -100,6 +104,7 @@ class CitedPaperAccessRepository(
                 Timestamp.from(discoveredAt),
                 objectKey,
                 contentHash,
+                fullText?.mediaType?.substringBefore(';')?.trim()?.lowercase(),
                 language,
                 languageDetectorVersion,
             )
@@ -141,38 +146,68 @@ class CitedPaperAccessRepository(
         objectKey,
     ) == true
 
-    fun reportEntries(analysisRunId: UUID): Map<String, CitedPaperAccessReport> = jdbc.query(
-        """
-        SELECT b.local_reference_key, a.access_status, a.access_reason, a.provider_id, a.source_url, a.license_identifier,
-               a.location_version, a.location_host_type, a.discovered_at, a.object_key, a.content_sha256,
-               a.language, a.language_detector_version,
-               COALESCE(
-                   jsonb_agg(jsonb_build_object(
-                       'atomicClaimId', verification.atomic_claim_id,
-                       'finalStatus', verification.final_status,
-                       'verificationScope', verification.verification_scope,
-                       'terminalReason', verification.terminal_reason
-                   ) ORDER BY verification.atomic_claim_id) FILTER (WHERE verification.id IS NOT NULL),
-                   '[]'::jsonb
-               )::text AS verification_outcomes
-          FROM cited_paper_access a
-          JOIN bibliography_entries b
-            ON b.analysis_run_id = a.analysis_run_id AND b.id = a.bibliography_entry_id
-          LEFT JOIN claim_paper_verifications verification
-            ON verification.analysis_run_id = a.analysis_run_id
-           AND verification.bibliography_entry_id = a.bibliography_entry_id
-         WHERE a.analysis_run_id = ?
-         GROUP BY b.local_reference_key, a.access_status, a.access_reason, a.provider_id, a.source_url, a.license_identifier,
-                  a.location_version, a.location_host_type, a.discovered_at, a.object_key, a.content_sha256,
-                  a.language, a.language_detector_version
-        """.trimIndent(),
-        { rs, _ -> rs.toAccessReportEntry() },
-        analysisRunId,
-    ).associate { it.localReferenceKey to it.report }
+    fun reportEntries(analysisRunId: UUID): Map<String, CitedPaperAccessReport> {
+        val indexingByReference = evidenceReportRepository.indexingReportsByReference(analysisRunId)
+        val passagesByVerification = evidenceReportRepository.passagesByVerification(analysisRunId)
+        val outcomesByReference = verificationOutcomes(analysisRunId, passagesByVerification)
+        return jdbc.query(
+            """
+            SELECT b.id AS bibliography_entry_id, b.local_reference_key, a.access_status, a.access_reason,
+                   a.provider_id, a.source_url, a.license_identifier, a.location_version, a.location_host_type,
+                   a.discovered_at, a.content_sha256, a.language, a.language_detector_version
+              FROM cited_paper_access a
+              JOIN bibliography_entries b
+                ON b.analysis_run_id = a.analysis_run_id AND b.id = a.bibliography_entry_id
+             WHERE a.analysis_run_id = ?
+             ORDER BY b.entry_order
+            """.trimIndent(),
+            { rs, _ -> rs.toAccessReportEntry(outcomesByReference, indexingByReference) },
+            analysisRunId,
+        ).associate { it.localReferenceKey to it.report }
+    }
 
-    private fun ResultSet.toAccessReportEntry(): AccessReportEntry {
-        val outcomeType = objectMapper.typeFactory.constructCollectionType(List::class.java, CitedReferenceVerificationOutcome::class.java)
-        val outcomes = objectMapper.readValue<List<CitedReferenceVerificationOutcome>>(getString("verification_outcomes"), outcomeType)
+    private fun verificationOutcomes(
+        analysisRunId: UUID,
+        passagesByVerification: Map<UUID, List<EvidencePassageReport>>,
+    ): Map<UUID, List<CitedReferenceVerificationOutcome>> = jdbc.query(
+        """
+        SELECT verification.id AS verification_id,
+               verification.bibliography_entry_id,
+               verification.atomic_claim_id,
+               claim.claim_text,
+               verification.final_status,
+               verification.verification_scope,
+               verification.terminal_reason
+          FROM claim_paper_verifications verification
+          JOIN atomic_claims claim
+            ON claim.analysis_run_id = verification.analysis_run_id
+           AND claim.id = verification.atomic_claim_id
+         WHERE verification.analysis_run_id = ?
+         ORDER BY claim.source_start_offset, verification.atomic_claim_id
+        """.trimIndent(),
+        { rs, _ ->
+            val verificationId = rs.getObject("verification_id", UUID::class.java)
+            VerificationOutcomeRow(
+                bibliographyEntryId = rs.getObject("bibliography_entry_id", UUID::class.java),
+                outcome = CitedReferenceVerificationOutcome(
+                    atomicClaimId = rs.getObject("atomic_claim_id", UUID::class.java),
+                    claimText = rs.getString("claim_text"),
+                    finalStatus = rs.getString("final_status"),
+                    verificationScope = rs.getString("verification_scope"),
+                    terminalReason = rs.getString("terminal_reason"),
+                    evidencePassages = passagesByVerification[verificationId].orEmpty(),
+                ),
+            )
+        },
+        analysisRunId,
+    ).groupBy(VerificationOutcomeRow::bibliographyEntryId)
+        .mapValues { (_, rows) -> rows.map(VerificationOutcomeRow::outcome) }
+
+    private fun ResultSet.toAccessReportEntry(
+        outcomesByReference: Map<UUID, List<CitedReferenceVerificationOutcome>>,
+        indexingByReference: Map<UUID, EvidenceIndexingReport>,
+    ): AccessReportEntry {
+        val bibliographyEntryId = getObject("bibliography_entry_id", UUID::class.java)
         return AccessReportEntry(
             localReferenceKey = getString("local_reference_key"),
             report = CitedPaperAccessReport(
@@ -187,11 +222,16 @@ class CitedPaperAccessRepository(
                 contentSha256 = getString("content_sha256"),
                 language = getString("language"),
                 languageDetectorVersion = getString("language_detector_version"),
-                verificationOutcomes = outcomes,
+                verificationOutcomes = outcomesByReference[bibliographyEntryId].orEmpty(),
+                evidenceIndexing = indexingByReference[bibliographyEntryId],
             ),
         )
     }
 
+    private data class VerificationOutcomeRow(
+        val bibliographyEntryId: UUID,
+        val outcome: CitedReferenceVerificationOutcome,
+    )
 
     private data class AccessReportEntry(
         val localReferenceKey: String,

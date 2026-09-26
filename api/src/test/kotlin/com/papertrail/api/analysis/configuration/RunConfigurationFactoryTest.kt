@@ -39,7 +39,14 @@ class RunConfigurationFactoryTest {
         assertEquals("LOCAL", snapshot.claimExtractor.trustBoundary)
         assertEquals(listOf("citation_context"), snapshot.claimExtractor.dataCategories)
         assertEquals("local", snapshot.embedding.provider)
+        assertEquals("feature-hash-384-v1", snapshot.embedding.model)
         assertEquals(listOf("cited_paper_chunks", "embedding_input"), snapshot.embedding.dataCategories)
+        assertEquals("postgres-hybrid-rrf-v1", snapshot.retrieval.profileId)
+        assertEquals(10, snapshot.retrieval.vectorCandidateLimit)
+        assertEquals(10, snapshot.retrieval.lexicalCandidateLimit)
+        assertEquals(5, snapshot.retrieval.finalCandidateLimit)
+        assertEquals(60, snapshot.retrieval.reciprocalRankFusionConstant)
+        assertTrue(snapshot.retrieval.embeddingProfileHash.matches(Regex("[0-9a-f]{64}")))
         assertEquals("mock", snapshot.systemOne.provider)
         assertEquals(listOf("atomic_claims", "evidence_passages"), snapshot.systemOne.dataCategories)
         assertEquals("grobid", snapshot.sourceParser.provider)
@@ -61,6 +68,23 @@ class RunConfigurationFactoryTest {
         assertEquals(0.9, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"].has("thresholds"))
         assertTrue(json["aggregation"]["thresholds"].isNull)
+    }
+
+    @Test
+    fun `pins deployment-configured retrieval parameters into the immutable run snapshot`() {
+        val configured = factoryFor(
+            retrievalProfileId = "postgres-hybrid-rrf-v2",
+            vectorCandidateLimit = 12,
+            lexicalCandidateLimit = 8,
+            finalCandidateLimit = 4,
+            reciprocalRankFusionConstant = 30,
+        ).from(RunConfigurationRequest())
+
+        assertEquals("postgres-hybrid-rrf-v2", configured.retrieval.profileId)
+        assertEquals(12, configured.retrieval.vectorCandidateLimit)
+        assertEquals(8, configured.retrieval.lexicalCandidateLimit)
+        assertEquals(4, configured.retrieval.finalCandidateLimit)
+        assertEquals(30, configured.retrieval.reciprocalRankFusionConstant)
     }
 
     @Test
@@ -291,13 +315,24 @@ class RunConfigurationFactoryTest {
         categories.associateWith { jacksonObjectMapper().readTree("\"${it.id} content\"") },
     )
 
-    private fun factoryFor(): RunConfigurationFactory = RunConfigurationFactory(
+    private fun factoryFor(
+        retrievalProfileId: String = "postgres-hybrid-rrf-v1",
+        vectorCandidateLimit: Int = 10,
+        lexicalCandidateLimit: Int = 10,
+        finalCandidateLimit: Int = 5,
+        reciprocalRankFusionConstant: Int = 60,
+    ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
         providerCatalog = reviewedExternalProviderCatalog(),
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
         languageDetectorVersion = "0.6",
         limits = ValidationLimitsSnapshot(52_428_800, 500, 5_000_000, 100_000, 100, 0.65),
+        retrievalProfileId = retrievalProfileId,
+        vectorCandidateLimit = vectorCandidateLimit,
+        lexicalCandidateLimit = lexicalCandidateLimit,
+        finalCandidateLimit = finalCandidateLimit,
+        reciprocalRankFusionConstant = reciprocalRankFusionConstant,
     )
 
     @Test

@@ -12,6 +12,7 @@ import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
 import com.papertrail.api.infrastructure.providers.OPEN_ACCESS_ROLE
 import com.papertrail.api.infrastructure.providers.SCHOLARLY_METADATA_ROLE
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
+import com.papertrail.api.evidence.domain.EmbeddingProfile
 import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
 
 class RunConfigurationFactory(
@@ -23,10 +24,22 @@ class RunConfigurationFactory(
     private val limits: ValidationLimitsSnapshot,
     private val referenceResolutionPolicyVersion: String = ScholarlyMetadataMatcher.POLICY_VERSION,
     private val referenceResolutionConfidenceThreshold: Double = 0.9,
+    private val retrievalProfileId: String = "postgres-hybrid-rrf-v1",
+    private val vectorCandidateLimit: Int = 10,
+    private val lexicalCandidateLimit: Int = 10,
+    private val finalCandidateLimit: Int = 5,
+    private val reciprocalRankFusionConstant: Int = 60,
 ) {
     init {
         require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
         require(referenceResolutionConfidenceThreshold in 0.0..1.0) { "Reference resolution threshold must be between zero and one." }
+        require(retrievalProfileId.isNotBlank() && retrievalProfileId.length <= 80) {
+            "Retrieval profile ID must contain between one and 80 characters."
+        }
+        require(vectorCandidateLimit > 0 && lexicalCandidateLimit > 0 && finalCandidateLimit > 0) {
+            "Evidence retrieval candidate limits must be positive."
+        }
+        require(reciprocalRankFusionConstant > 0) { "Reciprocal-rank fusion constant must be positive." }
     }
 
     fun parseRequest(node: JsonNode?): RunConfigurationRequest {
@@ -88,6 +101,8 @@ class RunConfigurationFactory(
         require(suppliedConsents.keys == requiredConsents.keys) {
             "External provider consent must match the external providers selected for this Analysis Run."
         }
+        val embeddingSelection = selected[1].toSelection()
+        val embeddingProfile = EmbeddingProfile.from(embeddingSelection)
         val consentSnapshots = requiredConsents.map { (providerId, requiredCategories) ->
             val consent = suppliedConsents.getValue(providerId)
             val suppliedCategories = consent.dataCategories.map { id ->
@@ -104,7 +119,15 @@ class RunConfigurationFactory(
         }.sortedBy(ExternalProviderConsentSnapshot::providerId)
         return AnalysisConfigurationSnapshot(
             claimExtractor = selected[0].toSelection(),
-            embedding = selected[1].toSelection(),
+            embedding = embeddingSelection,
+            retrieval = RetrievalConfigurationSnapshot(
+                profileId = retrievalProfileId,
+                vectorCandidateLimit = vectorCandidateLimit,
+                lexicalCandidateLimit = lexicalCandidateLimit,
+                finalCandidateLimit = finalCandidateLimit,
+                reciprocalRankFusionConstant = reciprocalRankFusionConstant,
+                embeddingProfileHash = embeddingProfile.profileHash,
+            ),
             systemOne = selected[2].toSelection(),
             sourceParser = ProviderSelection(parserId, parserVersion),
             languageDetector = ProviderSelection("optimaize", languageDetectorVersion),

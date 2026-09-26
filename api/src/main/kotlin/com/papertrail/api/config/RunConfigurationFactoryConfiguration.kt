@@ -45,6 +45,11 @@ class RunConfigurationFactoryConfiguration {
         @Value("\${paper-trail.analysis.parser-version}") parserVersion: String,
         @Value("\${paper-trail.validation.language-detector-version}") languageDetectorVersion: String,
         @Value("\${paper-trail.analysis.reference-resolution-confidence-threshold}") referenceResolutionConfidenceThreshold: Double,
+        @Value("\${paper-trail.analysis.retrieval.profile-id}") retrievalProfileId: String,
+        @Value("\${paper-trail.analysis.retrieval.vector-candidates}") vectorCandidateLimit: Int,
+        @Value("\${paper-trail.analysis.retrieval.lexical-candidates}") lexicalCandidateLimit: Int,
+        @Value("\${paper-trail.analysis.retrieval.final-candidates}") finalCandidateLimit: Int,
+        @Value("\${paper-trail.analysis.retrieval.rrf-constant}") reciprocalRankFusionConstant: Int,
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = objectMapper,
         providerCatalog = providerCatalog,
@@ -60,5 +65,10 @@ class RunConfigurationFactoryConfiguration {
             minimumLanguageConfidence = validator.limits.minimumLanguageConfidence,
         ),
         referenceResolutionConfidenceThreshold = referenceResolutionConfidenceThreshold,
+        retrievalProfileId = retrievalProfileId,
+        vectorCandidateLimit = vectorCandidateLimit,
+        lexicalCandidateLimit = lexicalCandidateLimit,
+        finalCandidateLimit = finalCandidateLimit,
+        reciprocalRankFusionConstant = reciprocalRankFusionConstant,
     )
 }

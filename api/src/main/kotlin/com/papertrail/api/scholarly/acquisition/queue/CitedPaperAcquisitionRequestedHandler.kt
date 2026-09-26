@@ -3,6 +3,7 @@ package com.papertrail.api.scholarly.acquisition.queue
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
+import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
 import org.springframework.jdbc.core.JdbcTemplate
@@ -18,6 +19,7 @@ class CitedPaperAcquisitionRequestedHandler(
     private val transactionTemplate: TransactionTemplate,
     private val objectMapper: ObjectMapper,
     private val citedPaperAccessService: CitedPaperAccessService,
+    private val citedPaperIndexingQueue: CitedPaperIndexingQueue,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
@@ -75,6 +77,15 @@ class CitedPaperAcquisitionRequestedHandler(
                     "UPDATE analysis_runs SET failure_reason = COALESCE(failure_reason, ?), updated_at = now() WHERE id = ? AND status = 'PROCESSING'",
                     failureReason,
                     event.analysisRunId,
+                )
+            } else {
+                citedPaperIndexingQueue.enqueueIfEligible(
+                    analysisRunId = event.analysisRunId,
+                    bibliographyEntryId = event.payload.bibliographyEntryId,
+                    documentId = event.payload.documentId,
+                    sourceContentSha256 = event.payload.sourceContentSha256,
+                    correlationId = event.correlationId,
+                    causationId = event.eventId,
                 )
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)

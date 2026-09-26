@@ -1668,17 +1668,20 @@ Example shape (symbolic placeholders must be replaced with the actual run values
   },
   "embedding": {
     "provider": "local",
-    "model": "e5-small-v2"
+    "version": "v1",
+    "model": "feature-hash-384-v1"
   },
   "systemOne": {
     "provider": "laya",
     "model": "default"
   },
   "retrieval": {
-    "provider": "postgres-hybrid",
-    "vectorK": 10,
-    "lexicalK": 10,
-    "finalK": 5
+    "profileId": "postgres-hybrid-rrf-v1",
+    "vectorCandidateLimit": 10,
+    "lexicalCandidateLimit": 10,
+    "finalCandidateLimit": 5,
+    "reciprocalRankFusionConstant": 60,
+    "embeddingProfileHash": "<pinned-sha256>"
   },
   "referenceResolution": {
     "executionStatus": "PENDING",
@@ -1750,7 +1753,7 @@ providers:
     default: local
     local:
       enabled: true
-      model: e5-small-v2
+      model: feature-hash-384-v1
     google-gemini-api:
       enabled: false
       model: example-embedding-model
@@ -1797,7 +1800,7 @@ providers:
       enabled: false  # external; enable only after review and per-run consent
 ```
 
-In this profile, the scholarly-metadata and open-access `recorded-fixtures` providers use checked-in data and make no remote requests. The pipeline resolves references and records fixture-backed access provenance/language outcomes. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. Embedding, System One, graph enrichment, and semantic verification remain unexecuted; progress and reports must say so.
+In this profile, the scholarly-metadata and open-access `recorded-fixtures` providers use checked-in data and make no remote requests. The pipeline resolves references, records fixture-backed access provenance/language outcomes, and runs deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. The current `feature-hash-384-v1` vectorizer is lexical, not a trained semantic model. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. System One, graph enrichment, semantic Evidence Judgements, and final verification remain unexecuted; progress and reports must say so.
 
 Rules:
 
@@ -1807,7 +1810,7 @@ Rules:
 - every external provider remains disabled in this conservative deployment profile; in the repository's local configuration, Crossref and Unpaywall are offered for testing but still cannot receive data unless the user explicitly consents to that provider and those exact data categories for the specific Analysis Run; consent is never inferred from readiness, configuration, or a previous run,
 - the provider-call gate checks current classification/enablement, Analysis Run provider selection, declared-versus-actual request categories, and per-run consent before invoking any outbound send action; adapters must derive categories from the request they are about to send,
 - explicitly pass GROBID consolidation values of `0`; do not rely on service defaults,
-- Analysis Run stores selected provider/model/settings fingerprints, reviewed retention disclosures, reference-resolution threshold, and external-provider consent/data-category snapshot,
+- Analysis Run stores selected provider/model/settings fingerprints, the retrieval/embedding profile and limits, reviewed retention disclosures, reference-resolution threshold, and external-provider consent/data-category snapshot,
 - application logic never branches on vendor names outside adapter/configuration code.
 
 ---
@@ -1825,7 +1828,7 @@ COMPLETED_WITH_WARNINGS
 FAILED
 ```
 
-`PARSED` means the immutable source structure, extracted Atomic Claims, inferred/provisional Claim–Citation Target links, reference-resolution outcomes, and (for runs that pinned an open-access provider) cited-paper access/language outcomes are persisted; Evidence Passage retrieval and semantic verification have not run. Pre-issue #8 immutable runs without that pinned provider are not retroactively sent to an acquisition service. `PARSED` is an intermediate run state, not a completed report.
+`PARSED` means the immutable source structure, extracted Atomic Claims, inferred/provisional Claim–Citation Target links, reference-resolution outcomes, and (for runs that pinned an open-access provider) cited-paper access/language outcomes are ready; eligible English Cited Paper assets have also been parsed, indexed, and retrieved for each linked Atomic Claim × Cited Reference. Semantic Evidence Judgements and final verification have not run. Pre-issue #8 immutable runs without that pinned provider are not retroactively sent to an acquisition service. `PARSED` is an intermediate run state, not a completed report.
 
 Optional progress counters:
 
@@ -2555,7 +2558,7 @@ api/
 │       ├── client/       # Scholarly metadata provider adapters
 │       ├── report/       # Reference Resolution Report projections
 │       └── queue/        # Per-Bibliography-Entry resolution handler
-├── evidence/             # Add when evidence retrieval/verification is implemented
+├── evidence/             # Run-scoped Cited Paper parsing, chunking, embedding, retrieval, and indexing
 ├── review/               # Add when Human Review is implemented
 ├── infrastructure/
 │   ├── messaging/        # Generic outbox, inbox, stream worker, event envelope
@@ -2966,7 +2969,7 @@ relevant configuration
 Example:
 
 ```text
-sha256("local|e5-small-v2|normalize=true")
+sha256("paper-trail-embedding-profile-v1\nlocal\nfeature-hash-384-v1\nv1\n384\nword-unigram-bigram-feature-hash\nunit-l2")
 ```
 
 Persist as:
@@ -3213,7 +3216,7 @@ Use:
 PARSED
 ```
 
-when the immutable source structure, extracted Atomic Claims, and inferred/provisional Citation Target links are persisted, but Evidence Passage retrieval and verification have not run. `PARSED` is not a complete Evidence Coverage Report; a later evidence pipeline stage may transition it back to `PROCESSING`.
+when immutable source structure, extracted Atomic Claims, inferred/provisional Citation Target links, reference-resolution outcomes, and eligible English Cited Paper Evidence Passage retrieval are ready. Semantic Evidence Judgements and final verification have not run. `PARSED` is not a complete Evidence Coverage Report.
 
 Use:
 
@@ -3328,14 +3331,14 @@ enabled: false
 
 # 55. Local Development Defaults
 
-The following is the target local configuration for the full pipeline (see [the provider matrix](./agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The current runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, version-pinned local heuristic claim extraction with context-scoped target linking, and conservative bibliography resolution through recorded metadata fixtures. It does not invoke embeddings or System One.
+The following is the local configuration for the current pipeline (see [the provider matrix](./agents/provider-matrix.md) and the executable-shaped safe-default example in [section 29](#29-provider-enablement-configuration)). The current runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, version-pinned local heuristic claim extraction with context-scoped target linking, conservative bibliography resolution through recorded metadata fixtures, and deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. Its `feature-hash-384-v1` vectors are lexical features, not a trained semantic embedding model. It does not invoke System One or perform semantic verification.
 
 ```text
 claim extractor:
 heuristic
 
 embedding:
-local (enabled, pinned model)
+local `feature-hash-384-v1` word unigram/bigram vectors (deterministic; not a trained semantic model)
 
 system one:
 mock
@@ -3417,10 +3420,10 @@ MinIO
 Important scenarios:
 
 - duplicate Redis delivery,
-- worker crash/reprocessing,
+- worker crash/reprocessing across acquisition and Evidence Passage indexing,
 - outbox publish after restart,
 - duplicate DOI resolution,
-- two analysis runs sharing one cited paper,
+- distinct Claim–Paper retrieval scopes in one run and across runs sharing the same Cited Paper content,
 - disabled and unclassified provider rejection,
 - abstract-only reference creates `INSUFFICIENT_EVIDENCE` without semantic judging,
 - Atomic Claims persist once per run/context/source span; each claim links to every Citation Target in its own context, and database constraints reject cross-context links,

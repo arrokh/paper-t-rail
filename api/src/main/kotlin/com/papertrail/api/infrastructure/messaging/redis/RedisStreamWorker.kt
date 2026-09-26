@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedHandler
+import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
+import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedHandler
+import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedPayload
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedPayload
@@ -42,6 +45,7 @@ class RedisStreamWorker(
     private val handler: DocumentAnalysisRequestedHandler,
     private val referenceResolutionHandler: ReferenceResolutionRequestedHandler,
     private val citedPaperAcquisitionHandler: CitedPaperAcquisitionRequestedHandler,
+    private val citedPaperIndexingHandler: CitedPaperIndexingRequestedHandler,
     private val objectMapper: ObjectMapper,
     @Value("\${paper-trail.queue.stream}") private val stream: String,
     @Value("\${paper-trail.queue.group}") private val group: String,
@@ -190,6 +194,20 @@ class RedisStreamWorker(
                     workDescription = "bibliography reference resolution",
                     handle = { referenceResolutionHandler.handle(serialized) },
                     markFailed = { reason -> referenceResolutionHandler.markFailed(typedEvent, reason) },
+                )
+            }
+            CITED_PAPER_INDEXING_REQUESTED -> {
+                val typedEvent: PipelineEvent<CitedPaperIndexingRequestedPayload> = try {
+                    objectMapper.readValue(serialized)
+                } catch (exception: Exception) {
+                    deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The cited-paper indexing event payload could not be parsed.")
+                    return
+                }
+                processTypedEvent(
+                    record = record,
+                    workDescription = "Cited Paper Evidence Passage indexing",
+                    handle = { citedPaperIndexingHandler.handle(serialized) },
+                    markFailed = { reason -> citedPaperIndexingHandler.markFailed(typedEvent, reason) },
                 )
             }
             CITED_PAPER_ACQUISITION_REQUESTED -> {

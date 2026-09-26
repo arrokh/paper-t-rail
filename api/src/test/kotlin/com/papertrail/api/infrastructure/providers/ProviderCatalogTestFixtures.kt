@@ -59,9 +59,9 @@ fun reviewedExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
         ProviderRegistration(
             EMBEDDING_ROLE,
             "local",
-            "Local embeddings",
+            "Local feature-hash embeddings",
             "v1",
-            "e5-small-v2",
+            "feature-hash-384-v1",
             ProviderTrustBoundary.LOCAL,
             true,
             setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.EMBEDDING_INPUT),

@@ -58,6 +58,12 @@ paper-trail:
     parser-response-max-bytes: ${PAPER_MAX_GROBID_RESPONSE_BYTES:67108864}
     grobid-base-url: ${GROBID_BASE_URL:http://127.0.0.1:8070}
     reference-resolution-confidence-threshold: ${PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD:0.9}
+    retrieval:
+      profile-id: ${PAPER_RETRIEVAL_PROFILE_ID:postgres-hybrid-rrf-v1}
+      vector-candidates: ${PAPER_RETRIEVAL_VECTOR_CANDIDATES:10}
+      lexical-candidates: ${PAPER_RETRIEVAL_LEXICAL_CANDIDATES:10}
+      final-candidates: ${PAPER_RETRIEVAL_FINAL_CANDIDATES:5}
+      rrf-constant: ${PAPER_RETRIEVAL_RRF_CONSTANT:60}
     cited-paper-max-bytes: ${PAPER_MAX_CITED_PAPER_BYTES:52428800}
     cited-paper-max-extracted-characters: ${PAPER_MAX_CITED_PAPER_EXTRACTED_CHARACTERS:5000000}
   # Local consent-flow/acquisition testing defaults. Deployments must verify terms and replace test values.

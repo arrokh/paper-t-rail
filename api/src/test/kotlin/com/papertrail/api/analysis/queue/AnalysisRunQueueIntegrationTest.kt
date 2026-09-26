@@ -20,6 +20,18 @@ import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
+import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
+import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedHandler
+import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
+import com.papertrail.api.evidence.service.EvidenceRetrievalService
+import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
+import com.papertrail.api.evidence.repository.EvidenceReportRepository
+import com.papertrail.api.evidence.embedding.FeatureHashEmbeddingProvider
+import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
+import com.papertrail.api.evidence.retrieval.PostgresHybridEvidenceRetriever
+import com.papertrail.api.evidence.retrieval.ReciprocalRankFusion
+import com.papertrail.api.evidence.parsing.CitedPaperParser
+import com.papertrail.api.evidence.parsing.DefaultCitedPaperParser
 import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
 import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepository
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProvider
@@ -501,10 +513,154 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
         assertEquals("fr", access.language)
         assertEquals(1, fetched.get())
+        assertNull(access.evidenceIndexing)
         assertTrue(access.verificationOutcomes.isNotEmpty())
         assertTrue(access.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
         assertTrue(access.verificationOutcomes.all { it.verificationScope == "NONE" })
         assertTrue(access.verificationOutcomes.all { it.terminalReason == "LANGUAGE_UNSUPPORTED" })
+    }
+
+    @Test
+    fun `retrieves ranked passages from each exact cited paper for only its linked atomic claim`() {
+        val created = createQueuedRun()
+        val claimOne = "The first intervention improves response"
+        val claimTwo = "The second reagent increases yield"
+        val firstContextText = "$claimOne [1]."
+        val secondContextText = "$claimTwo [2]."
+        val sourceText = "$firstContextText\n$secondContextText"
+        val firstMarker = sourceText.indexOf("[1]")
+        val secondClaimStart = sourceText.indexOf(claimTwo)
+        val secondMarker = sourceText.indexOf("[2]")
+        val sourceParser = object : ScientificDocumentParser {
+            override fun parse(pdf: ByteArray) = ParsedScientificDocument(
+                parserId = "grobid",
+                parserVersion = "0.9.1-crf",
+                normalizedSourceText = sourceText,
+                sections = listOf(ParsedSection(0, "Results", sourceText, 0, sourceText.length)),
+                citationContexts = listOf(
+                    ParsedCitationContext(
+                        0,
+                        "CLAUSE",
+                        firstContextText,
+                        0,
+                        firstContextText.length,
+                        listOf(ParsedCitationOccurrence("[1]", firstMarker, firstMarker + 3, listOf("ref-alpha"))),
+                    ),
+                    ParsedCitationContext(
+                        0,
+                        "CLAUSE",
+                        secondContextText,
+                        secondClaimStart,
+                        secondClaimStart + secondContextText.length,
+                        listOf(ParsedCitationOccurrence("[2]", secondMarker, secondMarker + 3, listOf("ref-beta"))),
+                    ),
+                ),
+                bibliographyEntries = listOf(
+                    ParsedBibliographyEntry(0, "ref-alpha", "Alpha Study of Response", "Alpha Study of Response", listOf("Author Alpha"), 2020, "10.5555/papertrail.fixture.alpha.2020", "JOURNAL_ARTICLE"),
+                    ParsedBibliographyEntry(1, "ref-beta", "Beta Study of Yield", "Beta Study of Yield", listOf("Author Beta"), 2021, "10.5555/papertrail.fixture.beta.2021", "JOURNAL_ARTICLE"),
+                ),
+                rawParserOutput = "<TEI>fixture source</TEI>".toByteArray(),
+            )
+        }
+        val scholarlyWorks = listOf(
+            ScholarlyWork("10.5555/papertrail.fixture.alpha.2020", "Alpha Study of Response", listOf("Author Alpha"), 2020),
+            ScholarlyWork("10.5555/papertrail.fixture.beta.2021", "Beta Study of Yield", listOf("Author Beta"), 2021),
+        )
+        val lookupFactory = object : ScholarlyMetadataLookupFactory {
+            override val providerId = "recorded-fixtures"
+            override fun forRun(configuration: AnalysisConfigurationSnapshot) = object : ScholarlyMetadataLookup {
+                override fun byDoi(doi: String) = scholarlyWorks.singleOrNull { it.doi == doi }
+                override fun search(reference: BibliographyReference) = scholarlyWorks.filter { it.title == reference.title }
+            }
+        }
+        val resolutionService = referenceResolutionService(listOf(lookupFactory))
+        val paperTexts = mapOf(
+            "fixture://cited/alpha" to "The first intervention improves response in the alpha cohort. Alpha-only marker: 4c2a.",
+            "fixture://cited/beta" to "The second reagent increases yield in the beta cohort. Beta-only marker: 9d7f.",
+        )
+        val openAccessFactory = object : OpenAccessProviderFactory {
+            override val providerId = "recorded-fixtures"
+            override fun forRun(configuration: AnalysisConfigurationSnapshot) = object : OpenAccessProvider {
+                override fun discover(reference: BibliographyReference): OpenAccessDiscovery? {
+                    val key = if (reference.title == "Alpha Study of Response") "alpha" else "beta"
+                    val location = OpenAccessLocation("fixture://cited/$key", "CC0-1.0", "publishedVersion", "repository", providerId)
+                    return OpenAccessDiscovery(true, false, listOf(location), providerId, Instant.now())
+                }
+
+                override fun fetch(location: OpenAccessLocation) = AcquiredFullText(
+                    bytes = requireNotNull(paperTexts[location.url]).toByteArray(Charsets.UTF_8),
+                    mediaType = "text/plain",
+                    location = location,
+                )
+            }
+        }
+        val citedPaperParser = object : CitedPaperParser {
+            override fun parse(content: ByteArray, mediaType: String): ParsedScientificDocument {
+                val text = content.toString(Charsets.UTF_8)
+                return ParsedScientificDocument(
+                    parserId = "fixture-cited-paper-parser",
+                    parserVersion = "v7",
+                    normalizedSourceText = text,
+                    sections = listOf(ParsedSection(0, "Results", text, 0, text.length)),
+                    citationContexts = emptyList(),
+                    bibliographyEntries = emptyList(),
+                )
+            }
+        }
+
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler(parser = sourceParser, resolutionService = resolutionService).handle(documentEvent)
+        processReferenceResolutionEvents(
+            analysisRunId = created.analysisRunId,
+            providerFactories = listOf(openAccessFactory),
+            citedPaperParser = citedPaperParser,
+            resolutionService = resolutionService,
+        )
+
+        val entries = resolutionService.report(created.analysisRunId)!!.referenceResolution.entries.associateBy { it.localReferenceKey }
+        val alpha = entries.getValue("ref-alpha").citedPaperAccess!!
+        val beta = entries.getValue("ref-beta").citedPaperAccess!!
+        assertEquals("COMPLETED", alpha.evidenceIndexing?.status)
+        assertEquals("COMPLETED", beta.evidenceIndexing?.status)
+        assertEquals(claimOne, alpha.verificationOutcomes.single().claimText)
+        assertEquals(claimTwo, beta.verificationOutcomes.single().claimText)
+        val alphaPassage = alpha.verificationOutcomes.single().evidencePassages.single()
+        val betaPassage = beta.verificationOutcomes.single().evidencePassages.single()
+        assertTrue(alphaPassage.text.contains("Alpha-only marker: 4c2a"))
+        assertFalse(alphaPassage.text.contains("Beta-only marker: 9d7f"))
+        assertTrue(betaPassage.text.contains("Beta-only marker: 9d7f"))
+        assertFalse(betaPassage.text.contains("Alpha-only marker: 4c2a"))
+        assertEquals(alpha.evidenceIndexing?.assetId, alphaPassage.sourceAssetId)
+        assertEquals(beta.evidenceIndexing?.assetId, betaPassage.sourceAssetId)
+        assertEquals(expectedSha256(paperTexts.getValue("fixture://cited/alpha").toByteArray(Charsets.UTF_8)), alphaPassage.contentSha256)
+        assertEquals(expectedSha256(paperTexts.getValue("fixture://cited/beta").toByteArray(Charsets.UTF_8)), betaPassage.contentSha256)
+        assertEquals("fixture-cited-paper-parser", alphaPassage.parserProvider)
+        assertEquals("v7", betaPassage.parserVersion)
+        assertEquals("en", alphaPassage.language)
+        assertEquals("0.6", betaPassage.languageDetectorVersion)
+        assertEquals(0, alphaPassage.sectionOrder)
+        assertEquals(0, betaPassage.sectionOrder)
+        assertEquals("Results", alphaPassage.sectionHeading)
+        assertEquals("Results", betaPassage.sectionHeading)
+        assertEquals(1, alphaPassage.vectorRank)
+        assertEquals(1, alphaPassage.lexicalRank)
+        assertEquals(1, alphaPassage.fusedRank)
+        assertEquals(1, betaPassage.vectorRank)
+        assertEquals(1, betaPassage.lexicalRank)
+        assertEquals(1, betaPassage.fusedRank)
+        assertEquals("postgres-hybrid-rrf-v1", alphaPassage.retrievalProfile.profileId)
+        assertEquals(384, alphaPassage.retrievalProfile.embeddingDimension)
+        assertEquals(10, alphaPassage.retrievalProfile.vectorCandidateLimit)
+        assertEquals(10, alphaPassage.retrievalProfile.lexicalCandidateLimit)
+        assertEquals(5, alphaPassage.retrievalProfile.finalCandidateLimit)
+        assertTrue(alphaPassage.retrievalProfile.embeddingProfileHash.matches(Regex("[0-9a-f]{64}")))
+        assertTrue(alphaPassage.fusionScore > 0)
+        assertNotEquals(alphaPassage.sourceAssetId, betaPassage.sourceAssetId)
     }
 
     @Test
@@ -762,7 +918,7 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("UNRESOLVED", report.referenceResolution.entries[3].status)
         assertEquals("BELOW_CONFIDENCE_THRESHOLD", report.referenceResolution.entries[3].reasonCode)
         assertNull(report.referenceResolution.entries[3].canonicalPaper)
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM canonical_papers", Int::class.java))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND canonical_paper_id IS NOT NULL", Int::class.java, created.analysisRunId))
         assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
         assertThrows(DataAccessException::class.java) {
             jdbc.update("UPDATE bibliography_entry_resolutions SET reason_code = 'changed' WHERE analysis_run_id = ?", created.analysisRunId)
@@ -824,6 +980,7 @@ class AnalysisRunQueueIntegrationTest {
             stream = stream,
             group = group,
             citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
             consumerName = "replacement-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -840,6 +997,8 @@ class AnalysisRunQueueIntegrationTest {
             workerLogger.detachAppender(appender)
         }
 
+        OutboxPublisher(jdbc, redis, stream).publishPending()
+        replacement.poll()
         OutboxPublisher(jdbc, redis, stream).publishPending()
         replacement.poll()
         OutboxPublisher(jdbc, redis, stream).publishPending()
@@ -878,6 +1037,7 @@ class AnalysisRunQueueIntegrationTest {
             stream = stream,
             group = group,
             citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
             consumerName = "active-worker",
             reclaimDelayMs = 300,
             batchSize = 10,
@@ -892,6 +1052,7 @@ class AnalysisRunQueueIntegrationTest {
             stream = stream,
             group = group,
             citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
             consumerName = "replacement-worker",
             reclaimDelayMs = 300,
             batchSize = 10,
@@ -920,6 +1081,8 @@ class AnalysisRunQueueIntegrationTest {
             replacementWorker.poll()
             OutboxPublisher(jdbc, redis, stream).publishPending()
             replacementWorker.poll()
+            OutboxPublisher(jdbc, redis, stream).publishPending()
+            replacementWorker.poll()
         } finally {
             replacementWorker.shutdownLeaseHeartbeat()
         }
@@ -945,6 +1108,7 @@ class AnalysisRunQueueIntegrationTest {
             stream = stream,
             group = group,
             citedPaperAcquisitionHandler = citedPaperAccessEventHandler(resolutionService),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(resolutionService),
             consumerName = "reference-retry-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -988,6 +1152,8 @@ class AnalysisRunQueueIntegrationTest {
             worker.poll()
             OutboxPublisher(jdbc, redis, stream).publishPending()
             worker.poll()
+            OutboxPublisher(jdbc, redis, stream).publishPending()
+            worker.poll()
 
             assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
             assertEquals(4, jdbc.queryForObject(
@@ -1020,6 +1186,7 @@ class AnalysisRunQueueIntegrationTest {
             stream = stream,
             group = group,
             citedPaperAcquisitionHandler = citedPaperAccessEventHandler(resolutionService),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(resolutionService),
             consumerName = "reference-failure-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -1091,6 +1258,7 @@ class AnalysisRunQueueIntegrationTest {
             stream = stream,
             group = group,
             citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
             consumerName = "retry-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -1149,6 +1317,7 @@ class AnalysisRunQueueIntegrationTest {
             stream = stream,
             group = group,
             citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
             consumerName = "malformed-worker",
             reclaimDelayMs = 0,
             batchSize = 10,
@@ -1377,7 +1546,12 @@ class AnalysisRunQueueIntegrationTest {
         jdbc,
         objectMapper,
         ReferenceResolutionRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
-        CitedPaperAccessRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+        CitedPaperAccessRepository(
+            jdbc,
+            objectMapper,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            EvidenceReportRepository(jdbc),
+        ),
         lookupFactories,
     )
 
@@ -1420,7 +1594,12 @@ class AnalysisRunQueueIntegrationTest {
     ) = CitedPaperAccessService(
         jdbc = jdbc,
         objectMapper = objectMapper,
-        repository = CitedPaperAccessRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+        repository = CitedPaperAccessRepository(
+            jdbc,
+            objectMapper,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            EvidenceReportRepository(jdbc),
+        ),
         objectStore = objectStore,
         languageDetector = languageDetector,
         textExtractor = PdfBoxCitedPaperTextExtractor(5_000_000),
@@ -1439,8 +1618,36 @@ class AnalysisRunQueueIntegrationTest {
         TransactionTemplate(DataSourceTransactionManager(dataSource)),
         objectMapper,
         citedPaperAccessService(providerFactories, languageDetector),
+        CitedPaperIndexingQueue(jdbc, objectMapper),
         stageCompletionService(resolutionService),
     )
+
+    private fun citedPaperIndexingEventHandler(
+        resolutionService: ReferenceResolutionService = referenceResolutionService(),
+        parser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
+    ): CitedPaperIndexingRequestedHandler {
+        val repository = EvidenceRetrievalRepository(
+            jdbc,
+            objectMapper,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            PostgresHybridEvidenceRetriever(jdbc, ReciprocalRankFusion()),
+        )
+        val retrievalService = EvidenceRetrievalService(
+            objectStore,
+            parser,
+            SectionAwareEvidenceChunker(),
+            listOf(FeatureHashEmbeddingProvider()),
+            repository,
+        )
+        return CitedPaperIndexingRequestedHandler(
+            jdbc,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            objectMapper,
+            retrievalService,
+            repository,
+            stageCompletionService(resolutionService),
+        )
+    }
 
     private fun referenceResolutionEventHandler(
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
@@ -1459,6 +1666,8 @@ class AnalysisRunQueueIntegrationTest {
             ProviderCallGate(ProviderCatalog.safeDefaults()),
         )),
         languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
+        citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
+        resolutionService: ReferenceResolutionService = referenceResolutionService(),
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -1466,15 +1675,17 @@ class AnalysisRunQueueIntegrationTest {
             analysisRunId,
             REFERENCE_RESOLUTION_REQUESTED,
         )
-        val handler = referenceResolutionEventHandler()
+        val handler = referenceResolutionEventHandler(resolutionService)
         events.forEach(handler::handle)
-        processCitedPaperAcquisitionEvents(analysisRunId, providerFactories, languageDetector)
+        processCitedPaperAcquisitionEvents(analysisRunId, providerFactories, languageDetector, citedPaperParser, resolutionService)
     }
 
     private fun processCitedPaperAcquisitionEvents(
         analysisRunId: UUID,
         providerFactories: List<OpenAccessProviderFactory>,
         languageDetector: DocumentLanguageDetector,
+        citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
+        resolutionService: ReferenceResolutionService = referenceResolutionService(),
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -1483,10 +1694,19 @@ class AnalysisRunQueueIntegrationTest {
             CITED_PAPER_ACQUISITION_REQUESTED,
         )
         val handler = citedPaperAccessEventHandler(
+            resolutionService = resolutionService,
             providerFactories = providerFactories,
             languageDetector = languageDetector,
         )
         events.forEach(handler::handle)
+        val indexingEvents = jdbc.query(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
+            { rs, _ -> rs.getString(1) },
+            analysisRunId,
+            CITED_PAPER_INDEXING_REQUESTED,
+        )
+        val indexingHandler = citedPaperIndexingEventHandler(resolutionService = resolutionService, parser = citedPaperParser)
+        indexingEvents.forEach(indexingHandler::handle)
     }
 
     private fun issueSevenConfigurationJson(): String {
@@ -1596,7 +1816,7 @@ class AnalysisRunQueueIntegrationTest {
             jdbc = JdbcTemplate(dataSource)
             val migrationDirectory = listOf(Path.of("db/deploy"), Path.of("api/db/deploy"))
                 .firstOrNull(Files::isDirectory) ?: error("Could not locate Sqitch deployment directory")
-            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql", "conservative_reference_resolution.sql", "cited_paper_access.sql").forEach { filename ->
+            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql", "conservative_reference_resolution.sql", "cited_paper_access.sql", "traceable_evidence_retrieval.sql").forEach { filename ->
                 val migration = migrationDirectory.resolve(filename)
                 dataSource.connection.use { connection ->
                     connection.createStatement().use { statement -> statement.execute(Files.readString(migration)) }
@@ -1613,6 +1833,10 @@ class AnalysisRunQueueIntegrationTest {
             val citedPaperAccessMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("cited_paper_access.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(citedPaperAccessMigrationVerification)) }
+            }
+            val evidenceRetrievalMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("traceable_evidence_retrieval.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(evidenceRetrievalMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))
