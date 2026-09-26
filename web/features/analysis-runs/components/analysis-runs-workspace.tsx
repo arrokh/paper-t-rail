@@ -266,7 +266,6 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
         setActiveDetailTab("progress");
         setSelectedRunId(created.analysisRunId);
       },
-      onSettled: providerConfiguration.resetApprovedCategories,
     });
   }
 
@@ -448,7 +447,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                       <AlertDescription>{selectedRun.failureReason}</AlertDescription>
                     </Alert>
                   )}
-                  <Button type="button" variant="outline" className="min-h-11 w-full justify-between sm:w-auto" disabled={busy || !providerConfiguration.directory} onClick={reanalyze}>
+                  <Button type="button" variant="outline" className="min-h-11 w-full justify-between sm:w-auto" disabled={busy || !providerConfiguration.configurationReady} onClick={reanalyze}>
                     Create a new run from this document <ArrowUpRight aria-hidden="true" />
                   </Button>
                   {reanalysisError && (

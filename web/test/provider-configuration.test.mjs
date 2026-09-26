@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { availableProviderSelections, consentRequirements, createRunConfiguration, missingConsents } from "../features/providers/provider-configuration.ts";
+import {
+  availableProviderSelections,
+  consentRequirements,
+  createRunConfiguration,
+  missingConsents,
+  retainRequiredApprovals,
+  selectableProviderOptions,
+} from "../features/providers/provider-configuration.ts";
 
 const directory = {
   providers: {
@@ -25,6 +32,26 @@ const directory = {
         dataCategories: ["citation_context"],
         retentionDisclosure: "Provider retention terms reviewed for this deployment.",
       },
+      {
+        role: "claimExtractor",
+        providerId: "unclassified-ai",
+        displayName: "Unclassified AI",
+        version: "v1",
+        model: null,
+        trustBoundary: "UNREVIEWED",
+        dataCategories: ["citation_context"],
+        retentionDisclosure: null,
+      },
+      {
+        role: "claimExtractor",
+        providerId: "incomplete-ai",
+        displayName: "Incomplete AI disclosure",
+        version: "v1",
+        model: null,
+        trustBoundary: "EXTERNAL",
+        dataCategories: [],
+        retentionDisclosure: null,
+      },
     ],
     embedding: [
       {
@@ -44,7 +71,7 @@ const directory = {
         version: "v2",
         model: "embed-2",
         trustBoundary: "EXTERNAL",
-        dataCategories: ["cited_paper_chunks", "embedding_input"],
+        dataCategories: ["cited_paper_chunks", "embedding_input", "citation_context"],
         retentionDisclosure: "Provider retention terms reviewed for this deployment.",
       },
     ],
@@ -116,51 +143,64 @@ const localSelections = {
   openAccessProvider: "recorded-fixtures",
 };
 
+function selectionsWith(overrides) {
+  return { ...localSelections, ...overrides };
+}
+
 test("provider selections fall back to an available open-access provider", () => {
-  const selections = availableProviderSelections(directory, {
-    ...localSelections,
+  const selections = availableProviderSelections(directory, selectionsWith({
     openAccessProvider: "removed-provider",
-  });
+  }));
 
   assert.equal(selections.openAccessProvider, "recorded-fixtures");
 });
 
-test("local defaults have no external provider consent requirements", () => {
-  const requirements = consentRequirements(directory, localSelections);
-
-  assert.deepEqual(requirements, []);
-  assert.deepEqual(missingConsents(requirements, {}), []);
-  assert.deepEqual(createRunConfiguration(localSelections, requirements, {}), {
+test("local defaults produce a valid configuration without external consent", () => {
+  assert.deepEqual(consentRequirements(directory, localSelections), []);
+  assert.deepEqual(createRunConfiguration(directory, localSelections, {}), {
     ...localSelections,
     externalProviderConsents: [],
   });
 });
 
-test("external provider disclosure and saved consent include every selected request category", () => {
-  const selections = {
-    ...localSelections,
+test("default reconciliation and available choices exclude unclassified or incomplete providers", () => {
+  assert.deepEqual(
+    selectableProviderOptions(directory, "claimExtractor").map(({ providerId }) => providerId),
+    ["heuristic", "hosted-ai"],
+  );
+  assert.deepEqual(
+    availableProviderSelections(directory, selectionsWith({ claimExtractorProvider: "unclassified-ai" })),
+    localSelections,
+  );
+});
+
+test("one external provider selected for multiple roles receives the deduplicated category union", () => {
+  const selections = selectionsWith({
     claimExtractorProvider: "hosted-ai",
     embeddingProvider: "hosted-ai",
-  };
+  });
   const requirements = consentRequirements(directory, selections);
+  const expectedCategories = ["citation_context", "cited_paper_chunks", "embedding_input"];
   assert.deepEqual(requirements, [{
     providerId: "hosted-ai",
     displayName: "Hosted AI",
-    dataCategories: ["citation_context", "cited_paper_chunks", "embedding_input"],
+    dataCategories: expectedCategories,
     retentionDisclosure: "Provider retention terms reviewed for this deployment.",
   }]);
-  assert.deepEqual(missingConsents(requirements, { "hosted-ai": ["citation_context"] }), requirements);
 
-  const approval = { "hosted-ai": ["citation_context", "cited_paper_chunks", "embedding_input"] };
-  assert.deepEqual(missingConsents(requirements, approval), []);
-  assert.deepEqual(createRunConfiguration(selections, requirements, approval).externalProviderConsents, [{
-    providerId: "hosted-ai",
-    dataCategories: ["citation_context", "cited_paper_chunks", "embedding_input"],
-  }]);
+  const partialApproval = { "hosted-ai": ["citation_context"] };
+  assert.deepEqual(missingConsents(requirements, partialApproval), requirements);
+  assert.throws(() => createRunConfiguration(directory, selections, partialApproval), /Approve every disclosed data category/);
+
+  const fullApproval = { "hosted-ai": [...expectedCategories, "not-required"] };
+  assert.deepEqual(createRunConfiguration(directory, selections, fullApproval), {
+    ...selections,
+    externalProviderConsents: [{ providerId: "hosted-ai", dataCategories: expectedCategories }],
+  });
 });
 
 test("Open-access discovery and acquisition require consent for the actual metadata, contact email, and content location", () => {
-  const selections = { ...localSelections, openAccessProvider: "unpaywall" };
+  const selections = selectionsWith({ openAccessProvider: "unpaywall" });
   const requirements = consentRequirements(directory, selections);
 
   assert.deepEqual(requirements, [{
@@ -172,8 +212,19 @@ test("Open-access discovery and acquisition require consent for the actual metad
   assert.deepEqual(missingConsents(requirements, {}), requirements);
 });
 
-test("Crossref selection requires explicit per-run consent for bibliographic metadata", () => {
-  const selections = { ...localSelections, scholarlyMetadataProvider: "crossref" };
+test("changing selections recalculates required approvals and drops approvals no longer required", () => {
+  const externalSelections = selectionsWith({ claimExtractorProvider: "hosted-ai" });
+  const priorRequirements = consentRequirements(directory, externalSelections);
+  const priorApproval = { "hosted-ai": ["citation_context"] };
+  assert.deepEqual(missingConsents(priorRequirements, priorApproval), []);
+
+  const nextRequirements = consentRequirements(directory, localSelections);
+  assert.deepEqual(nextRequirements, []);
+  assert.deepEqual(retainRequiredApprovals(nextRequirements, priorApproval), {});
+});
+
+test("Crossref requires explicit per-run approval of bibliographic metadata", () => {
+  const selections = selectionsWith({ scholarlyMetadataProvider: "crossref" });
   const requirements = consentRequirements(directory, selections);
   assert.deepEqual(requirements, [{
     providerId: "crossref",
@@ -181,12 +232,14 @@ test("Crossref selection requires explicit per-run consent for bibliographic met
     dataCategories: ["bibliographic_metadata"],
     retentionDisclosure: "Crossref request logging and retention disclosure.",
   }]);
-  assert.deepEqual(missingConsents(requirements, {}), requirements);
-
-  const approved = { crossref: ["bibliographic_metadata"] };
-  assert.deepEqual(missingConsents(requirements, approved), []);
-  assert.deepEqual(createRunConfiguration(selections, requirements, approved), {
+  assert.throws(() => createRunConfiguration(directory, selections, {}), /Approve every disclosed data category/);
+  assert.deepEqual(createRunConfiguration(directory, selections, { crossref: ["bibliographic_metadata"] }), {
     ...selections,
     externalProviderConsents: [{ providerId: "crossref", dataCategories: ["bibliographic_metadata"] }],
   });
+});
+
+test("run configuration rejects provider selections outside the classified directory", () => {
+  const selections = selectionsWith({ claimExtractorProvider: "unclassified-ai" });
+  assert.throws(() => createRunConfiguration(directory, selections, { "unclassified-ai": ["citation_context"] }), /enabled, classified provider/);
 });
