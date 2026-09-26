@@ -4,11 +4,17 @@ For code-structure, SOLID, guard-clause, and type/file conventions shared with t
 
 For every change under `web/`, use the [Paper T-Rail Web UI Design System](../docs/ui-design-system.md) as the source of truth and preserve the accepted choice in [ADR 0005](../docs/adr/0005-shadcn-web-ui-system.md).
 
+## Feature and remote-state architecture
+
+- Keep route composition and the same-origin `/api/v1/*` proxy in `web/app/`. Organize product UI, data behavior, and feature types together under `web/features/<feature>/`; shared `web/lib/` modules must be genuinely cross-feature.
+- Use TanStack Query for browser-fetched remote state, mutation status, invalidation, and progress polling. Feature query functions call only relative `/api/v1/*` URLs through the Next.js proxy; do not add a separate typed API adapter.
+- Do not use component Effects or hand-managed intervals/refresh wiring for remote fetching, polling, or mutation refresh. Effects are appropriate for genuine synchronization with external systems, such as DOM observation or scrolling.
+
 ## Component and styling rules
 
 - Build interface primitives from the project-owned shadcn components in `@/components/ui/*`. Use shadcn `Button`, `Card`, `Badge`, `Field`, `Input`, `NativeSelect`, `Checkbox`, `Tabs`, `Collapsible`, `Alert`, `Separator`, `Skeleton`, and `Spinner` for their established patterns.
 - When a needed primitive is missing, add it from `web/` with `npx shadcn@latest add <name>`, then review and commit its generated source. Keep `components.json`, aliases, generated component paths, and global CSS configuration aligned.
-- Compose product-specific modules in `web/components/` from those primitives. Extend shared variants and semantic theme tokens when a visual state recurs; use `cn()` from `@/lib/utils` to compose Tailwind classes.
+- Compose feature-specific product modules under `web/features/<feature>/` from those primitives. Keep shared variants and semantic theme tokens for recurring visual states; use `cn()` from `@/lib/utils` to compose Tailwind classes.
 - Use Tailwind CSS v4 utilities for layout and spacing and CSS variables for theme colors. Preserve the Paper T-Rail paper/forest palette. Avoid introducing a parallel primitive library, handwritten buttons/fields/tabs, or one-off palette values.
 - Keep semantic HTML for page structure and native browser behavior that shadcn does not replace, such as a real file input. Style those elements with the system tokens and pair them with shadcn controls where appropriate.
 - Keep Next.js modules server-rendered by default. Add client state only to the smallest module that needs browser interaction.

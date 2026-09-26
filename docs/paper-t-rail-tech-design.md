@@ -2802,13 +2802,7 @@ Verifying claims
 Aggregating report
 ```
 
-V1 may poll:
-
-```text
-GET /analysis-runs/{id}
-```
-
-every few seconds.
+TanStack Query owns browser-fetched provider-directory, recent Analysis Run, parsed-document, and Reference Resolution Report state. The recent-run query fetches the cursor-paginated list through the same-origin Next.js proxy and polls every 2.5 seconds only while at least one run on the displayed page is nonterminal (`QUEUED`, `PROCESSING`, or `PARSED`). Polling stops once every displayed run is terminal (`COMPLETED`, `COMPLETED_WITH_WARNINGS`, or `FAILED`). Upload and re-analysis are mutations; after either succeeds, refresh the recent-run list and select the created Analysis Run. Query and mutation loading/error states are the UI's source of truth; do not mirror remote state in component state.
 
 SSE can be added later.
 
@@ -2838,9 +2832,9 @@ Traceability is more important than visual complexity.
 
 ## 41.5 UI System and Component Architecture
 
-Use `web/components/ui/` for project-owned shadcn primitives and `web/components/` for product composition. Generate a missing primitive with the shadcn CLI, then review and commit the resulting source. `web/app/styles.css` owns semantic theme tokens and Tailwind v4 setup; `web/lib/utils.ts` provides shared class composition. Use semantic HTML for document structure and native behavior that has no shadcn replacement, while keeping its styling inside the design tokens.
+Keep App Router route composition and the same-origin `/api/v1/*` backend proxy in `web/app/`. Organize product code under `web/features/<feature>/`, keeping feature UI, query/mutation behavior, and feature types together; the workspace composes provider configuration with Analysis Run features. Use `web/components/ui/` for project-owned shadcn primitives. Reserve `web/lib/` for genuinely cross-feature helpers such as class composition, safe API error extraction, scrolling, and structured logging. Browser data functions call only relative `/api/v1/*` paths so the proxy preserves request correlation and privacy-safe logging; do not add a separate typed API adapter.
 
-The UI targets WCAG 2.2 AA, works with keyboard and touch, preserves visible focus, and uses text as well as color for status. Keep the App Router server-rendered by default and isolate client interaction. Follow `web/AGENTS.md` and `docs/ui-design-system.md` for the complete implementation and verification rules.
+TanStack Query owns all browser remote-data reads and mutation refresh. Do not fetch, poll, or refresh remote data from component Effects or hand-managed intervals; reserve Effects for genuine synchronization with external systems such as DOM observation and scrolling. Keep route/layout modules server-rendered by default and isolate interaction in client features. The UI targets WCAG 2.2 AA, works with keyboard and touch, preserves visible focus, and uses text as well as color for status. Follow `web/AGENTS.md` and `docs/ui-design-system.md` for complete implementation and verification rules.
 
 ---
 
