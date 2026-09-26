@@ -1761,12 +1761,12 @@ providers:
       enabled: false
       model: example-embedding-model
     ollama:
-      enabled: ${OLLAMA_ENABLED:false}
-      base-url: ${OLLAMA_BASE_URL:}
-      model: ${OLLAMA_MODEL:}
+      enabled: ${OLLAMA_ENABLED:true}  # local Compose default; new runs still select feature-hash
+      base-url: ${OLLAMA_BASE_URL:http://ollama:11434}
+      model: ${OLLAMA_MODEL:nomic-embed-text}
       dimension: ${OLLAMA_DIMENSION:768}
       api-key: ${OLLAMA_API_KEY:}  # server-side only; never returned or snapshotted
-      trusted-hosts: ${OLLAMA_TRUSTED_HOSTS:localhost,127.0.0.1}  # other hosts classify as EXTERNAL
+      trusted-hosts: ${OLLAMA_TRUSTED_HOSTS:ollama,localhost,127.0.0.1}  # other hosts classify as EXTERNAL
       external-enablement-reviewed: ${OLLAMA_EXTERNAL_ENABLEMENT_REVIEWED:false}
       external-retention-disclosure: ${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:}
 
@@ -1809,7 +1809,7 @@ providers:
       enabled: false  # external; enable only after review and per-run consent
 ```
 
-In this profile, the scholarly-metadata and open-access `recorded-fixtures` providers use checked-in data and make no remote requests. The pipeline resolves references, records fixture-backed access provenance/language outcomes, and runs deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. The current `feature-hash-384-v1` vectorizer is lexical, not a trained semantic model. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. System One, graph enrichment, semantic Evidence Judgements, and final verification remain unexecuted; progress and reports must say so.
+In this profile, the scholarly-metadata and open-access `recorded-fixtures` providers use checked-in data and make no remote requests. The pipeline resolves references, records fixture-backed access provenance/language outcomes, and runs deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. The current `feature-hash-384-v1` vectorizer is lexical, not a trained semantic model. Local Compose starts the pinned Ollama service and pulls `nomic-embed-text` (768 dimensions) into a persistent volume; Ollama is offered as an embedding choice, while feature-hash remains the default selection for new runs. Non-Compose deployments must configure a valid endpoint/model/dimension and trust boundary explicitly. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. System One, graph enrichment, semantic Evidence Judgements, and final verification remain unexecuted; progress and reports must say so.
 
 Rules:
 
@@ -3348,7 +3348,7 @@ claim extractor:
 heuristic
 
 embedding:
-local `feature-hash-384-v1` word unigram/bigram vectors (deterministic; not a trained semantic model); optional Ollama embeddings are disabled unless an API-side endpoint, model, and dimension are configured, and do not replace the default
+local `feature-hash-384-v1` word unigram/bigram vectors (deterministic; not a trained semantic model); local Compose starts Ollama with `nomic-embed-text` (768 dimensions) as an available opt-in, while feature-hash remains the default selection; non-Compose deployments must configure Ollama explicitly
 
 system one:
 mock
