@@ -60,17 +60,18 @@ paper-trail:
     reference-resolution-confidence-threshold: ${PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD:0.9}
     cited-paper-max-bytes: ${PAPER_MAX_CITED_PAPER_BYTES:52428800}
     cited-paper-max-extracted-characters: ${PAPER_MAX_CITED_PAPER_EXTRACTED_CHARACTERS:5000000}
+  # Local consent-flow/acquisition testing defaults. Deployments must verify terms and replace test values.
   providers:
     crossref:
-      enabled: ${CROSSREF_ENABLED:false}
-      enablement-reviewed: ${CROSSREF_ENABLEMENT_REVIEWED:false}
-      retention-disclosure: ${CROSSREF_RETENTION_DISCLOSURE:}
-      contact-email: ${CROSSREF_CONTACT_EMAIL:}
+      enabled: ${CROSSREF_ENABLED:true}
+      enablement-reviewed: ${CROSSREF_ENABLEMENT_REVIEWED:true}
+      retention-disclosure: "${CROSSREF_RETENTION_DISCLOSURE:Crossref mencatat IP peminta dan isi permintaan. Email polite pool dipakai untuk pemecahan masalah, dan Crossref menyatakan log dihapus setelah tiga bulan.}"
+      contact-email: ${CROSSREF_CONTACT_EMAIL:test@ptr.test}
     unpaywall:
-      enabled: ${UNPAYWALL_ENABLED:false}
-      enablement-reviewed: ${UNPAYWALL_ENABLEMENT_REVIEWED:false}
-      retention-disclosure: ${UNPAYWALL_RETENTION_DISCLOSURE:}
-      contact-email: ${UNPAYWALL_CONTACT_EMAIL:}
+      enabled: ${UNPAYWALL_ENABLED:true}
+      enablement-reviewed: ${UNPAYWALL_ENABLEMENT_REVIEWED:true}
+      retention-disclosure: "${UNPAYWALL_RETENTION_DISCLOSURE:Unpaywall menerima DOI dan alamat kontak layanan; kebijakannya menyebut data permintaan dapat disimpan hingga enam bulan setelah penggunaan layanan berakhir. Repositori/host konten yang ditemukan memiliki ketentuan retensi tersendiri.}"
+      contact-email: ${UNPAYWALL_CONTACT_EMAIL:test@ptr.test}
 
 scalar:
   enabled: ${API_DOCS_ENABLED:true}

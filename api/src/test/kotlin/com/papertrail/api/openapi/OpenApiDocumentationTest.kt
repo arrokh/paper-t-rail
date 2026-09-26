@@ -176,7 +176,7 @@ class OpenApiDocumentationTest {
     }
 
     @Test
-    fun `provider directory exposes only enabled local choices and stable category descriptions`() {
+    fun `provider directory exposes reviewed external options and stable category descriptions`() {
         val response = mockMvc.perform(get("/api/v1/providers"))
             .andExpect(status().isOk)
             .andReturn()
@@ -193,11 +193,18 @@ class OpenApiDocumentationTest {
         assertEquals(1, claimExtractorOptions.size())
         assertEquals(1, embeddingOptions.size())
         assertEquals(1, systemOneOptions.size())
-        assertEquals(1, scholarlyMetadataOptions.size())
-        assertEquals(1, openAccessOptions.size())
+        assertEquals(2, scholarlyMetadataOptions.size())
+        assertEquals(2, openAccessOptions.size())
         val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions, scholarlyMetadataOptions, openAccessOptions).flatMap { it.toList() }
-        assertEquals(5, providerOptions.size)
-        assertTrue(providerOptions.all { it.path("trustBoundary").asText() == "LOCAL" })
+        assertEquals(7, providerOptions.size)
+        assertEquals(setOf("recorded-fixtures", "crossref"), scholarlyMetadataOptions.map { it.path("providerId").asText() }.toSet())
+        assertEquals(setOf("recorded-fixtures", "unpaywall"), openAccessOptions.map { it.path("providerId").asText() }.toSet())
+        val crossref = scholarlyMetadataOptions.first { it.path("providerId").asText() == "crossref" }
+        val unpaywall = openAccessOptions.first { it.path("providerId").asText() == "unpaywall" }
+        assertEquals("EXTERNAL", crossref.path("trustBoundary").asText())
+        assertEquals("EXTERNAL", unpaywall.path("trustBoundary").asText())
+        assertTrue(crossref.path("retentionDisclosure").asText().isNotBlank())
+        assertTrue(unpaywall.path("retentionDisclosure").asText().isNotBlank())
         assertFalse(providerOptions.any { it.path("providerId").asText() in setOf("jev", "google-gemini-api", "unreviewed-provider") })
         val disclosedCategoryIds = directory.path("dataCategories").map { it.path("id").asText() }.toSet()
         assertTrue(disclosedCategoryIds.containsAll(setOf(

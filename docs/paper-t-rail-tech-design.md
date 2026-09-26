@@ -1403,7 +1403,7 @@ No verification attempt should continue.
 
 # 23. Full-Text Acquisition
 
-Only fetch legally accessible resources through the configured open-access discovery/acquisition flow. V1 does not support manually uploading a cited paper as an acquisition fallback. The local recorded-fixture provider is the safe default. The optional Unpaywall adapter is external and disabled unless an operator has reviewed the exact deployment terms, configured a contact email and retention disclosure, and explicitly enables it; each Analysis Run still needs matching consent. Before any content-host request, require an HTTPS location with an explicit CC0, CC BY, or public-domain license, reject unknown/restrictive licenses, private hosts, credential-bearing/query-string/fragment URLs, and redirects, and accept only bounded PDF or plain-text content. Never infer legality from a URL being publicly reachable.
+Only fetch legally accessible resources through the configured open-access discovery/acquisition flow. V1 does not support manually uploading a cited paper as an acquisition fallback. The local recorded-fixture provider remains selected by default. The repository's local configuration offers the external Unpaywall adapter for consent/acquisition testing; deployments must review exact terms, configure deployment-specific contact/disclosure values, or disable it, and each Analysis Run still needs matching consent. Before any content-host request, require an HTTPS location with an explicit CC0, CC BY, or public-domain license, reject unknown/restrictive licenses, private hosts, credential-bearing/query-string/fragment URLs, and redirects, and accept only bounded PDF or plain-text content. Never infer legality from a URL being publicly reachable.
 
 Semantic verification in V1 supports English cited full text only. Persist `FULL_TEXT_AVAILABLE`, `ABSTRACT_ONLY`, `METADATA_ONLY`, or `UNAVAILABLE` separately from each Claim–Paper Verification's processing status, scope, terminal reason, and final status. Detect language before any chunking or embedding; if the full text is accessible but not confidently English, set `verification_scope=NONE`, final status `INSUFFICIENT_EVIDENCE`, and terminal reason `LANGUAGE_UNSUPPORTED`; do not send its content to embedding or verification providers. Abstract-only access yields `INSUFFICIENT_EVIDENCE` with scope `ABSTRACT_ONLY` without a semantic-verifier call. With no legal full text or abstract, persist `INACCESSIBLE` with scope `NONE`.
 
@@ -1721,9 +1721,9 @@ Create a new Analysis Run. For reproducibility, each run must retain the source 
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the safe-default provider contract for implemented stages. The issue #6 runtime persists run-scoped Atomic Claims with source spans and context-scoped Citation Target links; issue #7 resolves bibliography entries conservatively; issue #8 records run-scoped legal cited-paper access and language eligibility. Recorded fixtures are the default for scholarly metadata and open-access discovery. Crossref and Unpaywall remain disabled unless separately reviewed and enabled. Embeddings and System One are not invoked by the current pipeline, and their selections must not be represented as though those stages ran. The immutable run snapshot pins the selected open-access provider, a fingerprint of its request settings (including the configured Unpaywall contact address without storing the address itself), the reviewed retention disclosure, claim extraction, reference-resolution policy/threshold, and the exact external-provider consent categories. Aggregation remains `NOT_RUN` without calibrated thresholds. A stage that was not executed must not be represented as though it used a default policy.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines a conservative deployment profile for implemented stages. The issue #6 runtime persists run-scoped Atomic Claims with source spans and context-scoped Citation Target links; issue #7 resolves bibliography entries conservatively; issue #8 records run-scoped legal cited-paper access and language eligibility. Recorded fixtures remain the selected defaults for scholarly metadata and open-access discovery. For local consent-flow testing, the repository configuration offers reviewed Crossref and Unpaywall options; deployments must verify current terms, configure deployment-specific disclosures/contact, or disable both adapters (see [ADR 0006](adr/0006-reviewed-provider-options-in-local-default-configuration.md)). Embeddings and System One are not invoked by the current pipeline, and their selections must not be represented as though those stages ran. The immutable run snapshot pins the selected open-access provider, a fingerprint of its request settings (including the configured Unpaywall contact address without storing the address itself), the reviewed retention disclosure, claim extraction, reference-resolution policy/threshold, and the exact external-provider consent categories. Aggregation remains `NOT_RUN` without calibrated thresholds. A stage that was not executed must not be represented as though it used a default policy.
 
-Safe default example:
+Conservative deployment example:
 
 ```yaml
 providers:
@@ -1804,7 +1804,7 @@ Rules:
 - disabled providers cannot be selected,
 - provider list endpoint exposes only enabled providers,
 - classify each exact provider/deployment as `LOCAL`, `EXTERNAL`, or `UNREVIEWED`; document actual payload categories and retention/deletion terms before considering enablement, and keep `UNREVIEWED` providers disabled,
-- every external provider remains disabled in the safe default; even after administrative enablement, it cannot receive content unless the user explicitly consents to that provider and those exact data categories for the specific Analysis Run; consent is never inferred from readiness, configuration, or a previous run,
+- every external provider remains disabled in this conservative deployment profile; in the repository's local configuration, Crossref and Unpaywall are offered for testing but still cannot receive data unless the user explicitly consents to that provider and those exact data categories for the specific Analysis Run; consent is never inferred from readiness, configuration, or a previous run,
 - the provider-call gate checks current classification/enablement, Analysis Run provider selection, declared-versus-actual request categories, and per-run consent before invoking any outbound send action; adapters must derive categories from the request they are about to send,
 - explicitly pass GROBID consolidation values of `0`; do not rely on service defaults,
 - Analysis Run stores selected provider/model/settings fingerprints, reviewed retention disclosures, reference-resolution threshold, and external-provider consent/data-category snapshot,
@@ -2794,7 +2794,7 @@ Request:
 GET /api/v1/providers
 ```
 
-Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, `systemOne`, and `scholarlyMetadata`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The default runtime exposes local/mock providers and recorded scholarly-metadata fixtures; Crossref remains disabled by default.
+Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, `systemOne`, `scholarlyMetadata`, and `openAccess`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The local default runtime selects local/mock providers and recorded scholarly-metadata/OA fixtures; it also offers Crossref and Unpaywall for consent-flow testing, but they require explicit selection and fresh per-run consent.
 
 ## 40.5 OpenAPI and API Documentation UIs
 
@@ -3347,13 +3347,13 @@ retrieval:
 postgres hybrid
 
 scholarly metadata:
-recorded fixtures by default; Crossref disabled until trust-boundary/retention review and per-run consent
+recorded fixtures selected by default; Crossref available in the local test catalog with reviewed disclosure, but requires selection and per-run consent
 
 reference resolution:
 title-author-year-weighted-edit-similarity-v1; configured confidence threshold pinned to each Analysis Run (numeric calibration remains a release gate)
 
 graph and OA providers:
-recorded fixtures by default; remote adapters disabled until trust-boundary/retention review and per-run consent
+recorded fixtures selected by default; Unpaywall available in the local test catalog with reviewed disclosure, but requires selection and per-run consent
 
 storage:
 minio
