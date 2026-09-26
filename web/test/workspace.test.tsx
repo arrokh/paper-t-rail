@@ -6,12 +6,23 @@ import { useRecentAnalysisRuns } from "@/features/analysis-runs/queries/analysis
 
 const providerDirectory = {
   providers: {
-    claimExtractor: [{ role: "claimExtractor", providerId: "heuristic", displayName: "Heuristic", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: [], retentionDisclosure: null }],
-    embedding: [{ role: "embedding", providerId: "local", displayName: "Local", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: [], retentionDisclosure: null }],
-    systemOne: [{ role: "systemOne", providerId: "mock", displayName: "Mock", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: [], retentionDisclosure: null }],
-    scholarlyMetadata: [{ role: "scholarlyMetadata", providerId: "recorded-fixtures", displayName: "Recorded fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: [], retentionDisclosure: null }],
+    claimExtractor: [
+      { role: "claimExtractor", providerId: "heuristic", displayName: "Heuristic", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["citation_context"], retentionDisclosure: null },
+      { role: "claimExtractor", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "model-2", trustBoundary: "EXTERNAL", dataCategories: ["citation_context"], retentionDisclosure: "Provider retention terms reviewed for this deployment." },
+      { role: "claimExtractor", providerId: "unclassified-ai", displayName: "Unclassified AI", version: "v1", model: null, trustBoundary: "UNREVIEWED", dataCategories: ["citation_context"], retentionDisclosure: null },
+    ],
+    embedding: [
+      { role: "embedding", providerId: "local", displayName: "Local", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["cited_paper_chunks", "embedding_input"], retentionDisclosure: null },
+      { role: "embedding", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "embed-2", trustBoundary: "EXTERNAL", dataCategories: ["citation_context", "cited_paper_chunks", "embedding_input"], retentionDisclosure: "Provider retention terms reviewed for this deployment." },
+    ],
+    systemOne: [{ role: "systemOne", providerId: "mock", displayName: "Mock", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null }],
+    scholarlyMetadata: [{ role: "scholarlyMetadata", providerId: "recorded-fixtures", displayName: "Recorded fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: null }],
   },
-  dataCategories: [],
+  dataCategories: [
+    { id: "citation_context", label: "Citation Context", description: "The citation-bearing clause or sentence." },
+    { id: "cited_paper_chunks", label: "Cited Paper chunks", description: "Text chunks from an acquired Cited Paper." },
+    { id: "embedding_input", label: "Embedding input", description: "Text submitted to calculate embeddings." },
+  ],
 };
 
 function analysisRun(id: string, message: string, status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" = "QUEUED") {
@@ -135,6 +146,86 @@ describe("interactive workspace remote state", () => {
     expect(requests.every(({ url }) => url.startsWith("/api/v1/"))).toBe(true);
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "source.pdf" })).toBeTruthy());
+  });
+
+  it("recalculates provider consent on selection changes and requires fresh consent for each Analysis Run", async () => {
+    const submittedConfigurations: Array<{ claimExtractorProvider: string; externalProviderConsents: Array<{ providerId: string; dataCategories: string[] }> }> = [];
+    let runs: ReturnType<typeof analysisRun>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
+      const path = String(url);
+      const method = options.method ?? "GET";
+      if (path === "/api/v1/providers") return jsonResponse(providerDirectory);
+      if (path.startsWith("/api/v1/analysis-runs?") && method === "GET") {
+        return jsonResponse({ items: runs, nextCursor: null });
+      }
+      if (path === "/api/v1/analysis-runs" && method === "POST") {
+        const formData = options.body as FormData;
+        submittedConfigurations.push(JSON.parse(String(formData.get("configuration"))));
+        runs = [analysisRun("run-first", "The first Analysis Run is selected.")];
+        return jsonResponse({
+          documentId: "document-1",
+          analysisRunId: "run-first",
+          filename: "source.pdf",
+          sourceContentSha256: "a".repeat(64),
+          status: "QUEUED",
+          createdAt: "2025-01-01T00:00:00Z",
+        });
+      }
+      if (path === "/api/v1/documents/document-1/analysis-runs" && method === "POST") {
+        submittedConfigurations.push(JSON.parse(String(options.body)));
+        runs = [analysisRun("run-second", "The second Analysis Run is selected.", "PROCESSING"), ...runs];
+        return jsonResponse({
+          documentId: "document-1",
+          analysisRunId: "run-second",
+          filename: "source.pdf",
+          sourceContentSha256: "a".repeat(64),
+          status: "QUEUED",
+          createdAt: "2025-01-02T00:00:00Z",
+        });
+      }
+      throw new Error(`Unexpected browser request: ${method} ${path}`);
+    }));
+
+    const { container } = renderWorkspace();
+    await screen.findByText("Local/mock providers selected");
+    const claimExtractor = screen.getByLabelText("Claim extraction");
+    fireEvent.change(claimExtractor, { target: { value: "hosted-ai" } });
+
+    const citationContextConsent = await screen.findByRole("checkbox", { name: "Citation Context" });
+    expect(citationContextConsent.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(citationContextConsent);
+    expect(screen.getByRole("button", { name: "Upload & start Analysis Run" }).hasAttribute("disabled")).toBe(false);
+
+    fireEvent.change(claimExtractor, { target: { value: "heuristic" } });
+    expect(screen.queryByText("Hosted AI data access")).toBeNull();
+    fireEvent.change(claimExtractor, { target: { value: "hosted-ai" } });
+    expect((await screen.findByRole("checkbox", { name: "Citation Context" })).getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Citation Context" }));
+    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload & start Analysis Run" }));
+
+    expect(await screen.findByText("The first Analysis Run is selected.")).toBeTruthy();
+    expect(submittedConfigurations[0].externalProviderConsents).toEqual([{
+      providerId: "hosted-ai",
+      dataCategories: ["citation_context"],
+    }]);
+    expect((await screen.findByRole("checkbox", { name: "Citation Context" })).getAttribute("aria-checked")).toBe("false");
+
+    const reanalyzeButton = await screen.findByRole("button", { name: /Create a new run from this document/ });
+    expect(reanalyzeButton.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Citation Context" }));
+    expect(reanalyzeButton.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(reanalyzeButton);
+
+    expect(await screen.findByText("The second Analysis Run is selected.")).toBeTruthy();
+    expect(submittedConfigurations[1].externalProviderConsents).toEqual([{
+      providerId: "hosted-ai",
+      dataCategories: ["citation_context"],
+    }]);
   });
 
   it("polls while a displayed run is active and stops after all displayed runs become terminal", async () => {

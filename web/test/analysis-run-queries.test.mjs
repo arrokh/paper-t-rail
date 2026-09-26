@@ -32,18 +32,32 @@ test("provider-directory query exposes loading, successful data, and the safe AP
   const pending = client.fetchQuery(providerDirectoryQueryOptions());
   assert.equal(client.getQueryState(PROVIDER_DIRECTORY_QUERY_KEY)?.status, "pending");
 
-  const option = { providerId: "local" };
+  const roles = ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata"];
+  const optionFor = (role) => ({
+    role,
+    providerId: "local",
+    displayName: "Local",
+    version: "v1",
+    model: null,
+    trustBoundary: "LOCAL",
+    dataCategories: [],
+    retentionDisclosure: null,
+  });
   const directory = {
-    providers: {
-      claimExtractor: [option],
-      embedding: [option],
-      systemOne: [option],
-      scholarlyMetadata: [option],
-    },
+    providers: Object.fromEntries(roles.map((role) => [role, [optionFor(role), {
+      ...optionFor(role),
+      providerId: "unreviewed",
+      displayName: "Unreviewed",
+      trustBoundary: "UNREVIEWED",
+    }]])),
+    dataCategories: [],
+  };
+  const expectedDirectory = {
+    providers: Object.fromEntries(roles.map((role) => [role, [optionFor(role)]])),
     dataCategories: [],
   };
   releaseResponse(jsonResponse(directory));
-  assert.deepEqual(await pending, directory);
+  assert.deepEqual(await pending, expectedDirectory);
   assert.equal(client.getQueryState(PROVIDER_DIRECTORY_QUERY_KEY)?.status, "success");
 
   client.clear();
