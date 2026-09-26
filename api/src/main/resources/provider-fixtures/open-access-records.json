@@ -1,0 +1,15 @@
+[
+  {
+    "doi": "10.5555/papertrail.fixture.reference-resolution.2024",
+    "abstract": "A recorded fixture study demonstrating conservative reference resolution.",
+    "locations": [
+      {
+        "url": "fixture://open-access/reference-resolution-2024",
+        "license": "CC0-1.0",
+        "version": "publishedVersion",
+        "hostType": "repository",
+        "textResource": "provider-fixtures/cited-full-text/reference-resolution-2024.txt"
+      }
+    ]
+  }
+]

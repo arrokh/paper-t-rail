@@ -1,6 +1,7 @@
 package com.papertrail.api.analysis.service
 
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
+import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import org.springframework.jdbc.core.JdbcTemplate
@@ -35,9 +36,21 @@ class AnalysisRunStageCompletionService(
             analysisRunId,
             REFERENCE_RESOLUTION_REQUESTED,
         ) ?: 0L
-        if (pendingTaskCount > 0) return@execute false
+        val pendingAcquisitionCount = jdbc.queryForObject(
+            """
+            SELECT count(*)
+              FROM outbox_events task
+             WHERE task.analysis_run_id = ?
+               AND task.event_type = ?
+               AND NOT EXISTS (SELECT 1 FROM inbox_events completed WHERE completed.event_id = task.event_id)
+            """.trimIndent(),
+            Long::class.java,
+            analysisRunId,
+            CITED_PAPER_ACQUISITION_REQUESTED,
+        ) ?: 0L
+        if (pendingTaskCount > 0 || pendingAcquisitionCount > 0) return@execute false
 
-        val failedTaskCount = jdbc.queryForObject(
+        val failedReferenceTaskCount = jdbc.queryForObject(
             """
             SELECT count(*)
               FROM outbox_events task
@@ -54,17 +67,39 @@ class AnalysisRunStageCompletionService(
             REFERENCE_RESOLUTION_REQUESTED,
         ) ?: 0L
 
+        val failedAcquisitionTaskCount = jdbc.queryForObject(
+            """
+            SELECT count(*)
+              FROM outbox_events task
+              JOIN inbox_events completed ON completed.event_id = task.event_id
+              LEFT JOIN cited_paper_access access
+                ON access.analysis_run_id = task.analysis_run_id
+               AND access.bibliography_entry_id::text = (task.payload -> 'payload' ->> 'bibliographyEntryId')
+             WHERE task.analysis_run_id = ?
+               AND task.event_type = ?
+               AND access.bibliography_entry_id IS NULL
+            """.trimIndent(),
+            Long::class.java,
+            analysisRunId,
+            CITED_PAPER_ACQUISITION_REQUESTED,
+        ) ?: 0L
+        val failedTaskCount = failedReferenceTaskCount + failedAcquisitionTaskCount
         val parsed = parsedDocumentRepository.find(analysisRunId)
             ?: throw IllegalStateException("Persisted parsed document structure is missing after reference processing.")
         val resolutionSummary = referenceResolutionService.summary(analysisRunId)
+        val citedPaperAccessConfigured = jdbc.queryForObject(
+            "SELECT jsonb_exists(configuration_snapshot, 'openAccess') AND configuration_snapshot #>> '{referenceResolution,executionStatus}' <> 'NOT_RUN' FROM analysis_runs WHERE id = ?",
+            Boolean::class.java,
+            analysisRunId,
+        ) == true
         val atomicClaims = parsed.citationContexts.flatMap { it.atomicClaims }
         val inferredClaimTargetLinkCount = atomicClaims.sumOf { it.citationTargets.size }
         val warning = failedTaskCount > 0
         val finalStatus = if (warning) "COMPLETED_WITH_WARNINGS" else "PARSED"
-        val progressMessage = if (warning) {
-            "Parsed structure is ready, but $failedTaskCount bibliography resolution task(s) exhausted retries; evidence verification has not run."
-        } else {
-            "Parsed structure, Atomic Claims, inferred reference links, and conservative bibliography resolution are ready; evidence verification has not run."
+        val progressMessage = when {
+            warning -> "Parsed structure is ready, but $failedTaskCount reference-resolution or cited-paper access task(s) exhausted retries; semantic verification has not run."
+            citedPaperAccessConfigured -> "Parsed structure, reference resolution, legal cited-paper access outcomes, and language eligibility are ready; semantic verification has not run."
+            else -> "Parsed structure and reference resolution are ready; cited-paper access and semantic verification were not run for this legacy Analysis Run."
         }
         val updated = jdbc.update(
             """
@@ -84,7 +119,9 @@ class AnalysisRunStageCompletionService(
                        'unresolvedReferenceCount', ?,
                        'unsupportedReferenceTypeCount', ?,
                        'notAttemptedReferenceCount', ?,
-                       'failedReferenceResolutionCount', ?
+                       'failedReferenceResolutionCount', ?,
+                       'acquiredCitedPaperCount', ?,
+                       'failedCitedPaperAcquisitionCount', ?
                    ),
                    failure_reason = CASE WHEN ? > 0 THEN ? ELSE NULL END,
                    completed_at = CASE WHEN ? > 0 THEN now() ELSE completed_at END,
@@ -105,8 +142,10 @@ class AnalysisRunStageCompletionService(
             resolutionSummary.unsupportedReferenceType,
             resolutionSummary.notAttempted,
             resolutionSummary.failed,
+            jdbc.queryForObject("SELECT count(*) FROM cited_paper_access WHERE analysis_run_id = ? AND access_status = 'FULL_TEXT_AVAILABLE'", Int::class.java, analysisRunId) ?: 0,
+            failedAcquisitionTaskCount,
             failedTaskCount,
-            "One or more per-entry bibliography resolution tasks exhausted their retries.",
+            "One or more reference-resolution or cited-paper access tasks exhausted their retries.",
             failedTaskCount,
             analysisRunId,
         )

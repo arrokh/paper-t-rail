@@ -17,11 +17,18 @@ const providerDirectory = {
     ],
     systemOne: [{ role: "systemOne", providerId: "mock", displayName: "Mock", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null }],
     scholarlyMetadata: [{ role: "scholarlyMetadata", providerId: "recorded-fixtures", displayName: "Recorded fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: null }],
+    openAccess: [
+      { role: "openAccess", providerId: "recorded-fixtures", displayName: "Recorded OA fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata", "cited_paper_location"], retentionDisclosure: null },
+      { role: "openAccess", providerId: "unpaywall", displayName: "Unpaywall and discovered open-access hosts", version: "v2", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"], retentionDisclosure: "Reviewed Unpaywall request and retention disclosure." },
+    ],
   },
   dataCategories: [
     { id: "citation_context", label: "Citation Context", description: "The citation-bearing clause or sentence." },
     { id: "cited_paper_chunks", label: "Cited Paper chunks", description: "Text chunks from an acquired Cited Paper." },
     { id: "embedding_input", label: "Embedding input", description: "Text submitted to calculate embeddings." },
+    { id: "bibliographic_metadata", label: "Bibliographic metadata", description: "DOIs and minimum lookup fields." },
+    { id: "cited_paper_location", label: "Cited Paper location", description: "A discovered full-text URL." },
+    { id: "provider_contact_email", label: "Provider contact email", description: "Contact email sent to a provider." },
   ],
 };
 
@@ -37,6 +44,7 @@ function analysisRun(id: string, message: string, status: "QUEUED" | "PROCESSING
       claimExtractor: { provider: "heuristic", version: "v1" },
       embedding: { provider: "local", version: "v1" },
       systemOne: { provider: "mock", version: "v1" },
+      openAccess: { provider: "recorded-fixtures", version: "v1" },
       sourceParser: { provider: "grobid", version: "v1" },
       languageDetector: { provider: "local", version: "v1" },
       externalProviderConsents: [],
@@ -226,6 +234,66 @@ describe("interactive workspace remote state", () => {
       providerId: "hosted-ai",
       dataCategories: ["citation_context"],
     }]);
+  });
+
+  it("blocks external cited full-text acquisition until every disclosed category is approved", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    let submittedConfiguration: Record<string, unknown> | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
+      const path = String(url);
+      const method = options.method ?? "GET";
+      requests.push({ url: path, method });
+      if (path === "/api/v1/providers") return jsonResponse(providerDirectory);
+      if (path.startsWith("/api/v1/analysis-runs?") && method === "GET") {
+        return jsonResponse({ items: [], nextCursor: null });
+      }
+      if (path === "/api/v1/analysis-runs" && method === "POST") {
+        const formData = options.body as FormData;
+        submittedConfiguration = JSON.parse(String(formData.get("configuration")));
+        return jsonResponse({
+          documentId: "document-1",
+          analysisRunId: "run-open-access",
+          filename: "source.pdf",
+          sourceContentSha256: "a".repeat(64),
+          status: "QUEUED",
+          createdAt: "2025-01-01T00:00:00Z",
+        });
+      }
+      throw new Error(`Unexpected browser request: ${method} ${path}`);
+    }));
+
+    const { container } = renderWorkspace();
+    await screen.findByText("Local/mock providers selected");
+    fireEvent.change(screen.getByLabelText("Cited full-text access"), { target: { value: "unpaywall" } });
+
+    const categories = [
+      await screen.findByRole("checkbox", { name: "Bibliographic metadata" }),
+      screen.getByRole("checkbox", { name: "Cited Paper location" }),
+      screen.getByRole("checkbox", { name: "Provider contact email" }),
+    ];
+    expect(categories.every((category) => category.getAttribute("aria-checked") === "false")).toBe(true);
+
+    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
+    });
+    const uploadButton = screen.getByRole("button", { name: "Upload & start Analysis Run" });
+    expect(uploadButton.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(uploadButton);
+    expect(requests.some(({ url, method }) => url === "/api/v1/analysis-runs" && method === "POST")).toBe(false);
+
+    categories.forEach((category) => fireEvent.click(category));
+    expect(uploadButton.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(uploadButton);
+    await waitFor(() => expect(submittedConfiguration).not.toBeNull());
+    expect(submittedConfiguration).toMatchObject({
+      openAccessProvider: "unpaywall",
+      externalProviderConsents: [{
+        providerId: "unpaywall",
+        dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"],
+      }],
+    });
+    expect(requests.every(({ url }) => url.startsWith("/api/v1/"))).toBe(true);
   });
 
   it("polls while a displayed run is active and stops after all displayed runs become terminal", async () => {

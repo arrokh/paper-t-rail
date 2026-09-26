@@ -32,7 +32,7 @@ test("provider-directory query exposes loading, successful data, and the safe AP
   const pending = client.fetchQuery(providerDirectoryQueryOptions());
   assert.equal(client.getQueryState(PROVIDER_DIRECTORY_QUERY_KEY)?.status, "pending");
 
-  const roles = ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata"];
+  const roles = ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata", "openAccess"];
   const optionFor = (role) => ({
     role,
     providerId: "local",
@@ -90,6 +90,7 @@ test("upload mutation refreshes the active recent-run query without refetching i
       claimExtractor: { provider: "heuristic", version: "v1" },
       embedding: { provider: "local", version: "v1" },
       systemOne: { provider: "mock", version: "v1" },
+      openAccess: { provider: "recorded-fixtures", version: "v1" },
       sourceParser: { provider: "grobid", version: "v1" },
       languageDetector: { provider: "local", version: "v1" },
     },
@@ -133,6 +134,7 @@ test("upload mutation refreshes the active recent-run query without refetching i
       embeddingProvider: "local",
       systemOneProvider: "mock",
       scholarlyMetadataProvider: "recorded-fixtures",
+      openAccessProvider: "recorded-fixtures",
       externalProviderConsents: [],
     },
   });

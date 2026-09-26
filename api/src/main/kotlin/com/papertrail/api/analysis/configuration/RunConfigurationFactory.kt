@@ -9,6 +9,7 @@ import com.papertrail.api.infrastructure.providers.EMBEDDING_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.infrastructure.providers.ProviderRegistration
 import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
+import com.papertrail.api.infrastructure.providers.OPEN_ACCESS_ROLE
 import com.papertrail.api.infrastructure.providers.SCHOLARLY_METADATA_ROLE
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
 import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
@@ -31,7 +32,7 @@ class RunConfigurationFactory(
     fun parseRequest(node: JsonNode?): RunConfigurationRequest {
         if (node == null || node.isNull) return RunConfigurationRequest()
         require(node.isObject) { "Analysis configuration must be a JSON object." }
-        val allowed = setOf("claimExtractorProvider", "embeddingProvider", "systemOneProvider", "scholarlyMetadataProvider", "externalProviderConsents")
+        val allowed = setOf("claimExtractorProvider", "embeddingProvider", "systemOneProvider", "scholarlyMetadataProvider", "openAccessProvider", "externalProviderConsents")
         val supplied = node.fieldNames().asSequence().toSet()
         require(supplied.all { it in allowed }) { "Analysis configuration contains unsupported fields." }
         fun provider(name: String, default: String): String {
@@ -63,6 +64,7 @@ class RunConfigurationFactory(
             embeddingProvider = provider("embeddingProvider", "local"),
             systemOneProvider = provider("systemOneProvider", "mock"),
             scholarlyMetadataProvider = provider("scholarlyMetadataProvider", "recorded-fixtures"),
+            openAccessProvider = provider("openAccessProvider", "recorded-fixtures"),
             externalProviderConsents = providerConsents,
         )
     }
@@ -73,6 +75,7 @@ class RunConfigurationFactory(
             providerCatalog.requireSelectable(EMBEDDING_ROLE, request.embeddingProvider),
             providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, request.systemOneProvider),
             providerCatalog.requireSelectable(SCHOLARLY_METADATA_ROLE, request.scholarlyMetadataProvider),
+            providerCatalog.requireSelectable(OPEN_ACCESS_ROLE, request.openAccessProvider),
         )
         val requiredConsents = selected
             .filter { it.trustBoundary == ProviderTrustBoundary.EXTERNAL }
@@ -106,6 +109,9 @@ class RunConfigurationFactory(
             sourceParser = ProviderSelection(parserId, parserVersion),
             languageDetector = ProviderSelection("optimaize", languageDetectorVersion),
             validationLimits = limits,
+            openAccess = selected[4].toSelection(),
+            openAccessProviderConfigurationFingerprint = selected[4].payloadConfigurationFingerprint,
+            openAccessRetentionDisclosure = selected[4].retentionDisclosure,
             referenceResolution = ReferenceResolutionSnapshot(
                 executionStatus = "PENDING",
                 provider = selected[3].toSelection(),

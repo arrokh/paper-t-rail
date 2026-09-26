@@ -18,11 +18,19 @@ class RunConfigurationFactoryConfiguration {
         @Value("\${paper-trail.providers.crossref.enablement-reviewed:false}") crossrefEnablementReviewed: Boolean,
         @Value("\${paper-trail.providers.crossref.retention-disclosure:}") crossrefRetentionDisclosure: String,
         @Value("\${paper-trail.providers.crossref.contact-email:}") crossrefContactEmail: String,
+        @Value("\${paper-trail.providers.unpaywall.enabled:false}") unpaywallEnabled: Boolean,
+        @Value("\${paper-trail.providers.unpaywall.enablement-reviewed:false}") unpaywallEnablementReviewed: Boolean,
+        @Value("\${paper-trail.providers.unpaywall.retention-disclosure:}") unpaywallRetentionDisclosure: String,
+        @Value("\${paper-trail.providers.unpaywall.contact-email:}") unpaywallContactEmail: String,
     ): ProviderCatalog = ProviderCatalog.safeDefaults(
         crossrefEnabled = crossrefEnabled,
         crossrefEnablementReviewed = crossrefEnablementReviewed,
         crossrefRetentionDisclosure = crossrefRetentionDisclosure.takeIf(String::isNotBlank),
         crossrefContactEmail = crossrefContactEmail.takeIf(String::isNotBlank),
+        unpaywallEnabled = unpaywallEnabled,
+        unpaywallEnablementReviewed = unpaywallEnablementReviewed,
+        unpaywallRetentionDisclosure = unpaywallRetentionDisclosure.takeIf(String::isNotBlank),
+        unpaywallContactEmail = unpaywallContactEmail.takeIf(String::isNotBlank),
     )
 
     @Bean

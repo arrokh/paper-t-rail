@@ -11,6 +11,9 @@ import com.papertrail.api.citation.parsing.ParsedParserProvenance
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionReportResponse
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
+import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
+import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
+import com.papertrail.api.scholarly.acquisition.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import com.papertrail.api.analysis.http.AnalysisRunPage
 import com.papertrail.api.analysis.http.AnalysisRunSummary
@@ -125,6 +128,7 @@ class OpenApiDocumentationTest {
         val snapshotSchemaName = runProperties.path("configuration").path("${'$'}ref").asText().substringAfterLast('/')
         val snapshotProperties = document.path("components").path("schemas").path(snapshotSchemaName).path("properties")
         assertTrue(snapshotProperties.has("claimExtractor"))
+        assertTrue(snapshotProperties.has("openAccess"))
         assertTrue(snapshotProperties.has("validationLimits"))
         val parsedDocument = paths.path("/api/v1/analysis-runs/{runId}/parsed-document").path("get")
         assertTrue(parsedDocument.path("responses").path("200").path("content").has("application/json"))
@@ -147,6 +151,7 @@ class OpenApiDocumentationTest {
         assertTrue(configProperties.has("embeddingProvider"))
         assertTrue(configProperties.has("systemOneProvider"))
         assertTrue(configProperties.has("scholarlyMetadataProvider"))
+        assertTrue(configProperties.has("openAccessProvider"))
         assertTrue(configProperties.has("externalProviderConsents"))
         assertTrue(reanalysis.path("responses").has("201"))
         assertTrue(reanalysis.path("responses").has("404"))
@@ -171,7 +176,7 @@ class OpenApiDocumentationTest {
     }
 
     @Test
-    fun `provider directory exposes only enabled local choices and stable category descriptions`() {
+    fun `provider directory exposes reviewed external options and stable category descriptions`() {
         val response = mockMvc.perform(get("/api/v1/providers"))
             .andExpect(status().isOk)
             .andReturn()
@@ -183,14 +188,23 @@ class OpenApiDocumentationTest {
         val embeddingOptions = providers.path("embedding")
         val systemOneOptions = providers.path("systemOne")
         val scholarlyMetadataOptions = providers.path("scholarlyMetadata")
-        assertEquals(setOf("claimExtractor", "embedding", "systemOne", "scholarlyMetadata"), providers.fieldNames().asSequence().toSet())
+        val openAccessOptions = providers.path("openAccess")
+        assertEquals(setOf("claimExtractor", "embedding", "systemOne", "scholarlyMetadata", "openAccess"), providers.fieldNames().asSequence().toSet())
         assertEquals(1, claimExtractorOptions.size())
         assertEquals(1, embeddingOptions.size())
         assertEquals(1, systemOneOptions.size())
-        assertEquals(1, scholarlyMetadataOptions.size())
-        val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions, scholarlyMetadataOptions).flatMap { it.toList() }
-        assertEquals(4, providerOptions.size)
-        assertTrue(providerOptions.all { it.path("trustBoundary").asText() == "LOCAL" })
+        assertEquals(2, scholarlyMetadataOptions.size())
+        assertEquals(2, openAccessOptions.size())
+        val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions, scholarlyMetadataOptions, openAccessOptions).flatMap { it.toList() }
+        assertEquals(7, providerOptions.size)
+        assertEquals(setOf("recorded-fixtures", "crossref"), scholarlyMetadataOptions.map { it.path("providerId").asText() }.toSet())
+        assertEquals(setOf("recorded-fixtures", "unpaywall"), openAccessOptions.map { it.path("providerId").asText() }.toSet())
+        val crossref = scholarlyMetadataOptions.first { it.path("providerId").asText() == "crossref" }
+        val unpaywall = openAccessOptions.first { it.path("providerId").asText() == "unpaywall" }
+        assertEquals("EXTERNAL", crossref.path("trustBoundary").asText())
+        assertEquals("EXTERNAL", unpaywall.path("trustBoundary").asText())
+        assertTrue(crossref.path("retentionDisclosure").asText().isNotBlank())
+        assertTrue(unpaywall.path("retentionDisclosure").asText().isNotBlank())
         assertFalse(providerOptions.any { it.path("providerId").asText() in setOf("jev", "google-gemini-api", "unreviewed-provider") })
         val disclosedCategoryIds = directory.path("dataCategories").map { it.path("id").asText() }.toSet()
         assertTrue(disclosedCategoryIds.containsAll(setOf(
@@ -201,6 +215,7 @@ class OpenApiDocumentationTest {
             "atomic_claims",
             "evidence_passages",
             "embedding_input",
+            "cited_paper_location",
         )))
     }
 
@@ -363,7 +378,39 @@ class OpenApiDocumentationTest {
                     scorePolicyVersion = "title-author-year-weighted-edit-similarity-v1",
                     confidenceThreshold = 0.9,
                     summary = ReferenceResolutionSummary(2, 1, 0, 1, 0, 0),
-                    entries = emptyList(),
+                    entries = listOf(
+                        BibliographyResolutionReportEntry(
+                            entryOrder = 1,
+                            localReferenceKey = "ref1",
+                            rawText = "Example paper, 2024",
+                            title = "Example paper",
+                            authors = listOf("Riley Example"),
+                            year = 2024,
+                            doi = "10.1234/example",
+                            referenceType = "JOURNAL_ARTICLE",
+                            status = "RESOLVED",
+                            reasonCode = null,
+                            canonicalPaper = null,
+                            confidenceScore = 1.0,
+                            matchMethod = "DOI",
+                            citedPaperAccess = CitedPaperAccessReport(
+                                accessStatus = "ABSTRACT_ONLY",
+                                accessReason = "ABSTRACT_ONLY",
+                                providerId = "recorded-fixtures",
+                                sourceUrl = null,
+                                license = null,
+                                version = null,
+                                hostType = null,
+                                discoveredAt = Instant.parse("2025-01-01T00:00:00Z"),
+                                contentSha256 = null,
+                                language = null,
+                                languageDetectorVersion = null,
+                                verificationOutcomes = listOf(
+                                    CitedReferenceVerificationOutcome(UUID.randomUUID(), "INSUFFICIENT_EVIDENCE", "ABSTRACT_ONLY", "ABSTRACT_ONLY"),
+                                ),
+                            ),
+                        ),
+                    ),
                 ),
             ),
         )
@@ -375,6 +422,9 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.confidenceThreshold").value(0.9))
             .andExpect(jsonPath("$.referenceResolution.summary.unsupportedReferenceType").value(1))
             .andExpect(jsonPath("$.referenceResolution.summary.failed").value(0))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessStatus").value("ABSTRACT_ONLY"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessReason").value("ABSTRACT_ONLY"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.verificationOutcomes[0].finalStatus").value("INSUFFICIENT_EVIDENCE"))
     }
 
     @Test

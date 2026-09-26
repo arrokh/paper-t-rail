@@ -434,7 +434,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                     <dd className="m-0 break-all font-mono text-xs leading-relaxed text-foreground">{selectedRun.sourceContentSha256}</dd>
                     <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Configuration</dt>
                     <dd className="m-0 break-words text-sm text-foreground">
-                      {selectedRun.configuration.claimExtractor.provider} · {selectedRun.configuration.embedding.provider} · {selectedRun.configuration.systemOne.provider} · {selectedRun.configuration.referenceResolution?.provider?.provider ?? "not configured"}
+                      Claim {selectedRun.configuration.claimExtractor.provider} · Embeddings {selectedRun.configuration.embedding.provider} · Evidence {selectedRun.configuration.systemOne.provider} · Bibliography {selectedRun.configuration.referenceResolution?.provider?.provider ?? "not configured"} · Cited full text {selectedRun.configuration.openAccess?.provider ?? "not configured"}
                     </dd>
                     <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Worker stage</dt>
                     <dd className="m-0 text-sm capitalize text-foreground">
@@ -681,7 +681,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                 <TabsContent value="report" className="space-y-5 outline-none">
                   {coverageReportLoading && (
                     <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-                      <Spinner aria-hidden="true" /> Loading Reference Resolution Report…
+                      <Spinner aria-hidden="true" /> Loading Reference and Cited Paper Access Report…
                     </p>
                   )}
                   {coverageReportError && (
@@ -697,8 +697,8 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                       <div className="space-y-5">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="space-y-1">
-                            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Reference Resolution Report</p>
-                            <h3 className="font-heading text-lg font-semibold tracking-tight">Bibliography resolution</h3>
+                            <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Reference and Cited Paper Access Report</p>
+                            <h3 className="font-heading text-lg font-semibold tracking-tight">Reference resolution and legal access</h3>
                           </div>
                           <Badge variant="secondary" className="font-mono text-xs">
                             {resolution.executionStatus.replaceAll("_", " ").toLowerCase()}
@@ -729,6 +729,33 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                             </div>
                           ))}
                         </dl>
+                        <section className="space-y-3" aria-labelledby="cited-paper-access-heading">
+                          <div className="space-y-1">
+                            <h4 id="cited-paper-access-heading" className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Cited Paper access outcomes</h4>
+                            <p className="text-sm text-muted-foreground">Access availability is separate from each Claim–Paper Verification status.</p>
+                          </div>
+                          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+                            {([
+                              ["Full text available", "FULL_TEXT_AVAILABLE"],
+                              ["Abstract only", "ABSTRACT_ONLY"],
+                              ["Metadata only", "METADATA_ONLY"],
+                              ["Unavailable", "UNAVAILABLE"],
+                            ] as const).map(([label, status]) => (
+                              <div key={status} className="rounded-lg border border-border bg-card px-3 py-3">
+                                <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
+                                <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">
+                                  {resolution.entries.filter((entry) => entry.citedPaperAccess?.accessStatus === status).length}
+                                </dd>
+                              </div>
+                            ))}
+                            <div className="rounded-lg border border-border bg-card px-3 py-3">
+                              <dt className="text-xs leading-relaxed text-muted-foreground">Not attempted</dt>
+                              <dd className="m-0 mt-1 font-mono text-lg font-semibold text-foreground">
+                                {resolution.entries.filter((entry) => entry.status === "RESOLVED" && !entry.citedPaperAccess).length}
+                              </dd>
+                            </div>
+                          </dl>
+                        </section>
                         {resolution.entries.length === 0 ? (
                           <p className="rounded-lg border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
                             No Bibliography Entries were available for resolution.
@@ -748,7 +775,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                           </ol>
                         )}
                         <p className="text-xs leading-relaxed text-muted-foreground">
-                          Ambiguous and below-threshold matches remain unresolved. The configured threshold is pinned to this run; numeric calibration remains a separate release gate. This report does not claim to complete Atomic Claim or evidence analysis.
+                          Ambiguous and below-threshold matches remain unresolved. Access outcomes do not imply a semantic assessment: abstract-only and unsupported-language papers receive terminal statuses without semantic-provider calls, and English full text remains pending until semantic processing is implemented. The configured reference threshold is pinned to this run; numeric calibration remains a separate release gate.
                         </p>
                       </div>
                     );

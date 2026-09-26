@@ -29,6 +29,7 @@ const PROVIDER_FIELDS = [
   ["embedding", "Embeddings", "embeddingProvider"],
   ["systemOne", "Evidence assessment", "systemOneProvider"],
   ["scholarlyMetadata", "Bibliography resolution", "scholarlyMetadataProvider"],
+  ["openAccess", "Cited full-text access", "openAccessProvider"],
 ] as const;
 
 function errorMessage(error: unknown, fallback: string) {

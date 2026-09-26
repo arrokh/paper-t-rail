@@ -1,0 +1,3 @@
+# Offer reviewed Crossref and Unpaywall options in the local default configuration
+
+To make provider-consent and cited-paper acquisition flows testable from a fresh local setup, the repository enables and marks Crossref and Unpaywall reviewed in its default configuration, while recorded fixtures remain the selected defaults. This supersedes ADR 0003's disabled-by-default rule only for these two catalog options: no external request is permitted without explicit provider selection and matching per-run consent, and deployments must verify current terms, replace the test contact/disclosures with deployment-specific values, or disable the integrations.

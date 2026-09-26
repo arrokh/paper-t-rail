@@ -1,5 +1,7 @@
 package com.papertrail.api.scholarly.references.report
 
+import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
+
 data class BibliographyResolutionReportEntry(
     val entryOrder: Int,
     val localReferenceKey: String,
@@ -14,4 +16,5 @@ data class BibliographyResolutionReportEntry(
     val canonicalPaper: ReportCanonicalPaper?,
     val confidenceScore: Double?,
     val matchMethod: String?,
+    val citedPaperAccess: CitedPaperAccessReport? = null,
 )

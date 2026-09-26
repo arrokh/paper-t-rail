@@ -1403,7 +1403,9 @@ No verification attempt should continue.
 
 # 23. Full-Text Acquisition
 
-Only fetch legally accessible resources through the configured open-access discovery/acquisition flow. V1 does not support manually uploading a cited paper as an acquisition fallback. Semantic verification in V1 supports English cited full text only. Detect language before chunking or embedding; if the full text is accessible but non-English, set `verification_scope=NONE`, final status `INSUFFICIENT_EVIDENCE`, and terminal reason `LANGUAGE_UNSUPPORTED`; do not send its content to embedding or verification providers.
+Only fetch legally accessible resources through the configured open-access discovery/acquisition flow. V1 does not support manually uploading a cited paper as an acquisition fallback. The local recorded-fixture provider remains selected by default. The repository's local configuration offers the external Unpaywall adapter for consent/acquisition testing; deployments must review exact terms, configure deployment-specific contact/disclosure values, or disable it, and each Analysis Run still needs matching consent. Before any content-host request, require an HTTPS location with an explicit CC0, CC BY, or public-domain license, reject unknown/restrictive licenses, private hosts, credential-bearing/query-string/fragment URLs, and redirects, and accept only bounded PDF or plain-text content. Never infer legality from a URL being publicly reachable.
+
+Semantic verification in V1 supports English cited full text only. Persist `FULL_TEXT_AVAILABLE`, `ABSTRACT_ONLY`, `METADATA_ONLY`, or `UNAVAILABLE` separately from each Claim–Paper Verification's processing status, scope, terminal reason, and final status. Detect language before any chunking or embedding; if the full text is accessible but not confidently English, set `verification_scope=NONE`, final status `INSUFFICIENT_EVIDENCE`, and terminal reason `LANGUAGE_UNSUPPORTED`; do not send its content to embedding or verification providers. Abstract-only access yields `INSUFFICIENT_EVIDENCE` with scope `ABSTRACT_ONLY` without a semantic-verifier call. With no legal full text or abstract, persist `INACCESSIBLE` with scope `NONE`.
 
 Never bypass a paywall.
 
@@ -1719,9 +1721,9 @@ Create a new Analysis Run. For reproducibility, each run must retain the source 
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the intended safe-default provider contract for the complete V1 pipeline. The issue #6 runtime extends the issue #3 ingestion/queue and issue #5 parsing slices with a version-pinned local heuristic claim extractor, persisting run-scoped Atomic Claims with source spans and all-to-all links to Citation Targets in their own Citation Context. Issue #7 adds conservative bibliography resolution using the enabled scholarly-metadata provider; the local default is the checked-in recorded-fixture set, while Crossref remains disabled unless explicitly reviewed and enabled. Embeddings and System One are not invoked; their local/mock selections must not be represented as though those stages ran. The immutable run snapshot pins the claim-extraction and reference-resolution providers, reference-resolution score-policy version and configured threshold, and empty-by-default external-provider consent list. Aggregation remains `NOT_RUN` without uncalibrated thresholds. A stage that was not executed must not be represented as though it used a default policy.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines a conservative deployment profile for implemented stages. The issue #6 runtime persists run-scoped Atomic Claims with source spans and context-scoped Citation Target links; issue #7 resolves bibliography entries conservatively; issue #8 records run-scoped legal cited-paper access and language eligibility. Recorded fixtures remain the selected defaults for scholarly metadata and open-access discovery. For local consent-flow testing, the repository configuration offers reviewed Crossref and Unpaywall options; deployments must verify current terms, configure deployment-specific disclosures/contact, or disable both adapters (see [ADR 0006](adr/0006-reviewed-provider-options-in-local-default-configuration.md)). Embeddings and System One are not invoked by the current pipeline, and their selections must not be represented as though those stages ran. The immutable run snapshot pins the selected open-access provider, a fingerprint of its request settings (including the configured Unpaywall contact address without storing the address itself), the reviewed retention disclosure, claim extraction, reference-resolution policy/threshold, and the exact external-provider consent categories. Aggregation remains `NOT_RUN` without calibrated thresholds. A stage that was not executed must not be represented as though it used a default policy.
 
-Safe default example:
+Conservative deployment example:
 
 ```yaml
 providers:
@@ -1774,8 +1776,8 @@ providers:
     default: recorded-fixtures
     recorded-fixtures:
       enabled: true
-    unreviewed-remote:
-      enabled: false
+    unpaywall:
+      enabled: false  # external; enable only after exact deployment review and per-run consent
 
   grobid:
     parser:
@@ -1795,17 +1797,17 @@ providers:
       enabled: false  # external; enable only after review and per-run consent
 ```
 
-In this profile, the scholarly-metadata `recorded-fixtures` provider uses deterministic, checked-in metadata records and makes no remote requests. Recorded-fixture ports for OA discovery/acquisition, parser outputs, and verification remain the intended way to test those stages without remote credentials or an approved remote provider. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. This profile runs reference resolution against the local metadata fixtures while claim extraction, embedding, System One, graph enrichment, OA acquisition, and verification remain unexecuted.
+In this profile, the scholarly-metadata and open-access `recorded-fixtures` providers use checked-in data and make no remote requests. The pipeline resolves references and records fixture-backed access provenance/language outcomes. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. Embedding, System One, graph enrichment, and semantic verification remain unexecuted; progress and reports must say so.
 
 Rules:
 
 - disabled providers cannot be selected,
 - provider list endpoint exposes only enabled providers,
 - classify each exact provider/deployment as `LOCAL`, `EXTERNAL`, or `UNREVIEWED`; document actual payload categories and retention/deletion terms before considering enablement, and keep `UNREVIEWED` providers disabled,
-- every external provider remains disabled in the safe default; even after administrative enablement, it cannot receive content unless the user explicitly consents to that provider and those exact data categories for the specific Analysis Run; consent is never inferred from readiness, configuration, or a previous run,
+- every external provider remains disabled in this conservative deployment profile; in the repository's local configuration, Crossref and Unpaywall are offered for testing but still cannot receive data unless the user explicitly consents to that provider and those exact data categories for the specific Analysis Run; consent is never inferred from readiness, configuration, or a previous run,
 - the provider-call gate checks current classification/enablement, Analysis Run provider selection, declared-versus-actual request categories, and per-run consent before invoking any outbound send action; adapters must derive categories from the request they are about to send,
 - explicitly pass GROBID consolidation values of `0`; do not rely on service defaults,
-- Analysis Run stores selected provider/model snapshot, reference-resolution threshold, and external-provider consent/data-category snapshot,
+- Analysis Run stores selected provider/model/settings fingerprints, reviewed retention disclosures, reference-resolution threshold, and external-provider consent/data-category snapshot,
 - application logic never branches on vendor names outside adapter/configuration code.
 
 ---
@@ -1823,7 +1825,7 @@ COMPLETED_WITH_WARNINGS
 FAILED
 ```
 
-`PARSED` means the immutable source structure, extracted Atomic Claims, and inferred/provisional Claim–Citation Target links are persisted; Evidence Passage retrieval and verification have not run. It is an intermediate run state, not a completed report.
+`PARSED` means the immutable source structure, extracted Atomic Claims, inferred/provisional Claim–Citation Target links, reference-resolution outcomes, and (for runs that pinned an open-access provider) cited-paper access/language outcomes are persisted; Evidence Passage retrieval and semantic verification have not run. Pre-issue #8 immutable runs without that pinned provider are not retroactively sent to an acquisition service. `PARSED` is an intermediate run state, not a completed report.
 
 Optional progress counters:
 
@@ -2307,7 +2309,34 @@ HTML_FULLTEXT
 ABSTRACT
 ```
 
-## 35.12 paper_chunks
+## 35.12 cited_paper_access
+
+The issue #8 implementation persists one access outcome per resolved run-scoped Bibliography Entry. This status and provenance are independent of terminal verification outcomes.
+
+```text
+analysis_run_id FK
+bibliography_entry_id FK (same run and resolved canonical paper)
+canonical_paper_id FK
+access_status  -- FULL_TEXT_AVAILABLE | ABSTRACT_ONLY | METADATA_ONLY | UNAVAILABLE
+access_reason nullable  -- stable access explanation, e.g. FULL_TEXT_ACQUISITION_FAILED
+provider_id
+metadata_available
+abstract_available
+source_url nullable
+license_identifier nullable
+location_version nullable
+location_host_type nullable
+discovered_at
+object_key nullable
+content_sha256 nullable
+language nullable
+language_detector_version nullable
+created_at
+```
+
+A full-text outcome requires an acquired object, content hash, source URL, license, and pinned language-detector version. Access records are immutable. The run-scoped object key and content hash pin exactly which legal asset was language-checked.
+
+## 35.13 paper_chunks
 
 ```text
 id UUID PK
@@ -2321,7 +2350,7 @@ text_search TSVECTOR
 created_at
 ```
 
-## 35.13 paper_chunk_embeddings
+## 35.14 paper_chunk_embeddings
 
 ```text
 id UUID PK
@@ -2342,7 +2371,7 @@ Unique:
 
 For V1, exact vector search is acceptable.
 
-## 35.14 claim_paper_verifications
+## 35.15 claim_paper_verifications
 
 One row per:
 
@@ -2357,12 +2386,10 @@ Suggested:
 ```text
 id UUID PK
 analysis_run_id FK
-claim_id FK
-bibliography_reference_id FK
-canonical_paper_id nullable
-paper_asset_id nullable FK
-processing_status  -- PENDING | COMPLETED | FAILED
-processing_failure_reason nullable
+atomic_claim_id FK (same Analysis Run)
+bibliography_entry_id FK
+canonical_paper_id FK (same run-scoped access record)
+processing_status  -- PENDING | COMPLETED
 verification_scope  -- FULL_TEXT | ABSTRACT_ONLY | NONE
 terminal_reason nullable  -- e.g. LANGUAGE_UNSUPPORTED
 final_status nullable  -- one of the seven domain statuses when processing_status=COMPLETED
@@ -2375,10 +2402,10 @@ updated_at
 Unique:
 
 ```text
-(analysis_run_id, claim_id, bibliography_reference_id)
+(analysis_run_id, atomic_claim_id, bibliography_entry_id)
 ```
 
-## 35.15 evidence_candidates
+## 35.16 evidence_candidates
 
 ```text
 id UUID PK
@@ -2390,7 +2417,7 @@ fused_rank
 created_at
 ```
 
-## 35.16 evidence_judgements
+## 35.17 evidence_judgements
 
 ```text
 id UUID PK
@@ -2404,7 +2431,7 @@ raw_scores JSONB
 created_at
 ```
 
-## 35.17 human_reviews
+## 35.18 human_reviews
 
 ```text
 id UUID PK
@@ -2415,7 +2442,7 @@ note nullable
 created_at
 ```
 
-## 35.18 inbox_events
+## 35.19 inbox_events
 
 ```text
 event_id VARCHAR PK
@@ -2423,7 +2450,7 @@ handler_name
 processed_at
 ```
 
-## 35.19 outbox_events
+## 35.20 outbox_events
 
 ```text
 id UUID PK
@@ -2437,7 +2464,7 @@ created_at
 published_at nullable
 ```
 
-## 35.20 document_deletion_tombstones
+## 35.21 document_deletion_tombstones
 
 Content-free records used to prevent pending work from recreating data after explicit deletion.
 
@@ -2693,11 +2720,12 @@ The multipart `configuration` field and re-analysis JSON body use the same confi
   "embeddingProvider": "local",
   "systemOneProvider": "mock",
   "scholarlyMetadataProvider": "recorded-fixtures",
+  "openAccessProvider": "recorded-fixtures",
   "externalProviderConsents": []
 }
 ```
 
-The example selects only local/mock providers, so it carries no external-provider consent. For an enabled, classified external provider, include one consent entry per selected provider with exactly its disclosed categories, for example `{"providerId":"jev","dataCategories":["atomic_claims","evidence_passages"]}`. The server rejects disabled, unclassified, unknown, and unconsented selections before creating the Analysis Run. The immutable run snapshot records selected-provider classification/category mappings and the per-run consent. Every external adapter must pass the actual request categories and run snapshot through the provider-call gate before its send action.
+The example selects only local/mock providers, so it carries no external-provider consent. For an enabled, classified external provider, include one consent entry per selected provider with exactly its disclosed categories, for example `{"providerId":"jev","dataCategories":["atomic_claims","evidence_passages"]}`. Unpaywall additionally requires `bibliographic_metadata` and `provider_contact_email` consent for discovery and `cited_paper_location` for the actual content-host URL request. The server rejects disabled, unclassified, unknown, and unconsented selections before creating the Analysis Run. The immutable run snapshot records selected-provider classification/category mappings and the per-run consent. Every external adapter must pass categories derived from the actual outbound request and the run snapshot through the provider-call gate before its send action.
 
 Returns:
 
@@ -2727,6 +2755,8 @@ Returns the run's pinned parser provenance, normalized source text, sections, Ci
 ```http
 GET /api/v1/analysis-runs/{id}/report
 ```
+
+Each bibliography entry exposes cited-paper access status, a stable access reason, and provenance separately from its Claim–Paper Verification outcomes. Access includes the discovery provider, legal location and license when discovered, discovery time, content hash, language, and detector version. A failed fetch of discovered legal locations falls back to an available abstract or metadata-only outcome and exposes `FULL_TEXT_ACQUISITION_FAILED`; it does not erase known access. Verification outcomes separately expose scope, terminal reason, and final status; a pending English full-text verification is not presented as completed semantic analysis.
 
 ### Claims/verifications
 
@@ -2764,7 +2794,7 @@ Request:
 GET /api/v1/providers
 ```
 
-Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, `systemOne`, and `scholarlyMetadata`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The default runtime exposes local/mock providers and recorded scholarly-metadata fixtures; Crossref remains disabled by default.
+Returns enabled, classified provider choices only, grouped in the `providers` object by role (`claimExtractor`, `embedding`, `systemOne`, `scholarlyMetadata`, and `openAccess`). Each role maps to its available choices, with each choice's trust boundary, version/model, and actual request data-category mapping. The response also contains the stable data-category identifier/description catalog. Disabled and unreviewed providers are not offered by the UI. The local default runtime selects local/mock providers and recorded scholarly-metadata/OA fixtures; it also offers Crossref and Unpaywall for consent-flow testing, but they require explicit selection and fresh per-run consent.
 
 ## 40.5 OpenAPI and API Documentation UIs
 
@@ -3226,8 +3256,8 @@ V1 is single-user/no-auth, but still:
 - block non-HTTP(S) external locations,
 - do not bypass publisher authentication/paywalls,
 - store provenance for acquired full text,
-- require explicit consent per external provider and Analysis Run; use stable data-category identifiers (`source_document_text`, `bibliographic_metadata`, `citation_context`, `cited_paper_chunks`, `atomic_claims`, `evidence_passages`, `embedding_input`, `provider_contact_email`), disclose the categories each provider receives, and send only the minimum necessary content; `provider_contact_email` covers provider-required or configured contact email fields (for example, polite-pool identification); any newly introduced payload category requires matching consent,
-- default payload mapping: Crossref/Semantic Scholar/OA discovery → `bibliographic_metadata`; provider-required/configured contact email → `provider_contact_email`; LLM claim extraction → `citation_context`; embedding services → `cited_paper_chunks` + `embedding_input`; System One → `atomic_claims` + `evidence_passages`; GROBID consolidation → `bibliographic_metadata` and remains disabled by default,
+- require explicit consent per external provider and Analysis Run; use stable data-category identifiers (`source_document_text`, `bibliographic_metadata`, `citation_context`, `cited_paper_chunks`, `atomic_claims`, `evidence_passages`, `embedding_input`, `provider_contact_email`, `cited_paper_location`), disclose the categories each provider receives, and send only the minimum necessary content; `provider_contact_email` covers provider-required or configured contact email fields (for example, polite-pool identification); any newly introduced payload category requires matching consent,
+- default payload mapping: Crossref/Semantic Scholar/OA discovery → `bibliographic_metadata`; provider-required/configured contact email → `provider_contact_email`; OA content-host GET target URL → `cited_paper_location`; LLM claim extraction → `citation_context`; embedding services → `cited_paper_chunks` + `embedding_input`; System One → `atomic_claims` + `evidence_passages`; GROBID consolidation → `bibliographic_metadata` and remains disabled by default,
 - make clear that deleting local data cannot retract content already transmitted to an external provider; verify and disclose each provider's retention/deletion terms before enabling it,
 - because V1 has no authentication, bind the web/API to localhost or a trusted private network; do not expose it to an untrusted/public network until authentication and authorization are added,
 - provide a document deletion action that first tombstones the document and cancels/invalidates pending work, then removes the source file, document-scoped acquired assets, parsed text/chunks, embeddings, analysis results, Human Reviews, per-run provider-consent/configuration snapshots, and content-bearing logs; workers must check the tombstone before starting new provider calls and before committing results so pending events cannot resurrect deleted data. A provider call already in flight cannot be retracted. Retain shared cited-paper assets only while another non-deleted document/run references them; retain otherwise only a content-free deletion tombstone where needed for operational audit. This explicit deletion is the privacy exception to normal AnalysisRun immutability,
@@ -3317,13 +3347,13 @@ retrieval:
 postgres hybrid
 
 scholarly metadata:
-recorded fixtures by default; Crossref disabled until trust-boundary/retention review and per-run consent
+recorded fixtures selected by default; Crossref available in the local test catalog with reviewed disclosure, but requires selection and per-run consent
 
 reference resolution:
 title-author-year-weighted-edit-similarity-v1; configured confidence threshold pinned to each Analysis Run (numeric calibration remains a release gate)
 
 graph and OA providers:
-recorded fixtures by default; remote adapters disabled until trust-boundary/retention review and per-run consent
+recorded fixtures selected by default; Unpaywall available in the local test catalog with reviewed disclosure, but requires selection and per-run consent
 
 storage:
 minio

@@ -9,6 +9,7 @@ import com.papertrail.api.scholarly.references.report.ReferenceResolutionReportR
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
 import com.papertrail.api.scholarly.references.resolver.ReferenceResolutionStatus
 import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRepository
+import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepository
 import com.papertrail.api.scholarly.references.resolver.ConservativeReferenceResolver
 import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
@@ -22,6 +23,7 @@ class ReferenceResolutionService(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
     private val repository: ReferenceResolutionRepository,
+    private val citedPaperAccessRepository: CitedPaperAccessRepository,
     private val lookupFactories: List<ScholarlyMetadataLookupFactory>,
 ) {
     fun isResolutionConfigured(analysisRunId: UUID): Boolean {
@@ -62,6 +64,8 @@ class ReferenceResolutionService(
     fun report(analysisRunId: UUID): ReferenceResolutionReportResponse? {
         val context = loadRun(analysisRunId) ?: return null
         val entries = repository.reportEntries(analysisRunId)
+        val accessByReference = citedPaperAccessRepository.reportEntries(analysisRunId)
+        val reportEntries = entries.map { entry -> entry.copy(citedPaperAccess = accessByReference[entry.localReferenceKey]) }
         val summary = summarize(entries)
         val configuration = context.configuration.referenceResolution
         val policyConfigured = configuration.provider != null && !configuration.scorePolicyVersion.isNullOrBlank() && configuration.confidenceThreshold != null
@@ -78,7 +82,7 @@ class ReferenceResolutionService(
                 scorePolicyVersion = configuration.scorePolicyVersion,
                 confidenceThreshold = configuration.confidenceThreshold,
                 summary = summary,
-                entries = entries,
+                entries = reportEntries,
             ),
         )
     }

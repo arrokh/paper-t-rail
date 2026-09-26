@@ -64,6 +64,7 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
         embeddingProvider: role === "embedding" ? providerId : currentSelections.embeddingProvider,
         systemOneProvider: role === "systemOne" ? providerId : currentSelections.systemOneProvider,
         scholarlyMetadataProvider: role === "scholarlyMetadata" ? providerId : currentSelections.scholarlyMetadataProvider,
+        openAccessProvider: role === "openAccess" ? providerId : currentSelections.openAccessProvider,
       };
       const nextRequirements = consentRequirements(directory, nextSelections);
       return {

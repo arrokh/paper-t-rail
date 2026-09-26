@@ -87,6 +87,28 @@ const directory = {
         retentionDisclosure: null,
       },
     ],
+    openAccess: [
+      {
+        role: "openAccess",
+        providerId: "recorded-fixtures",
+        displayName: "Recorded open-access fixtures",
+        version: "v1",
+        model: null,
+        trustBoundary: "LOCAL",
+        dataCategories: ["bibliographic_metadata", "cited_paper_location"],
+        retentionDisclosure: null,
+      },
+      {
+        role: "openAccess",
+        providerId: "unpaywall",
+        displayName: "Unpaywall and discovered open-access hosts",
+        version: "v2",
+        model: null,
+        trustBoundary: "EXTERNAL",
+        dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"],
+        retentionDisclosure: "Reviewed Unpaywall request and retention disclosure.",
+      },
+    ],
     scholarlyMetadata: [
       {
         role: "scholarlyMetadata",
@@ -118,11 +140,20 @@ const localSelections = {
   embeddingProvider: "local",
   systemOneProvider: "mock",
   scholarlyMetadataProvider: "recorded-fixtures",
+  openAccessProvider: "recorded-fixtures",
 };
 
 function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
+
+test("provider selections fall back to an available open-access provider", () => {
+  const selections = availableProviderSelections(directory, selectionsWith({
+    openAccessProvider: "removed-provider",
+  }));
+
+  assert.equal(selections.openAccessProvider, "recorded-fixtures");
+});
 
 test("local defaults produce a valid configuration without external consent", () => {
   assert.deepEqual(consentRequirements(directory, localSelections), []);
@@ -166,6 +197,19 @@ test("one external provider selected for multiple roles receives the deduplicate
     ...selections,
     externalProviderConsents: [{ providerId: "hosted-ai", dataCategories: expectedCategories }],
   });
+});
+
+test("Open-access discovery and acquisition require consent for the actual metadata, contact email, and content location", () => {
+  const selections = selectionsWith({ openAccessProvider: "unpaywall" });
+  const requirements = consentRequirements(directory, selections);
+
+  assert.deepEqual(requirements, [{
+    providerId: "unpaywall",
+    displayName: "Unpaywall and discovered open-access hosts",
+    dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"],
+    retentionDisclosure: "Reviewed Unpaywall request and retention disclosure.",
+  }]);
+  assert.deepEqual(missingConsents(requirements, {}), requirements);
 });
 
 test("changing selections recalculates required approvals and drops approvals no longer required", () => {

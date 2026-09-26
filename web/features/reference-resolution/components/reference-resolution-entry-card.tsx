@@ -4,6 +4,7 @@ import { ArrowRight, ChevronDown } from "lucide-react";
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
+import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
 
 type ReferenceResolutionEntry = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number];
 
@@ -136,6 +137,8 @@ export function ReferenceResolutionEntryCard({
             </div>
           </section>
         )}
+
+        <CitedPaperAccessSummary access={entry.citedPaperAccess} />
       </article>
     </li>
   );

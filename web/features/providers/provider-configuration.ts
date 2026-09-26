@@ -1,6 +1,6 @@
 import type { AnalysisRunConfiguration } from "../analysis-runs/types.ts";
 
-export const PROVIDER_ROLES = ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata"] as const;
+export const PROVIDER_ROLES = ["claimExtractor", "embedding", "systemOne", "scholarlyMetadata", "openAccess"] as const;
 export type ProviderRole = (typeof PROVIDER_ROLES)[number];
 
 export type ProviderSelections = {
@@ -8,6 +8,7 @@ export type ProviderSelections = {
   embeddingProvider: string;
   systemOneProvider: string;
   scholarlyMetadataProvider: string;
+  openAccessProvider: string;
 };
 
 export const DEFAULT_PROVIDER_SELECTIONS: ProviderSelections = {
@@ -15,6 +16,7 @@ export const DEFAULT_PROVIDER_SELECTIONS: ProviderSelections = {
   embeddingProvider: "local",
   systemOneProvider: "mock",
   scholarlyMetadataProvider: "recorded-fixtures",
+  openAccessProvider: "recorded-fixtures",
 };
 
 export type ProviderOption = {
@@ -51,6 +53,7 @@ const SELECTION_FIELD_BY_ROLE: Record<ProviderRole, keyof ProviderSelections> = 
   embedding: "embeddingProvider",
   systemOne: "systemOneProvider",
   scholarlyMetadata: "scholarlyMetadataProvider",
+  openAccess: "openAccessProvider",
 };
 
 function isSelectableProviderOption(option: unknown, role: ProviderRole): option is ProviderOption {
@@ -102,6 +105,7 @@ export function availableProviderSelections(
     embeddingProvider: selectAvailable("embedding", "embeddingProvider"),
     systemOneProvider: selectAvailable("systemOne", "systemOneProvider"),
     scholarlyMetadataProvider: selectAvailable("scholarlyMetadata", "scholarlyMetadataProvider"),
+    openAccessProvider: selectAvailable("openAccess", "openAccessProvider"),
   };
 }
 

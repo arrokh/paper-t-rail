@@ -8,6 +8,7 @@ const val CLAIM_EXTRACTOR_ROLE = "claimExtractor"
 const val EMBEDDING_ROLE = "embedding"
 const val SYSTEM_ONE_ROLE = "systemOne"
 const val SCHOLARLY_METADATA_ROLE = "scholarlyMetadata"
+const val OPEN_ACCESS_ROLE = "openAccess"
 
 enum class ProviderTrustBoundary(val id: String) {
     LOCAL("LOCAL"),
@@ -23,7 +24,8 @@ enum class DataCategory(val id: String, val label: String, val description: Stri
     ATOMIC_CLAIMS("atomic_claims", "Atomic Claims", "Individual propositions submitted for assessment."),
     EVIDENCE_PASSAGES("evidence_passages", "Evidence Passages", "Passages from a Cited Paper submitted for assessment."),
     EMBEDDING_INPUT("embedding_input", "Embedding input", "Text submitted to a provider to calculate embeddings."),
-    PROVIDER_CONTACT_EMAIL("provider_contact_email", "Provider contact email", "An operator contact email required or configured for a provider request.");
+    PROVIDER_CONTACT_EMAIL("provider_contact_email", "Provider contact email", "An operator contact email required or configured for a provider request."),
+    CITED_PAPER_LOCATION("cited_paper_location", "Cited Paper location", "A discovered full-text URL used to request an openly licensed Cited Paper; Paper T-Rail does not send Source Document text.");
 
     companion object {
         fun fromId(id: String): DataCategory? = entries.firstOrNull { it.id == id }
@@ -75,7 +77,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
         require(registrations.map { it.role to it.providerId }.distinct().size == registrations.size) {
             "Provider registrations must be unique by role and provider ID."
         }
-        require(registrations.all { it.role in setOf(CLAIM_EXTRACTOR_ROLE, EMBEDDING_ROLE, SYSTEM_ONE_ROLE, SCHOLARLY_METADATA_ROLE) }) {
+        require(registrations.all { it.role in setOf(CLAIM_EXTRACTOR_ROLE, EMBEDDING_ROLE, SYSTEM_ONE_ROLE, SCHOLARLY_METADATA_ROLE, OPEN_ACCESS_ROLE) }) {
             "Provider registration contains an unsupported provider role."
         }
         require(registrations.none { it.enabled && it.trustBoundary == ProviderTrustBoundary.UNREVIEWED }) {
@@ -138,8 +140,45 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
             crossrefEnablementReviewed: Boolean = false,
             crossrefRetentionDisclosure: String? = null,
             crossrefContactEmail: String? = null,
-        ): ProviderCatalog = ProviderCatalog(
-            listOf(
+            unpaywallEnabled: Boolean = false,
+            unpaywallEnablementReviewed: Boolean = false,
+            unpaywallRetentionDisclosure: String? = null,
+            unpaywallContactEmail: String? = null,
+        ): ProviderCatalog {
+            require(!unpaywallEnabled || !unpaywallContactEmail.isNullOrBlank()) {
+                "Unpaywall requires a configured provider contact email before it can be enabled."
+            }
+            return ProviderCatalog(
+                listOf(
+                ProviderRegistration(
+                    role = OPEN_ACCESS_ROLE,
+                    providerId = "recorded-fixtures",
+                    displayName = "Recorded open-access fixtures",
+                    version = "v1",
+                    model = null,
+                    trustBoundary = ProviderTrustBoundary.LOCAL,
+                    enabled = true,
+                    dataCategories = setOf(DataCategory.BIBLIOGRAPHIC_METADATA, DataCategory.CITED_PAPER_LOCATION),
+                ),
+                ProviderRegistration(
+                    role = OPEN_ACCESS_ROLE,
+                    providerId = "unpaywall",
+                    displayName = "Unpaywall and discovered open-access hosts",
+                    version = "v2",
+                    model = null,
+                    trustBoundary = ProviderTrustBoundary.EXTERNAL,
+                    enabled = unpaywallEnabled,
+                    dataCategories = setOfNotNull(
+                        DataCategory.BIBLIOGRAPHIC_METADATA,
+                        DataCategory.CITED_PAPER_LOCATION,
+                        DataCategory.PROVIDER_CONTACT_EMAIL.takeIf { !unpaywallContactEmail.isNullOrBlank() },
+                    ),
+                    retentionDisclosure = unpaywallRetentionDisclosure,
+                    enablementReviewed = unpaywallEnablementReviewed,
+                    payloadConfigurationFingerprint = unpaywallContactEmail
+                        ?.takeIf(String::isNotBlank)
+                        ?.let(::sha256Fingerprint),
+                ),
                 ProviderRegistration(
                     role = SCHOLARLY_METADATA_ROLE,
                     providerId = "recorded-fixtures",
@@ -228,8 +267,9 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     enabled = false,
                     dataCategories = setOf(DataCategory.ATOMIC_CLAIMS, DataCategory.EVIDENCE_PASSAGES),
                 ),
-            ),
-        )
+                ),
+            )
+        }
     }
 }
 
@@ -260,6 +300,7 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
             EMBEDDING_ROLE -> configuration.embedding
             SYSTEM_ONE_ROLE -> configuration.systemOne
             SCHOLARLY_METADATA_ROLE -> configuration.referenceResolution.provider
+            OPEN_ACCESS_ROLE -> configuration.openAccess
             else -> throw ProviderCallRejectedException("Provider role '$role' is not supported.")
         } ?: throw ProviderCallRejectedException("Provider role '$role' was not configured for this Analysis Run.")
         if (selected.provider != providerId) {
@@ -267,10 +308,14 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
         }
         val scholarlyConfigurationChanged = role == SCHOLARLY_METADATA_ROLE &&
             configuration.referenceResolution.providerConfigurationFingerprint != registration.payloadConfigurationFingerprint
+        val openAccessConfigurationChanged = role == OPEN_ACCESS_ROLE && (
+            configuration.openAccessProviderConfigurationFingerprint != registration.payloadConfigurationFingerprint ||
+                configuration.openAccessRetentionDisclosure != registration.retentionDisclosure
+            )
         if (selected.version != registration.version || selected.model != registration.model ||
             selected.trustBoundary != registration.trustBoundary.id ||
             selected.dataCategories.toSet() != registration.dataCategories.map(DataCategory::id).toSet() ||
-            scholarlyConfigurationChanged
+            scholarlyConfigurationChanged || openAccessConfigurationChanged
         ) {
             throw ProviderCallRejectedException("Provider '$providerId' configuration or payload mapping changed after this Analysis Run was created.")
         }
