@@ -23,12 +23,15 @@ class EvidenceRetrievalRepository(
     private val transactionTemplate: TransactionTemplate,
     private val retriever: PostgresHybridEvidenceRetriever,
 ) {
-    fun isCompleted(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
-        "SELECT EXISTS (SELECT 1 FROM cited_paper_indexing WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND status = 'COMPLETED')",
-        Boolean::class.java,
+    fun status(analysisRunId: UUID, bibliographyEntryId: UUID): String? = jdbc.query(
+        "SELECT status FROM cited_paper_indexing WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+        { rs, _ -> rs.getString("status") },
         analysisRunId,
         bibliographyEntryId,
-    ) == true
+    ).firstOrNull()
+
+    fun isCompleted(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean =
+        status(analysisRunId, bibliographyEntryId) == "COMPLETED"
 
     fun loadContext(analysisRunId: UUID, bibliographyEntryId: UUID): EvidenceIndexingContext? {
         val access = jdbc.query(

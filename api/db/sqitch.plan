@@ -11,3 +11,4 @@ atomic_claims [analysis_run_listing_cursor] 2026-09-24T00:00:00Z Paper T-Rail Ma
 conservative_reference_resolution [atomic_claims] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist Canonical Papers and immutable bibliography resolution outcomes
 cited_paper_access [conservative_reference_resolution] 2026-09-24T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist legal cited full-text access and distinct verification outcomes
 traceable_evidence_retrieval [cited_paper_access] 2026-09-26T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Index exact cited assets and persist ranked Evidence Passages
+conflict_aware_evidence_coverage [traceable_evidence_retrieval] 2026-09-26T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist conflict-aware judgements and all claim-reference verification outcomes

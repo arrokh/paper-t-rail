@@ -9,7 +9,6 @@ import com.papertrail.api.scholarly.references.resolver.ReferenceResolutionDecis
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
-import org.springframework.transaction.support.TransactionTemplate
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.sql.ResultSet
@@ -19,7 +18,6 @@ import java.util.UUID
 class ReferenceResolutionRepository(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
-    private val transactionTemplate: TransactionTemplate,
 ) {
     fun pendingEntry(analysisRunId: UUID, bibliographyEntryId: UUID): StoredBibliographyReference? = jdbc.query(
         """
@@ -54,32 +52,31 @@ class ReferenceResolutionRepository(
         reference: StoredBibliographyReference,
         decision: ReferenceResolutionDecision,
         providerId: String,
-    ) {
-        transactionTemplate.executeWithoutResult {
-            val canonicalPaperId = decision.work?.let { work -> saveCanonicalPaper(work, providerId) }
-            jdbc.update(
-                """
-                INSERT INTO bibliography_entry_resolutions (
-                    analysis_run_id, bibliography_entry_id, status, reason_code, canonical_paper_id,
-                    matched_doi, matched_title, matched_authors, matched_year, confidence_score,
-                    match_method, provider_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
-                ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
-                """.trimIndent(),
-                analysisRunId,
-                reference.id,
-                decision.status.name,
-                decision.reasonCode,
-                canonicalPaperId,
-                decision.work?.doi?.let(DoiNormalizer::normalize),
-                decision.work?.title,
-                objectMapper.writeValueAsString(decision.work?.authors.orEmpty()),
-                decision.work?.year,
-                decision.score,
-                decision.matchMethod,
-                providerId,
-            )
-        }
+    ): UUID? {
+        val canonicalPaperId = decision.work?.let { work -> saveCanonicalPaper(work, providerId) }
+        jdbc.update(
+            """
+            INSERT INTO bibliography_entry_resolutions (
+                analysis_run_id, bibliography_entry_id, status, reason_code, canonical_paper_id,
+                matched_doi, matched_title, matched_authors, matched_year, confidence_score,
+                match_method, provider_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+            ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
+            """.trimIndent(),
+            analysisRunId,
+            reference.id,
+            decision.status.name,
+            decision.reasonCode,
+            canonicalPaperId,
+            decision.work?.doi?.let(DoiNormalizer::normalize),
+            decision.work?.title,
+            objectMapper.writeValueAsString(decision.work?.authors.orEmpty()),
+            decision.work?.year,
+            decision.score,
+            decision.matchMethod,
+            providerId,
+        )
+        return canonicalPaperId
     }
 
     fun reportEntries(analysisRunId: UUID): List<BibliographyResolutionReportEntry> = jdbc.query(

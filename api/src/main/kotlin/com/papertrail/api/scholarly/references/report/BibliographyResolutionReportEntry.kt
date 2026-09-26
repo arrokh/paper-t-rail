@@ -1,5 +1,6 @@
 package com.papertrail.api.scholarly.references.report
 
+import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
 
 data class BibliographyResolutionReportEntry(
@@ -17,4 +18,5 @@ data class BibliographyResolutionReportEntry(
     val confidenceScore: Double?,
     val matchMethod: String?,
     val citedPaperAccess: CitedPaperAccessReport? = null,
+    val verificationOutcomes: List<CitedReferenceVerificationOutcome> = emptyList(),
 )

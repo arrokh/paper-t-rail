@@ -1,3 +1,17 @@
+export type EvidenceJudgement = {
+  providerId: string;
+  modelId: string | null;
+  providerVersion: string;
+  judgement: "DIRECT_SUPPORT" | "PARTIAL_SUPPORT" | "CONTRADICTS" | "UNRELATED" | "INSUFFICIENT";
+  evidenceRole: "PRIMARY_FINDING" | "AUTHOR_SYNTHESIS" | "SECONDARY_REPORT";
+  confidence: number;
+  directness: number;
+  claimScopeMatch: number;
+  studyDesignQuality: number;
+  relevance: number;
+  calibratedStrength: number;
+};
+
 export type EvidenceRetrievalProfile = {
   profileId: string;
   vectorCandidateLimit: number;
@@ -9,6 +23,45 @@ export type EvidenceRetrievalProfile = {
   embeddingVersion: string;
   embeddingDimension: number;
   embeddingProfileHash: string;
+};
+
+export type ClaimReferenceVerificationOutcome = {
+  id: string;
+  atomicClaimId: string;
+  claimText: string;
+  claimSourceStartOffset: number;
+  claimSourceEndOffset: number;
+  citationContextText: string;
+  citationMarkers: string[];
+  associationKind: "INFERRED_PROVISIONAL";
+  processingStatus: "PENDING" | "COMPLETED" | "INCOMPLETE";
+  processingFailureReason: string | null;
+  finalStatus: "SUPPORTED" | "PARTIALLY_SUPPORTED" | "CONTRADICTED" | "INSUFFICIENT_EVIDENCE" | "INACCESSIBLE" | "UNRESOLVED" | "UNSUPPORTED_REFERENCE_TYPE" | null;
+  verificationScope: "FULL_TEXT" | "ABSTRACT_ONLY" | "NONE";
+  terminalReason: string | null;
+  evidenceConflict: boolean;
+  aggregatorVersion: string | null;
+  evidencePassages: Array<{
+    id: string;
+    text: string;
+    sectionOrder: number;
+    sectionHeading: string | null;
+    paragraphStart: number;
+    paragraphEnd: number;
+    pageNumber: number | null;
+    vectorRank: number | null;
+    lexicalRank: number | null;
+    fusedRank: number;
+    fusionScore: number;
+    sourceAssetId: string;
+    contentSha256: string;
+    parserProvider: string;
+    parserVersion: string;
+    language: string;
+    languageDetectorVersion: string;
+    retrievalProfile: EvidenceRetrievalProfile;
+    evidenceJudgement: EvidenceJudgement | null;
+  }>;
 };
 
 export type AnalysisRun = {
@@ -104,9 +157,31 @@ export type ParsedDocument = {
   }>;
 };
 
+export type EvidenceCoverageSummary = {
+  totalVerifications: number;
+  completedVerifications: number;
+  incompleteVerifications: number;
+  evidenceConflicts: number;
+  supported: number;
+  partiallySupported: number;
+  contradicted: number;
+  insufficientEvidence: number;
+  inaccessible: number;
+  unresolved: number;
+  unsupportedReferenceType: number;
+};
+
 export type ReferenceResolutionReportResponse = {
   analysisRunId: string;
   runStatus: string;
+  evidenceCoverage: {
+    executionStatus: "NOT_RUN" | "PENDING" | "COMPLETED" | "COMPLETED_WITH_WARNINGS" | "FAILED";
+    verificationPolicyVersion: string | null;
+    aggregationPolicyVersion: string | null;
+    thresholds: Record<string, number> | null;
+    summary: EvidenceCoverageSummary;
+    triageDisclaimer: string;
+  };
   referenceResolution: {
     executionStatus: string;
     scorePolicyVersion: string | null;
@@ -145,6 +220,7 @@ export type ReferenceResolutionReportResponse = {
         contentSha256: string | null;
         language: string | null;
         languageDetectorVersion: string | null;
+        verificationOutcomes: ClaimReferenceVerificationOutcome[];
         evidenceIndexing: {
           status: "PENDING" | "COMPLETED" | "FAILED";
           failureReason: string | null;
@@ -156,34 +232,8 @@ export type ReferenceResolutionReportResponse = {
           languageDetectorVersion: string | null;
           retrievalProfile: EvidenceRetrievalProfile;
         } | null;
-        verificationOutcomes: Array<{
-          atomicClaimId: string;
-          claimText: string;
-          finalStatus: string | null;
-          verificationScope: "FULL_TEXT" | "ABSTRACT_ONLY" | "NONE";
-          terminalReason: string | null;
-          evidencePassages: Array<{
-            id: string;
-            text: string;
-            sectionOrder: number;
-            sectionHeading: string | null;
-            paragraphStart: number;
-            paragraphEnd: number;
-            pageNumber: number | null;
-            vectorRank: number | null;
-            lexicalRank: number | null;
-            fusedRank: number;
-            fusionScore: number;
-            sourceAssetId: string;
-            contentSha256: string;
-            parserProvider: string;
-            parserVersion: string;
-            language: string;
-            languageDetectorVersion: string;
-            retrievalProfile: EvidenceRetrievalProfile;
-          }>;
-        }>;
       } | null;
+      verificationOutcomes: ClaimReferenceVerificationOutcome[];
     }>;
   };
 };

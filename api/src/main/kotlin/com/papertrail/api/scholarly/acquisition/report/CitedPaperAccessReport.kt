@@ -1,5 +1,6 @@
 package com.papertrail.api.scholarly.acquisition.report
 
+import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.evidence.report.EvidenceIndexingReport
 import java.time.Instant
 
@@ -15,6 +16,6 @@ data class CitedPaperAccessReport(
     val contentSha256: String?,
     val language: String?,
     val languageDetectorVersion: String?,
-    val verificationOutcomes: List<CitedReferenceVerificationOutcome>,
+    val verificationOutcomes: List<CitedReferenceVerificationOutcome> = emptyList(),
     val evidenceIndexing: EvidenceIndexingReport? = null,
 )

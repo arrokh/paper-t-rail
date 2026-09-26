@@ -1,6 +1,5 @@
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 import { Badge } from "@/components/ui/badge";
-import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import { cn } from "@/lib/utils";
 
 type CitedPaperAccess = NonNullable<ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["citedPaperAccess"]>;
@@ -136,22 +135,6 @@ export function CitedPaperAccessSummary({ access }: { access: CitedPaperAccess |
         </div>
       )}
 
-      <div className="space-y-2 border-t border-border/70 pt-3">
-        <h6 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Claim–Paper Verification and Evidence Passages</h6>
-        {access.verificationOutcomes.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No Atomic Claim is linked to this Cited Reference.</p>
-        ) : (
-          <ul className="space-y-2">
-            {access.verificationOutcomes.map((outcome) => (
-              <ClaimEvidencePassages
-                key={outcome.atomicClaimId}
-                outcome={outcome}
-                indexingStatus={access.evidenceIndexing?.status ?? null}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
     </section>
   );
 }

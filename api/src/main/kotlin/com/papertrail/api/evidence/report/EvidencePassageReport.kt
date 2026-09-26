@@ -21,4 +21,5 @@ data class EvidencePassageReport(
     val language: String,
     val languageDetectorVersion: String,
     val retrievalProfile: EvidenceRetrievalProfileReport,
+    val evidenceJudgement: EvidenceJudgementReport?,
 )

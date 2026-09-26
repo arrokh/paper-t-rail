@@ -75,6 +75,11 @@ class ReferenceResolutionRequestedHandler(
             )
             if (inserted == 0) return@executeWithoutResult
             if (failureReason != null) {
+                referenceResolutionService.failResolution(
+                    event.analysisRunId,
+                    event.payload.bibliographyEntryId,
+                    REFERENCE_RESOLUTION_RETRIES_EXHAUSTED,
+                )
                 jdbc.update(
                     "UPDATE analysis_runs SET failure_reason = COALESCE(failure_reason, ?), updated_at = now() WHERE id = ? AND status = 'PROCESSING'",
                     failureReason,
@@ -89,7 +94,7 @@ class ReferenceResolutionRequestedHandler(
 
     private fun enqueueAcquisitionIfResolved(event: PipelineEvent<ReferenceResolutionRequestedPayload>) {
         val accessConfigured = jdbc.queryForObject(
-            "SELECT jsonb_exists(configuration_snapshot, 'openAccess') FROM analysis_runs WHERE id = ?",
+            "SELECT jsonb_typeof(configuration_snapshot -> 'openAccess') = 'object' FROM analysis_runs WHERE id = ?",
             Boolean::class.java,
             event.analysisRunId,
         ) == true
@@ -142,6 +147,10 @@ class ReferenceResolutionRequestedHandler(
             objectMapper.writeValueAsString(acquisitionEvent),
             Timestamp.from(Instant.now()),
         )
+    }
+
+    companion object {
+        const val REFERENCE_RESOLUTION_RETRIES_EXHAUSTED = "REFERENCE_RESOLUTION_RETRIES_EXHAUSTED"
     }
 
     private data class RunProvenance(
