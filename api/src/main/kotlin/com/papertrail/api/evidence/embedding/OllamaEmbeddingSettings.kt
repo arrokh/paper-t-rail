@@ -1,5 +1,6 @@
 package com.papertrail.api.evidence.embedding
 
+import com.papertrail.api.evidence.domain.EmbeddingProfile
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
 import java.net.URI
@@ -58,7 +59,7 @@ data class OllamaEmbeddingSettings(
         const val DEFAULT_DIMENSION = 768
         const val DEFAULT_REQUEST_TIMEOUT_MILLIS = 60_000L
         const val MAX_REQUEST_TIMEOUT_MILLIS = 600_000L
-        const val MAX_DIMENSION = 16_000
+        const val MAX_DIMENSION = EmbeddingProfile.MAX_VECTOR_DIMENSION
         const val MAX_RESPONSE_BYTES = 1_000_000
 
         private val MODEL_ID_PATTERN = Regex("[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}")

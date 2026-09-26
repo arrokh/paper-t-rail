@@ -11,6 +11,12 @@ const val SYSTEM_ONE_ROLE = "systemOne"
 const val SCHOLARLY_METADATA_ROLE = "scholarlyMetadata"
 const val OPEN_ACCESS_ROLE = "openAccess"
 
+private val EMBEDDING_DATA_CATEGORIES = setOf(
+    DataCategory.CITED_PAPER_CHUNKS,
+    DataCategory.ATOMIC_CLAIMS,
+    DataCategory.EMBEDDING_INPUT,
+)
+
 enum class ProviderTrustBoundary(val id: String) {
     LOCAL("LOCAL"),
     EXTERNAL("EXTERNAL"),
@@ -242,7 +248,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     model = "feature-hash-384-v1",
                     trustBoundary = ProviderTrustBoundary.LOCAL,
                     enabled = true,
-                    dataCategories = setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.ATOMIC_CLAIMS, DataCategory.EMBEDDING_INPUT),
+                    dataCategories = EMBEDDING_DATA_CATEGORIES,
                     embeddingDimension = 384,
                 ),
                 ProviderRegistration(
@@ -253,7 +259,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     model = null,
                     trustBoundary = ProviderTrustBoundary.EXTERNAL,
                     enabled = false,
-                    dataCategories = setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.ATOMIC_CLAIMS, DataCategory.EMBEDDING_INPUT),
+                    dataCategories = EMBEDDING_DATA_CATEGORIES,
                 ),
                 ProviderRegistration(
                     role = EMBEDDING_ROLE,
@@ -264,11 +270,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     model = ollamaEmbeddingSettings.modelId.takeIf(String::isNotBlank),
                     trustBoundary = ollamaEmbeddingSettings.trustBoundary,
                     enabled = ollamaEmbeddingSettings.isSelectable,
-                    dataCategories = setOf(
-                        DataCategory.CITED_PAPER_CHUNKS,
-                        DataCategory.ATOMIC_CLAIMS,
-                        DataCategory.EMBEDDING_INPUT,
-                    ),
+                    dataCategories = EMBEDDING_DATA_CATEGORIES,
                     retentionDisclosure = ollamaEmbeddingSettings.retentionDisclosure,
                     enablementReviewed = ollamaEmbeddingSettings.enablementReviewed,
                     configurationFingerprint = ollamaEmbeddingSettings.configurationFingerprint
