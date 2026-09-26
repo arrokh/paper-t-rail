@@ -25,6 +25,7 @@ import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedHandler
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.evidence.service.EvidenceRetrievalService
 import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
+import com.papertrail.api.evidence.repository.EvidenceReportRepository
 import com.papertrail.api.evidence.embedding.FeatureHashEmbeddingProvider
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
 import com.papertrail.api.evidence.retrieval.PostgresHybridEvidenceRetriever
@@ -1545,7 +1546,12 @@ class AnalysisRunQueueIntegrationTest {
         jdbc,
         objectMapper,
         ReferenceResolutionRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
-        CitedPaperAccessRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+        CitedPaperAccessRepository(
+            jdbc,
+            objectMapper,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            EvidenceReportRepository(jdbc),
+        ),
         lookupFactories,
     )
 
@@ -1588,7 +1594,12 @@ class AnalysisRunQueueIntegrationTest {
     ) = CitedPaperAccessService(
         jdbc = jdbc,
         objectMapper = objectMapper,
-        repository = CitedPaperAccessRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+        repository = CitedPaperAccessRepository(
+            jdbc,
+            objectMapper,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            EvidenceReportRepository(jdbc),
+        ),
         objectStore = objectStore,
         languageDetector = languageDetector,
         textExtractor = PdfBoxCitedPaperTextExtractor(5_000_000),

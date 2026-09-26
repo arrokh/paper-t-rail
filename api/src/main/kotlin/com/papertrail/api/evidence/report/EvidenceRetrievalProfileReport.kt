@@ -1,4 +1,4 @@
-package com.papertrail.api.scholarly.acquisition.report
+package com.papertrail.api.evidence.report
 
 data class EvidenceRetrievalProfileReport(
     val profileId: String,

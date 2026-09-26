@@ -1,4 +1,4 @@
-package com.papertrail.api.scholarly.acquisition.report
+package com.papertrail.api.evidence.report
 
 import java.util.UUID
 
