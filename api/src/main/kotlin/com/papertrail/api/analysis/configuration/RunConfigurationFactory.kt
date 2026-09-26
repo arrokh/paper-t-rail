@@ -162,6 +162,8 @@ class RunConfigurationFactory(
         model = model,
         trustBoundary = trustBoundary.id,
         dataCategories = dataCategories.map(DataCategory::id).sorted(),
+        configurationFingerprint = configurationFingerprint,
+        embeddingDimension = embeddingDimension,
     )
 
     fun toJson(snapshot: AnalysisConfigurationSnapshot): String = objectMapper.writeValueAsString(snapshot)

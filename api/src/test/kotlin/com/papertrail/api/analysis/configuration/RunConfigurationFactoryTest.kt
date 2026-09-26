@@ -42,7 +42,7 @@ class RunConfigurationFactoryTest {
         assertEquals(listOf("citation_context"), snapshot.claimExtractor.dataCategories)
         assertEquals("local", snapshot.embedding.provider)
         assertEquals("feature-hash-384-v1", snapshot.embedding.model)
-        assertEquals(listOf("cited_paper_chunks", "embedding_input"), snapshot.embedding.dataCategories)
+        assertEquals(listOf("atomic_claims", "cited_paper_chunks", "embedding_input"), snapshot.embedding.dataCategories)
         assertEquals("postgres-hybrid-rrf-v1", snapshot.retrieval.profileId)
         assertEquals(10, snapshot.retrieval.vectorCandidateLimit)
         assertEquals(10, snapshot.retrieval.lexicalCandidateLimit)

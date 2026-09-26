@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
+import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import org.springframework.beans.factory.annotation.Value
@@ -13,7 +14,31 @@ import org.springframework.context.annotation.Configuration
 @Configuration
 class RunConfigurationFactoryConfiguration {
     @Bean
+    fun ollamaEmbeddingSettings(
+        @Value("\${paper-trail.providers.ollama.enabled:false}") enabled: Boolean,
+        @Value("\${paper-trail.providers.ollama.base-url:}") baseUrl: String,
+        @Value("\${paper-trail.providers.ollama.model:}") model: String,
+        @Value("\${paper-trail.providers.ollama.dimension:768}") dimension: Int,
+        @Value("\${paper-trail.providers.ollama.api-key:}") apiKey: String,
+        @Value("\${paper-trail.providers.ollama.trusted-hosts:localhost,127.0.0.1}") trustedHosts: String,
+        @Value("\${paper-trail.providers.ollama.request-timeout-millis:60000}") requestTimeoutMillis: Long,
+        @Value("\${paper-trail.providers.ollama.external-enablement-reviewed:false}") enablementReviewed: Boolean,
+        @Value("\${paper-trail.providers.ollama.external-retention-disclosure:}") retentionDisclosure: String,
+    ): OllamaEmbeddingSettings = OllamaEmbeddingSettings(
+        enabled = enabled,
+        baseUrl = baseUrl,
+        modelId = model,
+        dimension = dimension,
+        apiKey = apiKey.trim().takeIf(String::isNotEmpty),
+        trustedHosts = trustedHosts.split(',').map(String::trim).filter(String::isNotEmpty).toSet(),
+        requestTimeoutMillis = requestTimeoutMillis,
+        enablementReviewed = enablementReviewed,
+        retentionDisclosure = retentionDisclosure.takeIf(String::isNotBlank),
+    )
+
+    @Bean
     fun providerCatalog(
+        ollamaEmbeddingSettings: OllamaEmbeddingSettings,
         @Value("\${paper-trail.providers.crossref.enabled:false}") crossrefEnabled: Boolean,
         @Value("\${paper-trail.providers.crossref.enablement-reviewed:false}") crossrefEnablementReviewed: Boolean,
         @Value("\${paper-trail.providers.crossref.retention-disclosure:}") crossrefRetentionDisclosure: String,
@@ -31,6 +56,7 @@ class RunConfigurationFactoryConfiguration {
         unpaywallEnablementReviewed = unpaywallEnablementReviewed,
         unpaywallRetentionDisclosure = unpaywallRetentionDisclosure.takeIf(String::isNotBlank),
         unpaywallContactEmail = unpaywallContactEmail.takeIf(String::isNotBlank),
+        ollamaEmbeddingSettings = ollamaEmbeddingSettings,
     )
 
     @Bean

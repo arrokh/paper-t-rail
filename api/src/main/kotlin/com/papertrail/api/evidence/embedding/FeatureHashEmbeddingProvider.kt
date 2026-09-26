@@ -15,7 +15,14 @@ class FeatureHashEmbeddingProvider : EmbeddingProvider {
     override val version = EmbeddingProfile.VERSION
     override val dimension = EmbeddingProfile.DIMENSION
 
-    override fun embed(text: String): FloatArray {
+    override fun embed(text: String, context: EmbeddingRequestContext): FloatArray {
+        require(context.inputCategory in EmbeddingRequestContext.SUPPORTED_INPUT_CATEGORIES) {
+            "Local embedding input category is not supported."
+        }
+        return embed(text)
+    }
+
+    fun embed(text: String): FloatArray {
         val terms = TERM_PATTERN.findAll(text.lowercase(Locale.ROOT))
             .map(MatchResult::value)
             .filterNot(String::isBlank)

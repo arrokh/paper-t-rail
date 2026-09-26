@@ -6,5 +6,5 @@ interface EmbeddingProvider {
     val version: String
     val dimension: Int
 
-    fun embed(text: String): FloatArray
+    fun embed(text: String, context: EmbeddingRequestContext): FloatArray
 }

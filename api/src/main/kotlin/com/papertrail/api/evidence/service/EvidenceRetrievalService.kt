@@ -5,7 +5,9 @@ import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
 import com.papertrail.api.evidence.domain.EmbeddedEvidenceChunk
 import com.papertrail.api.evidence.domain.EmbeddingProfile
 import com.papertrail.api.evidence.embedding.EmbeddingProvider
+import com.papertrail.api.evidence.embedding.EmbeddingRequestContext
 import com.papertrail.api.evidence.parsing.CitedPaperParser
+import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import org.springframework.stereotype.Service
@@ -43,9 +45,19 @@ class EvidenceRetrievalService(
         require(chunks.isNotEmpty()) { "The Cited Paper parser returned no usable section paragraphs." }
         val provider = embeddingProviders.singleOrNull {
             it.providerId == profile.providerId && it.modelId == profile.modelId && it.version == profile.version && it.dimension == profile.dimension
-        } ?: throw IllegalStateException("The pinned local embedding profile is unavailable.")
-        val embeddedChunks = chunks.map { chunk -> EmbeddedEvidenceChunk(chunk, provider.embed(chunk.text)) }
-        val claimVectors = context.claims.associate { claim -> claim.verificationId to provider.embed(claim.text) }
+        } ?: throw IllegalStateException("The pinned embedding profile is unavailable.")
+        fun embed(text: String, category: DataCategory): FloatArray {
+            val vector = provider.embed(text, EmbeddingRequestContext(context.configuration, category))
+            require(vector.size == profile.dimension) {
+                "Embedding provider returned a vector dimension that does not match the Analysis Run profile."
+            }
+            require(vector.all(Float::isFinite)) { "Embedding provider returned a non-finite vector value." }
+            return vector
+        }
+        val embeddedChunks = chunks.map { chunk -> EmbeddedEvidenceChunk(chunk, embed(chunk.text, DataCategory.CITED_PAPER_CHUNKS)) }
+        val claimVectors = context.claims.associate { claim ->
+            claim.verificationId to embed(claim.text, DataCategory.ATOMIC_CLAIMS)
+        }
         repository.persistAndRetrieve(context, parsed, embeddedChunks, claimVectors, profile)
     }
 }

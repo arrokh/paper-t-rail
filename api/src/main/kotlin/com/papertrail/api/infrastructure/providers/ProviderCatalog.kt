@@ -2,6 +2,7 @@ package com.papertrail.api.infrastructure.providers
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import java.security.MessageDigest
 
 const val CLAIM_EXTRACTOR_ROLE = "claimExtractor"
@@ -9,6 +10,12 @@ const val EMBEDDING_ROLE = "embedding"
 const val SYSTEM_ONE_ROLE = "systemOne"
 const val SCHOLARLY_METADATA_ROLE = "scholarlyMetadata"
 const val OPEN_ACCESS_ROLE = "openAccess"
+
+private val EMBEDDING_DATA_CATEGORIES = setOf(
+    DataCategory.CITED_PAPER_CHUNKS,
+    DataCategory.ATOMIC_CLAIMS,
+    DataCategory.EMBEDDING_INPUT,
+)
 
 enum class ProviderTrustBoundary(val id: String) {
     LOCAL("LOCAL"),
@@ -44,6 +51,8 @@ data class ProviderRegistration(
     val retentionDisclosure: String? = null,
     val enablementReviewed: Boolean = false,
     val payloadConfigurationFingerprint: String? = null,
+    val configurationFingerprint: String? = null,
+    val embeddingDimension: Int? = null,
 )
 
 data class ProviderOption(
@@ -79,6 +88,9 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
         }
         require(registrations.all { it.role in setOf(CLAIM_EXTRACTOR_ROLE, EMBEDDING_ROLE, SYSTEM_ONE_ROLE, SCHOLARLY_METADATA_ROLE, OPEN_ACCESS_ROLE) }) {
             "Provider registration contains an unsupported provider role."
+        }
+        require(registrations.all { it.embeddingDimension == null || it.embeddingDimension > 0 }) {
+            "Configured embedding dimensions must be positive."
         }
         require(registrations.none { it.enabled && it.trustBoundary == ProviderTrustBoundary.UNREVIEWED }) {
             "Unreviewed providers cannot be enabled."
@@ -144,6 +156,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
             unpaywallEnablementReviewed: Boolean = false,
             unpaywallRetentionDisclosure: String? = null,
             unpaywallContactEmail: String? = null,
+            ollamaEmbeddingSettings: OllamaEmbeddingSettings = OllamaEmbeddingSettings.disabled(),
         ): ProviderCatalog {
             require(!unpaywallEnabled || !unpaywallContactEmail.isNullOrBlank()) {
                 "Unpaywall requires a configured provider contact email before it can be enabled."
@@ -235,7 +248,8 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     model = "feature-hash-384-v1",
                     trustBoundary = ProviderTrustBoundary.LOCAL,
                     enabled = true,
-                    dataCategories = setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.EMBEDDING_INPUT),
+                    dataCategories = EMBEDDING_DATA_CATEGORIES,
+                    embeddingDimension = 384,
                 ),
                 ProviderRegistration(
                     role = EMBEDDING_ROLE,
@@ -245,7 +259,24 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     model = null,
                     trustBoundary = ProviderTrustBoundary.EXTERNAL,
                     enabled = false,
-                    dataCategories = setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.EMBEDDING_INPUT),
+                    dataCategories = EMBEDDING_DATA_CATEGORIES,
+                ),
+                ProviderRegistration(
+                    role = EMBEDDING_ROLE,
+                    providerId = OllamaEmbeddingSettings.PROVIDER_ID,
+                    displayName = ollamaEmbeddingSettings.modelId.takeIf(String::isNotBlank)
+                        ?.let { "Ollama embeddings ($it)" } ?: "Ollama embeddings",
+                    version = OllamaEmbeddingSettings.VERSION,
+                    model = ollamaEmbeddingSettings.modelId.takeIf(String::isNotBlank),
+                    trustBoundary = ollamaEmbeddingSettings.trustBoundary,
+                    enabled = ollamaEmbeddingSettings.isSelectable,
+                    dataCategories = EMBEDDING_DATA_CATEGORIES,
+                    retentionDisclosure = ollamaEmbeddingSettings.retentionDisclosure,
+                    enablementReviewed = ollamaEmbeddingSettings.enablementReviewed,
+                    configurationFingerprint = ollamaEmbeddingSettings.configurationFingerprint
+                        .takeIf { ollamaEmbeddingSettings.isConfigurationValid },
+                    embeddingDimension = ollamaEmbeddingSettings.dimension
+                        .takeIf { ollamaEmbeddingSettings.isConfigurationValid },
                 ),
                 ProviderRegistration(
                     role = SYSTEM_ONE_ROLE,
@@ -312,10 +343,15 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
             configuration.openAccessProviderConfigurationFingerprint != registration.payloadConfigurationFingerprint ||
                 configuration.openAccessRetentionDisclosure != registration.retentionDisclosure
             )
+        val embeddingDimensionChanged = role == EMBEDDING_ROLE &&
+            selected.embeddingDimension != registration.embeddingDimension &&
+            !(selected.provider == "local" && selected.embeddingDimension == null)
+        val embeddingConfigurationChanged = role == EMBEDDING_ROLE &&
+            (selected.configurationFingerprint != registration.configurationFingerprint || embeddingDimensionChanged)
         if (selected.version != registration.version || selected.model != registration.model ||
             selected.trustBoundary != registration.trustBoundary.id ||
             selected.dataCategories.toSet() != registration.dataCategories.map(DataCategory::id).toSet() ||
-            scholarlyConfigurationChanged || openAccessConfigurationChanged
+            scholarlyConfigurationChanged || openAccessConfigurationChanged || embeddingConfigurationChanged
         ) {
             throw ProviderCallRejectedException("Provider '$providerId' configuration or payload mapping changed after this Analysis Run was created.")
         }
