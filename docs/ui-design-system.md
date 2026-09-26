@@ -10,10 +10,11 @@ Paper T-Rail is a focused research workspace, not a generic analytics dashboard.
 
 - **Framework:** Next.js App Router, React, strict TypeScript, and Tailwind CSS v4.
 - **Primitives:** shadcn/ui using its `base` (Base UI) component set. Components are generated into `web/components/ui/` and committed as project-owned source; there is no opaque runtime shadcn component package.
-- **Composition:** product-specific UI belongs in `web/components/`; route composition belongs in `web/app/`. Keep primitive behavior and variants in `components/ui`, compose them for the product rather than creating parallel button, field, tab, or disclosure systems.
+- **Composition:** route composition and the same-origin API proxy belong in `web/app/`. Keep product UI, remote-state queries/mutations, and feature types together under `web/features/<feature>/`; the workspace composes feature views. Reserve `web/components/ui/` for project-owned shadcn primitives and `web/lib/` for genuinely cross-feature helpers.
 - **Styling:** semantic CSS custom properties in `web/app/styles.css` are the palette and surface source of truth. Tailwind utilities express layout and composition. `cn()` from `web/lib/utils.ts` composes classes and resolves conflicting utilities.
 - **Icons:** Lucide React, sized consistently and hidden from assistive technology when adjacent text already names the action.
-- **Server/client split:** keep route/layout modules server-rendered; put client state and browser APIs in the smallest interactive product module.
+- **Remote state:** TanStack Query owns browser-fetched remote state, including loading/errors, mutations, invalidation, and progress polling. Feature queries call only relative `/api/v1/*` paths through the same-origin Next.js proxy; do not introduce a separate typed API adapter.
+- **Server/client split:** keep route/layout modules server-rendered; put client state and browser APIs in the smallest interactive feature module. Do not use Effects or hand-managed intervals for remote fetching, polling, or mutation refresh; Effects remain appropriate for genuine synchronization with external systems.
 
 Use shadcn `Button`, `Card`, `Badge`, `Alert`, `Checkbox`, `Field`, `Input`, `NativeSelect`, `Tabs`, `Collapsible`, `Separator`, `Skeleton`, and `Spinner` for the corresponding interface patterns. Add another shadcn primitive through the CLI when a need arises. Use semantic HTML for document structure and native behavior that shadcn does not replace (for example, a real file input); keep its visual treatment composed from system tokens and shadcn primitives.
 

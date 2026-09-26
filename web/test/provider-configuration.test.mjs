@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { consentRequirements, createRunConfiguration, missingConsents } from "../lib/provider-configuration.ts";
+import { availableProviderSelections, consentRequirements, createRunConfiguration, missingConsents } from "../features/providers/provider-configuration.ts";
 
 const directory = {
   providers: {
@@ -115,6 +115,15 @@ const localSelections = {
   scholarlyMetadataProvider: "recorded-fixtures",
   openAccessProvider: "recorded-fixtures",
 };
+
+test("provider selections fall back to an available open-access provider", () => {
+  const selections = availableProviderSelections(directory, {
+    ...localSelections,
+    openAccessProvider: "removed-provider",
+  });
+
+  assert.equal(selections.openAccessProvider, "recorded-fixtures");
+});
 
 test("local defaults have no external provider consent requirements", () => {
   const requirements = consentRequirements(directory, localSelections);

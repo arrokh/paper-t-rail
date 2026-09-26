@@ -18,7 +18,7 @@ class LegalOpenAccessLocationPolicy {
         ) return false
         if (host.contains(':') || host.matches(IPV4_LITERAL)) {
             val address = runCatching { InetAddress.getByName(host) }.getOrNull() ?: return false
-            if (!isPublicAddress(address)) return false
+            if (!PublicInternetAddressPolicy.isPublic(address)) return false
         }
         return true
     }
@@ -34,10 +34,6 @@ class LegalOpenAccessLocationPolicy {
             .orEmpty()
         return if (normalized == "by") "ccby" else normalized
     }
-
-    private fun isPublicAddress(address: InetAddress): Boolean =
-        !address.isAnyLocalAddress && !address.isLoopbackAddress && !address.isLinkLocalAddress &&
-            !address.isSiteLocalAddress && !address.isMulticastAddress
 
     companion object {
         const val RECORDED_FIXTURES_PROVIDER = "recorded-fixtures"

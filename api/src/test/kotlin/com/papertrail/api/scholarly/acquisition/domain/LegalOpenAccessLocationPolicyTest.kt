@@ -24,7 +24,11 @@ class LegalOpenAccessLocationPolicyTest {
         assertFalse(policy.isUsable(location("https://127.0.0.1/article.pdf", "CC-BY")))
         assertFalse(policy.isUsable(location("https://10.0.0.1/article.pdf", "CC-BY")))
         assertFalse(policy.isUsable(location("https://169.254.169.254/latest/meta-data", "CC-BY")))
+        assertFalse(policy.isUsable(location("https://100.100.100.200/article.pdf", "CC-BY")))
+        assertFalse(policy.isUsable(location("https://198.18.0.1/article.pdf", "CC-BY")))
         assertFalse(policy.isUsable(location("https://[::1]/article.pdf", "CC-BY")))
+        assertFalse(policy.isUsable(location("https://[2001:db8::1]/article.pdf", "CC-BY")))
+        assertTrue(policy.isUsable(location("https://[2001:4860:4860::8888]/article.pdf", "CC-BY")))
         assertFalse(policy.isUsable(location("https://localhost/article.pdf", "CC-BY")))
     }
 

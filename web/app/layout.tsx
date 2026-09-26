@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./styles.css";
+import { QueryProvider } from "./query-provider";
 
 export const metadata: Metadata = {
   title: "Paper T-Rail — Upload a Source Document",
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <QueryProvider>{children}</QueryProvider>
+      </body>
     </html>
   );
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatConfidenceThreshold } from "../lib/format-confidence-threshold.ts";
+import { formatConfidenceThreshold } from "../features/reference-resolution/format-confidence-threshold.ts";
 
 test("preserves the configured threshold precision for run provenance", () => {
   assert.equal(formatConfidenceThreshold(0.905), "0.905");

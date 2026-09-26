@@ -1,4 +1,4 @@
-import type { ReferenceResolutionReportResponse } from "@/lib/types";
+import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 

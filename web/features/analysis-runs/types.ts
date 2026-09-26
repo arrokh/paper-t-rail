@@ -144,4 +144,11 @@ export type CreatedRun = {
   createdAt: string;
 };
 
-export type ApiError = { code: string; message: string };
+export type AnalysisRunConfiguration = {
+  claimExtractorProvider: string;
+  embeddingProvider: string;
+  systemOneProvider: string;
+  scholarlyMetadataProvider: string;
+  openAccessProvider: string;
+  externalProviderConsents: Array<{ providerId: string; dataCategories: string[] }>;
+};

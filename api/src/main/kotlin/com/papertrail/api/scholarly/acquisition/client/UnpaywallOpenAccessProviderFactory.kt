@@ -11,6 +11,7 @@ import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
 import com.papertrail.api.scholarly.acquisition.domain.LegalOpenAccessLocationPolicy
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
+import com.papertrail.api.scholarly.acquisition.domain.PublicInternetAddressPolicy
 import com.papertrail.api.scholarly.references.client.BibliographyReference
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import org.springframework.beans.factory.annotation.Qualifier
@@ -136,14 +137,10 @@ class UnpaywallOpenAccessProviderFactory(
             val host = uri.host?.removeSurrounding("[", "]")
                 ?: throw IllegalArgumentException("Open-access content URL has no host.")
             val addresses = InetAddress.getAllByName(host)
-            require(addresses.isNotEmpty() && addresses.all(::isPublicAddress)) {
+            require(addresses.isNotEmpty() && addresses.all(PublicInternetAddressPolicy::isPublic)) {
                 "Open-access content host must resolve only to public addresses."
             }
         }
-
-        private fun isPublicAddress(address: InetAddress): Boolean =
-            !address.isAnyLocalAddress && !address.isLoopbackAddress && !address.isLinkLocalAddress &&
-                !address.isSiteLocalAddress && !address.isMulticastAddress
 
         private fun locationFrom(node: JsonNode): OpenAccessLocation? {
             val url = node.path("url_for_pdf").takeIf(JsonNode::isTextual)?.asText()?.takeIf(String::isNotBlank)
