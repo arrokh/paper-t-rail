@@ -299,7 +299,6 @@ def main() -> None:
         with tempfile.TemporaryDirectory(prefix="paper-trail-benchmark-") as temporary_directory:
             documents = download_documents(Path(temporary_directory))
             started_compose = True
-            compose_command(project, environment, "up", "--detach", "--build", "api", "worker")
             compose_command(
                 project,
                 environment,
@@ -311,6 +310,7 @@ def main() -> None:
                 "deploy",
                 f"db:pg://{environment['POSTGRES_USER']}:{environment['POSTGRES_PASSWORD']}@postgres:5432/{environment['POSTGRES_DB']}",
             )
+            compose_command(project, environment, "up", "--detach", "--build", "api", "worker")
             wait_for_api(api_url)
             for document in documents:
                 print(json.dumps(benchmark_document(document, api_url, project, environment), indent=2), flush=True)
