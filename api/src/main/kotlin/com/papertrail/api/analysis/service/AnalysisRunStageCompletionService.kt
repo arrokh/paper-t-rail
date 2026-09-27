@@ -1,6 +1,7 @@
 package com.papertrail.api.analysis.service
 
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
+import com.papertrail.api.document.service.lockActiveAnalysisRun
 import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
@@ -18,6 +19,7 @@ class AnalysisRunStageCompletionService(
     private val referenceResolutionService: ReferenceResolutionService,
 ) {
     fun completeParsedStageIfReady(analysisRunId: UUID): Boolean = transactionTemplate.execute {
+        jdbc.lockActiveAnalysisRun(analysisRunId)
         val runStatus = jdbc.query(
             "SELECT status FROM analysis_runs WHERE id = ? FOR UPDATE",
             { rs, _ -> rs.getString("status") },

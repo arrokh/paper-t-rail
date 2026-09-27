@@ -31,6 +31,7 @@ import com.papertrail.api.analysis.http.AnalysisRunPage
 import com.papertrail.api.analysis.http.AnalysisRunSummary
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
 import com.papertrail.api.analysis.service.AnalysisRunService
+import com.papertrail.api.document.service.SourceDocumentDeletionService
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -77,6 +78,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var analysisRunService: AnalysisRunService
+
+    @MockitoBean
+    private lateinit var sourceDocumentDeletionService: SourceDocumentDeletionService
 
     @MockitoBean
     private lateinit var configurationFactory: RunConfigurationFactory
@@ -164,6 +168,12 @@ class OpenApiDocumentationTest {
         assertFalse(parsedDocument.path("description").asText().contains("completed Analysis Run"))
         assertTrue(parsedDocument.path("responses").has("404"))
         assertTrue(parsedDocument.path("responses").has("409"))
+        val deleteDocument = paths.path("/api/v1/documents/{documentId}").path("delete")
+        assertEquals("Delete a Source Document and all document-scoped data", deleteDocument.path("summary").asText())
+        assertTrue(deleteDocument.path("responses").has("204"))
+        assertTrue(deleteDocument.path("responses").has("404"))
+        assertTrue(deleteDocument.path("responses").has("503"))
+        assertTrue(deleteDocument.path("description").asText().contains("cannot be retracted"))
         val reanalysis = paths.path("/api/v1/documents/{documentId}/analysis-runs").path("post")
         assertTrue(reanalysis.path("requestBody").path("content").has("application/json"))
         val report = paths.path("/api/v1/analysis-runs/{runId}/report").path("get")
@@ -217,6 +227,16 @@ class OpenApiDocumentationTest {
         assertTrue(invalidationProperties.has("doi"))
         assertTrue(invalidationProperties.has("query"))
         assertTrue(invalidateCrossref.path("description").asText().contains("provider-wide invalidation"))
+    }
+
+    @Test
+    fun `document deletion endpoint delegates confirmed deletion and returns no content`() {
+        val documentId = UUID.randomUUID()
+
+        mockMvc.perform(delete("/api/v1/documents/$documentId"))
+            .andExpect(status().isNoContent)
+
+        Mockito.verify(sourceDocumentDeletionService).delete(documentId)
     }
 
     @Test

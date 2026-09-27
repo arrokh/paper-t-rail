@@ -25,6 +25,7 @@ const RUN_POLL_INTERVAL_MS = 2500;
 export const RECENT_ANALYSIS_RUNS_QUERY_KEY = ["analysis-runs", "recent"] as const;
 export const UPLOAD_ANALYSIS_RUN_MUTATION_KEY = ["analysis-runs", "upload"] as const;
 export const REANALYZE_ANALYSIS_RUN_MUTATION_KEY = ["analysis-runs", "reanalyze"] as const;
+export const DELETE_SOURCE_DOCUMENT_MUTATION_KEY = ["analysis-runs", "delete-document"] as const;
 export const HUMAN_REVIEW_MUTATION_KEY = ["analysis-runs", "human-review"] as const;
 
 export function isTerminalAnalysisRun(run: Pick<AnalysisRun, "status">): boolean {
@@ -101,6 +102,11 @@ async function reanalyzeDocument({ documentId, configuration }: ReanalyzeDocumen
   return (await response.json()) as CreatedRun;
 }
 
+async function deleteSourceDocument(documentId: string): Promise<void> {
+  const response = await fetch(`/api/v1/documents/${encodeURIComponent(documentId)}`, { method: "DELETE" });
+  if (!response.ok) throw new Error(await readApiError(response));
+}
+
 export function uploadAnalysisRunMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
     mutationKey: UPLOAD_ANALYSIS_RUN_MUTATION_KEY,
@@ -117,6 +123,28 @@ export function reanalyzeDocumentMutationOptions(queryClient: QueryClient) {
   });
 }
 
+export function deleteSourceDocumentMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationKey: DELETE_SOURCE_DOCUMENT_MUTATION_KEY,
+    mutationFn: deleteSourceDocument,
+    onSuccess: async (_data, documentId) => {
+      const cachedRunPages = queryClient.getQueriesData<AnalysisRunPage>({ queryKey: RECENT_ANALYSIS_RUNS_QUERY_KEY });
+      const deletedRunIds = cachedRunPages.flatMap(([, page]) =>
+        page?.items.filter((run) => run.documentId === documentId).map((run) => run.id) ?? [],
+      );
+      queryClient.setQueriesData<AnalysisRunPage>({ queryKey: RECENT_ANALYSIS_RUNS_QUERY_KEY }, (page) => page && ({
+        ...page,
+        items: page.items.filter((run) => run.documentId !== documentId),
+      }));
+      deletedRunIds.forEach((runId) => {
+        queryClient.removeQueries({ queryKey: ["analysis-runs", "parsed-document", runId], exact: true });
+        queryClient.removeQueries({ queryKey: referenceResolutionReportQueryKey(runId), exact: true });
+      });
+      await refreshRecentAnalysisRuns(queryClient);
+    },
+  });
+}
+
 export function useUploadAnalysisRun() {
   const queryClient = useQueryClient();
   return useMutation(uploadAnalysisRunMutationOptions(queryClient));
@@ -125,6 +153,11 @@ export function useUploadAnalysisRun() {
 export function useReanalyzeDocument() {
   const queryClient = useQueryClient();
   return useMutation(reanalyzeDocumentMutationOptions(queryClient));
+}
+
+export function useDeleteSourceDocument() {
+  const queryClient = useQueryClient();
+  return useMutation(deleteSourceDocumentMutationOptions(queryClient));
 }
 
 export function parsedDocumentQueryOptions(analysisRunId: string) {

@@ -2,6 +2,7 @@ package com.papertrail.api.evidence.verification.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.document.service.requireActiveAnalysisRun
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
@@ -53,6 +54,7 @@ class EvidenceVerificationService(
             val providerJudgements = if (requestedIds.isEmpty()) {
                 emptyList()
             } else {
+                jdbc.requireActiveAnalysisRun(analysisRunId)
                 evaluateThroughProviderGate(provider, configuration, pending.request)
             }
             require(providerJudgements.map(EvidenceJudgement::evidenceCandidateId).toSet() == requestedIds &&

@@ -349,6 +349,64 @@ describe("interactive workspace remote state", () => {
     expect(requests.every(({ url }) => url.startsWith("/api/v1/"))).toBe(true);
   });
 
+  it("explains and confirms local document deletion before removing the document's runs", async () => {
+    const requests: Array<{ url: string; method: string }> = [];
+    let runs: ReturnType<typeof analysisRun>[] = [analysisRun("run-delete", "Waiting for worker.", "PROCESSING")];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
+      const path = String(url);
+      const method = options.method ?? "GET";
+      requests.push({ url: path, method });
+      if (path === "/api/v1/providers") return jsonResponse(providerDirectory);
+      if (path.startsWith("/api/v1/analysis-runs?") && method === "GET") {
+        return jsonResponse({ items: runs, nextCursor: null });
+      }
+      if (path === "/api/v1/documents/document-1" && method === "DELETE") {
+        runs = [];
+        return { ok: true, status: 204 };
+      }
+      throw new Error(`Unexpected browser request: ${method} ${path}`);
+    }));
+
+    renderWorkspace();
+    await screen.findByText("Local providers selected");
+    fireEvent.click(await screen.findByRole("button", { name: /source\.pdf/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Delete Source Document and all Analysis Runs/ }));
+
+    expect(screen.getByRole("heading", { name: "Confirm permanent deletion" })).toBeTruthy();
+    expect(screen.getByText(/uploaded PDF, parsed content, every Analysis Run/)).toBeTruthy();
+    expect(screen.getByText(/cannot be retracted by Paper T-Rail/)).toBeTruthy();
+    expect(requests.some(({ method }) => method === "DELETE")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: /Permanently delete Source Document/ }));
+    expect(await screen.findByText("Your first Analysis Run will appear here.")).toBeTruthy();
+    expect(requests.some(({ url, method }) => url === "/api/v1/documents/document-1" && method === "DELETE")).toBe(true);
+    expect(screen.getByText("Select an Analysis Run to inspect its progress and parsed document.")).toBeTruthy();
+  });
+
+  it("keeps deletion confirmation available and reports a safe error when deletion fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
+      const path = String(url);
+      const method = options.method ?? "GET";
+      if (path === "/api/v1/providers") return jsonResponse(providerDirectory);
+      if (path.startsWith("/api/v1/analysis-runs?") && method === "GET") {
+        return jsonResponse({ items: [analysisRun("run-delete-error", "Waiting for worker.")], nextCursor: null });
+      }
+      if (path === "/api/v1/documents/document-1" && method === "DELETE") {
+        return jsonResponse({ code: "DELETION_INCOMPLETE", message: "Retry deletion to finish removing local data." }, 503);
+      }
+      throw new Error(`Unexpected browser request: ${method} ${path}`);
+    }));
+
+    renderWorkspace();
+    await screen.findByText("Local providers selected");
+    fireEvent.click(await screen.findByRole("button", { name: /source\.pdf/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Delete Source Document and all Analysis Runs/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Permanently delete Source Document/ }));
+
+    expect(await screen.findByText("Retry deletion to finish removing local data.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Permanently delete Source Document/ })).toBeTruthy();
+  });
+
   it("polls while a displayed run is active and stops after all displayed runs become terminal", async () => {
     let listRequests = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {

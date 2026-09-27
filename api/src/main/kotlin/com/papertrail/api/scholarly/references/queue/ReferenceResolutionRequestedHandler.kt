@@ -3,6 +3,7 @@ package com.papertrail.api.scholarly.references.queue
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
+import com.papertrail.api.document.service.isSourceDocumentDeleted
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
@@ -31,6 +32,7 @@ class ReferenceResolutionRequestedHandler(
     fun handle(serializedEvent: String): UUID {
         val event: PipelineEvent<ReferenceResolutionRequestedPayload> = objectMapper.readValue(serializedEvent)
         require(event.eventType == REFERENCE_RESOLUTION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
 
         val run = jdbc.query(
@@ -59,6 +61,7 @@ class ReferenceResolutionRequestedHandler(
 
     fun markFailed(event: PipelineEvent<ReferenceResolutionRequestedPayload>, reason: String) {
         require(event.eventType == REFERENCE_RESOLUTION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return
         recordProcessed(event, reason)
     }
 
@@ -68,8 +71,9 @@ class ReferenceResolutionRequestedHandler(
     ) {
         transactionTemplate.executeWithoutResult {
             val inserted = jdbc.update(
-                "INSERT INTO inbox_events (event_id, handler_name, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
+                "INSERT INTO inbox_events (event_id, analysis_run_id, handler_name, processed_at) VALUES (?, ?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
                 event.eventId,
+                event.analysisRunId,
                 REFERENCE_RESOLUTION_HANDLER,
                 Timestamp.from(Instant.now()),
             )

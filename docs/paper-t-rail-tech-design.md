@@ -2079,7 +2079,6 @@ A reasonable starting plan is:
 ```text
 extensions
 core_documents
-document_deletion_tombstones
 analysis_runs
 citation_contexts_occurrences_and_references
 canonical_papers
@@ -2090,6 +2089,7 @@ paper_chunk_embeddings
 verifications
 human_reviews
 messaging_inbox_outbox
+source_document_deletion
 search_indexes
 ```
 
@@ -2479,7 +2479,7 @@ created_at
 published_at nullable
 ```
 
-## 35.21 document_deletion_tombstones
+## 35.21 source_document_tombstones
 
 Content-free records used to prevent pending work from recreating data after explicit deletion.
 

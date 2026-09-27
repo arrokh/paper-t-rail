@@ -21,6 +21,7 @@ import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
+import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
 import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedHandler
 import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedPayload
@@ -94,6 +95,7 @@ import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRep
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import com.papertrail.api.infrastructure.providers.reviewedExternalProviderCatalog
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.document.service.SourceDocumentDeletionService
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
@@ -160,6 +162,281 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Testcontainers
 class AnalysisRunQueueIntegrationTest {
+    @Test
+    fun `document deletion removes scoped data and preserves assets referenced by an unrelated active run`() {
+        val deleted = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE event_id = ?",
+            String::class.java,
+            deleted.eventId,
+        )!!
+        eventHandler().handle(documentEvent)
+        processReferenceResolutionEvents(deleted.analysisRunId)
+
+        val verificationId = jdbc.queryForObject(
+            "SELECT id FROM claim_paper_verifications WHERE analysis_run_id = ? AND processing_status = 'COMPLETED' LIMIT 1",
+            UUID::class.java,
+            deleted.analysisRunId,
+        )!!
+        humanReviewService().record(
+            verificationId,
+            HumanReviewAction.AGREE,
+            null,
+            "Separate human assessment to remove with this document.",
+        )
+        val canonicalPaperIds = jdbc.query(
+            "SELECT DISTINCT canonical_paper_id FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND canonical_paper_id IS NOT NULL",
+            { rs, _ -> rs.getObject(1, UUID::class.java) },
+            deleted.analysisRunId,
+        )
+        val pendingReanalysis = createQueuedRunForExistingDocument(deleted.documentId, deleted.hash)
+        val staleAnalysisEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            pendingReanalysis.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        val staleResolutionEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? LIMIT 1",
+            String::class.java,
+            deleted.analysisRunId,
+            REFERENCE_RESOLUTION_REQUESTED,
+        )!!
+
+        val unrelated = createQueuedRun()
+        val unrelatedDocumentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE event_id = ?",
+            String::class.java,
+            unrelated.eventId,
+        )!!
+        eventHandler().handle(unrelatedDocumentEvent)
+        jdbc.query(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
+            { rs, _ -> rs.getString(1) },
+            unrelated.analysisRunId,
+            REFERENCE_RESOLUTION_REQUESTED,
+        ).forEach(referenceResolutionEventHandler()::handle)
+        val unrelatedReferenceId = jdbc.queryForObject(
+            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? AND local_reference_key = 'ref1'",
+            UUID::class.java,
+            unrelated.analysisRunId,
+        )!!
+        val sharedObjectKey = jdbc.queryForObject(
+            "SELECT object_key FROM cited_paper_access WHERE analysis_run_id = ? AND object_key IS NOT NULL LIMIT 1",
+            String::class.java,
+            deleted.analysisRunId,
+        )!!
+        val sharedReferenceInserted = jdbc.update(
+            """
+            INSERT INTO cited_paper_access (
+                asset_id, analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status,
+                access_reason, provider_id, metadata_available, abstract_available, source_url,
+                license_identifier, location_version, location_host_type, discovered_at, object_key,
+                content_sha256, content_media_type, language, language_detector_version
+            )
+            SELECT source.asset_id, ?, ?, source.canonical_paper_id, source.access_status,
+                   source.access_reason, source.provider_id, source.metadata_available, source.abstract_available,
+                   source.source_url, source.license_identifier, source.location_version, source.location_host_type,
+                   source.discovered_at, source.object_key, source.content_sha256, source.content_media_type,
+                   source.language, source.language_detector_version
+              FROM cited_paper_access source
+             WHERE source.analysis_run_id = ? AND source.object_key = ?
+             LIMIT 1
+            """.trimIndent(),
+            unrelated.analysisRunId,
+            unrelatedReferenceId,
+            deleted.analysisRunId,
+            sharedObjectKey,
+        )
+        assertEquals(1, sharedReferenceInserted)
+        assertTrue(objectStore.contains(sharedObjectKey))
+
+        val storedObjects = jdbc.query(
+            """
+            SELECT object_key FROM source_documents WHERE id = ?
+            UNION
+            SELECT parsed.raw_tei_object_key
+              FROM parsed_document_parses parsed
+              JOIN analysis_runs run ON run.id = parsed.analysis_run_id
+             WHERE run.document_id = ?
+            UNION
+            SELECT access.object_key
+              FROM cited_paper_access access
+              JOIN analysis_runs run ON run.id = access.analysis_run_id
+             WHERE run.document_id = ? AND access.object_key IS NOT NULL
+            """.trimIndent(),
+            { rs, _ -> rs.getString("object_key") },
+            deleted.documentId,
+            deleted.documentId,
+            deleted.documentId,
+        )
+        assertTrue(storedObjects.size >= 3)
+        assertTrue(jdbc.queryForObject("SELECT count(*) FROM human_reviews WHERE analysis_run_id = ?", Int::class.java, deleted.analysisRunId)!! > 0)
+        assertTrue(jdbc.queryForObject("SELECT count(*) FROM inbox_events", Int::class.java)!! > 0)
+
+        sourceDocumentDeletionService().delete(deleted.documentId)
+
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM source_documents WHERE id = ?", Int::class.java, deleted.documentId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM analysis_runs WHERE document_id = ?", Int::class.java, deleted.documentId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE analysis_run_id IN (?, ?)", Int::class.java, deleted.analysisRunId, pendingReanalysis.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM parsed_document_parses WHERE analysis_run_id = ?", Int::class.java, deleted.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM atomic_claims WHERE analysis_run_id = ?", Int::class.java, deleted.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?", Int::class.java, deleted.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cited_paper_access WHERE analysis_run_id = ?", Int::class.java, deleted.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM paper_chunks WHERE analysis_run_id = ?", Int::class.java, deleted.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM claim_paper_verifications WHERE analysis_run_id = ?", Int::class.java, deleted.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM human_reviews WHERE analysis_run_id = ?", Int::class.java, deleted.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE analysis_run_id IN (?, ?)", Int::class.java, deleted.analysisRunId, pendingReanalysis.analysisRunId))
+        canonicalPaperIds.forEach { canonicalPaperId ->
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM canonical_papers WHERE id = ?", Int::class.java, canonicalPaperId))
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM source_document_tombstones WHERE document_id = ?", Int::class.java, deleted.documentId))
+        storedObjects.filterNot { it == sharedObjectKey }.forEach { objectKey -> assertFalse(objectStore.contains(objectKey)) }
+        assertTrue(objectStore.contains(sharedObjectKey))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM analysis_runs WHERE id = ?", Int::class.java, unrelated.analysisRunId))
+        assertTrue(objectStore.contains("source/${unrelated.documentId}/${unrelated.hash}.pdf"))
+        assertNull(analysisRunService().get(deleted.analysisRunId))
+        assertFalse(analysisRunService().list().items.any { it.documentId == deleted.documentId })
+
+        assertEquals(
+            UUID.fromString(objectMapper.readTree(staleAnalysisEvent).path("eventId").asText()),
+            eventHandler().handle(staleAnalysisEvent),
+        )
+        assertEquals(
+            UUID.fromString(objectMapper.readTree(staleResolutionEvent).path("eventId").asText()),
+            referenceResolutionEventHandler().handle(staleResolutionEvent),
+        )
+        sourceDocumentDeletionService().delete(deleted.documentId)
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM source_document_tombstones WHERE document_id = ?", Int::class.java, deleted.documentId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM analysis_runs WHERE document_id = ?", Int::class.java, deleted.documentId))
+
+        sourceDocumentDeletionService().delete(unrelated.documentId)
+        assertFalse(objectStore.contains(sharedObjectKey))
+        canonicalPaperIds.forEach { canonicalPaperId ->
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM canonical_papers WHERE id = ?", Int::class.java, canonicalPaperId))
+        }
+    }
+
+    @Test
+    fun `a tombstoned document cannot be reanalyzed or recreated by pending workers`() {
+        val created = createQueuedRun()
+        val queuedEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE event_id = ?",
+            String::class.java,
+            created.eventId,
+        )!!
+
+        sourceDocumentDeletionService().delete(created.documentId)
+
+        assertEquals(created.eventId, eventHandler().handle(queuedEvent))
+        val now = Instant.now()
+        val staleResolution = PipelineEvent(
+            UUID.randomUUID(),
+            REFERENCE_RESOLUTION_REQUESTED,
+            1,
+            created.analysisRunId,
+            UUID.randomUUID(),
+            null,
+            now,
+            0,
+            ReferenceResolutionRequestedPayload(created.documentId, created.hash, UUID.randomUUID()),
+        )
+        val staleAcquisition = PipelineEvent(
+            UUID.randomUUID(),
+            CITED_PAPER_ACQUISITION_REQUESTED,
+            1,
+            created.analysisRunId,
+            UUID.randomUUID(),
+            null,
+            now,
+            0,
+            CitedPaperAcquisitionRequestedPayload(created.documentId, created.hash, UUID.randomUUID()),
+        )
+        val staleIndexing = PipelineEvent(
+            UUID.randomUUID(),
+            CITED_PAPER_INDEXING_REQUESTED,
+            1,
+            created.analysisRunId,
+            UUID.randomUUID(),
+            null,
+            now,
+            0,
+            CitedPaperIndexingRequestedPayload(created.documentId, created.hash, UUID.randomUUID()),
+        )
+        assertEquals(staleResolution.eventId, referenceResolutionEventHandler().handle(objectMapper.writeValueAsString(staleResolution)))
+        assertEquals(staleAcquisition.eventId, citedPaperAccessEventHandler().handle(objectMapper.writeValueAsString(staleAcquisition)))
+        assertEquals(staleIndexing.eventId, citedPaperIndexingEventHandler().handle(objectMapper.writeValueAsString(staleIndexing)))
+        assertThrows(ResponseStatusException::class.java) {
+            analysisRunService().createReanalysis(created.documentId, null)
+        }
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM source_documents WHERE id = ?", Int::class.java, created.documentId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM analysis_runs WHERE document_id = ?", Int::class.java, created.documentId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM inbox_events", Int::class.java))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM source_document_tombstones WHERE document_id = ?", Int::class.java, created.documentId))
+        assertFalse(objectStore.contains("source/${created.documentId}/${created.hash}.pdf"))
+    }
+
+    @Test
+    fun `failed object deletion keeps a retryable tombstone and retry completes cleanup`() {
+        val created = createQueuedRun()
+        val deleteAttempts = AtomicInteger()
+        val flakyObjectStore = object : SourceDocumentObjectStore {
+            override fun put(objectKey: String, content: ByteArray, contentType: String) = objectStore.put(objectKey, content, contentType)
+            override fun get(objectKey: String): ByteArray = objectStore.get(objectKey)
+            override fun delete(objectKey: String) {
+                if (deleteAttempts.getAndIncrement() == 0) error("simulated object-store failure")
+                objectStore.delete(objectKey)
+            }
+        }
+        val deletionService = SourceDocumentDeletionService(
+            jdbc,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            flakyObjectStore,
+        )
+
+        assertThrows(ResponseStatusException::class.java) { deletionService.delete(created.documentId) }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM source_document_tombstones WHERE document_id = ?", Int::class.java, created.documentId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM source_documents WHERE id = ?", Int::class.java, created.documentId))
+        assertTrue(objectStore.contains("source/${created.documentId}/${created.hash}.pdf"))
+
+        deletionService.delete(created.documentId)
+
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM source_documents WHERE id = ?", Int::class.java, created.documentId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM analysis_runs WHERE document_id = ?", Int::class.java, created.documentId))
+        assertFalse(objectStore.contains("source/${created.documentId}/${created.hash}.pdf"))
+    }
+
+    @Test
+    fun `tombstoned document blocks run updates and inbox commits until cleanup is retried`() {
+        val created = createQueuedRun()
+        jdbc.update(
+            "INSERT INTO source_document_tombstones (document_id) VALUES (?)",
+            created.documentId,
+        )
+
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update(
+                "UPDATE analysis_runs SET progress = '{\"stage\":\"FAILED\"}'::jsonb WHERE id = ?",
+                created.analysisRunId,
+            )
+        }
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update(
+                "INSERT INTO inbox_events (event_id, analysis_run_id, handler_name) VALUES (?, ?, ?)",
+                UUID.randomUUID(),
+                created.analysisRunId,
+                "stale-worker",
+            )
+        }
+
+        sourceDocumentDeletionService().delete(created.documentId)
+
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM analysis_runs WHERE id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM source_document_tombstones WHERE document_id = ?", Int::class.java, created.documentId))
+    }
+
     @Test
     fun `upload creates queued run with pinned source hash configuration and transactional outbox`() {
         val pdf = englishPdf()
@@ -1974,6 +2251,58 @@ class AnalysisRunQueueIntegrationTest {
         return CreatedRunIds(documentId, runId, eventId, hash)
     }
 
+    private fun sourceDocumentDeletionService() = SourceDocumentDeletionService(
+        jdbc = jdbc,
+        transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        objectStore = objectStore,
+    )
+
+    private fun createQueuedRunForExistingDocument(documentId: UUID, hash: String): CreatedRunIds {
+        val runId = UUID.randomUUID()
+        val eventId = UUID.randomUUID()
+        val correlationId = UUID.randomUUID()
+        val createdAt = Instant.now()
+        jdbc.update(
+            """
+            INSERT INTO analysis_runs (
+                id, document_id, source_content_sha256, source_parser_id, source_parser_version,
+                configuration_snapshot, status, progress, created_at
+            ) VALUES (?, ?, ?, 'grobid', '0.9.1-crf', ?::jsonb, 'QUEUED', '{"stage":"QUEUED"}'::jsonb, ?)
+            """.trimIndent(),
+            runId,
+            documentId,
+            hash,
+            objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest())),
+            Timestamp.from(createdAt),
+        )
+        val event = PipelineEvent(
+            eventId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+            1,
+            runId,
+            correlationId,
+            null,
+            createdAt,
+            0,
+            DocumentAnalysisRequestedPayload(documentId, hash),
+        )
+        jdbc.update(
+            """
+            INSERT INTO outbox_events (
+                event_id, event_type, schema_version, analysis_run_id, correlation_id, occurred_at, payload, created_at
+            ) VALUES (?, ?, 1, ?, ?, ?, ?::jsonb, ?)
+            """.trimIndent(),
+            eventId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+            runId,
+            correlationId,
+            Timestamp.from(createdAt),
+            objectMapper.writeValueAsString(event),
+            Timestamp.from(createdAt),
+        )
+        return CreatedRunIds(documentId, runId, eventId, hash)
+    }
+
     private fun analysisRunService(
         transactionTemplate: TransactionTemplate = TransactionTemplate(
             DataSourceTransactionManager(dataSource),
@@ -2290,6 +2619,7 @@ class AnalysisRunQueueIntegrationTest {
         override fun get(objectKey: String): ByteArray = content[objectKey]?.copyOf() ?: error("Source object missing")
         override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey) }
         fun contentType(objectKey: String): String? = contentTypes[objectKey]
+        fun contains(objectKey: String): Boolean = objectKey in content
         fun clear() { content.clear(); contentTypes.clear() }
     }
 
@@ -2366,6 +2696,14 @@ class AnalysisRunQueueIntegrationTest {
             val humanReviewsMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("human_reviews.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(humanReviewsMigrationVerification)) }
+            }
+            val sourceDocumentDeletionMigration = migrationDirectory.resolve("source_document_deletion.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(sourceDocumentDeletionMigration)) }
+            }
+            val sourceDocumentDeletionMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("source_document_deletion.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(sourceDocumentDeletionMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

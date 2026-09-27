@@ -3,6 +3,7 @@ package com.papertrail.api.scholarly.acquisition.queue
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
+import com.papertrail.api.document.service.isSourceDocumentDeleted
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
@@ -31,6 +32,7 @@ class CitedPaperAcquisitionRequestedHandler(
     fun handle(serializedEvent: String): UUID {
         val event: PipelineEvent<CitedPaperAcquisitionRequestedPayload> = objectMapper.readValue(serializedEvent)
         require(event.eventType == CITED_PAPER_ACQUISITION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
 
         val run = jdbc.query(
@@ -57,6 +59,7 @@ class CitedPaperAcquisitionRequestedHandler(
 
     fun markFailed(event: PipelineEvent<CitedPaperAcquisitionRequestedPayload>, reason: String) {
         require(event.eventType == CITED_PAPER_ACQUISITION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return
         recordProcessed(event, reason)
     }
 
@@ -66,8 +69,9 @@ class CitedPaperAcquisitionRequestedHandler(
     ) {
         transactionTemplate.executeWithoutResult {
             val inserted = jdbc.update(
-                "INSERT INTO inbox_events (event_id, handler_name, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
+                "INSERT INTO inbox_events (event_id, analysis_run_id, handler_name, processed_at) VALUES (?, ?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
                 event.eventId,
+                event.analysisRunId,
                 CITED_PAPER_ACQUISITION_HANDLER,
                 Timestamp.from(Instant.now()),
             )
