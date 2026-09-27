@@ -19,5 +19,6 @@ data class AnalysisRunSummary(
     val configuration: JsonNode,
     val createdAt: Instant,
     val startedAt: Instant?,
+    @field:Schema(description = "Terminal processing or validation failure. Claim-citation pair limit failures include the observed pair count and configured limit.")
     val failureReason: String?,
 )

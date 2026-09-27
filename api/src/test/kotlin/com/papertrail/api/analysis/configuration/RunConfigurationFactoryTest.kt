@@ -55,6 +55,7 @@ class RunConfigurationFactoryTest {
         assertEquals("0.9.1-crf", snapshot.sourceParser.version)
         assertEquals(52_428_800, snapshot.validationLimits.maxUploadBytes)
         assertEquals(100_000, snapshot.validationLimits.maxExtractedCharactersPerPage)
+        assertEquals(5_000, snapshot.validationLimits.maxClaimCitationPairs)
         assertEquals(100, snapshot.validationLimits.minimumExtractedCharacters)
         assertEquals("PENDING", snapshot.referenceResolution.executionStatus)
         val metadataProvider = snapshot.referenceResolution.provider!!
@@ -72,6 +73,14 @@ class RunConfigurationFactoryTest {
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
         assertEquals(0.9, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"]["thresholds"].isNull)
+    }
+
+    @Test
+    fun `pins the configured claim-citation pair limit and rejects non-positive limits`() {
+        val configured = factoryFor(maxClaimCitationPairs = 12).from(RunConfigurationRequest())
+
+        assertEquals(12, configured.validationLimits.maxClaimCitationPairs)
+        assertThrows(IllegalArgumentException::class.java) { factoryFor(maxClaimCitationPairs = 0) }
     }
 
     @Test
@@ -342,13 +351,22 @@ class RunConfigurationFactoryTest {
         finalCandidateLimit: Int = 5,
         reciprocalRankFusionConstant: Int = 60,
         evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
+        maxClaimCitationPairs: Int = ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
         providerCatalog = reviewedExternalProviderCatalog(),
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
         languageDetectorVersion = "0.6",
-        limits = ValidationLimitsSnapshot(52_428_800, 500, 5_000_000, 100_000, 100, 0.65),
+        limits = ValidationLimitsSnapshot(
+            maxUploadBytes = 52_428_800,
+            maxPages = 500,
+            maxExtractedCharacters = 5_000_000,
+            maxExtractedCharactersPerPage = 100_000,
+            minimumExtractedCharacters = 100,
+            minimumLanguageConfidence = 0.65,
+            maxClaimCitationPairs = maxClaimCitationPairs,
+        ),
         retrievalProfileId = retrievalProfileId,
         vectorCandidateLimit = vectorCandidateLimit,
         lexicalCandidateLimit = lexicalCandidateLimit,

@@ -37,11 +37,14 @@ Set these in `.env`; every cap is enforced by rejection, never by truncating the
 | `PAPER_MAX_UPLOAD_BYTES` | `52428800` | Maximum PDF upload size |
 | `PAPER_MAX_REQUEST_SIZE` | `51MB` | Maximum complete multipart request size, including boundaries; raise it when increasing the PDF byte cap |
 | `PAPER_MAX_PAGES` | `500` | Maximum parsed page count |
+| `PAPER_MAX_CLAIM_CITATION_PAIRS` | `5000` | Maximum inferred Atomic Claim × Citation Target links; an over-limit queued run fails with an explicit reason before persisting parsed output |
 | `PAPER_MAX_EXTRACTED_CHARACTERS` | `5000000` | Maximum extracted text before rejection |
 | `PAPER_MAX_EXTRACTED_CHARACTERS_PER_PAGE` | `100000` | Maximum extracted text on one page before rejection; bounds PDFBox per-page buffering |
 | `PAPER_MAX_GROBID_RESPONSE_BYTES` | `67108864` | Maximum TEI response bytes read before rejection and XML parsing |
 | `PAPER_MIN_EXTRACTED_CHARACTERS` | `100` | Minimum text needed for language validation |
 | `PAPER_MIN_LANGUAGE_CONFIDENCE` | `0.65` | Minimum English language-detection confidence |
+
+The rationale, measured article/dissertation results, pinned runtime/provider matrix, and reproduction command are recorded in [the V1 runtime matrix](docs/benchmarks/v1-runtime-matrix.md); rerun the measurements with `make benchmark-processing`.
 
 Scanned PDFs without enough selectable text, unsupported languages, invalid PDFs, page/size-limit violations, and parser failures receive explicit API error codes and explanations. OCR is not performed.
 
@@ -63,9 +66,9 @@ Retrieval settings are deployment-configurable through `.env` and pinned into ea
 | `PAPER_RETRIEVAL_FINAL_CANDIDATES` | `5` | Maximum fused passages retained per claim/reference |
 | `PAPER_RETRIEVAL_RRF_CONSTANT` | `60` | Reciprocal-rank fusion constant |
 
-The default embedding selection remains `feature-hash-384-v1`; it is deterministic word-unigram/bigram hashing, not a trained semantic model. Local Compose also starts an internal Ollama service and enables `nomic-embed-text` (768 dimensions) as an optional selection. On first startup, Compose downloads the Ollama image and model into the persistent `ollama_data` volume. API and worker startup does not wait for the model download; check it with `docker compose -f infra/docker-compose.yml logs ollama-model-init` before selecting Ollama. New Analysis Runs still select feature-hash unless the operator or researcher explicitly chooses Ollama. Ollama endpoint credentials stay server-side. Chunk and Atomic Claim query vectors use the same selected Ollama model/profile, and the immutable run pins the model, dimension, and a non-secret endpoint fingerprint. Candidate retrieval never crosses the exact Analysis Run and Cited Reference scope.
+The default embedding selection remains `feature-hash-384-v1`; it is deterministic word-unigram/bigram hashing, not a trained semantic model. Local Compose also starts an internal Ollama service and enables the pinned `nomic-embed-text:v1.5` model (768 dimensions; Ollama manifest digest `0a109f422b47`) as an optional selection. On first startup, Compose downloads the Ollama image and model into the persistent `ollama_data` volume. API and worker startup does not wait for the model download; check it with `docker compose -f infra/docker-compose.yml logs ollama-model-init` before selecting Ollama. New Analysis Runs still select feature-hash unless the operator or researcher explicitly chooses Ollama. Ollama endpoint credentials stay server-side. Chunk and Atomic Claim query vectors use the same selected Ollama model/profile, and the immutable run pins the model, dimension, and a non-secret endpoint fingerprint. Candidate retrieval never crosses the exact Analysis Run and Cited Reference scope.
 
-For non-Compose deployments, configure `OLLAMA_ENABLED`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, and `OLLAMA_DIMENSION` in the API environment. Only endpoint hosts explicitly listed in `OLLAMA_TRUSTED_HOSTS` are `LOCAL`; other hosts are classified `EXTERNAL` and require a reviewed retention disclosure plus fresh per-run consent. External endpoints remain unavailable until reviewed enablement and a deployment-specific disclosure are configured, and each run must approve `atomic_claims`, `cited_paper_chunks`, and `embedding_input`. An optional `OLLAMA_API_KEY` is used only by the API as a bearer credential and is never returned by the provider directory or persisted in Analysis Run configuration.
+For non-Compose deployments, configure `OLLAMA_ENABLED`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, and `OLLAMA_DIMENSION` in the API environment; local Compose defaults `OLLAMA_MODEL` to `nomic-embed-text:v1.5`. Only endpoint hosts explicitly listed in `OLLAMA_TRUSTED_HOSTS` are `LOCAL`; other hosts are classified `EXTERNAL` and require a reviewed retention disclosure plus fresh per-run consent. External endpoints remain unavailable until reviewed enablement and a deployment-specific disclosure are configured, and each run must approve `atomic_claims`, `cited_paper_chunks`, and `embedding_input`. An optional `OLLAMA_API_KEY` is used only by the API as a bearer credential and is never returned by the provider directory or persisted in Analysis Run configuration.
 
 ## API
 
