@@ -137,6 +137,9 @@ services:
       CROSSREF_ENABLEMENT_REVIEWED: ${CROSSREF_ENABLEMENT_REVIEWED:-true}
       CROSSREF_RETENTION_DISCLOSURE: ${CROSSREF_RETENTION_DISCLOSURE:-Crossref mencatat IP peminta dan isi permintaan. Email polite pool dipakai untuk pemecahan masalah, dan Crossref menyatakan log dihapus setelah tiga bulan.}
       CROSSREF_CONTACT_EMAIL: ${CROSSREF_CONTACT_EMAIL:-test@ptr.test}
+      CROSSREF_CACHE_POSITIVE_TTL: ${CROSSREF_CACHE_POSITIVE_TTL:-30d}
+      CROSSREF_CACHE_NEGATIVE_TTL: ${CROSSREF_CACHE_NEGATIVE_TTL:-1h}
+      OPERATOR_API_CREDENTIAL: ${OPERATOR_API_CREDENTIAL:-}
       UNPAYWALL_ENABLED: ${UNPAYWALL_ENABLED:-true}
       UNPAYWALL_ENABLEMENT_REVIEWED: ${UNPAYWALL_ENABLEMENT_REVIEWED:-true}
       UNPAYWALL_RETENTION_DISCLOSURE: ${UNPAYWALL_RETENTION_DISCLOSURE:-Unpaywall menerima DOI dan alamat kontak layanan; kebijakannya menyebut data permintaan dapat disimpan hingga enam bulan setelah penggunaan layanan berakhir. Repositori/host konten yang ditemukan memiliki ketentuan retensi tersendiri.}

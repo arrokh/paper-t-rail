@@ -43,7 +43,7 @@ class CrossrefScholarlyMetadataLookupTest {
         val server = MockRestServiceServer.bindTo(builder).build()
         server.expect(ExpectedCount.never(), requestTo(containsString("api.crossref.org")))
         val configuration = crossrefConfiguration().copy(externalProviderConsents = emptyList())
-        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, configuration, null)
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, configuration, null, NoOpCrossrefLookupCache)
 
         assertThrows(ProviderCallRejectedException::class.java) {
             lookup.byDoi("10.1234/unconsented")
@@ -62,7 +62,7 @@ class CrossrefScholarlyMetadataLookupTest {
                 """{"message":{"DOI":"10.1234/confirmed","title":["Confirmed study"],"author":[{"given":"Ada","family":"Researcher"}],"published-print":{"date-parts":[[2024]]}}}""",
                 MediaType.APPLICATION_JSON,
             ))
-        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null)
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null, NoOpCrossrefLookupCache)
 
         val work = lookup.byDoi("10.1234/confirmed")
 
@@ -84,7 +84,7 @@ class CrossrefScholarlyMetadataLookupTest {
                 """{"message":{"items":[{"DOI":"10.1234/search-match","title":["A test title"],"author":[{"given":"Ada","family":"Researcher"}],"issued":{"date-parts":[[2024]]}}]}}""",
                 MediaType.APPLICATION_JSON,
             ))
-        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null)
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null, NoOpCrossrefLookupCache)
 
         val matches = lookup.search(BibliographyReference("A test title", listOf("Ada Researcher"), 2024, null, "JOURNAL_ARTICLE"))
 
@@ -128,6 +128,7 @@ class CrossrefScholarlyMetadataLookupTest {
             ProviderCallGate(catalog),
             missingEmailConsent,
             contactEmail,
+            NoOpCrossrefLookupCache,
         )
 
         assertThrows(ProviderCallRejectedException::class.java) {
@@ -166,6 +167,7 @@ class CrossrefScholarlyMetadataLookupTest {
             ProviderCallGate(reviewedExternalProviderCatalogWithContactEmail(changedEmail)),
             configuration,
             changedEmail,
+            NoOpCrossrefLookupCache,
         )
 
         assertThrows(ProviderCallRejectedException::class.java) {

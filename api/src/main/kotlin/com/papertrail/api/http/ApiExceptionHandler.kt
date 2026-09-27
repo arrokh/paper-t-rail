@@ -32,6 +32,7 @@ class ApiExceptionHandler {
         val status = exception.statusCode
         val code = when (status) {
             HttpStatus.NOT_FOUND -> "NOT_FOUND"
+            HttpStatus.UNAUTHORIZED -> "UNAUTHORIZED"
             HttpStatus.CONFLICT -> "CONFLICT"
             HttpStatus.SERVICE_UNAVAILABLE -> "SERVICE_UNAVAILABLE"
             else -> "REQUEST_REJECTED"

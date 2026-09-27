@@ -25,6 +25,8 @@ spring:
 
 paper-trail:
   role: ${APP_ROLE:api}
+  operator:
+    credential: ${OPERATOR_API_CREDENTIAL:}
   upload:
     max-bytes: ${PAPER_MAX_UPLOAD_BYTES:52428800}
     max-pages: ${PAPER_MAX_PAGES:500}
@@ -73,6 +75,9 @@ paper-trail:
       enablement-reviewed: ${CROSSREF_ENABLEMENT_REVIEWED:true}
       retention-disclosure: "${CROSSREF_RETENTION_DISCLOSURE:Crossref mencatat IP peminta dan isi permintaan. Email polite pool dipakai untuk pemecahan masalah, dan Crossref menyatakan log dihapus setelah tiga bulan.}"
       contact-email: ${CROSSREF_CONTACT_EMAIL:test@ptr.test}
+      cache:
+        positive-ttl: ${CROSSREF_CACHE_POSITIVE_TTL:30d}
+        negative-ttl: ${CROSSREF_CACHE_NEGATIVE_TTL:1h}
     unpaywall:
       enabled: ${UNPAYWALL_ENABLED:true}
       enablement-reviewed: ${UNPAYWALL_ENABLEMENT_REVIEWED:true}

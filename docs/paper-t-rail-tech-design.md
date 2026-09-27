@@ -3294,15 +3294,16 @@ provider capability metadata
 
 But PostgreSQL remains the durable source for analysis results.
 
-Cache keys should be versioned.
-
-Example:
+Cache keys should be versioned. Crossref uses normalized DOI keys and a SHA-256 hash of a bibliographic query normalized with Unicode NFKC, collapsed whitespace, and case folding:
 
 ```text
-crossref:doi:{normalizedDoi}:v1
+crossref:doi:v1:{normalizedDoi}
+crossref:search:v1:{sha256(normalizedQuery)}
 ```
 
-Use TTLs.
+Crossref positive results expire after a configurable 30 days by default; empty/not-found results expire after a configurable hour. Cache values contain only normalized DOI, title, authors, and year fields—never provider response JSON, request query text, or contact-email values. A cache hit still passes the selected provider and exact per-run consent through the provider-call gate, and resolution outcomes are persisted for each Analysis Run in PostgreSQL. Cache expiry or Redis loss does not delete those durable outcomes.
+
+An operator can invalidate exactly one DOI or bibliographic-search entry using the direct API's `DELETE /api/v1/operator/caches/crossref` endpoint and a server-side `OPERATOR_API_CREDENTIAL`. The endpoint accepts a typed DOI or query, never Redis commands or a provider-wide flush, and the web proxy does not expose DELETE requests. Leave operator invalidation unavailable unless the credential is configured.
 
 Do not depend on cache persistence for correctness.
 
