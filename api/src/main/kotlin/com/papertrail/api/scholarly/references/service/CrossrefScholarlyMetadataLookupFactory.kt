@@ -1,6 +1,7 @@
 package com.papertrail.api.scholarly.references.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.scholarly.references.client.CrossrefLookupCache
 import com.papertrail.api.scholarly.references.client.CrossrefScholarlyMetadataLookup
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookup
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookupFactory
@@ -16,6 +17,7 @@ class CrossrefScholarlyMetadataLookupFactory(
     @Qualifier("crossrefRestClient") private val client: RestClient,
     private val objectMapper: ObjectMapper,
     private val callGate: ProviderCallGate,
+    private val cache: CrossrefLookupCache,
     @Value("\${paper-trail.providers.crossref.contact-email:}") private val contactEmail: String,
 ) : ScholarlyMetadataLookupFactory {
     override val providerId: String = "crossref"
@@ -26,5 +28,6 @@ class CrossrefScholarlyMetadataLookupFactory(
         callGate = callGate,
         configuration = configuration,
         contactEmail = contactEmail.takeIf(String::isNotBlank),
+        cache = cache,
     )
 }

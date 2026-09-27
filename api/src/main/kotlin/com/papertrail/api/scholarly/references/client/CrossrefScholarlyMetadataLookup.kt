@@ -2,11 +2,12 @@ package com.papertrail.api.scholarly.references.client
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
 import com.papertrail.api.infrastructure.providers.SCHOLARLY_METADATA_ROLE
-import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.web.client.RestClient
@@ -19,6 +20,7 @@ class CrossrefScholarlyMetadataLookup(
     private val callGate: ProviderCallGate,
     private val configuration: AnalysisConfigurationSnapshot,
     private val contactEmail: String?,
+    private val cache: CrossrefLookupCache,
 ) : ScholarlyMetadataLookup {
     override fun byDoi(doi: String): ScholarlyWork? {
         val payload = payload(
@@ -26,15 +28,18 @@ class CrossrefScholarlyMetadataLookup(
         )
         return callGate.call(SCHOLARLY_METADATA_ROLE, "crossref", payload, configuration) { actualPayload ->
             val requestData = actualPayload.contentByCategory.getValue(DataCategory.BIBLIOGRAPHIC_METADATA)
-            val requestDoi = requestData.path("doi").asText()
+            val requestDoi = requestData.path("doi").asText().let { DoiNormalizer.normalize(it) ?: it }
+            cache.findByDoi(requestDoi)?.let { return@call it.firstOrNull() }
             val uriBuilder = UriComponentsBuilder.fromPath("/works/{doi}")
             actualPayload.contentByCategory[DataCategory.PROVIDER_CONTACT_EMAIL]
                 ?.takeIf(JsonNode::isTextual)
                 ?.asText()
                 ?.let { uriBuilder.queryParam("mailto", it) }
             val uri = uriBuilder.buildAndExpand(requestDoi).encode().toUri()
-            val response = exchange(uri) ?: return@call null
-            response.path("message")?.let(::toWork)
+            val response = exchange(uri)
+            val works = response?.path("message")?.let(::toWork)?.let(::listOf).orEmpty()
+            cache.storeByDoi(requestDoi, works)
+            works.firstOrNull()
         }
     }
 
@@ -53,6 +58,7 @@ class CrossrefScholarlyMetadataLookup(
         return callGate.call(SCHOLARLY_METADATA_ROLE, "crossref", payload, configuration) { actualPayload ->
             val query = actualPayload.contentByCategory.getValue(DataCategory.BIBLIOGRAPHIC_METADATA)
                 .path("bibliographicQuery").asText()
+            cache.findBySearch(query)?.let { return@call it }
             val uriBuilder = UriComponentsBuilder.fromPath("/works")
                 .queryParam("query.bibliographic", query)
                 .queryParam("rows", MAX_RESULTS)
@@ -60,8 +66,10 @@ class CrossrefScholarlyMetadataLookup(
                 ?.takeIf(JsonNode::isTextual)
                 ?.asText()
                 ?.let { uriBuilder.queryParam("mailto", it) }
-            val response = exchange(uriBuilder.build().encode().toUri()) ?: return@call emptyList()
-            response.path("message").path("items").mapNotNull(::toWork)
+            val response = exchange(uriBuilder.build().encode().toUri())
+            val works = response?.path("message")?.path("items")?.mapNotNull(::toWork).orEmpty()
+            cache.storeSearch(query, works)
+            works
         }
     }
 
@@ -82,14 +90,16 @@ class CrossrefScholarlyMetadataLookup(
             }
         }
 
+    private fun normalizeField(value: String): String? = value.trim().replace(WHITESPACE, " ").takeIf(String::isNotEmpty)
+
     private fun toWork(node: JsonNode): ScholarlyWork? {
-        val doi = node.path("DOI").takeIf(JsonNode::isTextual)?.asText() ?: return null
-        val title = node.path("title").firstOrNull()?.asText()?.takeIf(String::isNotBlank) ?: return null
+        val doi = DoiNormalizer.normalize(node.path("DOI").takeIf(JsonNode::isTextual)?.asText()) ?: return null
+        val title = node.path("title").firstOrNull()?.asText()?.let(::normalizeField) ?: return null
         val authors = node.path("author").mapNotNull { author ->
-            author.path("name").takeIf(JsonNode::isTextual)?.asText()?.takeIf(String::isNotBlank)
+            author.path("name").takeIf(JsonNode::isTextual)?.asText()?.let(::normalizeField)
                 ?: listOfNotNull(
-                    author.path("given").takeIf(JsonNode::isTextual)?.asText()?.takeIf(String::isNotBlank),
-                    author.path("family").takeIf(JsonNode::isTextual)?.asText()?.takeIf(String::isNotBlank),
+                    author.path("given").takeIf(JsonNode::isTextual)?.asText()?.let(::normalizeField),
+                    author.path("family").takeIf(JsonNode::isTextual)?.asText()?.let(::normalizeField),
                 ).joinToString(" ").takeIf(String::isNotBlank)
         }
         val year = sequenceOf("published-print", "published-online", "issued")
@@ -100,5 +110,6 @@ class CrossrefScholarlyMetadataLookup(
 
     companion object {
         const val MAX_RESULTS = 10
+        private val WHITESPACE = Regex("\\s+")
     }
 }
