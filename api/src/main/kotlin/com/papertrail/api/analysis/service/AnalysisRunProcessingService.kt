@@ -6,6 +6,8 @@ import com.papertrail.api.citation.claims.service.ClaimExtractionService
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.document.service.isSourceDocumentDeleted
+import com.papertrail.api.document.service.requireActiveSourceDocument
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
@@ -45,6 +47,7 @@ class AnalysisRunProcessingService(
 
     fun process(event: PipelineEvent<DocumentAnalysisRequestedPayload>): UUID {
         require(event.eventType == DOCUMENT_ANALYSIS_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
 
         val document = jdbc.query(
@@ -78,6 +81,7 @@ class AnalysisRunProcessingService(
         if (run.documentId != event.payload.documentId || run.sourceHash != event.payload.sourceContentSha256 || document.sha256 != run.sourceHash) {
             throw IllegalStateException("Queue event provenance does not match the persisted Source Document and Analysis Run.")
         }
+        jdbc.requireActiveSourceDocument(event.payload.documentId)
         val content = objectStore.get(document.objectKey)
         if (sha256Hex(content) != run.sourceHash) {
             throw IllegalStateException("Stored Source Document failed its SHA-256 integrity check.")
@@ -110,13 +114,16 @@ class AnalysisRunProcessingService(
             throw IllegalStateException("Analysis Run is not in a parsable state.")
         }
 
+        jdbc.requireActiveSourceDocument(event.payload.documentId)
         val existingParsed = parsedDocumentRepository.find(event.analysisRunId)
         if (existingParsed == null) {
+            jdbc.requireActiveSourceDocument(event.payload.documentId)
             val parsed = scientificDocumentParser.parse(content)
             if (parsed.parserId != run.parserId || parsed.parserVersion != run.parserVersion) {
                 throw IllegalStateException("The scientific parser identity does not match the Analysis Run provenance.")
             }
             require(parsed.rawParserOutput.isNotEmpty()) { "The scientific parser returned no raw parser output." }
+            jdbc.requireActiveSourceDocument(event.payload.documentId)
             val extractedClaims = claimExtractionService.extract(
                 run.claimExtractorProvider,
                 run.claimExtractorVersion,
@@ -188,8 +195,9 @@ class AnalysisRunProcessingService(
         val resolutionConfigured = referenceResolutionService.isResolutionConfigured(event.analysisRunId)
         transactionTemplate.executeWithoutResult {
             val inserted = jdbc.update(
-                "INSERT INTO inbox_events (event_id, handler_name, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
+                "INSERT INTO inbox_events (event_id, analysis_run_id, handler_name, processed_at) VALUES (?, ?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
                 event.eventId,
+                event.analysisRunId,
                 DOCUMENT_ANALYSIS_HANDLER,
                 Timestamp.from(Instant.now()),
             )
@@ -220,6 +228,7 @@ class AnalysisRunProcessingService(
     }
 
     fun markFailed(event: PipelineEvent<DocumentAnalysisRequestedPayload>, reason: String) {
+        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return
         transactionTemplate.executeWithoutResult {
             jdbc.update(
                 """
@@ -288,8 +297,9 @@ class AnalysisRunProcessingService(
             )
             if (failed != 1) throw IllegalStateException("Analysis Run could not be rejected for exceeding its claim-citation pair limit.")
             val processed = jdbc.update(
-                "INSERT INTO inbox_events (event_id, handler_name, processed_at) VALUES (?, ?, ?)",
+                "INSERT INTO inbox_events (event_id, analysis_run_id, handler_name, processed_at) VALUES (?, ?, ?, ?)",
                 event.eventId,
+                event.analysisRunId,
                 DOCUMENT_ANALYSIS_HANDLER,
                 Timestamp.from(Instant.now()),
             )

@@ -100,6 +100,7 @@ class EvidenceRetrievalServiceTest {
         assertEquals(listOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.ATOMIC_CLAIMS), embeddingCategories)
         Mockito.verify(repository).isCompleted(runId, referenceId)
         Mockito.verify(repository).loadContext(runId, referenceId)
+        Mockito.verify(repository, Mockito.atLeastOnce()).requireActiveRun(runId)
         Mockito.verifyNoMoreInteractions(repository)
     }
 }

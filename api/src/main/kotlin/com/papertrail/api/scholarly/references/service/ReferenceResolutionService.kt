@@ -17,6 +17,8 @@ import com.papertrail.api.analysis.configuration.ReferenceResolutionSnapshot
 import com.papertrail.api.evidence.report.EvidenceCoverageReport
 import com.papertrail.api.evidence.report.EvidenceCoverageReportRepository
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
+import com.papertrail.api.document.service.lockActiveAnalysisRun
+import com.papertrail.api.document.service.requireActiveAnalysisRun
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
@@ -60,10 +62,12 @@ class ReferenceResolutionService(
                 ambiguityMargin = ScholarlyMetadataMatcher.AMBIGUITY_MARGIN,
             ),
         )
+        jdbc.requireActiveAnalysisRun(analysisRunId)
         val decision = resolver.resolve(
             BibliographyReference(stored.title, stored.authors, stored.year, stored.doi, stored.referenceType),
         )
         transactionTemplate.executeWithoutResult {
+            jdbc.lockActiveAnalysisRun(analysisRunId)
             val canonicalPaperId = repository.save(analysisRunId, stored, decision, providerId)
             claimReferenceVerificationRepository.applyResolution(
                 analysisRunId = analysisRunId,
@@ -150,7 +154,12 @@ class ReferenceResolutionService(
         SELECT status,
                configuration_snapshot::text AS configuration,
                analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot) AS semantic_pipeline_configured
-          FROM analysis_runs WHERE id = ?
+          FROM analysis_runs run
+          JOIN source_documents document ON document.id = run.document_id
+         WHERE run.id = ?
+           AND NOT EXISTS (
+               SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = document.id
+           )
         """.trimIndent(),
         { rs, _ ->
             RunResolutionContext(

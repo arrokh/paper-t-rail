@@ -3,6 +3,8 @@ package com.papertrail.api.scholarly.acquisition.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.document.service.lockActiveAnalysisRun
+import com.papertrail.api.document.service.requireActiveSourceDocument
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProvider
@@ -61,9 +63,10 @@ class CitedPaperAccessService(
             doi = reference.doi,
             referenceType = reference.referenceType,
         )
+        jdbc.requireActiveSourceDocument(context.documentId)
         val discovery = provider.discover(metadata)
         val permittedLocations = discovery?.locations.orEmpty().filter(locationPolicy::isUsable)
-        val acquiredText = acquireExtractableFullText(provider, permittedLocations)
+        val acquiredText = acquireExtractableFullText(context.documentId, provider, permittedLocations)
         val acquired = acquiredText?.first
         val extractedText = acquiredText?.second
         val languageDetection = extractedText?.let(languageDetector::detect)
@@ -96,6 +99,7 @@ class CitedPaperAccessService(
         try {
             if (acquired != null && objectKey != null) objectStore.put(objectKey, acquired.bytes, acquired.mediaType)
             val inserted = transactionTemplate.execute {
+                jdbc.lockActiveAnalysisRun(analysisRunId)
                 val saved = repository.save(
                     analysisRunId = analysisRunId,
                     reference = reference,
@@ -133,11 +137,13 @@ class CitedPaperAccessService(
     }
 
     private fun acquireExtractableFullText(
+        documentId: UUID,
         provider: OpenAccessProvider,
         locations: List<OpenAccessLocation>,
     ): Pair<AcquiredFullText, String>? {
         for (location in locations.take(MAX_LOCATIONS_TO_TRY)) {
             try {
+                jdbc.requireActiveSourceDocument(documentId)
                 val acquired = provider.fetch(location)
                 return acquired to textExtractor.extract(acquired)
             } catch (exception: ProviderCallRejectedException) {
@@ -150,9 +156,10 @@ class CitedPaperAccessService(
     }
 
     private fun loadRun(analysisRunId: UUID): AccessRunContext? = jdbc.query(
-        "SELECT status, configuration_snapshot::text AS configuration FROM analysis_runs WHERE id = ?",
+        "SELECT document_id, status, configuration_snapshot::text AS configuration FROM analysis_runs WHERE id = ?",
         { rs, _ ->
             AccessRunContext(
+                documentId = rs.getObject("document_id", UUID::class.java),
                 status = rs.getString("status"),
                 configuration = objectMapper.readValue(rs.getString("configuration"), AnalysisConfigurationSnapshot::class.java),
             )
@@ -180,6 +187,7 @@ class CitedPaperAccessService(
     }
 
     private data class AccessRunContext(
+        val documentId: UUID,
         val status: String,
         val configuration: AnalysisConfigurationSnapshot,
     )

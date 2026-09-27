@@ -33,8 +33,10 @@ class EvidenceRetrievalService(
             "Only confidently English Cited Paper assets with recorded detector provenance can be indexed."
         }
 
+        repository.requireActiveRun(analysisRunId)
         val content = objectStore.get(context.objectKey)
         require(sha256Hex(content) == context.contentSha256) { "Stored Cited Paper failed its SHA-256 integrity check." }
+        repository.requireActiveRun(analysisRunId)
         val parsed = citedPaperParser.parse(content, context.mediaType)
         if (context.mediaType == "application/pdf") {
             require(parsed.parserId == context.configuration.sourceParser.provider &&
@@ -47,6 +49,7 @@ class EvidenceRetrievalService(
             it.providerId == profile.providerId && it.modelId == profile.modelId && it.version == profile.version && it.dimension == profile.dimension
         } ?: throw IllegalStateException("The pinned embedding profile is unavailable.")
         fun embed(text: String, category: DataCategory): FloatArray {
+            repository.requireActiveRun(analysisRunId)
             val vector = provider.embed(text, EmbeddingRequestContext(context.configuration, category))
             require(vector.size == profile.dimension) {
                 "Embedding provider returned a vector dimension that does not match the Analysis Run profile."

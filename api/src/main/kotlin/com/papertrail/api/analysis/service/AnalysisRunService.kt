@@ -17,6 +17,8 @@ import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.document.service.SourceDocumentDeletedException
+import com.papertrail.api.document.service.lockActiveSourceDocument
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
@@ -185,6 +187,7 @@ class AnalysisRunService(
           FROM analysis_runs r
           JOIN source_documents d ON d.id = r.document_id
          WHERE r.id = ?
+           AND NOT EXISTS (SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = d.id)
         """.trimIndent(),
         { resultSet, _ -> resultSet.toRunSummary() },
         runId,
@@ -212,6 +215,7 @@ class AnalysisRunService(
                        r.created_at, r.started_at, r.failure_reason
                   FROM analysis_runs r
                   JOIN source_documents d ON d.id = r.document_id
+                 WHERE NOT EXISTS (SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = d.id)
                  ORDER BY r.created_at DESC, r.id DESC
                  LIMIT ?
                 """.trimIndent(),
@@ -226,7 +230,8 @@ class AnalysisRunService(
                        r.created_at, r.started_at, r.failure_reason
                   FROM analysis_runs r
                   JOIN source_documents d ON d.id = r.document_id
-                 WHERE (r.created_at, r.id) < (?, ?)
+                 WHERE NOT EXISTS (SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = d.id)
+                   AND (r.created_at, r.id) < (?, ?)
                  ORDER BY r.created_at DESC, r.id DESC
                  LIMIT ?
                 """.trimIndent(),
@@ -253,6 +258,11 @@ class AnalysisRunService(
         configuration: AnalysisConfigurationSnapshot,
         createdAt: Instant,
     ) {
+        try {
+            jdbc.lockActiveSourceDocument(documentId)
+        } catch (_: SourceDocumentDeletedException) {
+            throw ResponseStatusException(HttpStatus.NOT_FOUND, "Source Document not found.")
+        }
         val snapshotJson = configurationFactory.toJson(configuration)
         jdbc.update(
             """
@@ -300,7 +310,14 @@ class AnalysisRunService(
     }
 
     private fun findDocument(id: UUID): StoredDocument? = jdbc.query(
-        "SELECT id, filename, object_key, sha256 FROM source_documents WHERE id = ?",
+        """
+        SELECT document.id, document.filename, document.object_key, document.sha256
+          FROM source_documents document
+         WHERE document.id = ?
+           AND NOT EXISTS (
+               SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = document.id
+           )
+        """.trimIndent(),
         { rs, _ -> StoredDocument(rs.getObject("id", UUID::class.java), rs.getString("filename"), rs.getString("object_key"), rs.getString("sha256")) },
         id,
     ).firstOrNull()
