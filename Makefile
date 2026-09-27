@@ -3,7 +3,7 @@ MISE = mise exec --
 # Keep command-line CHANGE data out of shell source text in the revert target.
 export CHANGE
 
-.PHONY: dev infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-web lint-web typecheck-web build-web validate
+.PHONY: dev infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-web lint-web typecheck-web build-web calibrate validate
 
 dev: infra-up migrate
 	$(COMPOSE) up -d --build api worker web
@@ -44,7 +44,7 @@ infra-down:
 clean:
 	$(COMPOSE) down --volumes --remove-orphans
 
-test: test-api test-web lint-web typecheck-web build-web
+test: test-api test-web lint-web typecheck-web build-web calibrate
 
 test-api:
 	cd api && $(MISE) ./gradlew test
@@ -60,5 +60,8 @@ typecheck-web:
 
 build-web:
 	cd web && $(MISE) pnpm run build
+
+calibrate:
+	cd api && $(MISE) ./gradlew calibrate
 
 validate: test

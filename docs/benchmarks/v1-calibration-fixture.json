@@ -1,0 +1,393 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "paper-t-rail-v1-calibration-draft",
+  "fixtureStatus": "DRAFT",
+  "releaseCalibrationStatus": "NOT_APPROVED",
+  "provenance": {
+    "kind": "SYNTHETIC",
+    "recordId": "paper-t-rail-calibration-fixture-generator-v1",
+    "description": "Hand-authored synthetic known-answer scenarios for exercising reference matching and evidence aggregation. No case is drawn from or adjudicated against a scholarly paper."
+  },
+  "referencePolicyCandidates": [
+    {
+      "candidateId": "reference-threshold-090",
+      "scorePolicyVersion": "title-author-year-weighted-edit-similarity-v1",
+      "confidenceThreshold": 0.9,
+      "ambiguityMargin": 0.02
+    },
+    {
+      "candidateId": "reference-threshold-098",
+      "scorePolicyVersion": "title-author-year-weighted-edit-similarity-v1",
+      "confidenceThreshold": 0.98,
+      "ambiguityMargin": 0.02
+    },
+    {
+      "candidateId": "reference-threshold-099",
+      "scorePolicyVersion": "title-author-year-weighted-edit-similarity-v1",
+      "confidenceThreshold": 0.99,
+      "ambiguityMargin": 0.02
+    }
+  ],
+  "aggregationPolicyCandidates": [
+    {
+      "candidateId": "aggregation-permissive-example",
+      "verificationPolicyVersion": "weighted-evidence-role-scope-design-v1",
+      "aggregationPolicyVersion": "conflict-aware-evidence-strength-v1",
+      "thresholds": {
+        "directSupport": 0.7,
+        "partialSupport": 0.65,
+        "contradiction": 0.7,
+        "comparabilityMargin": 0.1
+      }
+    },
+    {
+      "candidateId": "aggregation-design-baseline-example",
+      "verificationPolicyVersion": "weighted-evidence-role-scope-design-v1",
+      "aggregationPolicyVersion": "conflict-aware-evidence-strength-v1",
+      "thresholds": {
+        "directSupport": 0.8,
+        "partialSupport": 0.7,
+        "contradiction": 0.8,
+        "comparabilityMargin": 0.08
+      }
+    },
+    {
+      "candidateId": "aggregation-conservative-example",
+      "verificationPolicyVersion": "weighted-evidence-role-scope-design-v1",
+      "aggregationPolicyVersion": "conflict-aware-evidence-strength-v1",
+      "thresholds": {
+        "directSupport": 0.9,
+        "partialSupport": 0.85,
+        "contradiction": 0.9,
+        "comparabilityMargin": 0.05
+      }
+    }
+  ],
+  "referenceCases": [
+    {
+      "caseId": "reference-confirmed-exact-metadata",
+      "category": "CONFIRMED_MATCH",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-reference-confirmed-exact-v1",
+        "description": "Artificial entry and candidate share title, authors, and year; this checks a known positive matcher outcome."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "reference": {
+        "title": "Versioned methods for scholarly reference matching",
+        "authors": ["Ada Researcher", "Bea Analyst"],
+        "year": 2024,
+        "doi": null,
+        "referenceType": "JOURNAL_ARTICLE"
+      },
+      "candidates": [
+        {
+          "candidateId": "confirmed-work",
+          "doi": "10.5555/calibration.confirmed.2024",
+          "title": "Versioned methods for scholarly reference matching",
+          "authors": ["Ada Researcher", "Bea Analyst"],
+          "year": 2024
+        }
+      ],
+      "expected": {
+        "status": "RESOLVED",
+        "candidateId": "confirmed-work"
+      }
+    },
+    {
+      "caseId": "reference-confirmed-minor-title-variation",
+      "category": "CONFIRMED_MATCH",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-reference-confirmed-variation-v1",
+        "description": "Artificial confirmed identity with a small title transcription variation and corroborating author/year metadata."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "reference": {
+        "title": "Deterministic evidence thresholds for academic auditing",
+        "authors": ["Casey Scholar"],
+        "year": 2022,
+        "doi": null,
+        "referenceType": "JOURNAL_ARTICLE"
+      },
+      "candidates": [
+        {
+          "candidateId": "minor-variation-work",
+          "doi": "10.5555/calibration.variation.2022",
+          "title": "Deterministic evidence thresholds in academic auditing",
+          "authors": ["Casey Scholar"],
+          "year": 2022
+        }
+      ],
+      "expected": {
+        "status": "RESOLVED",
+        "candidateId": "minor-variation-work"
+      }
+    },
+    {
+      "caseId": "reference-near-miss-title-decoy",
+      "category": "NEAR_MISS",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-reference-near-miss-title-v1",
+        "description": "Artificial decoy differs from the entry by a small title edit while matching author and year, intentionally stressing false auto-resolution."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "reference": {
+        "title": "A reproducible study of citation calibration",
+        "authors": ["Dana Researcher"],
+        "year": 2023,
+        "doi": null,
+        "referenceType": "JOURNAL_ARTICLE"
+      },
+      "candidates": [
+        {
+          "candidateId": "near-miss-decoy",
+          "doi": "10.5555/calibration.decoy.2023",
+          "title": "A reproducible study of citation calibrations",
+          "authors": ["Dana Researcher"],
+          "year": 2023
+        }
+      ],
+      "expected": {
+        "status": "UNRESOLVED"
+      }
+    },
+    {
+      "caseId": "reference-near-miss-unrelated-work",
+      "category": "NEAR_MISS",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-reference-unrelated-decoy-v1",
+        "description": "Artificial low-similarity candidate checks that the matcher abstains from unrelated metadata."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "reference": {
+        "title": "A reproducible study of citation calibration",
+        "authors": ["Dana Researcher"],
+        "year": 2023,
+        "doi": null,
+        "referenceType": "JOURNAL_ARTICLE"
+      },
+      "candidates": [
+        {
+          "candidateId": "unrelated-decoy",
+          "doi": "10.5555/calibration.unrelated.2023",
+          "title": "Ocean chemistry measurements in coastal sediment",
+          "authors": ["Morgan Scientist"],
+          "year": 2021
+        }
+      ],
+      "expected": {
+        "status": "UNRESOLVED"
+      }
+    },
+    {
+      "caseId": "reference-ambiguous-duplicate-candidates",
+      "category": "AMBIGUOUS_MATCH",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-reference-ambiguous-v1",
+        "description": "Two distinct artificial identities have identical matching metadata; the expected safe result is abstention."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "reference": {
+        "title": "Evidence provenance in research synthesis",
+        "authors": ["Elliot Researcher"],
+        "year": 2021,
+        "doi": null,
+        "referenceType": "JOURNAL_ARTICLE"
+      },
+      "candidates": [
+        {
+          "candidateId": "ambiguous-work-one",
+          "doi": "10.5555/calibration.ambiguous.one",
+          "title": "Evidence provenance in research synthesis",
+          "authors": ["Elliot Researcher"],
+          "year": 2021
+        },
+        {
+          "candidateId": "ambiguous-work-two",
+          "doi": "10.5555/calibration.ambiguous.two",
+          "title": "Evidence provenance in research synthesis",
+          "authors": ["Elliot Researcher"],
+          "year": 2021
+        }
+      ],
+      "expected": {
+        "status": "UNRESOLVED"
+      }
+    }
+  ],
+  "evidenceCases": [
+    {
+      "caseId": "evidence-direct-support",
+      "category": "DIRECT_SUPPORT",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-evidence-direct-support-v1",
+        "description": "Artificial primary finding with strong directness, claim-scope match, study design, and relevance."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "judgements": [
+        {
+          "judgement": "DIRECT_SUPPORT",
+          "evidenceRole": "PRIMARY_FINDING",
+          "confidence": 0.9,
+          "directness": 0.96,
+          "claimScopeMatch": 0.94,
+          "studyDesignQuality": 0.9,
+          "relevance": 0.95
+        }
+      ],
+      "expectedStatus": "SUPPORTED",
+      "expectedConflict": false
+    },
+    {
+      "caseId": "evidence-partial-support",
+      "category": "PARTIAL_SUPPORT",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-evidence-partial-support-v1",
+        "description": "Artificial passage supports a narrower scope than the Atomic Claim."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "judgements": [
+        {
+          "judgement": "PARTIAL_SUPPORT",
+          "evidenceRole": "PRIMARY_FINDING",
+          "confidence": 0.84,
+          "directness": 0.82,
+          "claimScopeMatch": 0.78,
+          "studyDesignQuality": 0.8,
+          "relevance": 0.85
+        }
+      ],
+      "expectedStatus": "PARTIALLY_SUPPORTED",
+      "expectedConflict": false
+    },
+    {
+      "caseId": "evidence-contradiction",
+      "category": "CONTRADICTION",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-evidence-contradiction-v1",
+        "description": "Artificial primary finding materially conflicts with the Atomic Claim."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "judgements": [
+        {
+          "judgement": "CONTRADICTS",
+          "evidenceRole": "PRIMARY_FINDING",
+          "confidence": 0.93,
+          "directness": 0.94,
+          "claimScopeMatch": 0.92,
+          "studyDesignQuality": 0.9,
+          "relevance": 0.93
+        }
+      ],
+      "expectedStatus": "CONTRADICTED",
+      "expectedConflict": false
+    },
+    {
+      "caseId": "evidence-comparable-support-contradiction",
+      "category": "COMPARABLE_CONFLICT",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-evidence-comparable-conflict-v1",
+        "description": "Artificial credible support and contradiction judgements have comparable strength and scope."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "judgements": [
+        {
+          "judgement": "DIRECT_SUPPORT",
+          "evidenceRole": "PRIMARY_FINDING",
+          "confidence": 0.92,
+          "directness": 0.92,
+          "claimScopeMatch": 0.92,
+          "studyDesignQuality": 0.92,
+          "relevance": 0.92
+        },
+        {
+          "judgement": "CONTRADICTS",
+          "evidenceRole": "PRIMARY_FINDING",
+          "confidence": 0.9,
+          "directness": 0.9,
+          "claimScopeMatch": 0.9,
+          "studyDesignQuality": 0.9,
+          "relevance": 0.9
+        }
+      ],
+      "expectedStatus": "INSUFFICIENT_EVIDENCE",
+      "expectedConflict": true
+    },
+    {
+      "caseId": "evidence-high-confidence-low-scope",
+      "category": "CONFIDENCE_WITHOUT_SCOPE",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-evidence-confidence-only-v1",
+        "description": "Artificial judgement has high raw confidence but weak directness, scope match, design quality, and relevance; confidence alone must not support the claim."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "judgements": [
+        {
+          "judgement": "DIRECT_SUPPORT",
+          "evidenceRole": "PRIMARY_FINDING",
+          "confidence": 1.0,
+          "directness": 0.1,
+          "claimScopeMatch": 0.1,
+          "studyDesignQuality": 0.1,
+          "relevance": 0.1
+        }
+      ],
+      "expectedStatus": "INSUFFICIENT_EVIDENCE",
+      "expectedConflict": false
+    },
+    {
+      "caseId": "evidence-secondary-report-only",
+      "category": "SECONDARY_REPORT_ONLY",
+      "provenance": {
+        "kind": "SYNTHETIC",
+        "recordId": "synthetic-evidence-secondary-report-v1",
+        "description": "Artificial secondary report tests evidence-role down-weighting despite otherwise maximal scores."
+      },
+      "adjudication": {
+        "state": "DRAFT"
+      },
+      "judgements": [
+        {
+          "judgement": "DIRECT_SUPPORT",
+          "evidenceRole": "SECONDARY_REPORT",
+          "confidence": 1.0,
+          "directness": 1.0,
+          "claimScopeMatch": 1.0,
+          "studyDesignQuality": 1.0,
+          "relevance": 1.0
+        }
+      ],
+      "expectedStatus": "INSUFFICIENT_EVIDENCE",
+      "expectedConflict": false
+    }
+  ]
+}
