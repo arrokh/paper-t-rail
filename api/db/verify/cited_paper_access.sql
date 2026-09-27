@@ -52,10 +52,22 @@ BEGIN
         SELECT 1 FROM pg_constraint
          WHERE conname = 'claim_paper_verifications_same_run_claim_fk'
            AND conrelid = 'public.claim_paper_verifications'::regclass
-    ) OR NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-         WHERE conname = 'claim_paper_verifications_access_paper_fk'
-           AND conrelid = 'public.claim_paper_verifications'::regclass
+    ) OR NOT (
+        EXISTS (
+            SELECT 1 FROM pg_constraint
+             WHERE conname = 'claim_paper_verifications_access_paper_fk'
+               AND conrelid = 'public.claim_paper_verifications'::regclass
+        ) OR (
+            EXISTS (
+                SELECT 1 FROM pg_constraint
+                 WHERE conname = 'claim_paper_verifications_run_reference_fk'
+                   AND conrelid = 'public.claim_paper_verifications'::regclass
+            ) AND EXISTS (
+                SELECT 1 FROM pg_constraint
+                 WHERE conname = 'claim_paper_verifications_resolved_reference_fk'
+                   AND conrelid = 'public.claim_paper_verifications'::regclass
+            )
+        )
     ) THEN
         RAISE EXCEPTION 'Same-run Cited Paper and Claim verification constraints are missing';
     END IF;

@@ -10,6 +10,8 @@ import com.papertrail.api.evidence.domain.RankedEvidenceChunk
 import com.papertrail.api.evidence.embedding.toPostgresVectorLiteral
 import com.papertrail.api.evidence.retrieval.PostgresHybridEvidenceRetriever
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
+import com.papertrail.api.document.service.lockActiveAnalysisRun
+import com.papertrail.api.document.service.requireActiveAnalysisRun
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
@@ -32,6 +34,10 @@ class EvidenceRetrievalRepository(
 
     fun isCompleted(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean =
         status(analysisRunId, bibliographyEntryId) == "COMPLETED"
+
+    fun requireActiveRun(analysisRunId: UUID) {
+        jdbc.requireActiveAnalysisRun(analysisRunId)
+    }
 
     fun loadContext(analysisRunId: UUID, bibliographyEntryId: UUID): EvidenceIndexingContext? {
         val access = jdbc.query(
@@ -88,6 +94,7 @@ class EvidenceRetrievalRepository(
         claimVectors: Map<UUID, FloatArray>,
         profile: EmbeddingProfile,
     ): Int = transactionTemplate.execute {
+        jdbc.lockActiveAnalysisRun(context.analysisRunId)
         val state = jdbc.query(
             "SELECT status, cited_paper_parse_id, candidate_count FROM cited_paper_indexing WHERE analysis_run_id = ? AND bibliography_entry_id = ? FOR UPDATE",
             { rs, _ -> IndexingState(rs.getString("status"), rs.getObject("cited_paper_parse_id", UUID::class.java), rs.getInt("candidate_count")) },

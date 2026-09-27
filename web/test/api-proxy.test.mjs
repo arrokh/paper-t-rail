@@ -1,10 +1,39 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import * as routeHandlers from "../app/api/v1/[...path]/route.ts";
-import { GET, POST } from "../app/api/v1/[...path]/route.ts";
+import { DELETE, GET, POST } from "../app/api/v1/[...path]/route.ts";
 
-test("operator cache invalidation's DELETE method is not exposed by the web proxy", () => {
-  assert.equal(routeHandlers.DELETE, undefined);
+test("DELETE is proxied only for a Source Document UUID, not other API operations", async (context) => {
+  const originalFetch = globalThis.fetch;
+  let upstreamRequest;
+  globalThis.fetch = async (url, options) => {
+    upstreamRequest = { url, options };
+    return new Response(null, { status: 204 });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; });
+
+  const request = (path) => ({
+    method: "DELETE",
+    headers: new Headers(),
+    nextUrl: new URL(`http://localhost/api/v1/${path.join("/")}`),
+    arrayBuffer: async () => new ArrayBuffer(0),
+  });
+  const invalid = await DELETE(request(["operator", "caches", "crossref"]), {
+    params: Promise.resolve({ path: ["operator", "caches", "crossref"] }),
+  });
+  assert.equal(invalid.status, 404);
+  const invalidDocumentId = await DELETE(request(["documents", "not-a-uuid"]), {
+    params: Promise.resolve({ path: ["documents", "not-a-uuid"] }),
+  });
+  assert.equal(invalidDocumentId.status, 404);
+  assert.equal(upstreamRequest, undefined);
+
+  const documentId = "32a8f3c1-3f82-4c6c-aab6-8bb8a8e8d52f";
+  const response = await DELETE(request(["documents", documentId]), {
+    params: Promise.resolve({ path: ["documents", documentId] }),
+  });
+  assert.equal(response.status, 204);
+  assert.equal(upstreamRequest.options.method, "DELETE");
+  assert.equal(new URL(upstreamRequest.url).pathname, `/api/v1/documents/${documentId}`);
 });
 
 test("API proxy forwards the request ID, returns it to the caller, and emits structured request logs", async (context) => {

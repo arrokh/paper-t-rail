@@ -7,6 +7,7 @@ import {
   useParsedDocument,
   useRecentAnalysisRuns,
   UPLOAD_ANALYSIS_RUN_MUTATION_KEY,
+  useDeleteSourceDocument,
   useReanalyzeDocument,
   useReferenceResolutionReport,
 } from "@/features/analysis-runs/queries/analysis-run-queries";
@@ -17,6 +18,7 @@ import {
   ArrowUpRight,
   ChevronDown,
   FileText,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -139,10 +141,12 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
   const [activeDetailTab, setActiveDetailTab] = useState<AnalysisRunDetailTab>("progress");
   const [selectedRunId, setSelectedRunId] = useState<string | null>(initialSelectedRunId);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [deleteConfirmationRequested, setDeleteConfirmationRequested] = useState(false);
   const providerConfiguration = useProviderConfiguration();
   const reanalyzeMutation = useReanalyzeDocument();
+  const deleteDocumentMutation = useDeleteSourceDocument();
   const uploadPending = useIsMutating({ mutationKey: UPLOAD_ANALYSIS_RUN_MUTATION_KEY }) > 0;
-  const busy = reanalyzeMutation.isPending || uploadPending;
+  const busy = reanalyzeMutation.isPending || deleteDocumentMutation.isPending || uploadPending;
   const detailsCardRef = useRef<HTMLDivElement>(null);
   const pendingDetailTarget = useRef<{ tab: AnalysisRunDetailTab; targetId: string } | null>(null);
   const pageCursor = pageCursors[pageIndex] ?? null;
@@ -226,6 +230,8 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
 
   function selectRun(runId: string) {
     pendingDetailTarget.current = null;
+    setDeleteConfirmationRequested(false);
+    deleteDocumentMutation.reset();
     setSelectedRunId(runId);
     setActiveDetailTab("progress");
     scrollToDetails(detailsCardRef.current);
@@ -234,6 +240,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
   function goToNextRunPage() {
     if (!runPage.nextCursor || loading) return;
     pendingDetailTarget.current = null;
+    setDeleteConfirmationRequested(false);
     setSelectedRunId(null);
     setActiveDetailTab("progress");
     setPageCursors((current) => [...current.slice(0, pageIndex + 1), runPage.nextCursor!]);
@@ -243,6 +250,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
   function goToPreviousRunPage() {
     if (pageIndex === 0 || loading) return;
     pendingDetailTarget.current = null;
+    setDeleteConfirmationRequested(false);
     setSelectedRunId(null);
     setActiveDetailTab("progress");
     setPageIndex(pageIndex - 1);
@@ -258,6 +266,21 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
     event.preventDefault();
     pendingDetailTarget.current = { tab, targetId };
     setActiveDetailTab(tab);
+  }
+
+  function confirmDocumentDeletion() {
+    if (!selectedRun || deleteDocumentMutation.isPending) return;
+
+    deleteDocumentMutation.mutate(selectedRun.documentId, {
+      onSuccess: () => {
+        pendingDetailTarget.current = null;
+        setDeleteConfirmationRequested(false);
+        setSelectedRunId(null);
+        setActiveDetailTab("progress");
+        setValidationError(null);
+        window.requestAnimationFrame(() => document.getElementById("runs-heading")?.focus());
+      },
+    });
   }
 
   function reanalyze() {
@@ -320,7 +343,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
               <span className="font-semibold text-warning-foreground">02</span> Persisted Progress
             </p>
             <div className="flex items-center justify-between gap-3">
-              <CardTitle id="runs-heading" role="heading" aria-level={2} className="text-xl tracking-tight">
+              <CardTitle id="runs-heading" role="heading" aria-level={2} tabIndex={-1} className="text-xl tracking-tight">
                 Analysis Runs
               </CardTitle>
               <Badge variant="secondary" className="font-mono text-xs">
@@ -469,6 +492,53 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                       <AlertDescription>{reanalysisError}</AlertDescription>
                     </Alert>
                   )}
+                  <div className="space-y-3 border-t border-border pt-4">
+                    <Button
+                      type="button"
+                      variant={deleteConfirmationRequested ? "outline" : "destructive"}
+                      className="min-h-11 w-full justify-between sm:w-auto"
+                      disabled={deleteDocumentMutation.isPending || uploadPending || reanalyzeMutation.isPending}
+                      aria-expanded={deleteConfirmationRequested}
+                      aria-controls={deleteConfirmationRequested ? "delete-document-confirmation" : undefined}
+                      onClick={() => {
+                        deleteDocumentMutation.reset();
+                        setDeleteConfirmationRequested((requested) => !requested);
+                      }}
+                    >
+                      {deleteConfirmationRequested ? "Cancel deletion" : "Delete Source Document and all Analysis Runs"}
+                      {!deleteConfirmationRequested && <Trash2 aria-hidden="true" />}
+                    </Button>
+                    {deleteConfirmationRequested && (
+                      <section id="delete-document-confirmation" className="space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4" aria-labelledby="delete-document-confirmation-heading">
+                        <div className="space-y-2">
+                          <h3 id="delete-document-confirmation-heading" className="font-heading text-base font-semibold text-foreground">
+                            Confirm permanent deletion
+                          </h3>
+                          <p className="text-sm leading-relaxed text-foreground">
+                            This removes the uploaded PDF, parsed content, every Analysis Run and its provider-consent/configuration snapshots, acquired and indexed Cited Paper data, verification results, and Human Reviews from this local installation. Shared Cited Paper assets are retained only while another non-deleted document or run references them. Data already sent to external providers cannot be retracted by Paper T-Rail.
+                          </p>
+                        </div>
+                        {deleteDocumentMutation.error && (
+                          <Alert variant="destructive">
+                            <AlertTitle>Could not fully delete this Source Document</AlertTitle>
+                            <AlertDescription>{errorMessage(deleteDocumentMutation.error, "Retry deletion to finish removing local data.")}</AlertDescription>
+                          </Alert>
+                        )}
+                        <div className="flex justify-end">
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            className="min-h-11"
+                            disabled={deleteDocumentMutation.isPending}
+                            onClick={confirmDocumentDeletion}
+                          >
+                            {deleteDocumentMutation.isPending ? <Spinner aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+                            Permanently delete Source Document
+                          </Button>
+                        </div>
+                      </section>
+                    )}
+                  </div>
                 </TabsContent>
 
                 <TabsContent value="parsed" className="space-y-5 outline-none">
