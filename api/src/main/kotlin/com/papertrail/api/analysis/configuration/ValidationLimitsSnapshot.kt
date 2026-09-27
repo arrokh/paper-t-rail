@@ -7,4 +7,9 @@ data class ValidationLimitsSnapshot(
     val maxExtractedCharactersPerPage: Int,
     val minimumExtractedCharacters: Int,
     val minimumLanguageConfidence: Double,
-)
+    val maxClaimCitationPairs: Int = DEFAULT_MAX_CLAIM_CITATION_PAIRS,
+) {
+    companion object {
+        const val DEFAULT_MAX_CLAIM_CITATION_PAIRS = 5_000
+    }
+}

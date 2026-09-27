@@ -28,6 +28,7 @@ paper-trail:
   upload:
     max-bytes: ${PAPER_MAX_UPLOAD_BYTES:52428800}
     max-pages: ${PAPER_MAX_PAGES:500}
+    max-claim-citation-pairs: ${PAPER_MAX_CLAIM_CITATION_PAIRS:5000}
     max-extracted-characters: ${PAPER_MAX_EXTRACTED_CHARACTERS:5000000}
     max-extracted-characters-per-page: ${PAPER_MAX_EXTRACTED_CHARACTERS_PER_PAGE:100000}
     minimum-extracted-characters: ${PAPER_MIN_EXTRACTED_CHARACTERS:100}

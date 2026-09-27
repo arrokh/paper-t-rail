@@ -237,6 +237,14 @@ class AnalysisRunQueueIntegrationTest {
                 created.analysisRunId,
             ),
         )
+        assertEquals(
+            5_000,
+            jdbc.queryForObject(
+                "SELECT (configuration_snapshot #>> '{validationLimits,maxClaimCitationPairs}')::integer FROM analysis_runs WHERE id = ?",
+                Int::class.java,
+                created.analysisRunId,
+            ),
+        )
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE analysis_run_id = ? AND published_at IS NULL", Int::class.java, created.analysisRunId))
 
         val secondRun = service.createReanalysis(created.documentId, null)
@@ -295,6 +303,11 @@ class AnalysisRunQueueIntegrationTest {
         eventHandler().handle(event!!)
 
         assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals(5, jdbc.queryForObject(
+            "SELECT count(*) FROM atomic_claim_citation_targets WHERE analysis_run_id = ?",
+            Int::class.java,
+            created.analysisRunId,
+        ))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
         val report = referenceResolutionService().report(created.analysisRunId)!!
         assertEquals("NOT_RUN", report.referenceResolution.executionStatus)
@@ -305,8 +318,34 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `over-limit claim-citation pairs fail the run before parsed output is persisted`() {
+        val configuration = configurationFactory(maxClaimCitationPairs = 4)
+            .from(RunConfigurationRequest())
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+
+        eventHandler().handle(event)
+
+        assertEquals("FAILED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        val failureReason = jdbc.queryForObject("SELECT failure_reason FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId)!!
+        assertTrue(failureReason.contains("CLAIM_CITATION_PAIRS_TOO_MANY"))
+        assertTrue(failureReason.contains("5 claim-citation pairs"))
+        assertTrue(failureReason.contains("configured limit is 4"))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM parsed_document_parses WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM atomic_claims WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM atomic_claim_citation_targets WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = ?", Int::class.java, created.eventId))
+    }
+
+    @Test
     fun `parsed document is withheld until processing reaches a ready terminal state`() {
-        val created = createQueuedRun()
+        val configuration = configurationFactory(maxClaimCitationPairs = 5).from(RunConfigurationRequest())
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
         val service = analysisRunService()
 
         val pending = assertThrows(ResponseStatusException::class.java) {
@@ -328,6 +367,11 @@ class AnalysisRunQueueIntegrationTest {
         eventHandler().handle(event!!)
         processReferenceResolutionEvents(created.analysisRunId)
 
+        assertEquals(5, jdbc.queryForObject(
+            "SELECT count(*) FROM atomic_claim_citation_targets WHERE analysis_run_id = ?",
+            Int::class.java,
+            created.analysisRunId,
+        ))
         val parsed = service.getParsedDocument(created.analysisRunId)
         assertEquals("grobid", parsed.parser.provider)
         assertEquals(created.hash, parsed.sourceContentSha256)
@@ -1768,13 +1812,24 @@ class AnalysisRunQueueIntegrationTest {
         )
     }
 
-    private fun configurationFactory(providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults()) = RunConfigurationFactory(
+    private fun configurationFactory(
+        providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
+        maxClaimCitationPairs: Int = ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
+    ) = RunConfigurationFactory(
         objectMapper = objectMapper,
         providerCatalog = providerCatalog,
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
         languageDetectorVersion = "0.6",
-        limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
+        limits = ValidationLimitsSnapshot(
+            maxUploadBytes = 1_000_000,
+            maxPages = 20,
+            maxExtractedCharacters = 100_000,
+            maxExtractedCharactersPerPage = 100_000,
+            minimumExtractedCharacters = 100,
+            minimumLanguageConfidence = 0.65,
+            maxClaimCitationPairs = maxClaimCitationPairs,
+        ),
         evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
     )
 
@@ -1980,6 +2035,7 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper.readTree("""{"executionStatus":"NOT_RUN","scorePolicyVersion":null,"confidenceThreshold":null}"""),
         )
         configuration.remove("aggregation")
+        (configuration.get("validationLimits") as ObjectNode).remove("maxClaimCitationPairs")
         return configuration.toString()
     }
 

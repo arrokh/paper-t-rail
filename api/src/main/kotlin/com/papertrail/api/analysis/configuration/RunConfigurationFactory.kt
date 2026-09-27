@@ -44,6 +44,7 @@ class RunConfigurationFactory(
             "Evidence retrieval candidate limits must be positive."
         }
         require(reciprocalRankFusionConstant > 0) { "Reciprocal-rank fusion constant must be positive." }
+        require(limits.maxClaimCitationPairs > 0) { "The claim-citation pair limit must be positive." }
     }
 
     fun parseRequest(node: JsonNode?): RunConfigurationRequest {

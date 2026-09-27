@@ -41,7 +41,7 @@ class AnalysisRunController(
 ) {
     @Operation(
         summary = "Upload a PDF and create an Analysis Run",
-        description = "Validates and stores an English text-based PDF, then creates a new immutable run and queues it.",
+        description = "Validates and stores an English text-based PDF, then creates a new immutable run and queues it. The worker enforces the pinned claim-citation pair limit after parsing; over-limit runs fail with an explicit count and are not truncated or persisted as parsed structure.",
         requestBody = OpenApiRequestBody(
             required = true,
             content = [Content(

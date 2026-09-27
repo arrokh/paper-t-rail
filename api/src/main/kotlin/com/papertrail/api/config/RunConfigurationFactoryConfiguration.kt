@@ -76,6 +76,7 @@ class RunConfigurationFactoryConfiguration {
         @Value("\${paper-trail.analysis.retrieval.lexical-candidates}") lexicalCandidateLimit: Int,
         @Value("\${paper-trail.analysis.retrieval.final-candidates}") finalCandidateLimit: Int,
         @Value("\${paper-trail.analysis.retrieval.rrf-constant}") reciprocalRankFusionConstant: Int,
+        @Value("\${paper-trail.upload.max-claim-citation-pairs}") maxClaimCitationPairs: Int,
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = objectMapper,
         providerCatalog = providerCatalog,
@@ -89,6 +90,7 @@ class RunConfigurationFactoryConfiguration {
             maxExtractedCharactersPerPage = validator.limits.maxExtractedCharactersPerPage,
             minimumExtractedCharacters = validator.limits.minimumExtractedCharacters,
             minimumLanguageConfidence = validator.limits.minimumLanguageConfidence,
+            maxClaimCitationPairs = maxClaimCitationPairs,
         ),
         referenceResolutionConfidenceThreshold = referenceResolutionConfidenceThreshold,
         retrievalProfileId = retrievalProfileId,

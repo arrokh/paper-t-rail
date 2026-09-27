@@ -1763,7 +1763,7 @@ providers:
     ollama:
       enabled: ${OLLAMA_ENABLED:true}  # local Compose default; new runs still select feature-hash
       base-url: ${OLLAMA_BASE_URL:http://ollama:11434}
-      model: ${OLLAMA_MODEL:nomic-embed-text}
+      model: ${OLLAMA_MODEL:nomic-embed-text:v1.5}
       dimension: ${OLLAMA_DIMENSION:768}
       api-key: ${OLLAMA_API_KEY:}  # server-side only; never returned or snapshotted
       trusted-hosts: ${OLLAMA_TRUSTED_HOSTS:ollama,localhost,127.0.0.1}  # other hosts classify as EXTERNAL
@@ -1809,7 +1809,7 @@ providers:
       enabled: false  # external; enable only after review and per-run consent
 ```
 
-In this profile, the scholarly-metadata and open-access `recorded-fixtures` providers use checked-in data and make no remote requests. The pipeline resolves references, records fixture-backed access provenance/language outcomes, and runs deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. The current `feature-hash-384-v1` vectorizer is lexical, not a trained semantic model. Local Compose starts the pinned Ollama service and pulls `nomic-embed-text` (768 dimensions) into a persistent volume; Ollama is offered as an embedding choice, while feature-hash remains the default selection for new runs. Non-Compose deployments must configure a valid endpoint/model/dimension and trust boundary explicitly. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. System One, graph enrichment, semantic Evidence Judgements, and final verification remain unexecuted; progress and reports must say so.
+In this profile, the scholarly-metadata and open-access `recorded-fixtures` providers use checked-in data and make no remote requests. The pipeline resolves references, records fixture-backed access provenance/language outcomes, and runs deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. The current `feature-hash-384-v1` vectorizer is lexical, not a trained semantic model. Local Compose starts the pinned Ollama service and pulls `nomic-embed-text:v1.5` (768 dimensions, Ollama manifest digest `0a109f422b47`) into a persistent volume; Ollama is offered as an embedding choice, while feature-hash remains the default selection for new runs. Non-Compose deployments must configure a valid endpoint/model/dimension and trust boundary explicitly. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. System One, graph enrichment, semantic Evidence Judgements, and final verification remain unexecuted; progress and reports must say so.
 
 Rules:
 
@@ -2698,7 +2698,7 @@ Validation:
 - Reject obvious scanned/non-text PDF if detectable.
 - English-only.
 - Enforce configurable limits for upload bytes, page count, and claim-citation pair count.
-- Set initial numeric limits after benchmarking a representative journal article and thesis/dissertation against the processing budget; make the caps configurable and reject over-limit documents with a clear explanation rather than silently truncating them.
+- Set initial numeric limits after benchmarking a representative journal article and thesis/dissertation against the processing budget; make the caps configurable and reject over-limit documents with a clear explanation rather than silently truncating them. The current measured caps, outcomes, and pinned runtime/provider matrix are recorded in [the V1 runtime matrix](benchmarks/v1-runtime-matrix.md).
 
 ### Delete document and derived data
 
@@ -3262,7 +3262,7 @@ V1 is single-user/no-auth, but still:
 - sanitize filenames,
 - never trust PDF paths,
 - store generated object keys instead of using user filenames as paths,
-- enforce configurable upload-byte, page-count, and claim-citation-pair limits; choose initial values after benchmarking a representative article and thesis/dissertation against the processing budget, and never silently truncate,
+- enforce configurable upload-byte, page-count, and claim-citation-pair limits; reject over-limit pair counts before persisting parsed output, never silently truncate, and retain the selected limits in each run snapshot,
 - limit parsed document size; GROBID TEI responses are byte-capped (64 MiB by default) while being read, before XML parsing, and oversized responses are rejected,
 - set timeouts for GROBID and external APIs,
 - limit downloaded cited-paper size,
@@ -3329,7 +3329,7 @@ local-embedding-runtime
 local-llm-runtime
 ```
 
-The system should boot even when optional disabled provider containers are absent. Pin tested versions for all service images and record the compatible runtime matrix; do not rely on floating `latest` tags.
+The system should boot even when optional disabled provider containers are absent. Pin tested versions for all service images and record the compatible runtime matrix; do not rely on floating `latest` tags. The measured V1 matrix and its ARM64 image digests are in [the runtime-matrix record](benchmarks/v1-runtime-matrix.md).
 
 Provider initialization must respect:
 
@@ -3348,7 +3348,7 @@ claim extractor:
 heuristic
 
 embedding:
-local `feature-hash-384-v1` word unigram/bigram vectors (deterministic; not a trained semantic model); local Compose starts Ollama with `nomic-embed-text` (768 dimensions) as an available opt-in, while feature-hash remains the default selection; non-Compose deployments must configure Ollama explicitly
+local `feature-hash-384-v1` word unigram/bigram vectors (deterministic; not a trained semantic model); local Compose starts Ollama with `nomic-embed-text:v1.5` (768 dimensions) as an available opt-in, while feature-hash remains the default selection; non-Compose deployments must configure Ollama explicitly
 
 system one:
 mock
@@ -3453,7 +3453,7 @@ Keep one small English paper fixture with:
 - one unsupported reference type if possible,
 - several multi-claim citation sentences.
 
-Expected output should be asserted at a structural level, not exact AI confidence values. Separately benchmark a representative journal article and thesis/dissertation to choose and record byte, page, and claim-citation-pair caps within the processing budget; keep the numeric caps configurable.
+Expected output should be asserted at a structural level, not exact AI confidence values. The representative article/dissertation benchmark, chosen byte/page/pair defaults, reproducible command, and runtime/provider pins are recorded in [the V1 runtime matrix](benchmarks/v1-runtime-matrix.md); keep the numeric caps configurable.
 
 ## 56.5 TDD and Test Quality
 
@@ -3508,8 +3508,8 @@ A coding agent should consider V1 usable when all of the following work:
 41. Comparable credible support and contradiction yield `INSUFFICIENT_EVIDENCE`; clearly stronger evidence may determine `SUPPORTED` or `CONTRADICTED`, while partial support without stronger contradiction yields `PARTIALLY_SUPPORTED`.
 42. Evidence-strength rubric and aggregation thresholds are calibrated on a human-labeled fixture, versioned, and pinned to each run before release.
 43. Reference-resolution score policy and threshold are calibrated on confirmed matches and near-miss decoys and pinned before release.
-44. Byte, page, and claim-citation-pair caps are selected from benchmark results for a representative article and thesis/dissertation before release.
-45. The compatibility matrix pins tested versions for services/providers, including Redis 6.2+ where `XAUTOCLAIM` is used.
+44. The configurable byte, page, and claim-citation-pair caps are benchmarked against a representative article and dissertation; current defaults are 50 MiB, 500 pages, and 5,000 pairs, with outcomes in [the V1 runtime matrix](benchmarks/v1-runtime-matrix.md).
+45. The compatibility matrix pins tested service/provider versions; the benchmark uses Redis 7.4.2 (above 6.2) and records the ARM64 runtime pins in [the V1 runtime matrix](benchmarks/v1-runtime-matrix.md).
 
 ---
 
