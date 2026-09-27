@@ -1,14 +1,18 @@
 """Download the approved checkpoint revision and verify its pinned weight digest."""
 
 import hashlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path
 
-from huggingface_hub import HfApi, snapshot_download
-
 MODEL_ID = "convaiinnovations/laya-typed-decisions"
 MODEL_REVISION = "1a793eb568e6718f15941d08f85432581df534e3"
+RUNTIME_PACKAGE = "laya"
+RUNTIME_VERSION = "0.3.20"
+RUNTIME_SOURCE_COMMIT = "23a17522aa4942da6cce53a995a275760320b691"
+RUNTIME_ID = f"laya-serve-{RUNTIME_VERSION}@{RUNTIME_SOURCE_COMMIT}"
+MANIFEST_NAME = "paper-t-rail-laya-model.json"
 MODEL_WEIGHTS_SHA256 = "4fa56de72383a9d3efa9cfa78955733c81b9fc8067a587ca4beb82c78107a24e"
 MODEL_CONTEXT_TOKENS = 1024
 MODEL_GIT_BLOB_OIDS = {
@@ -43,7 +47,23 @@ def git_blob_oid(path: Path) -> str:
     return digest.hexdigest()
 
 
+def runtime_identity() -> dict[str, str]:
+    installed_version = importlib.metadata.version(RUNTIME_PACKAGE)
+    source_commit = os.environ.get("LAYA_SOURCE_COMMIT", "")
+    if installed_version != RUNTIME_VERSION or source_commit != RUNTIME_SOURCE_COMMIT:
+        raise RuntimeError("The installed Laya runtime does not match the approved version and source commit.")
+    return {
+        "id": RUNTIME_ID,
+        "package": RUNTIME_PACKAGE,
+        "version": installed_version,
+        "source_commit": source_commit,
+    }
+
+
 def download_and_verify(cache_home: Path) -> Path:
+    runtime = runtime_identity()
+    from huggingface_hub import HfApi, snapshot_download
+
     repo = HfApi().model_info(MODEL_ID, revision=MODEL_REVISION)
     if repo.sha != MODEL_REVISION:
         raise RuntimeError("The Hugging Face checkpoint revision does not match the approved commit.")
@@ -70,6 +90,7 @@ def download_and_verify(cache_home: Path) -> Path:
 
     cache_home.mkdir(parents=True, exist_ok=True)
     manifest = {
+        "runtime": runtime,
         "model_id": MODEL_ID,
         "revision": MODEL_REVISION,
         "snapshot_path": str(snapshot),
@@ -77,7 +98,7 @@ def download_and_verify(cache_home: Path) -> Path:
         "model_file_oids": MODEL_GIT_BLOB_OIDS,
         "context_tokens": MODEL_CONTEXT_TOKENS,
     }
-    manifest_path = cache_home / "paper-t-rail-laya-model.json"
+    manifest_path = cache_home / MANIFEST_NAME
     temporary_path = manifest_path.with_suffix(".json.tmp")
     temporary_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary_path, manifest_path)
@@ -87,8 +108,9 @@ def download_and_verify(cache_home: Path) -> Path:
 def main() -> None:
     cache_home = Path(os.environ.get("HF_HOME", "/models/hf"))
     snapshot = download_and_verify(cache_home)
-    print(json.dumps({"status": "verified", "model_id": MODEL_ID, "revision": MODEL_REVISION,
-                      "snapshot_path": str(snapshot), "weights_sha256": MODEL_WEIGHTS_SHA256}))
+    print(json.dumps({"status": "verified", "runtime": runtime_identity(), "model_id": MODEL_ID,
+                      "revision": MODEL_REVISION, "snapshot_path": str(snapshot),
+                      "weights_sha256": MODEL_WEIGHTS_SHA256}))
 
 
 if __name__ == "__main__":

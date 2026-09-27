@@ -32,7 +32,8 @@ ENV PATH="/opt/venv/bin:$PATH" \
     TOKENIZERS_PARALLELISM=false \
     OMP_NUM_THREADS=4 \
     LAYA_DEVICE=cpu \
-    HF_HOME=/models/hf
+    HF_HOME=/models/hf \
+    LAYA_SOURCE_COMMIT=${LAYA_SOURCE_COMMIT}
 
 RUN groupadd --gid 10001 laya \
     && useradd --uid 10001 --gid laya --create-home laya \

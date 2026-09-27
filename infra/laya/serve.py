@@ -1,11 +1,12 @@
 """Run the pinned first-party laya-serve API against the verified local checkpoint."""
 
-import importlib.metadata
 import json
 import os
 from pathlib import Path
 
+from api_key_auth import ApiKeyMiddleware
 from download_model import (
+    MANIFEST_NAME,
     MODEL_CONTEXT_TOKENS,
     MODEL_GIT_BLOB_OIDS,
     MODEL_ID,
@@ -13,13 +14,10 @@ from download_model import (
     MODEL_WEIGHTS_SHA256,
     REQUIRED_FILES,
     git_blob_oid,
+    runtime_identity,
     sha256_file,
 )
-from api_key_auth import ApiKeyMiddleware
 from laya_serve_preflight import install_context_guard
-
-RUNTIME_VERSION = "0.3.20"
-MANIFEST_NAME = "paper-t-rail-laya-model.json"
 
 
 def verified_checkpoint(cache_home: Path) -> Path:
@@ -27,6 +25,8 @@ def verified_checkpoint(cache_home: Path) -> Path:
     if not manifest_path.is_file():
         raise RuntimeError("The approved Laya checkpoint has not been downloaded and verified.")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("runtime") != runtime_identity():
+        raise RuntimeError("The local Laya runtime manifest does not match the approved version and source commit.")
     if manifest.get("model_id") != MODEL_ID or manifest.get("revision") != MODEL_REVISION or \
             manifest.get("model_weights_sha256") != MODEL_WEIGHTS_SHA256 or \
             manifest.get("model_file_oids") != MODEL_GIT_BLOB_OIDS or \
@@ -49,8 +49,7 @@ def verified_checkpoint(cache_home: Path) -> Path:
 
 
 def build_app():
-    if importlib.metadata.version("laya") != RUNTIME_VERSION:
-        raise RuntimeError("The installed Laya runtime does not match the pinned release.")
+    runtime_identity()
     if not os.environ.get("LAYA_API_KEY", "").strip():
         raise RuntimeError("Set LAYA_API_KEY before starting the Laya sidecar.")
     if os.environ.get("LAYA_DEVICE", "cpu").lower() != "cpu":
