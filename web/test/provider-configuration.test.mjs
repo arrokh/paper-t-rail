@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   availableProviderSelections,
   consentRequirements,
+  DEFAULT_PROVIDER_SELECTIONS,
   createRunConfiguration,
   missingConsents,
   retainRequiredApprovals,
@@ -146,6 +147,97 @@ const localSelections = {
 function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
+
+test("new-run preferences choose reviewed providers when the API exposes them", () => {
+  const reviewedDirectory = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      systemOne: [
+        ...directory.providers.systemOne,
+        {
+          role: "systemOne",
+          providerId: "laya",
+          displayName: "Laya local System One",
+          version: "v1",
+          model: "laya-calibrated",
+          trustBoundary: "LOCAL",
+          dataCategories: ["atomic_claims", "evidence_passages"],
+          retentionDisclosure: null,
+        },
+      ],
+    },
+  };
+
+  assert.deepEqual(availableProviderSelections(reviewedDirectory, DEFAULT_PROVIDER_SELECTIONS), {
+    ...localSelections,
+    systemOneProvider: "laya",
+    scholarlyMetadataProvider: "crossref",
+    openAccessProvider: "unpaywall",
+  });
+});
+
+test("new-run preferences explicitly fall back to safe providers when preferred providers are unavailable", () => {
+  const safeDirectory = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      scholarlyMetadata: directory.providers.scholarlyMetadata.filter(({ providerId }) => providerId !== "crossref"),
+      openAccess: directory.providers.openAccess.filter(({ providerId }) => providerId !== "unpaywall"),
+    },
+  };
+  const selections = availableProviderSelections(safeDirectory, DEFAULT_PROVIDER_SELECTIONS);
+
+  assert.deepEqual(selections, localSelections);
+});
+
+test("unavailable selections reconcile to the intended fallback instead of directory ordering", () => {
+  const recordedMetadata = directory.providers.scholarlyMetadata.find(({ providerId }) => providerId === "recorded-fixtures");
+  const recordedOpenAccess = directory.providers.openAccess.find(({ providerId }) => providerId === "recorded-fixtures");
+  const reorderedDirectory = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      scholarlyMetadata: [
+        { ...recordedMetadata, providerId: "another-local-provider" },
+        recordedMetadata,
+      ],
+      openAccess: [
+        { ...recordedOpenAccess, providerId: "another-local-provider" },
+        recordedOpenAccess,
+      ],
+    },
+  };
+
+  assert.deepEqual(
+    availableProviderSelections(reorderedDirectory, DEFAULT_PROVIDER_SELECTIONS),
+    localSelections,
+  );
+});
+
+test("Laya is not preferred unless the selectable provider is locally executed", () => {
+  const externalLayaDirectory = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      systemOne: [
+        ...directory.providers.systemOne,
+        {
+          ...directory.providers.systemOne[0],
+          providerId: "laya",
+          trustBoundary: "EXTERNAL",
+          dataCategories: ["atomic_claims", "evidence_passages"],
+          retentionDisclosure: "Reviewed disclosure.",
+        },
+      ],
+    },
+  };
+
+  assert.equal(
+    availableProviderSelections(externalLayaDirectory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider,
+    "mock",
+  );
+});
 
 test("provider selections fall back to an available open-access provider", () => {
   const selections = availableProviderSelections(directory, selectionsWith({

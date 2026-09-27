@@ -20,7 +20,6 @@ const providerDirectory = {
     scholarlyMetadata: [{ role: "scholarlyMetadata", providerId: "recorded-fixtures", displayName: "Recorded fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: null }],
     openAccess: [
       { role: "openAccess", providerId: "recorded-fixtures", displayName: "Recorded OA fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata", "cited_paper_location"], retentionDisclosure: null },
-      { role: "openAccess", providerId: "unpaywall", displayName: "Unpaywall and discovered open-access hosts", version: "v2", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"], retentionDisclosure: "Reviewed Unpaywall request and retention disclosure." },
     ],
   },
   dataCategories: [
@@ -32,6 +31,32 @@ const providerDirectory = {
     { id: "cited_paper_location", label: "Cited Paper location", description: "A discovered full-text URL." },
     { id: "provider_contact_email", label: "Provider contact email", description: "Contact email sent to a provider." },
   ],
+};
+
+const unpaywallOnlyProviderDirectory = {
+  ...providerDirectory,
+  providers: {
+    ...providerDirectory.providers,
+    openAccess: [
+      ...providerDirectory.providers.openAccess,
+      { role: "openAccess", providerId: "unpaywall", displayName: "Unpaywall and discovered open-access hosts", version: "v2", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"], retentionDisclosure: "Reviewed Unpaywall request and retention disclosure." },
+    ],
+  },
+};
+
+const preferredProviderDirectory = {
+  ...unpaywallOnlyProviderDirectory,
+  providers: {
+    ...unpaywallOnlyProviderDirectory.providers,
+    systemOne: [
+      ...providerDirectory.providers.systemOne,
+      { role: "systemOne", providerId: "laya", displayName: "Laya local System One", version: "v1", model: "laya-calibrated", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null },
+    ],
+    scholarlyMetadata: [
+      ...providerDirectory.providers.scholarlyMetadata,
+      { role: "scholarlyMetadata", providerId: "crossref", displayName: "Crossref REST API", version: "v1", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: "Reviewed Crossref request and retention disclosure." },
+    ],
+  },
 };
 
 function analysisRun(id: string, message: string, status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" = "QUEUED") {
@@ -55,6 +80,7 @@ function analysisRun(id: string, message: string, status: "QUEUED" | "PROCESSING
       },
       systemOne: { provider: "mock", version: "v1" },
       openAccess: { provider: "recorded-fixtures", version: "v1" },
+      referenceResolution: { provider: { provider: "recorded-fixtures", version: "v1" } },
       sourceParser: { provider: "grobid", version: "v1" },
       languageDetector: { provider: "local", version: "v1" },
       externalProviderConsents: [],
@@ -103,6 +129,69 @@ describe("interactive workspace remote state", () => {
     finishProviderRequest(jsonResponse({ code: "PROVIDER_CATALOG_UNAVAILABLE", message: "Provider choices are temporarily unavailable." }, 503));
     expect(await screen.findByText("Provider choices are temporarily unavailable.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Upload & start Analysis Run" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("selects preferred providers when available without treating defaults as consent", async () => {
+    let submittedConfiguration: Record<string, unknown> | null = null;
+    const runs: ReturnType<typeof analysisRun>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
+      const path = String(url);
+      const method = options.method ?? "GET";
+      if (path === "/api/v1/providers") return jsonResponse(preferredProviderDirectory);
+      if (path.startsWith("/api/v1/analysis-runs?") && method === "GET") {
+        return jsonResponse({ items: runs, nextCursor: null });
+      }
+      if (path === "/api/v1/analysis-runs" && method === "POST") {
+        const form = options.body as FormData;
+        submittedConfiguration = JSON.parse(String(form.get("configuration"))) as Record<string, unknown>;
+        const savedRun = analysisRun("run-preferred", "The preferred-provider Analysis Run is selected.");
+        savedRun.configuration.systemOne.provider = "laya";
+        savedRun.configuration.openAccess.provider = "unpaywall";
+        savedRun.configuration.referenceResolution!.provider!.provider = "crossref";
+        runs.push(savedRun);
+        return jsonResponse({
+          documentId: "document-1",
+          analysisRunId: "run-preferred",
+          filename: "source.pdf",
+          sourceContentSha256: "a".repeat(64),
+          status: "QUEUED",
+          createdAt: "2025-01-01T00:00:00Z",
+        });
+      }
+      throw new Error(`Unexpected browser request: ${method} ${path}`);
+    }));
+
+    const { container } = renderWorkspace();
+    await screen.findByText("Crossref REST API data access");
+    expect((screen.getByLabelText("Evidence assessment") as HTMLSelectElement).value).toBe("laya");
+    expect((screen.getByLabelText("Bibliography resolution") as HTMLSelectElement).value).toBe("crossref");
+    expect((screen.getByLabelText("Cited full-text access") as HTMLSelectElement).value).toBe("unpaywall");
+
+    const externalApprovals = screen.getAllByRole("checkbox");
+    expect(externalApprovals).toHaveLength(4);
+    expect(externalApprovals.every((approval) => approval.getAttribute("aria-checked") === "false")).toBe(true);
+    const uploadButton = screen.getByRole("button", { name: "Upload & start Analysis Run" });
+    expect(uploadButton.hasAttribute("disabled")).toBe(true);
+    externalApprovals.forEach((approval) => fireEvent.click(approval));
+    expect(uploadButton.hasAttribute("disabled")).toBe(false);
+
+    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
+    });
+    fireEvent.click(uploadButton);
+
+    expect(await screen.findByText("The preferred-provider Analysis Run is selected.")).toBeTruthy();
+    expect(submittedConfiguration).toMatchObject({
+      systemOneProvider: "laya",
+      scholarlyMetadataProvider: "crossref",
+      openAccessProvider: "unpaywall",
+      externalProviderConsents: [
+        { providerId: "crossref", dataCategories: ["bibliographic_metadata"] },
+        { providerId: "unpaywall", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"] },
+      ],
+    });
+    expect(screen.getByText(/Evidence laya · Bibliography crossref · Cited full text unpaywall/)).toBeTruthy();
   });
 
   it("refreshes and selects the newly created run after upload and re-analysis", async () => {
@@ -296,7 +385,7 @@ describe("interactive workspace remote state", () => {
       const path = String(url);
       const method = options.method ?? "GET";
       requests.push({ url: path, method });
-      if (path === "/api/v1/providers") return jsonResponse(providerDirectory);
+      if (path === "/api/v1/providers") return jsonResponse(unpaywallOnlyProviderDirectory);
       if (path.startsWith("/api/v1/analysis-runs?") && method === "GET") {
         return jsonResponse({ items: [], nextCursor: null });
       }
@@ -316,8 +405,7 @@ describe("interactive workspace remote state", () => {
     }));
 
     const { container } = renderWorkspace();
-    await screen.findByText("Local providers selected");
-    fireEvent.change(screen.getByLabelText("Cited full-text access"), { target: { value: "unpaywall" } });
+    await screen.findByText("Unpaywall and discovered open-access hosts data access");
 
     const categories = [
       await screen.findByRole("checkbox", { name: "Bibliographic metadata" }),
