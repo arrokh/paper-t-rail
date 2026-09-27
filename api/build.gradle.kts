@@ -56,6 +56,30 @@ tasks.withType<Test> {
     useJUnitPlatform()
 }
 
+val calibrationSourceSet = sourceSets.create("calibration") {
+    compileClasspath += sourceSets.main.get().output
+    runtimeClasspath += sourceSets.main.get().output
+}
+
+configurations[calibrationSourceSet.implementationConfigurationName]
+    .extendsFrom(configurations.implementation.get())
+configurations[calibrationSourceSet.runtimeOnlyConfigurationName]
+    .extendsFrom(configurations.runtimeOnly.get())
+
+tasks.register<JavaExec>("calibrate") {
+    group = "verification"
+    description = "Benchmarks reference resolution and evidence aggregation against the versioned calibration fixture."
+    dependsOn(tasks.named(calibrationSourceSet.classesTaskName))
+    classpath = calibrationSourceSet.runtimeClasspath
+    mainClass.set("com.papertrail.api.calibration.CalibrationHarnessMainKt")
+    val repositoryRoot = project.projectDir.parentFile
+    args(
+        repositoryRoot.resolve("docs/benchmarks/v1-calibration-fixture.json").absolutePath,
+        repositoryRoot.resolve("docs/benchmarks/v1-calibration.md").absolutePath,
+    )
+    workingDir = repositoryRoot
+}
+
 springBoot {
     mainClass = "com.papertrail.api.PaperTrailApplicationKt"
 }

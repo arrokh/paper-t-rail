@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as routeHandlers from "../app/api/v1/[...path]/route.ts";
 import { GET, POST } from "../app/api/v1/[...path]/route.ts";
+
+test("operator cache invalidation's DELETE method is not exposed by the web proxy", () => {
+  assert.equal(routeHandlers.DELETE, undefined);
+});
 
 test("API proxy forwards the request ID, returns it to the caller, and emits structured request logs", async (context) => {
   const originalFetch = globalThis.fetch;

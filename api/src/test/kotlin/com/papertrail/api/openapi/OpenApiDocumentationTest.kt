@@ -23,6 +23,10 @@ import com.papertrail.api.scholarly.acquisition.domain.TerminalVerificationStatu
 import com.papertrail.api.evidence.report.EvidenceCoverageReport
 import com.papertrail.api.evidence.report.EvidenceCoverageSummary
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
+import com.papertrail.api.scholarly.references.client.CrossrefLookupCache
+import com.papertrail.api.scholarly.references.http.CrossrefCacheInvalidationRequest
+import com.papertrail.api.scholarly.references.http.CrossrefCacheLookupType
+import com.papertrail.api.scholarly.references.service.CrossrefCacheInvalidationService
 import com.papertrail.api.analysis.http.AnalysisRunPage
 import com.papertrail.api.analysis.http.AnalysisRunSummary
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
@@ -48,6 +52,7 @@ import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
@@ -57,7 +62,7 @@ import org.mockito.Mockito
 import java.time.Instant
 import java.util.UUID
 
-@SpringBootTest(properties = ["paper-trail.role=api"])
+@SpringBootTest(properties = ["paper-trail.role=api", "paper-trail.operator.credential=operator-test-credential"])
 @AutoConfigureMockMvc
 @ExtendWith(OutputCaptureExtension::class)
 class OpenApiDocumentationTest {
@@ -88,6 +93,9 @@ class OpenApiDocumentationTest {
     @MockitoBean
     private lateinit var humanReviewService: HumanReviewService
 
+    @MockitoBean
+    private lateinit var crossrefLookupCache: CrossrefLookupCache
+
     @Test
     fun `OpenAPI contract describes the existing analysis run endpoints and PDF upload`() {
         val response = mockMvc.perform(get("/v3/api-docs"))
@@ -114,6 +122,7 @@ class OpenApiDocumentationTest {
         assertTrue(listRuns.path("parameters").any { it.path("name").asText() == "cursor" })
         val upload = analysisRuns.path("post")
         assertEquals("Upload a PDF and create an Analysis Run", upload.path("summary").asText())
+        assertTrue(upload.path("description").asText().contains("claim-citation pair limit"))
         assertTrue(upload.path("responses").path("201").path("content").has("application/json"))
         assertFalse(upload.path("parameters").any { it.path("name").asText() == "configuration" })
         assertTrue(upload.path("requestBody").path("content").has("multipart/form-data"))
@@ -142,6 +151,10 @@ class OpenApiDocumentationTest {
         assertTrue(snapshotProperties.has("claimExtractor"))
         assertTrue(snapshotProperties.has("openAccess"))
         assertTrue(snapshotProperties.has("validationLimits"))
+        val limitsSchemaName = snapshotProperties.path("validationLimits").path("${'$'}ref").asText().substringAfterLast('/')
+        val limitsProperties = document.path("components").path("schemas").path(limitsSchemaName).path("properties")
+        assertTrue(limitsProperties.has("maxClaimCitationPairs"))
+        assertTrue(runProperties.path("failureReason").path("description").asText().contains("observed pair count"))
         val parsedDocument = paths.path("/api/v1/analysis-runs/{runId}/parsed-document").path("get")
         assertTrue(parsedDocument.path("responses").path("200").path("content").has("application/json"))
         assertTrue(parsedDocument.path("summary").asText().contains("Atomic Claims"))
@@ -191,6 +204,19 @@ class OpenApiDocumentationTest {
         assertTrue(reanalysis.path("responses").has("201"))
         assertTrue(reanalysis.path("responses").has("404"))
         assertTrue(paths.path("/api/v1/health").path("get").path("responses").path("200").path("content").has("application/json"))
+        val invalidateCrossref = paths.path("/api/v1/operator/caches/crossref").path("delete")
+        assertEquals("Invalidate one Crossref cache entry", invalidateCrossref.path("summary").asText())
+        assertTrue(invalidateCrossref.path("responses").has("200"))
+        assertTrue(invalidateCrossref.path("responses").has("400"))
+        assertTrue(invalidateCrossref.path("responses").has("401"))
+        val operatorCredential = invalidateCrossref.path("parameters").first { it.path("name").asText() == "X-Operator-Credential" }
+        assertTrue(operatorCredential.path("required").asBoolean())
+        val invalidationSchemaName = invalidateCrossref.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val invalidationProperties = document.path("components").path("schemas").path(invalidationSchemaName).path("properties")
+        assertTrue(invalidationProperties.has("lookupType"))
+        assertTrue(invalidationProperties.has("doi"))
+        assertTrue(invalidationProperties.has("query"))
+        assertTrue(invalidateCrossref.path("description").asText().contains("provider-wide invalidation"))
     }
 
     @Test
@@ -208,6 +234,70 @@ class OpenApiDocumentationTest {
         assertEquals(0, page.path("items").size())
         assertTrue(page.path("nextCursor").isNull)
         Mockito.verify(analysisRunService).list(2, "cursor-token")
+    }
+
+    @Test
+    fun `operator cache invalidation remains disabled without a configured server credential`() {
+        val service = CrossrefCacheInvalidationService(crossrefLookupCache, "")
+        val exception = assertThrows(ResponseStatusException::class.java) {
+            service.invalidate("anything", CrossrefCacheInvalidationRequest(CrossrefCacheLookupType.DOI, doi = "10.1234/one"))
+        }
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, exception.statusCode)
+        Mockito.verifyNoInteractions(crossrefLookupCache)
+    }
+
+    @Test
+    fun `operator cache invalidation rejects missing credentials and invalidates only the requested DOI`() {
+        val body = """{"lookupType":"DOI","doi":"https://doi.org/10.1234/operator-entry"}"""
+        mockMvc.perform(
+            delete("/api/v1/operator/caches/crossref")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body),
+        ).andExpect(status().isUnauthorized)
+        Mockito.verifyNoInteractions(crossrefLookupCache)
+
+        Mockito.`when`(crossrefLookupCache.invalidateDoi("https://doi.org/10.1234/operator-entry")).thenReturn(true)
+        mockMvc.perform(
+            delete("/api/v1/operator/caches/crossref")
+                .header("X-Operator-Credential", "operator-test-credential")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body),
+        ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.invalidated").value(true))
+        Mockito.verify(crossrefLookupCache).invalidateDoi("https://doi.org/10.1234/operator-entry")
+        Mockito.verifyNoMoreInteractions(crossrefLookupCache)
+    }
+
+    @Test
+    fun `operator cache invalidation targets one normalized search entry`() {
+        Mockito.`when`(crossrefLookupCache.invalidateSearch("A title Ada 2024")).thenReturn(true)
+        mockMvc.perform(
+            delete("/api/v1/operator/caches/crossref")
+                .header("X-Operator-Credential", "operator-test-credential")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"lookupType":"SEARCH","query":"A title Ada 2024"}"""),
+        ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.invalidated").value(true))
+        Mockito.verify(crossrefLookupCache).invalidateSearch("A title Ada 2024")
+        Mockito.verifyNoMoreInteractions(crossrefLookupCache)
+    }
+
+    @Test
+    fun `operator cache invalidation rejects malformed or provider-wide requests`() {
+        val malformedRequests = listOf(
+            """{"lookupType":"DOI","doi":"not-a-doi"}""",
+            """{"lookupType":"DOI","doi":"10.1234/one","query":"also supplied"}""",
+            """{"lookupType":"ALL","doi":"10.1234/one"}""",
+        )
+        malformedRequests.forEach { body ->
+            mockMvc.perform(
+                delete("/api/v1/operator/caches/crossref")
+                    .header("X-Operator-Credential", "operator-test-credential")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body),
+            ).andExpect(status().isBadRequest)
+        }
+        Mockito.verifyNoInteractions(crossrefLookupCache)
     }
 
     @Test

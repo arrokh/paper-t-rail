@@ -27,35 +27,35 @@ class EvidenceAggregationPolicyTest {
     }
 
     @Test
-    fun `human-labeled calibration fixture preserves conservative outcomes`() {
+    fun `synthetic known-answer examples preserve conservative outcomes`() {
         val fixture = listOf(
-            CalibrationCase(
+            AggregationExample(
                 "balanced credible support and contradiction",
                 listOf(judgement(EvidenceJudgementKind.DIRECT_SUPPORT, 0.90), judgement(EvidenceJudgementKind.CONTRADICTS, 0.88)),
                 TerminalVerificationStatus.INSUFFICIENT_EVIDENCE,
                 conflict = true,
             ),
-            CalibrationCase(
+            AggregationExample(
                 "clearly stronger direct support",
                 listOf(judgement(EvidenceJudgementKind.DIRECT_SUPPORT, 0.96), judgement(EvidenceJudgementKind.CONTRADICTS, 0.80)),
                 TerminalVerificationStatus.SUPPORTED,
             ),
-            CalibrationCase(
+            AggregationExample(
                 "partial support without stronger contradiction",
                 listOf(judgement(EvidenceJudgementKind.PARTIAL_SUPPORT, 0.80)),
                 TerminalVerificationStatus.PARTIALLY_SUPPORTED,
             ),
-            CalibrationCase(
+            AggregationExample(
                 "clearly stronger contradiction",
                 listOf(judgement(EvidenceJudgementKind.DIRECT_SUPPORT, 0.72), judgement(EvidenceJudgementKind.CONTRADICTS, 0.94)),
                 TerminalVerificationStatus.CONTRADICTED,
             ),
-            CalibrationCase(
+            AggregationExample(
                 "high confidence without directness or scope match",
                 listOf(judgement(EvidenceJudgementKind.DIRECT_SUPPORT, 0.0, confidence = 1.0, directness = 0.1, scope = 0.1, design = 0.1, relevance = 0.1)),
                 TerminalVerificationStatus.INSUFFICIENT_EVIDENCE,
             ),
-            CalibrationCase(
+            AggregationExample(
                 "secondary report alone does not outweigh its provenance role",
                 listOf(judgement(EvidenceJudgementKind.DIRECT_SUPPORT, 1.0, role = EvidenceRole.SECONDARY_REPORT)),
                 TerminalVerificationStatus.INSUFFICIENT_EVIDENCE,
@@ -110,7 +110,7 @@ class EvidenceAggregationPolicyTest {
         relevance = relevance,
     )
 
-    private data class CalibrationCase(
+    private data class AggregationExample(
         val name: String,
         val judgements: List<EvidenceJudgement>,
         val expected: TerminalVerificationStatus,

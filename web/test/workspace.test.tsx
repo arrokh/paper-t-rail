@@ -13,7 +13,7 @@ const providerDirectory = {
     ],
     embedding: [
       { role: "embedding", providerId: "local", displayName: "Local", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null },
-      { role: "embedding", providerId: "ollama", displayName: "Ollama embeddings (nomic-embed-text)", version: "v1", model: "nomic-embed-text", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null },
+      { role: "embedding", providerId: "ollama", displayName: "Ollama embeddings (nomic-embed-text:v1.5)", version: "v1", model: "nomic-embed-text:v1.5", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null },
       { role: "embedding", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "embed-2", trustBoundary: "EXTERNAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: "Provider retention terms reviewed for this deployment." },
     ],
     systemOne: [{ role: "systemOne", providerId: "mock", displayName: "Mock", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null }],

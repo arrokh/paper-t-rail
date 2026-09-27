@@ -1,6 +1,7 @@
 package com.papertrail.api.analysis.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.citation.claims.service.ClaimCitationPairCounter
 import com.papertrail.api.citation.claims.service.ClaimExtractionService
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
@@ -10,6 +11,7 @@ import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
+import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedPayload
@@ -54,7 +56,8 @@ class AnalysisRunProcessingService(
             """
             SELECT document_id, source_content_sha256, source_parser_id, source_parser_version,
                    configuration_snapshot #>> '{claimExtractor,provider}' AS claim_extractor_provider,
-                   configuration_snapshot #>> '{claimExtractor,version}' AS claim_extractor_version
+                   configuration_snapshot #>> '{claimExtractor,version}' AS claim_extractor_version,
+                   configuration_snapshot #>> '{validationLimits,maxClaimCitationPairs}' AS max_claim_citation_pairs
               FROM analysis_runs WHERE id = ?
             """.trimIndent(),
             { rs, _ ->
@@ -65,6 +68,8 @@ class AnalysisRunProcessingService(
                     rs.getString("source_parser_version"),
                     rs.getString("claim_extractor_provider") ?: throw IllegalStateException("Analysis Run has no pinned claim extractor provider."),
                     rs.getString("claim_extractor_version") ?: throw IllegalStateException("Analysis Run has no pinned claim extractor version."),
+                    rs.getString("max_claim_citation_pairs")?.toIntOrNull()
+                        ?: ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
                 )
             },
             event.analysisRunId,
@@ -117,6 +122,11 @@ class AnalysisRunProcessingService(
                 run.claimExtractorVersion,
                 parsed.citationContexts,
             )
+            val claimCitationPairCount = ClaimCitationPairCounter.count(parsed, extractedClaims)
+            if (claimCitationPairCount > run.maxClaimCitationPairs.toLong()) {
+                rejectClaimCitationPairLimit(event, claimCitationPairCount, run.maxClaimCitationPairs)
+                return event.eventId
+            }
             val rawTeiObjectKey =
                 "source/${event.payload.documentId}/analysis-runs/${event.analysisRunId}/grobid-${sha256Hex(parsed.rawParserOutput)}.xml"
             objectStore.put(rawTeiObjectKey, parsed.rawParserOutput, "application/xml")
@@ -250,6 +260,43 @@ class AnalysisRunProcessingService(
         analysisRunId,
     ) == true
 
+    private fun rejectClaimCitationPairLimit(
+        event: PipelineEvent<DocumentAnalysisRequestedPayload>,
+        pairCount: Long,
+        maximumPairs: Int,
+    ) {
+        val reason = "CLAIM_CITATION_PAIRS_TOO_MANY: The document produces $pairCount claim-citation pairs; the configured limit is $maximumPairs."
+        transactionTemplate.executeWithoutResult {
+            val failed = jdbc.update(
+                """
+                UPDATE analysis_runs
+                   SET status = 'FAILED',
+                       failure_reason = ?,
+                       progress = jsonb_build_object('stage', 'FAILED', 'percent', 0, 'message', ?),
+                       completed_at = now(),
+                       updated_at = now()
+                 WHERE id = ? AND document_id = ? AND source_content_sha256 = ?
+                   AND status = 'PROCESSING'
+                   AND NOT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)
+                """.trimIndent(),
+                reason,
+                reason,
+                event.analysisRunId,
+                event.payload.documentId,
+                event.payload.sourceContentSha256,
+                event.eventId,
+            )
+            if (failed != 1) throw IllegalStateException("Analysis Run could not be rejected for exceeding its claim-citation pair limit.")
+            val processed = jdbc.update(
+                "INSERT INTO inbox_events (event_id, handler_name, processed_at) VALUES (?, ?, ?)",
+                event.eventId,
+                DOCUMENT_ANALYSIS_HANDLER,
+                Timestamp.from(Instant.now()),
+            )
+            if (processed != 1) throw IllegalStateException("Claim-citation pair rejection could not be recorded as processed.")
+        }
+    }
+
     private fun insertOutboxEvent(event: PipelineEvent<ReferenceResolutionRequestedPayload>) {
         jdbc.update(
             """
@@ -298,6 +345,7 @@ class AnalysisRunProcessingService(
         val parserVersion: String,
         val claimExtractorProvider: String,
         val claimExtractorVersion: String,
+        val maxClaimCitationPairs: Int,
     )
 
     companion object {
