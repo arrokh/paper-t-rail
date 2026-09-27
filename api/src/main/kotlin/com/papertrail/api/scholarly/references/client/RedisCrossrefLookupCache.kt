@@ -2,14 +2,14 @@ package com.papertrail.api.scholarly.references.client
 
 import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.infrastructure.cache.ProviderCacheStore
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataAccessException
-import org.springframework.data.redis.core.StringRedisTemplate
 import java.time.Duration
 
 class RedisCrossrefLookupCache(
-    private val redis: StringRedisTemplate,
+    private val cacheStore: ProviderCacheStore,
     private val objectMapper: ObjectMapper,
     private val positiveTtl: Duration,
     private val negativeTtl: Duration,
@@ -36,12 +36,7 @@ class RedisCrossrefLookupCache(
     override fun invalidateSearch(query: String): Boolean = CrossrefCacheKeys.search(query)?.let(::delete) ?: false
 
     private fun find(key: String): List<ScholarlyWork>? {
-        val encoded = try {
-            redis.opsForValue().get(key)
-        } catch (_: DataAccessException) {
-            log.warn("Crossref cache read failed; continuing without cached metadata")
-            return null
-        } ?: return null
+        val encoded = cacheStore.find(key) ?: return null
 
         return try {
             val collectionType = objectMapper.typeFactory.constructCollectionType(List::class.java, ScholarlyWork::class.java)
@@ -64,18 +59,14 @@ class RedisCrossrefLookupCache(
     private fun store(key: String, works: List<ScholarlyWork>) {
         val normalized = normalizeWorks(works)
         val ttl = if (normalized.isEmpty()) negativeTtl else positiveTtl
-        try {
-            redis.opsForValue().set(key, objectMapper.writeValueAsString(normalized), ttl)
-        } catch (_: DataAccessException) {
-            log.warn("Crossref cache write failed; continuing without cached metadata")
-        }
+        cacheStore.store(key, objectMapper.writeValueAsString(normalized), ttl)
     }
 
-    private fun delete(key: String): Boolean = redis.delete(key) == true
+    private fun delete(key: String): Boolean = cacheStore.invalidate(key)
 
     private fun removeInvalidEntry(key: String) {
         try {
-            redis.delete(key)
+            cacheStore.invalidate(key)
         } catch (_: DataAccessException) {
             log.warn("Invalid Crossref cache entry could not be removed")
         }

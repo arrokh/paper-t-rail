@@ -84,6 +84,9 @@ paper-trail:
       enablement-reviewed: ${UNPAYWALL_ENABLEMENT_REVIEWED:true}
       retention-disclosure: "${UNPAYWALL_RETENTION_DISCLOSURE:Unpaywall menerima DOI dan alamat kontak layanan; kebijakannya menyebut data permintaan dapat disimpan hingga enam bulan setelah penggunaan layanan berakhir. Repositori/host konten yang ditemukan memiliki ketentuan retensi tersendiri.}"
       contact-email: ${UNPAYWALL_CONTACT_EMAIL:test@ptr.test}
+      cache:
+        positive-ttl: ${UNPAYWALL_CACHE_POSITIVE_TTL:24h}
+        negative-ttl: ${UNPAYWALL_CACHE_NEGATIVE_TTL:1h}
     ollama:
       enabled: ${OLLAMA_ENABLED:false}
       base-url: ${OLLAMA_BASE_URL:}

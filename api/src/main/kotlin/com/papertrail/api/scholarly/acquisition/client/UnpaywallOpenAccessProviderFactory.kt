@@ -27,6 +27,7 @@ import java.time.Instant
 class UnpaywallOpenAccessProviderFactory(
     private val objectMapper: ObjectMapper,
     private val providerCallGate: ProviderCallGate,
+    private val discoveryCache: UnpaywallDiscoveryCache,
     @Qualifier("unpaywallRestClient") private val unpaywallClient: RestClient,
     @Qualifier("openAccessContentRestClient") private val contentClient: RestClient,
     @Value("\${paper-trail.providers.unpaywall.contact-email:}") private val contactEmail: String,
@@ -61,6 +62,7 @@ class UnpaywallOpenAccessProviderFactory(
                     ?: throw IllegalStateException("Authorized Unpaywall request omitted its DOI.")
                 val authorizedEmail = authorizedPayload.contentByCategory[DataCategory.PROVIDER_CONTACT_EMAIL]
                     ?.takeIf(JsonNode::isTextual)?.asText()
+                discoveryCache.findByDoi(authorizedDoi)?.let { return@call it.toDiscovery() }
                 val response = unpaywallClient.get()
                     .uri { builder ->
                         builder.pathSegment("v2", authorizedDoi)
@@ -81,17 +83,26 @@ class UnpaywallOpenAccessProviderFactory(
                             "Unpaywall discovery response is empty or exceeds the configured limit."
                         }
                         objectMapper.readTree(bytes)
-                    } ?: return@call null
+                    } ?: run {
+                        discoveryCache.storeByDoi(authorizedDoi, null, Instant.now())
+                        return@call null
+                    }
                 val foundDoi = response.path("doi").takeIf(JsonNode::isTextual)?.asText()
-                if (DoiNormalizer.normalize(foundDoi) != doi) return@call null
+                if (DoiNormalizer.normalize(foundDoi) != doi) {
+                    discoveryCache.storeByDoi(authorizedDoi, null, Instant.now())
+                    return@call null
+                }
+                val fetchedAt = Instant.now()
                 val locations = response.path("oa_locations").mapNotNull(::locationFrom)
-                OpenAccessDiscovery(
+                val discovery = OpenAccessDiscovery(
                     metadataAvailable = true,
                     abstractAvailable = response.path("abstract").takeIf(JsonNode::isTextual)?.asText()?.isNotBlank() == true,
                     locations = locations,
                     providerId = providerId,
-                    discoveredAt = Instant.now(),
+                    discoveredAt = fetchedAt,
                 )
+                discoveryCache.storeByDoi(authorizedDoi, discovery, fetchedAt)
+                discovery
             }
         }
 
@@ -143,17 +154,21 @@ class UnpaywallOpenAccessProviderFactory(
         }
 
         private fun locationFrom(node: JsonNode): OpenAccessLocation? {
-            val url = node.path("url_for_pdf").takeIf(JsonNode::isTextual)?.asText()?.takeIf(String::isNotBlank)
-                ?: node.path("url").takeIf(JsonNode::isTextual)?.asText()?.takeIf(String::isNotBlank)
-                ?: return null
+            val url = node.text("url_for_pdf") ?: node.text("url") ?: return null
             return OpenAccessLocation(
                 url = url,
-                license = node.path("license").takeIf(JsonNode::isTextual)?.asText(),
-                version = node.path("version").takeIf(JsonNode::isTextual)?.asText(),
-                hostType = node.path("host_type").takeIf(JsonNode::isTextual)?.asText(),
+                license = node.text("license"),
+                version = node.text("version"),
+                hostType = node.text("host_type"),
                 providerId = providerId,
             )
         }
+
+        private fun JsonNode.text(field: String): String? = path(field)
+            .takeIf(JsonNode::isTextual)
+            ?.asText()
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
     }
 
     companion object {

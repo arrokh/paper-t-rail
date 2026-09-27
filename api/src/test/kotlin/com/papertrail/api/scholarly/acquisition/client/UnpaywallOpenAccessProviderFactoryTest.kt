@@ -68,6 +68,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
         val provider = UnpaywallOpenAccessProviderFactory(
             objectMapper,
             ProviderCallGate(changedCatalog),
+            NoOpUnpaywallDiscoveryCache(),
             discoveryBuilder.build(),
             RestClient.builder().build(),
             "changed@example.invalid",
@@ -89,6 +90,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
         val provider = UnpaywallOpenAccessProviderFactory(
             objectMapper,
             ProviderCallGate(catalog),
+            NoOpUnpaywallDiscoveryCache(),
             discoveryBuilder.build(),
             RestClient.builder().build(),
             contactEmail,
@@ -115,6 +117,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
         val provider = UnpaywallOpenAccessProviderFactory(
             objectMapper,
             ProviderCallGate(catalog),
+            NoOpUnpaywallDiscoveryCache(),
             RestClient.builder().build(),
             contentBuilder.build(),
             contactEmail,
@@ -145,6 +148,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
         val provider = UnpaywallOpenAccessProviderFactory(
             objectMapper,
             ProviderCallGate(catalog),
+            NoOpUnpaywallDiscoveryCache(),
             discoveryBuilder.build(),
             contentBuilder.build(),
             contactEmail,
