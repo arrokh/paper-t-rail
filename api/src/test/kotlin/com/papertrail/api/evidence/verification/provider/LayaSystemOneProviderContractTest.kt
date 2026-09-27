@@ -199,6 +199,7 @@ class LayaSystemOneProviderContractTest {
             fixtureResponse { (it.path("answers").path("directness").path("legend") as ObjectNode).put("0", "unexpected") },
             fixtureResponse { (it.path("answers").path("directness") as ObjectNode).put("score", 5.0) },
             fixtureResponse { (it.path("usage") as ObjectNode).put("input_tokens", -1) },
+            fixtureResponse { (it.path("usage") as ObjectNode).replace("input_tokens", mapper.readTree("18446744073709551616")) },
             mapper.writeValueAsString(fixtureNode().deepCopy<JsonNode>().also {
                 val answers = it.path("answers") as ObjectNode
                 (answers.path("judgement") as ObjectNode).put("choice", "NOT_A_JUDGEMENT")

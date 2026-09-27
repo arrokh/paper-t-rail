@@ -266,7 +266,7 @@ class LayaSystemOneProvider(
     }
 
     private fun nonNegativeInteger(value: JsonNode?): Boolean =
-        value != null && value.isIntegralNumber && value.longValue() >= 0
+        value != null && value.isIntegralNumber && value.canConvertToLong() && value.longValue() >= 0
 
     private fun questions(): Map<String, Any> = linkedMapOf(
         JUDGEMENT_QUESTION to mapOf(
