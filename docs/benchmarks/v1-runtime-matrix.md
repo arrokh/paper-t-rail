@@ -40,9 +40,9 @@ The source PDFs are downloaded by [`scripts/benchmark-processing-caps.py`](../..
 
 | Setting | Default | Benchmark context and rationale |
 | --- | ---: | --- |
-| `PAPER_MAX_UPLOAD_BYTES` | `52428800` bytes (50 MiB) | Preserves the existing 50 MiB limit. It is about 22 times the largest measured PDF; `PAPER_MAX_REQUEST_SIZE=51MB` leaves room for multipart overhead. |
-| `PAPER_MAX_PAGES` | `500` | Preserves the existing page limit and is about 2.4 times the 208-page dissertation. |
-| `PAPER_MAX_CLAIM_CITATION_PAIRS` | `5000` | New run-snapshotted cap; about 8.2 times the 611 pairs measured in the dissertation. It bounds downstream per-link work without silently dropping claims or targets. |
+| `PAPER_MAX_UPLOAD_BYTES` | `52428800` bytes (50 MiB) | Preserves the existing limit. The largest sample was 2,355,957 bytes and uploaded in 0.637–1.273 seconds; 50 MiB is about 22.3 times that size. `PAPER_MAX_REQUEST_SIZE=51MB` leaves multipart overhead. The 50 MiB boundary itself was not benchmarked. |
+| `PAPER_MAX_PAGES` | `500` | Preserves the existing limit and is about 2.4 times the 208-page dissertation. That document reached `PARSED` in at most 35.421 seconds; peak sampled GROBID memory was 5,054.5 MiB on a Docker host budget of 15.66 GiB. The 500-page boundary was not tested, so these observations do not imply linear time or memory scaling. |
+| `PAPER_MAX_CLAIM_CITATION_PAIRS` | `5000` | New run-snapshotted cap; about 8.2 times the dissertation's 611 pairs (734 claims; end-to-end processing at most 35.421 seconds). It bounds persisted-link and downstream per-link work after parsing; 5,000 pairs were not benchmarked, and no truncation is performed. |
 
 The 5,000-pair value is a bounded initial operating limit, not a claim that a 5,000-pair document was benchmarked or that runtime scales linearly. All three values are configurable. The worker counts the claim × persisted Citation Target links after parsing/extraction and before persisting parsed output. If the count exceeds the snapshotted cap, the run fails with the observed count and configured maximum; it does not truncate or persist a partial parsed structure. Integration coverage checks rejection above the cap and acceptance exactly at the cap.
 
