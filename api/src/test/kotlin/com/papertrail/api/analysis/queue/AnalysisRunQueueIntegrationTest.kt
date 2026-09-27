@@ -17,6 +17,7 @@ import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.analysis.service.AnalysisRunProcessingService
 import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
+import com.papertrail.api.infrastructure.cache.RedisProviderCacheStore
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
@@ -56,6 +57,8 @@ import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
 import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepository
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProvider
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProviderFactory
+import com.papertrail.api.scholarly.acquisition.client.RedisUnpaywallDiscoveryCache
+import com.papertrail.api.scholarly.acquisition.client.UnpaywallOpenAccessProviderFactory
 import com.papertrail.api.scholarly.acquisition.client.RecordedFixtureOpenAccessProviderFactory
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
@@ -124,7 +127,9 @@ import org.springframework.data.domain.Range
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.http.MediaType
+import org.springframework.test.web.client.ExpectedCount
 import org.springframework.test.web.client.MockRestServiceServer
+import org.springframework.test.web.client.match.MockRestRequestMatchers.queryParam
 import org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
 import org.springframework.web.client.RestClient
@@ -140,6 +145,7 @@ import org.springframework.transaction.TransactionStatus
 import org.springframework.transaction.TransactionSystemException
 import org.springframework.transaction.support.SimpleTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
+import org.hamcrest.Matchers.containsString
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
@@ -313,7 +319,7 @@ class AnalysisRunQueueIntegrationTest {
                 MediaType.APPLICATION_JSON,
             ))
         val restClient = builder.build()
-        val cache: CrossrefLookupCache = RedisCrossrefLookupCache(redis, objectMapper, Duration.ofDays(30), Duration.ofHours(1))
+        val cache: CrossrefLookupCache = RedisCrossrefLookupCache(RedisProviderCacheStore(redis), objectMapper, Duration.ofDays(30), Duration.ofHours(1))
         val factory = object : ScholarlyMetadataLookupFactory {
             override val providerId = "crossref"
 
@@ -731,6 +737,106 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
         assertNull(access.accessReason)
         assertEquals("fixture://recorded/available", access.sourceUrl)
+    }
+
+    @Test
+    fun `Unpaywall cache hits revalidate legal locations and persist access per Analysis Run`() {
+        val contactEmail = "unpaywall-cache@example.invalid"
+        val catalog = ProviderCatalog.safeDefaults(
+            unpaywallEnabled = true,
+            unpaywallEnablementReviewed = true,
+            unpaywallRetentionDisclosure = "Reviewed Unpaywall terms for this controlled-provider test.",
+            unpaywallContactEmail = contactEmail,
+        )
+        val configuration = configurationFactory(catalog).from(
+            RunConfigurationRequest(
+                openAccessProvider = UnpaywallOpenAccessProviderFactory.UNPAYWALL_PROVIDER,
+                externalProviderConsents = listOf(
+                    ExternalProviderConsentSnapshot(
+                        UnpaywallOpenAccessProviderFactory.UNPAYWALL_PROVIDER,
+                        listOf(
+                            DataCategory.BIBLIOGRAPHIC_METADATA.id,
+                            DataCategory.CITED_PAPER_LOCATION.id,
+                            DataCategory.PROVIDER_CONTACT_EMAIL.id,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val discoveryBuilder = RestClient.builder().baseUrl("https://api.unpaywall.org")
+        val contentBuilder = RestClient.builder()
+        val discoveryServer = MockRestServiceServer.bindTo(discoveryBuilder).build()
+        val contentServer = MockRestServiceServer.bindTo(contentBuilder).build()
+        val factory = UnpaywallOpenAccessProviderFactory(
+            objectMapper = objectMapper,
+            providerCallGate = ProviderCallGate(catalog),
+            discoveryCache = RedisUnpaywallDiscoveryCache(
+                RedisProviderCacheStore(redisTemplate),
+                objectMapper,
+                Duration.ofHours(24),
+                Duration.ofHours(1),
+            ),
+            unpaywallClient = discoveryBuilder.build(),
+            contentClient = contentBuilder.build(),
+            contactEmail = contactEmail,
+            maximumBytes = 1_000_000,
+        )
+        val runs = listOf(
+            createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration)),
+            createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration)),
+        )
+        discoveryServer.expect(ExpectedCount.once(), requestTo(containsString("https://api.unpaywall.org/v2/")))
+            .andExpect(queryParam("email", contactEmail))
+            .andRespond(withSuccess(
+                """{"doi":"10.5555/papertrail.fixture.reference-resolution.2024","abstract":"Available summary","oa_locations":[{"url_for_pdf":"https://8.8.8.8/restricted.pdf","license":"all-rights-reserved","version":"publishedVersion","host_type":"repository"},{"url_for_pdf":"https://8.8.4.4/legal.txt","license":"cc-by","version":"publishedVersion","host_type":"repository"}]}""",
+                MediaType.APPLICATION_JSON,
+            ))
+        contentServer.expect(ExpectedCount.twice(), requestTo("https://8.8.4.4/legal.txt"))
+            .andRespond(withSuccess(ENGLISH.repeat(10), MediaType.TEXT_PLAIN))
+        contentServer.expect(ExpectedCount.never(), requestTo("https://8.8.8.8/restricted.pdf"))
+
+        runs.forEach { run ->
+            val documentEvent = jdbc.queryForObject(
+                "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+                String::class.java,
+                run.analysisRunId,
+                DOCUMENT_ANALYSIS_REQUESTED,
+            )!!
+            eventHandler().handle(documentEvent)
+            processReferenceResolutionEvents(run.analysisRunId, providerFactories = listOf(factory))
+        }
+
+        discoveryServer.verify()
+        contentServer.verify()
+        val outcomes = jdbc.query(
+            "SELECT analysis_run_id, provider_id, access_status, source_url, object_key, discovered_at FROM cited_paper_access ORDER BY analysis_run_id",
+        ) { rs, _ ->
+            listOf(
+                rs.getObject("analysis_run_id", UUID::class.java).toString(),
+                rs.getString("provider_id"),
+                rs.getString("access_status"),
+                rs.getString("source_url"),
+                rs.getString("object_key"),
+                rs.getTimestamp("discovered_at").toInstant().toString(),
+            )
+        }
+        assertEquals(2, outcomes.size)
+        assertEquals(runs.map { it.analysisRunId.toString() }.toSet(), outcomes.map { it[0] }.toSet())
+        assertTrue(outcomes.all { it[1] == UnpaywallOpenAccessProviderFactory.UNPAYWALL_PROVIDER })
+        assertTrue(outcomes.all { it[2] == "FULL_TEXT_AVAILABLE" })
+        assertTrue(outcomes.all { it[3] == "https://8.8.4.4/legal.txt" })
+        assertTrue(outcomes.all { it[4] != "null" && it[4].contains("analysis-runs/") })
+        assertEquals(2, outcomes.map { it[4] }.toSet().size)
+        assertEquals(1, outcomes.map { it[5] }.toSet().size)
+        val cacheKey = "unpaywall:doi:v1:10.5555/papertrail.fixture.reference-resolution.2024"
+        assertTrue(redisTemplate.hasKey(cacheKey))
+        assertTrue(redisTemplate.expire(cacheKey, Duration.ofMillis(100)) == true)
+        Thread.sleep(200)
+        assertFalse(redisTemplate.hasKey(cacheKey))
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM cited_paper_access", Int::class.java))
+        outcomes.map { it[4] }.forEach { objectKey ->
+            assertTrue(objectStore.get(objectKey).isNotEmpty())
+        }
     }
 
     @Test

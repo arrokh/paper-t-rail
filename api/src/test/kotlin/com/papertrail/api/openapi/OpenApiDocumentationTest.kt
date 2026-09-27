@@ -1,6 +1,7 @@
 package com.papertrail.api.openapi
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.infrastructure.cache.OperatorCredentialVerifier
 import com.papertrail.api.infrastructure.logging.RequestCorrelationFilter
 import com.papertrail.api.citation.parsing.ParsedDocumentView
 import com.papertrail.api.citation.parsing.ParsedAtomicClaimView
@@ -14,6 +15,9 @@ import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
+import com.papertrail.api.scholarly.acquisition.client.UnpaywallDiscoveryCache
+import com.papertrail.api.scholarly.acquisition.http.UnpaywallCacheInvalidationRequest
+import com.papertrail.api.scholarly.acquisition.service.UnpaywallCacheInvalidationService
 import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.review.domain.HumanReview
 import com.papertrail.api.review.domain.HumanReviewAction
@@ -95,6 +99,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var crossrefLookupCache: CrossrefLookupCache
+
+    @MockitoBean
+    private lateinit var unpaywallDiscoveryCache: UnpaywallDiscoveryCache
 
     @Test
     fun `OpenAPI contract describes the existing analysis run endpoints and PDF upload`() {
@@ -217,6 +224,17 @@ class OpenApiDocumentationTest {
         assertTrue(invalidationProperties.has("doi"))
         assertTrue(invalidationProperties.has("query"))
         assertTrue(invalidateCrossref.path("description").asText().contains("provider-wide invalidation"))
+        val invalidateUnpaywall = paths.path("/api/v1/operator/caches/unpaywall").path("delete")
+        assertEquals("Invalidate one Unpaywall DOI cache entry", invalidateUnpaywall.path("summary").asText())
+        assertTrue(invalidateUnpaywall.path("responses").has("200"))
+        assertTrue(invalidateUnpaywall.path("responses").has("400"))
+        assertTrue(invalidateUnpaywall.path("responses").has("401"))
+        assertTrue(invalidateUnpaywall.path("responses").has("503"))
+        assertTrue(invalidateUnpaywall.path("parameters").any { it.path("name").asText() == "X-Operator-Credential" })
+        val unpaywallSchemaName = invalidateUnpaywall.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val unpaywallProperties = document.path("components").path("schemas").path(unpaywallSchemaName).path("properties")
+        assertEquals(setOf("doi"), unpaywallProperties.fieldNames().asSequence().toSet())
+        assertTrue(invalidateUnpaywall.path("description").asText().contains("exactly one normalized Unpaywall DOI"))
     }
 
     @Test
@@ -238,7 +256,7 @@ class OpenApiDocumentationTest {
 
     @Test
     fun `operator cache invalidation remains disabled without a configured server credential`() {
-        val service = CrossrefCacheInvalidationService(crossrefLookupCache, "")
+        val service = CrossrefCacheInvalidationService(crossrefLookupCache, OperatorCredentialVerifier(""))
         val exception = assertThrows(ResponseStatusException::class.java) {
             service.invalidate("anything", CrossrefCacheInvalidationRequest(CrossrefCacheLookupType.DOI, doi = "10.1234/one"))
         }
@@ -298,6 +316,46 @@ class OpenApiDocumentationTest {
             ).andExpect(status().isBadRequest)
         }
         Mockito.verifyNoInteractions(crossrefLookupCache)
+    }
+
+    @Test
+    fun `operator Unpaywall invalidation requires credentials and removes only the requested DOI key`() {
+        mockMvc.perform(
+            delete("/api/v1/operator/caches/unpaywall")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"doi":"10.1234/operator-entry"}"""),
+        ).andExpect(status().isUnauthorized)
+        Mockito.verifyNoInteractions(unpaywallDiscoveryCache)
+
+        Mockito.`when`(unpaywallDiscoveryCache.invalidateDoi("https://doi.org/10.1234/operator-entry")).thenReturn(true)
+        mockMvc.perform(
+            delete("/api/v1/operator/caches/unpaywall")
+                .header("X-Operator-Credential", "operator-test-credential")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"doi":"https://doi.org/10.1234/operator-entry"}"""),
+        ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.invalidated").value(true))
+        Mockito.verify(unpaywallDiscoveryCache).invalidateDoi("https://doi.org/10.1234/operator-entry")
+        Mockito.verifyNoMoreInteractions(unpaywallDiscoveryCache)
+    }
+
+    @Test
+    fun `operator Unpaywall invalidation rejects invalid DOI requests`() {
+        listOf("", "not-a-doi").forEach { doi ->
+            mockMvc.perform(
+                delete("/api/v1/operator/caches/unpaywall")
+                    .header("X-Operator-Credential", "operator-test-credential")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(UnpaywallCacheInvalidationRequest(doi))),
+            ).andExpect(status().isBadRequest)
+        }
+        Mockito.verifyNoInteractions(unpaywallDiscoveryCache)
+
+        val service = UnpaywallCacheInvalidationService(unpaywallDiscoveryCache, OperatorCredentialVerifier(""))
+        assertThrows(ResponseStatusException::class.java) {
+            service.invalidate("anything", UnpaywallCacheInvalidationRequest("10.1234/entry"))
+        }
+        Mockito.verifyNoInteractions(unpaywallDiscoveryCache)
     }
 
     @Test

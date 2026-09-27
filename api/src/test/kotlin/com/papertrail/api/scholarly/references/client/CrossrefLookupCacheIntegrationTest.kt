@@ -5,6 +5,7 @@ import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
+import com.papertrail.api.infrastructure.cache.RedisProviderCacheStore
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
@@ -260,7 +261,7 @@ class CrossrefLookupCacheIntegrationTest {
     private fun cache(
         positiveTtl: Duration = Duration.ofDays(30),
         negativeTtl: Duration = Duration.ofHours(1),
-    ) = RedisCrossrefLookupCache(redis, objectMapper, positiveTtl, negativeTtl)
+    ) = RedisCrossrefLookupCache(RedisProviderCacheStore(redis), objectMapper, positiveTtl, negativeTtl)
 
     private data class ProviderFixture(
         val catalog: ProviderCatalog,

@@ -3301,16 +3301,17 @@ provider capability metadata
 
 But PostgreSQL remains the durable source for analysis results.
 
-Cache keys should be versioned. Crossref uses normalized DOI keys and a SHA-256 hash of a bibliographic query normalized with Unicode NFKC, collapsed whitespace, and case folding:
+Cache keys should be versioned and provider-namespaced. Crossref uses normalized DOI keys and a SHA-256 hash of a bibliographic query normalized with Unicode NFKC, collapsed whitespace, and case folding; Unpaywall uses the normalized DOI:
 
 ```text
 crossref:doi:v1:{normalizedDoi}
 crossref:search:v1:{sha256(normalizedQuery)}
+unpaywall:doi:v1:{normalizedDoi}
 ```
 
-Crossref positive results expire after a configurable 30 days by default; empty/not-found results expire after a configurable hour. Cache values contain only normalized DOI, title, authors, and year fields—never provider response JSON, request query text, or contact-email values. A cache hit still passes the selected provider and exact per-run consent through the provider-call gate, and resolution outcomes are persisted for each Analysis Run in PostgreSQL. Cache expiry or Redis loss does not delete those durable outcomes.
+Crossref positive results expire after a configurable 30 days by default; empty/not-found results expire after a configurable hour. Unpaywall positive discovery results expire after a configurable 24 hours by default; not-found/empty results expire after a configurable hour. Cache values contain only normalized fields needed by the app: Crossref DOI, title, authors, and year; Unpaywall availability flags and location URL, license, version, and host type, plus fetch timestamp and schema version. Never store raw provider response JSON, request query text, contact-email values, or downloaded full-text assets. A cache hit still passes the selected provider and exact per-run consent through the provider-call gate. Reapply the current legal-location policy before every content-host request, and persist each Analysis Run's own outcomes in PostgreSQL. Cache expiry or Redis loss does not delete those durable outcomes or acquired assets.
 
-An operator can invalidate exactly one DOI or bibliographic-search entry using the direct API's `DELETE /api/v1/operator/caches/crossref` endpoint and a server-side `OPERATOR_API_CREDENTIAL`. The endpoint accepts a typed DOI or query, never Redis commands or a provider-wide flush, and the web proxy does not expose DELETE requests. Leave operator invalidation unavailable unless the credential is configured.
+An operator can invalidate exactly one logical entry using the direct API's `DELETE /api/v1/operator/caches/crossref` (one DOI or bibliographic-search entry) or `DELETE /api/v1/operator/caches/unpaywall` (one DOI entry) endpoint and a server-side `OPERATOR_API_CREDENTIAL`. These endpoints accept typed identifiers, never Redis commands or provider-wide flushes, and the web proxy does not expose DELETE requests. Leave operator invalidation unavailable unless the credential is configured.
 
 Do not depend on cache persistence for correctness.
 

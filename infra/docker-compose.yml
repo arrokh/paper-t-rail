@@ -145,6 +145,8 @@ services:
       UNPAYWALL_ENABLEMENT_REVIEWED: ${UNPAYWALL_ENABLEMENT_REVIEWED:-true}
       UNPAYWALL_RETENTION_DISCLOSURE: ${UNPAYWALL_RETENTION_DISCLOSURE:-Unpaywall menerima DOI dan alamat kontak layanan; kebijakannya menyebut data permintaan dapat disimpan hingga enam bulan setelah penggunaan layanan berakhir. Repositori/host konten yang ditemukan memiliki ketentuan retensi tersendiri.}
       UNPAYWALL_CONTACT_EMAIL: ${UNPAYWALL_CONTACT_EMAIL:-test@ptr.test}
+      UNPAYWALL_CACHE_POSITIVE_TTL: ${UNPAYWALL_CACHE_POSITIVE_TTL:-24h}
+      UNPAYWALL_CACHE_NEGATIVE_TTL: ${UNPAYWALL_CACHE_NEGATIVE_TTL:-1h}
       OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-nomic-embed-text:v1.5}
