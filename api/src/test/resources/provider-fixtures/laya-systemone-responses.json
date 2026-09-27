@@ -1,0 +1,67 @@
+{
+  "DIRECT_SUPPORT": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "judgement": {"type": "choice", "choice": "DIRECT_SUPPORT", "probabilities": {"DIRECT_SUPPORT": 0.9, "PARTIAL_SUPPORT": 0.025, "CONTRADICTS": 0.025, "UNRELATED": 0.025, "INSUFFICIENT": 0.025}, "confidence": 0.7, "answer_confidence": 0.9},
+      "evidence_role": {"type": "choice", "choice": "PRIMARY_FINDING", "probabilities": {"PRIMARY_FINDING": 0.8, "AUTHOR_SYNTHESIS": 0.1, "SECONDARY_REPORT": 0.1}, "confidence": 0.8},
+      "directness": {"type": "score", "score": 3.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 1.0, "4": 0.0}, "confidence": 0.8},
+      "claim_scope_match": {"type": "score", "score": 2.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 1.0, "3": 0.0, "4": 0.0}, "confidence": 0.8},
+      "study_design_quality": {"type": "score", "score": 4.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 0.0, "4": 1.0}, "confidence": 0.8},
+      "relevance": {"type": "score", "score": 1.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 1.0, "2": 0.0, "3": 0.0, "4": 0.0}, "confidence": 0.8}
+    },
+    "usage": {"input_tokens": 1000, "output_tokens": 0},
+    "routing": {"model": "typed-decisions", "reason": "explicit model='typed-decisions'"}
+  },
+  "PARTIAL_SUPPORT": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "judgement": {"type": "choice", "choice": "PARTIAL_SUPPORT", "probabilities": {"DIRECT_SUPPORT": 0.025, "PARTIAL_SUPPORT": 0.9, "CONTRADICTS": 0.025, "UNRELATED": 0.025, "INSUFFICIENT": 0.025}, "confidence": 0.9, "answer_confidence": 0.9},
+      "evidence_role": {"type": "choice", "choice": "AUTHOR_SYNTHESIS", "probabilities": {"PRIMARY_FINDING": 0.1, "AUTHOR_SYNTHESIS": 0.8, "SECONDARY_REPORT": 0.1}, "confidence": 0.8},
+      "directness": {"type": "score", "score": 3.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 1.0, "4": 0.0}, "confidence": 0.8},
+      "claim_scope_match": {"type": "score", "score": 2.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 1.0, "3": 0.0, "4": 0.0}, "confidence": 0.8},
+      "study_design_quality": {"type": "score", "score": 4.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 0.0, "4": 1.0}, "confidence": 0.8},
+      "relevance": {"type": "score", "score": 1.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 1.0, "2": 0.0, "3": 0.0, "4": 0.0}, "confidence": 0.8}
+    },
+    "usage": {"input_tokens": 1000, "output_tokens": 0},
+    "routing": {"model": "typed-decisions", "reason": "explicit model='typed-decisions'"}
+  },
+  "CONTRADICTS": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "judgement": {"type": "choice", "choice": "CONTRADICTS", "probabilities": {"DIRECT_SUPPORT": 0.025, "PARTIAL_SUPPORT": 0.025, "CONTRADICTS": 0.9, "UNRELATED": 0.025, "INSUFFICIENT": 0.025}, "confidence": 0.9, "answer_confidence": 0.9},
+      "evidence_role": {"type": "choice", "choice": "SECONDARY_REPORT", "probabilities": {"PRIMARY_FINDING": 0.1, "AUTHOR_SYNTHESIS": 0.1, "SECONDARY_REPORT": 0.8}, "confidence": 0.8},
+      "directness": {"type": "score", "score": 3.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 1.0, "4": 0.0}, "confidence": 0.8},
+      "claim_scope_match": {"type": "score", "score": 2.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 1.0, "3": 0.0, "4": 0.0}, "confidence": 0.8},
+      "study_design_quality": {"type": "score", "score": 4.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 0.0, "4": 1.0}, "confidence": 0.8},
+      "relevance": {"type": "score", "score": 1.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 1.0, "2": 0.0, "3": 0.0, "4": 0.0}, "confidence": 0.8}
+    },
+    "usage": {"input_tokens": 1000, "output_tokens": 0},
+    "routing": {"model": "typed-decisions", "reason": "explicit model='typed-decisions'"}
+  },
+  "UNRELATED": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "judgement": {"type": "choice", "choice": "UNRELATED", "probabilities": {"DIRECT_SUPPORT": 0.025, "PARTIAL_SUPPORT": 0.025, "CONTRADICTS": 0.025, "UNRELATED": 0.9, "INSUFFICIENT": 0.025}, "confidence": 0.9, "answer_confidence": 0.9},
+      "evidence_role": {"type": "choice", "choice": "PRIMARY_FINDING", "probabilities": {"PRIMARY_FINDING": 0.8, "AUTHOR_SYNTHESIS": 0.1, "SECONDARY_REPORT": 0.1}, "confidence": 0.8},
+      "directness": {"type": "score", "score": 3.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 1.0, "4": 0.0}, "confidence": 0.8},
+      "claim_scope_match": {"type": "score", "score": 2.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 1.0, "3": 0.0, "4": 0.0}, "confidence": 0.8},
+      "study_design_quality": {"type": "score", "score": 4.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 0.0, "4": 1.0}, "confidence": 0.8},
+      "relevance": {"type": "score", "score": 1.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 1.0, "2": 0.0, "3": 0.0, "4": 0.0}, "confidence": 0.8}
+    },
+    "usage": {"input_tokens": 1000, "output_tokens": 0},
+    "routing": {"model": "typed-decisions", "reason": "explicit model='typed-decisions'"}
+  },
+  "INSUFFICIENT": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "judgement": {"type": "choice", "choice": "INSUFFICIENT", "probabilities": {"DIRECT_SUPPORT": 0.025, "PARTIAL_SUPPORT": 0.025, "CONTRADICTS": 0.025, "UNRELATED": 0.025, "INSUFFICIENT": 0.9}, "confidence": 0.9, "answer_confidence": 0.9},
+      "evidence_role": {"type": "choice", "choice": "AUTHOR_SYNTHESIS", "probabilities": {"PRIMARY_FINDING": 0.1, "AUTHOR_SYNTHESIS": 0.8, "SECONDARY_REPORT": 0.1}, "confidence": 0.8},
+      "directness": {"type": "score", "score": 3.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 1.0, "4": 0.0}, "confidence": 0.8},
+      "claim_scope_match": {"type": "score", "score": 2.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 1.0, "3": 0.0, "4": 0.0}, "confidence": 0.8},
+      "study_design_quality": {"type": "score", "score": 4.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 0.0, "2": 0.0, "3": 0.0, "4": 1.0}, "confidence": 0.8},
+      "relevance": {"type": "score", "score": 1.0, "legend": {"0": "none", "1": "low", "2": "moderate", "3": "high", "4": "complete"}, "probabilities": {"0": 0.0, "1": 1.0, "2": 0.0, "3": 0.0, "4": 0.0}, "confidence": 0.8}
+    },
+    "usage": {"input_tokens": 1000, "output_tokens": 0},
+    "routing": {"model": "typed-decisions", "reason": "explicit model='typed-decisions'"}
+  }
+}

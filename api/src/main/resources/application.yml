@@ -97,6 +97,13 @@ paper-trail:
       request-timeout-millis: ${OLLAMA_REQUEST_TIMEOUT_MILLIS:60000}
       external-enablement-reviewed: ${OLLAMA_EXTERNAL_ENABLEMENT_REVIEWED:false}
       external-retention-disclosure: "${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:}"
+    laya:
+      # Non-Compose and deployment default remains off; `make dev` explicitly enables the local sidecar.
+      enabled: ${LAYA_ENABLED:false}
+      base-url: ${LAYA_BASE_URL:}
+      api-key: ${LAYA_API_KEY:}
+      trusted-hosts: ${LAYA_TRUSTED_HOSTS:laya,localhost,127.0.0.1}
+      request-timeout-millis: ${LAYA_REQUEST_TIMEOUT_MILLIS:120000}
 
 scalar:
   enabled: ${API_DOCS_ENABLED:true}

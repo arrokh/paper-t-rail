@@ -5,6 +5,7 @@ import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import org.springframework.beans.factory.annotation.Value
@@ -37,8 +38,24 @@ class RunConfigurationFactoryConfiguration {
     )
 
     @Bean
+    fun layaSystemOneSettings(
+        @Value("\${paper-trail.providers.laya.enabled:false}") enabled: Boolean,
+        @Value("\${paper-trail.providers.laya.base-url:}") baseUrl: String,
+        @Value("\${paper-trail.providers.laya.api-key:}") apiKey: String,
+        @Value("\${paper-trail.providers.laya.trusted-hosts:laya,localhost,127.0.0.1}") trustedHosts: String,
+        @Value("\${paper-trail.providers.laya.request-timeout-millis:120000}") requestTimeoutMillis: Long,
+    ): LayaSystemOneSettings = LayaSystemOneSettings(
+        enabled = enabled,
+        baseUrl = baseUrl,
+        apiKey = apiKey.trim().takeIf(String::isNotEmpty),
+        trustedHosts = trustedHosts.split(',').map(String::trim).filter(String::isNotEmpty).toSet(),
+        requestTimeoutMillis = requestTimeoutMillis,
+    )
+
+    @Bean
     fun providerCatalog(
         ollamaEmbeddingSettings: OllamaEmbeddingSettings,
+        layaSystemOneSettings: LayaSystemOneSettings,
         @Value("\${paper-trail.providers.crossref.enabled:false}") crossrefEnabled: Boolean,
         @Value("\${paper-trail.providers.crossref.enablement-reviewed:false}") crossrefEnablementReviewed: Boolean,
         @Value("\${paper-trail.providers.crossref.retention-disclosure:}") crossrefRetentionDisclosure: String,
@@ -57,6 +74,7 @@ class RunConfigurationFactoryConfiguration {
         unpaywallRetentionDisclosure = unpaywallRetentionDisclosure.takeIf(String::isNotBlank),
         unpaywallContactEmail = unpaywallContactEmail.takeIf(String::isNotBlank),
         ollamaEmbeddingSettings = ollamaEmbeddingSettings,
+        layaSystemOneSettings = layaSystemOneSettings,
     )
 
     @Bean

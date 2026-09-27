@@ -1,11 +1,18 @@
-COMPOSE = docker compose -f infra/docker-compose.yml
+COMPOSE = docker compose --env-file "$$(if [ -f .env ]; then printf .env; else printf .env.example; fi)" -f infra/docker-compose.yml
 MISE = mise exec --
 # Keep command-line CHANGE data out of shell source text in the revert target.
 export CHANGE
 
-.PHONY: dev infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-web lint-web typecheck-web build-web calibrate benchmark-processing validate
+.PHONY: dev infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-model-download benchmark-laya validate
 
 dev: infra-up migrate
+	python3 scripts/prepare_local_laya_env.py
+	@set -eu; \
+	laya_enabled=$$(python3 scripts/prepare_local_laya_env.py --enabled-only); \
+	if [ "$$laya_enabled" = true ]; then \
+		$(COMPOSE) --profile laya-evaluation run --rm laya-model-download; \
+		$(COMPOSE) --profile laya-evaluation up -d --build --wait laya; \
+	fi
 	$(COMPOSE) up -d --build api worker web
 
 infra-up:
@@ -44,10 +51,19 @@ infra-down:
 clean:
 	$(COMPOSE) down --volumes --remove-orphans
 
-test: test-api test-web lint-web typecheck-web build-web calibrate
+test: test-api test-laya test-web lint-web typecheck-web build-web calibrate
 
 test-api:
 	cd api && $(MISE) ./gradlew test
+
+test-laya:
+	python3 -m unittest discover -s infra/laya -p 'test_*.py' -v
+
+laya-model-download:
+	$(COMPOSE) --profile laya-evaluation run --rm laya-model-download
+
+benchmark-laya:
+	$(COMPOSE) --profile laya-evaluation exec -T laya python /app/benchmark_runtime.py
 
 test-web:
 	cd web && $(MISE) pnpm test
