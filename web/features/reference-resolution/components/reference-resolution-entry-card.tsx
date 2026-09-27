@@ -10,12 +10,14 @@ import { ClaimEvidencePassages } from "@/features/reference-resolution/component
 type ReferenceResolutionEntry = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number];
 
 export function ReferenceResolutionEntryCard({
+  analysisRunId,
   entry,
   anchorId,
   parsedEntryHref,
   parsedEntryAvailable,
   onViewParsedEntry,
 }: {
+  analysisRunId: string;
   entry: ReferenceResolutionEntry;
   anchorId: string;
   parsedEntryHref: string;
@@ -153,6 +155,7 @@ export function ReferenceResolutionEntryCard({
               {entry.verificationOutcomes.map((outcome) => (
                 <ClaimEvidencePassages
                   key={outcome.id}
+                  analysisRunId={analysisRunId}
                   outcome={outcome}
                   indexingStatus={entry.citedPaperAccess?.evidenceIndexing?.status ?? null}
                 />

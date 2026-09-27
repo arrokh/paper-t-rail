@@ -35,6 +35,7 @@ describe("Reference Resolution Entry Card", () => {
     render(
       <ol>
         <ReferenceResolutionEntryCard
+          analysisRunId="run-123"
           entry={entry}
           anchorId="resolution-ref1"
           parsedEntryHref="#bibliography-ref1"

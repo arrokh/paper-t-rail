@@ -1880,7 +1880,7 @@ SUPPORTED
 
 Persist separately.
 
-Suggested actions:
+Actions:
 
 ```text
 AGREE
@@ -1888,11 +1888,14 @@ DISAGREE
 OVERRIDE
 ```
 
-Suggested model:
+`OVERRIDE` requires a separate `overrideStatus`; `AGREE` and `DISAGREE` omit it. A review may include a note of up to 2,000 characters. Only a completed Claim–Paper Verification with a machine final status can be reviewed.
+
+Persist reviews with their exact `analysis_run_id` and `verification_id`:
 
 ```text
 HumanReview
 - id
+- analysis_run_id
 - verification_id
 - action
 - override_status nullable
@@ -1900,7 +1903,7 @@ HumanReview
 - created_at
 ```
 
-Even in a single-user workspace, keep reviews append-only for provenance.
+Even in a single-user workspace, reviews are append-only for provenance. The report exposes the machine `finalStatus` and separate `humanReviews` history; recording a review never updates the Claim–Paper Verification. Reviews are removed only as part of the explicit document-deletion privacy exception.
 
 This creates future ground-truth data.
 
@@ -2800,6 +2803,10 @@ Request:
 }
 ```
 
+`action` is `AGREE`, `DISAGREE`, or `OVERRIDE`; `overrideStatus` is required only for `OVERRIDE` and uses one of the seven final verification statuses. `note` is optional and limited to 2,000 characters. The endpoint accepts reviews only for completed machine results and appends a new record without changing that result.
+
+A successful response includes the review ID, exact Analysis Run and Verification IDs, action, separate override status, note, and recorded time. The completed Verification outcome in the Analysis Run report exposes its machine `finalStatus` and `humanReviews` as separate fields.
+
 ## 40.4 Providers
 
 ```http
@@ -2870,7 +2877,7 @@ Display:
 - inferred/provisional claim-to-citation associations,
 - machine judgement/confidence,
 - final aggregated status and any evidence-conflict indicator,
-- human review history.
+- machine final status, clearly labeled separately from append-only human review history and any human override assessment.
 
 Traceability is more important than visual complexity.
 

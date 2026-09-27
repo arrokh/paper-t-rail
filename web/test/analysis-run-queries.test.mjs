@@ -4,6 +4,9 @@ import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   RECENT_ANALYSIS_RUNS_QUERY_KEY,
   recentAnalysisRunsQueryOptions,
+  referenceResolutionReportQueryKey,
+  referenceResolutionReportQueryOptions,
+  recordHumanReviewMutationOptions,
   uploadAnalysisRunMutationOptions,
 } from "../features/analysis-runs/queries/analysis-run-queries.ts";
 import {
@@ -143,6 +146,64 @@ test("upload mutation refreshes the active recent-run query without refetching i
   assert.equal(JSON.parse(uploadRequest.body.get("configuration")).claimExtractorProvider, "heuristic");
   assert.equal(listRequests, 3);
   assert.equal(client.getQueryData([...RECENT_ANALYSIS_RUNS_QUERY_KEY, null]).items[0].id, "run-created");
+});
+
+test("Human Review mutation appends a separate result and refreshes the active run report", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  const createdReview = {
+    id: "review-1",
+    analysisRunId: "run-1",
+    verificationId: "verification-1",
+    action: "OVERRIDE",
+    overrideStatus: "SUPPORTED",
+    note: "Separate human assessment.",
+    createdAt: "2026-01-01T00:00:00Z",
+  };
+  let report = { humanReviews: [] };
+  let reportReads = 0;
+  let submittedBody;
+  globalThis.fetch = async (url, options = {}) => {
+    if (url === "/api/v1/analysis-runs/run-1/report") {
+      reportReads += 1;
+      return jsonResponse(report);
+    }
+    if (url === "/api/v1/verifications/verification-1/reviews" && options.method === "POST") {
+      submittedBody = JSON.parse(options.body);
+      report = { humanReviews: [createdReview] };
+      return jsonResponse(createdReview, 201);
+    }
+    throw new Error(`Unexpected browser request: ${url}`);
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const reportOptions = referenceResolutionReportQueryOptions("run-1");
+  const observer = new QueryObserver(client, reportOptions);
+  const unsubscribe = observer.subscribe(() => {});
+  context.after(unsubscribe);
+  await client.fetchQuery(reportOptions);
+
+  const mutation = client.getMutationCache().build(
+    client,
+    recordHumanReviewMutationOptions(client, "run-1"),
+  );
+  await mutation.execute({
+    verificationId: "verification-1",
+    action: "OVERRIDE",
+    overrideStatus: "SUPPORTED",
+    note: "Separate human assessment.",
+  });
+
+  assert.deepEqual(submittedBody, {
+    action: "OVERRIDE",
+    overrideStatus: "SUPPORTED",
+    note: "Separate human assessment.",
+  });
+  assert.equal(reportReads, 2);
+  assert.deepEqual(client.getQueryData(referenceResolutionReportQueryKey("run-1")).humanReviews, [createdReview]);
 });
 
 test("recent-run polling stays active while any displayed run is nonterminal and stops after terminal statuses", () => {

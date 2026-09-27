@@ -1,6 +1,8 @@
 package com.papertrail.api.evidence.report
 
 import com.papertrail.api.evidence.repository.EvidenceReportRepository
+import com.papertrail.api.review.domain.HumanReview
+import com.papertrail.api.review.repository.HumanReviewRepository
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import java.sql.ResultSet
@@ -10,6 +12,7 @@ import java.util.UUID
 class EvidenceCoverageReportRepository(
     private val jdbc: JdbcTemplate,
     private val evidenceReportRepository: EvidenceReportRepository,
+    private val humanReviewRepository: HumanReviewRepository,
 ) {
     fun indexingReportsByReference(analysisRunId: UUID): Map<UUID, EvidenceIndexingReport> =
         evidenceReportRepository.indexingReportsByReference(analysisRunId)
@@ -36,6 +39,7 @@ class EvidenceCoverageReportRepository(
 
     fun outcomesByReference(analysisRunId: UUID): Map<String, List<CitedReferenceVerificationOutcome>> {
         val passages = evidenceReportRepository.passagesByVerification(analysisRunId)
+        val reviews = humanReviewRepository.byRun(analysisRunId)
         return jdbc.query(
             """
             SELECT verification.id AS verification_id,
@@ -86,7 +90,7 @@ class EvidenceCoverageReportRepository(
                       verification.evidence_conflict, verification.aggregator_version
              ORDER BY verification.bibliography_entry_id, claim.source_start_offset, verification.atomic_claim_id
             """.trimIndent(),
-            { rs, _ -> rs.toVerificationOutcome(passages) },
+            { rs, _ -> rs.toVerificationOutcome(passages, reviews) },
             analysisRunId,
         ).groupBy({ it.first }, { it.second })
     }
@@ -107,6 +111,7 @@ class EvidenceCoverageReportRepository(
 
     private fun ResultSet.toVerificationOutcome(
         passages: Map<UUID, List<EvidencePassageReport>>,
+        reviews: Map<UUID, List<HumanReview>>,
     ): Pair<String, CitedReferenceVerificationOutcome> {
         val verificationId = getObject("verification_id", UUID::class.java)
         val sqlMarkers = getArray("citation_markers")?.array as? Array<*>
@@ -128,6 +133,7 @@ class EvidenceCoverageReportRepository(
             evidenceConflict = getBoolean("evidence_conflict"),
             aggregatorVersion = getString("aggregator_version"),
             evidencePassages = passages[verificationId].orEmpty(),
+            humanReviews = reviews[verificationId].orEmpty(),
         )
     }
 }

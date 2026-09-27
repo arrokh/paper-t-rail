@@ -78,9 +78,11 @@ function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
 function ReportMetric({ label, value }: { label: string; value: number | string }) {
   return (
     <Card size="sm">
-      <CardContent className="space-y-1">
-        <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
-        <dd className="m-0 font-mono text-lg font-semibold text-foreground">{value}</dd>
+      <CardContent>
+        <dl className="space-y-1">
+          <dt className="text-xs leading-relaxed text-muted-foreground">{label}</dt>
+          <dd className="m-0 font-mono text-lg font-semibold text-foreground">{value}</dd>
+        </dl>
       </CardContent>
     </Card>
   );
@@ -721,7 +723,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                           <AlertTitle>Conservative research triage</AlertTitle>
                           <AlertDescription>{coverage.triageDisclaimer}</AlertDescription>
                         </Alert>
-                        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                           {([
                             ["Claim–Reference pairs", verificationCounts.totalVerifications],
                             ["Completed pairs", verificationCounts.completedVerifications],
@@ -730,8 +732,8 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                           ] as const).map(([label, count]) => (
                             <ReportMetric key={label} label={label} value={count} />
                           ))}
-                        </dl>
-                        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4" aria-label="Counts by final verification status">
+                        </div>
+                        <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4" aria-label="Counts by final verification status">
                           {([
                             ["SUPPORTED", verificationCounts.supported],
                             ["PARTIALLY_SUPPORTED", verificationCounts.partiallySupported],
@@ -743,7 +745,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                           ] as const).map(([label, count]) => (
                             <ReportMetric key={label} label={label.replaceAll("_", " ").toLowerCase()} value={count} />
                           ))}
-                        </dl>
+                        </section>
                         <dl className="grid gap-3 rounded-lg border border-border bg-muted/20 p-4 sm:grid-cols-3">
                           <div className="space-y-1">
                             <dt className="font-mono text-xs uppercase text-muted-foreground">Evidence-strength rubric</dt>
@@ -770,7 +772,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                             <dd className="m-0 font-mono text-xs text-foreground">{formatConfidenceThreshold(resolution.confidenceThreshold)}</dd>
                           </div>
                         </dl>
-                        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
                           {([
                             ["Bibliography entries", counts.total],
                             ["Resolved", counts.resolved],
@@ -781,13 +783,13 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                           ] as const).map(([label, count]) => (
                             <ReportMetric key={label} label={label} value={count} />
                           ))}
-                        </dl>
+                        </div>
                         <section className="space-y-3" aria-labelledby="cited-paper-access-heading">
                           <div className="space-y-1">
                             <h4 id="cited-paper-access-heading" className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Cited Paper access outcomes</h4>
                             <p className="text-sm text-muted-foreground">Access availability is separate from each Claim–Reference Verification status.</p>
                           </div>
-                          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+                          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
                             {([
                               ["Full text available", "FULL_TEXT_AVAILABLE"],
                               ["Abstract only", "ABSTRACT_ONLY"],
@@ -804,7 +806,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                               label="Not attempted"
                               value={resolution.entries.filter((entry) => entry.status === "RESOLVED" && !entry.citedPaperAccess).length}
                             />
-                          </dl>
+                          </div>
                         </section>
                         {resolution.entries.length === 0 ? (
                           <p className="rounded-lg border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
@@ -815,6 +817,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                             {resolution.entries.map((entry) => (
                               <ReferenceResolutionEntryCard
                                 key={entry.localReferenceKey}
+                                analysisRunId={selectedRun.id}
                                 entry={entry}
                                 anchorId={referenceResolutionAnchorId(entry.localReferenceKey)}
                                 parsedEntryHref={`#bibliography-${entry.localReferenceKey}`}
