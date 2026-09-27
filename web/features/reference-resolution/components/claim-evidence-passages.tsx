@@ -2,6 +2,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
+import { HumanReviewPanel } from "@/features/reference-resolution/components/human-review-panel";
 
 type VerificationOutcome = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["verificationOutcomes"][number];
 type IndexingStatus = NonNullable<ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["citedPaperAccess"]>["evidenceIndexing"] extends infer Indexing
@@ -9,15 +10,17 @@ type IndexingStatus = NonNullable<ReferenceResolutionReportResponse["referenceRe
   : never;
 
 function statusLabel(outcome: VerificationOutcome): string {
-  if (outcome.processingStatus === "INCOMPLETE") return "incomplete pair";
-  if (outcome.processingStatus === "PENDING") return "pending assessment";
-  return outcome.finalStatus?.replaceAll("_", " ").toLowerCase() ?? "missing domain status";
+  if (outcome.processingStatus === "INCOMPLETE") return "Machine result unavailable · incomplete pair";
+  if (outcome.processingStatus === "PENDING") return "Machine result pending";
+  return `Machine result: ${outcome.finalStatus?.replaceAll("_", " ").toLowerCase() ?? "missing domain status"}`;
 }
 
 export function ClaimEvidencePassages({
+  analysisRunId,
   outcome,
   indexingStatus,
 }: {
+  analysisRunId: string;
   outcome: VerificationOutcome;
   indexingStatus: IndexingStatus | null;
 }) {
@@ -62,6 +65,12 @@ export function ClaimEvidencePassages({
         </Alert>
       )}
       {outcome.aggregatorVersion && <p className="m-0 text-xs text-muted-foreground">Deterministic aggregation policy: {outcome.aggregatorVersion}</p>}
+      <HumanReviewPanel
+        analysisRunId={analysisRunId}
+        verificationId={outcome.id}
+        machineStatus={outcome.finalStatus}
+        reviews={outcome.humanReviews}
+      />
       {outcome.evidencePassages.length > 0 ? (
         <ol className="space-y-2" aria-label={`Evidence Passages for Atomic Claim ${outcome.atomicClaimId}`}>
           {outcome.evidencePassages.map((passage) => (

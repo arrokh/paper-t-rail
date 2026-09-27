@@ -15,6 +15,11 @@ import com.papertrail.api.scholarly.references.report.BibliographyResolutionRepo
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
 import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
+import com.papertrail.api.review.domain.HumanReview
+import com.papertrail.api.review.domain.HumanReviewAction
+import com.papertrail.api.review.http.CreateHumanReviewRequest
+import com.papertrail.api.review.service.HumanReviewService
+import com.papertrail.api.scholarly.acquisition.domain.TerminalVerificationStatus
 import com.papertrail.api.evidence.report.EvidenceCoverageReport
 import com.papertrail.api.evidence.report.EvidenceCoverageSummary
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
@@ -49,6 +54,7 @@ import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -83,6 +89,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var referenceResolutionService: ReferenceResolutionService
+
+    @MockitoBean
+    private lateinit var humanReviewService: HumanReviewService
 
     @MockitoBean
     private lateinit var crossrefLookupCache: CrossrefLookupCache
@@ -160,6 +169,29 @@ class OpenApiDocumentationTest {
         val report = paths.path("/api/v1/analysis-runs/{runId}/report").path("get")
         assertTrue(report.path("responses").path("200").path("content").has("application/json"))
         assertTrue(report.path("responses").has("404"))
+        val review = paths.path("/api/v1/verifications/{verificationId}/reviews").path("post")
+        assertEquals("Record a Human Review", review.path("summary").asText())
+        assertTrue(review.path("requestBody").path("content").has("application/json"))
+        assertTrue(review.path("responses").has("201"))
+        assertTrue(review.path("responses").has("400"))
+        assertTrue(review.path("responses").has("404"))
+        assertTrue(review.path("responses").has("409"))
+        val reviewRequestSchemaName = review.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val reviewRequestProperties = document.path("components").path("schemas").path(reviewRequestSchemaName).path("properties")
+        assertTrue(reviewRequestProperties.has("action"))
+        assertTrue(reviewRequestProperties.has("overrideStatus"))
+        assertTrue(reviewRequestProperties.has("note"))
+        val schemas = document.path("components").path("schemas")
+        val verificationProperties = schemas.path("CitedReferenceVerificationOutcome").path("properties")
+        assertTrue(verificationProperties.has("finalStatus"))
+        assertTrue(verificationProperties.has("humanReviews"))
+        val humanReviewProperties = schemas.path("HumanReview").path("properties")
+        assertTrue(humanReviewProperties.has("analysisRunId"))
+        assertTrue(humanReviewProperties.has("verificationId"))
+        assertTrue(humanReviewProperties.has("action"))
+        assertTrue(humanReviewProperties.has("overrideStatus"))
+        assertTrue(humanReviewProperties.has("note"))
+        assertTrue(humanReviewProperties.has("createdAt"))
         val reanalysisSchema = reanalysis.path("requestBody").path("content").path("application/json").path("schema")
         val configSchemaName = reanalysisSchema.path("${'$'}ref").asText().substringAfterLast('/')
         val configProperties = document.path("components").path("schemas").path(configSchemaName).path("properties")
@@ -310,6 +342,47 @@ class OpenApiDocumentationTest {
             "embedding_input",
             "cited_paper_location",
         )))
+    }
+
+    @Test
+    fun `Human Review endpoint returns the appended separate assessment`() {
+        val verificationId = UUID.randomUUID()
+        val runId = UUID.randomUUID()
+        val review = HumanReview(
+            id = UUID.randomUUID(),
+            analysisRunId = runId,
+            verificationId = verificationId,
+            action = HumanReviewAction.OVERRIDE,
+            overrideStatus = TerminalVerificationStatus.SUPPORTED,
+            note = "Separate human assessment.",
+            createdAt = Instant.parse("2026-01-02T03:04:05Z"),
+        )
+        Mockito.`when`(humanReviewService.record(
+            verificationId,
+            HumanReviewAction.OVERRIDE,
+            TerminalVerificationStatus.SUPPORTED,
+            "Separate human assessment.",
+        )).thenReturn(review)
+
+        val response = mockMvc.perform(
+            post("/api/v1/verifications/$verificationId/reviews")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(CreateHumanReviewRequest(
+                    action = HumanReviewAction.OVERRIDE,
+                    overrideStatus = TerminalVerificationStatus.SUPPORTED,
+                    note = "Separate human assessment.",
+                ))),
+        )
+            .andExpect(status().isCreated)
+            .andReturn()
+            .response
+        val body = objectMapper.readTree(response.contentAsString)
+        assertEquals(review.id.toString(), body.path("id").asText())
+        assertEquals(runId.toString(), body.path("analysisRunId").asText())
+        assertEquals(verificationId.toString(), body.path("verificationId").asText())
+        assertEquals("OVERRIDE", body.path("action").asText())
+        assertEquals("SUPPORTED", body.path("overrideStatus").asText())
+        assertEquals("Separate human assessment.", body.path("note").asText())
     }
 
     @Test

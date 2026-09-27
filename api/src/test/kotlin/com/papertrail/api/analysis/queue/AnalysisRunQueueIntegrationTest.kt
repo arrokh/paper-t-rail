@@ -29,6 +29,11 @@ import com.papertrail.api.evidence.service.EvidenceRetrievalService
 import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
 import com.papertrail.api.evidence.repository.EvidenceReportRepository
 import com.papertrail.api.evidence.report.EvidenceCoverageReportRepository
+import com.papertrail.api.review.domain.HumanReviewAction
+import com.papertrail.api.review.repository.HumanReviewRepository
+import com.papertrail.api.review.repository.JdbcHumanReviewRepository
+import com.papertrail.api.review.service.HumanReviewService
+import com.papertrail.api.scholarly.acquisition.domain.TerminalVerificationStatus
 import com.papertrail.api.evidence.verification.provider.MockSystemOneProvider
 import com.papertrail.api.evidence.verification.provider.SystemOneProvider
 import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
@@ -476,6 +481,109 @@ class AnalysisRunQueueIntegrationTest {
         val judgements = reference.verificationOutcomes.flatMap { it.evidencePassages }.mapNotNull { it.evidenceJudgement }
         assertTrue(judgements.isNotEmpty())
         assertTrue(judgements.all { it.providerId == "mock" && it.judgement == "INSUFFICIENT" })
+    }
+
+    @Test
+    fun `Human Reviews append to the exact completed Verification without changing machine results`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val reviewService = humanReviewService()
+        val invalidAction = assertThrows(ResponseStatusException::class.java) {
+            reviewService.record(UUID.randomUUID(), HumanReviewAction.AGREE, TerminalVerificationStatus.SUPPORTED, null)
+        }
+        assertEquals(HttpStatus.BAD_REQUEST, invalidAction.statusCode)
+        val missing = assertThrows(ResponseStatusException::class.java) {
+            reviewService.record(UUID.randomUUID(), HumanReviewAction.AGREE, null, null)
+        }
+        assertEquals(HttpStatus.NOT_FOUND, missing.statusCode)
+        val pendingVerificationId = jdbc.queryForObject(
+            "SELECT id FROM claim_paper_verifications WHERE analysis_run_id = ? LIMIT 1",
+            UUID::class.java,
+            created.analysisRunId,
+        )!!
+        val pendingConflict = assertThrows(ResponseStatusException::class.java) {
+            reviewService.record(pendingVerificationId, HumanReviewAction.AGREE, null, null)
+        }
+        assertEquals(HttpStatus.CONFLICT, pendingConflict.statusCode)
+
+        processReferenceResolutionEvents(created.analysisRunId)
+        val resolutionService = referenceResolutionService()
+        val before = resolutionService.report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.verificationOutcomes.first()
+        val machineBefore = jdbc.queryForMap(
+            "SELECT processing_status, final_status, evidence_conflict, aggregator_version FROM claim_paper_verifications WHERE id = ?",
+            before.id,
+        )
+        val machineStatus = TerminalVerificationStatus.valueOf(before.finalStatus!!)
+        val overrideStatus = if (machineStatus == TerminalVerificationStatus.SUPPORTED) {
+            TerminalVerificationStatus.CONTRADICTED
+        } else {
+            TerminalVerificationStatus.SUPPORTED
+        }
+        val agreement = reviewService.record(
+            verificationId = before.id,
+            action = HumanReviewAction.AGREE,
+            overrideStatus = null,
+            note = "I agree with the completed machine result.",
+        )
+        val override = reviewService.record(
+            verificationId = before.id,
+            action = HumanReviewAction.OVERRIDE,
+            overrideStatus = overrideStatus,
+            note = "My separate assessment is recorded for comparison.",
+        )
+        val disagreementWithoutOptionalFields = reviewService.record(
+            verificationId = before.id,
+            action = HumanReviewAction.DISAGREE,
+            overrideStatus = null,
+            note = null,
+        )
+        val after = resolutionService.report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.verificationOutcomes.first()
+
+        assertEquals(machineStatus.name, after.finalStatus)
+        assertEquals(machineBefore, jdbc.queryForMap(
+            "SELECT processing_status, final_status, evidence_conflict, aggregator_version FROM claim_paper_verifications WHERE id = ?",
+            before.id,
+        ))
+        assertEquals(3, jdbc.queryForObject(
+            "SELECT count(*) FROM human_reviews WHERE analysis_run_id = ? AND verification_id = ?",
+            Int::class.java,
+            created.analysisRunId,
+            before.id,
+        ))
+        assertEquals(setOf(agreement.id, override.id, disagreementWithoutOptionalFields.id), after.humanReviews.map { it.id }.toSet())
+        assertTrue(after.humanReviews.all { it.analysisRunId == created.analysisRunId && it.verificationId == before.id })
+        assertEquals(overrideStatus, after.humanReviews.single { it.action == HumanReviewAction.OVERRIDE }.overrideStatus)
+        assertEquals("I agree with the completed machine result.", after.humanReviews.single { it.action == HumanReviewAction.AGREE }.note)
+        assertNull(after.humanReviews.single { it.action == HumanReviewAction.DISAGREE }.overrideStatus)
+        assertNull(after.humanReviews.single { it.action == HumanReviewAction.DISAGREE }.note)
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("UPDATE human_reviews SET note = 'rewritten' WHERE id = ?", agreement.id)
+        }
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("DELETE FROM human_reviews WHERE id = ?", agreement.id)
+        }
+        assertEquals(3, jdbc.queryForObject(
+            "SELECT count(*) FROM human_reviews WHERE analysis_run_id = ? AND verification_id = ?",
+            Int::class.java,
+            created.analysisRunId,
+            before.id,
+        ))
+
+        jdbc.update("DELETE FROM claim_paper_verifications WHERE id = ?", before.id)
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT count(*) FROM human_reviews WHERE analysis_run_id = ? AND verification_id = ?",
+            Int::class.java,
+            created.analysisRunId,
+            before.id,
+        ))
     }
 
     @Test
@@ -1920,6 +2028,10 @@ class AnalysisRunQueueIntegrationTest {
 
     private fun claimReferenceVerificationRepository(): ClaimReferenceVerificationRepository = JdbcClaimReferenceVerificationRepository(jdbc)
 
+    private fun humanReviewRepository(): HumanReviewRepository = JdbcHumanReviewRepository(jdbc)
+
+    private fun humanReviewService(): HumanReviewService = HumanReviewService(humanReviewRepository())
+
     private fun referenceResolutionService(
         lookupFactories: List<ScholarlyMetadataLookupFactory> = listOf(RecordedFixtureScholarlyMetadataLookupFactory(objectMapper)),
     ) = ReferenceResolutionService(
@@ -1929,7 +2041,7 @@ class AnalysisRunQueueIntegrationTest {
         claimReferenceVerificationRepository(),
         ReferenceResolutionRepository(jdbc, objectMapper),
         CitedPaperAccessRepository(jdbc, objectMapper),
-        EvidenceCoverageReportRepository(jdbc, EvidenceReportRepository(jdbc)),
+        EvidenceCoverageReportRepository(jdbc, EvidenceReportRepository(jdbc), humanReviewRepository()),
         lookupFactories,
     )
 
@@ -2246,6 +2358,14 @@ class AnalysisRunQueueIntegrationTest {
             val evidenceCoverageMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("conflict_aware_evidence_coverage.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(evidenceCoverageMigrationVerification)) }
+            }
+            val humanReviewsMigration = migrationDirectory.resolve("human_reviews.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(humanReviewsMigration)) }
+            }
+            val humanReviewsMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("human_reviews.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(humanReviewsMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

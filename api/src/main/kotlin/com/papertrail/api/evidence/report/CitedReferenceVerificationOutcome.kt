@@ -1,5 +1,6 @@
 package com.papertrail.api.evidence.report
 
+import com.papertrail.api.review.domain.HumanReview
 import java.util.UUID
 
 data class CitedReferenceVerificationOutcome(
@@ -19,4 +20,5 @@ data class CitedReferenceVerificationOutcome(
     val evidenceConflict: Boolean,
     val aggregatorVersion: String?,
     val evidencePassages: List<EvidencePassageReport> = emptyList(),
+    val humanReviews: List<HumanReview> = emptyList(),
 )

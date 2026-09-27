@@ -25,6 +25,26 @@ export type EvidenceRetrievalProfile = {
   embeddingProfileHash: string;
 };
 
+export type HumanReviewAction = "AGREE" | "DISAGREE" | "OVERRIDE";
+export type HumanReviewStatus =
+  | "SUPPORTED"
+  | "PARTIALLY_SUPPORTED"
+  | "CONTRADICTED"
+  | "INSUFFICIENT_EVIDENCE"
+  | "INACCESSIBLE"
+  | "UNRESOLVED"
+  | "UNSUPPORTED_REFERENCE_TYPE";
+
+export type HumanReview = {
+  id: string;
+  analysisRunId: string;
+  verificationId: string;
+  action: HumanReviewAction;
+  overrideStatus: HumanReviewStatus | null;
+  note: string | null;
+  createdAt: string;
+};
+
 export type ClaimReferenceVerificationOutcome = {
   id: string;
   atomicClaimId: string;
@@ -62,6 +82,7 @@ export type ClaimReferenceVerificationOutcome = {
     retrievalProfile: EvidenceRetrievalProfile;
     evidenceJudgement: EvidenceJudgement | null;
   }>;
+  humanReviews: HumanReview[];
 };
 
 export type AnalysisRun = {

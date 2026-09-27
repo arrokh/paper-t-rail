@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
@@ -21,6 +22,7 @@ const outcome: Verification = {
   terminalReason: null,
   evidenceConflict: false,
   aggregatorVersion: "conflict-aware-evidence-strength-v1",
+  humanReviews: [],
   evidencePassages: [{
     id: "passage-1",
     text: "The intervention group showed a sustained improvement in the measured outcome.",
@@ -67,15 +69,24 @@ const outcome: Verification = {
   }],
 };
 
+function renderPassages(outcome: Verification) {
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ul>
+        <ClaimEvidencePassages analysisRunId="run-123" outcome={outcome} indexingStatus="COMPLETED" />
+      </ul>
+    </QueryClientProvider>,
+  );
+}
+
 describe("Claim Evidence Passages", () => {
   it("drills from an Atomic Claim and its citation to a ranked, judged passage and retrieval provenance", () => {
-    render(
-      <ul>
-        <ClaimEvidencePassages outcome={outcome} indexingStatus="COMPLETED" />
-      </ul>,
-    );
+    renderPassages(outcome);
 
     expect(screen.getByText(outcome.claimText)).toBeTruthy();
+    expect(screen.getByText("Machine result: supported")).toBeTruthy();
+    expect(screen.getByText("Human review history")).toBeTruthy();
+    expect(screen.getByText("No human reviews recorded.")).toBeTruthy();
     expect(screen.getByText(outcome.citationContextText)).toBeTruthy();
     expect(screen.getByText("[1]")).toBeTruthy();
     expect(screen.getByText(/inferred provisional — inferred, not author-confirmed/)).toBeTruthy();
@@ -114,11 +125,7 @@ describe("Claim Evidence Passages", () => {
       ],
     };
 
-    render(
-      <ul>
-        <ClaimEvidencePassages outcome={conflict} indexingStatus="COMPLETED" />
-      </ul>,
-    );
+    renderPassages(conflict);
 
     expect(screen.getByText("Support and contradiction are comparably strong")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Evidence Passage · fused rank 1/ })).toBeTruthy();
@@ -140,13 +147,9 @@ describe("Claim Evidence Passages", () => {
       evidencePassages: [],
     };
 
-    render(
-      <ul>
-        <ClaimEvidencePassages outcome={incomplete} indexingStatus="COMPLETED" />
-      </ul>,
-    );
+    renderPassages(incomplete);
 
-    expect(screen.getByText("incomplete pair")).toBeTruthy();
+    expect(screen.getByText(/incomplete pair/)).toBeTruthy();
     expect(screen.getByText("evidence verification retries exhausted")).toBeTruthy();
     expect(screen.queryByText("supported")).toBeNull();
     expect(screen.getByText("Processing stopped before this Claim–Reference Verification completed.")).toBeTruthy();

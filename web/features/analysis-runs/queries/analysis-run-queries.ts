@@ -14,6 +14,9 @@ import type {
   CreatedRun,
   ParsedDocument,
   ReferenceResolutionReportResponse,
+  HumanReview,
+  HumanReviewAction,
+  HumanReviewStatus,
 } from "../types.ts";
 
 const RUN_PAGE_SIZE = 25;
@@ -22,6 +25,7 @@ const RUN_POLL_INTERVAL_MS = 2500;
 export const RECENT_ANALYSIS_RUNS_QUERY_KEY = ["analysis-runs", "recent"] as const;
 export const UPLOAD_ANALYSIS_RUN_MUTATION_KEY = ["analysis-runs", "upload"] as const;
 export const REANALYZE_ANALYSIS_RUN_MUTATION_KEY = ["analysis-runs", "reanalyze"] as const;
+export const HUMAN_REVIEW_MUTATION_KEY = ["analysis-runs", "human-review"] as const;
 
 export function isTerminalAnalysisRun(run: Pick<AnalysisRun, "status">): boolean {
   return run.status === "COMPLETED"
@@ -138,9 +142,13 @@ export function parsedDocumentQueryOptions(analysisRunId: string) {
   });
 }
 
+export function referenceResolutionReportQueryKey(analysisRunId: string) {
+  return ["analysis-runs", "report", analysisRunId] as const;
+}
+
 export function referenceResolutionReportQueryOptions(analysisRunId: string) {
   return queryOptions({
-    queryKey: ["analysis-runs", "report", analysisRunId] as const,
+    queryKey: referenceResolutionReportQueryKey(analysisRunId),
     queryFn: async ({ signal }): Promise<ReferenceResolutionReportResponse> => {
       const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/report`, {
         cache: "no-store",
@@ -158,6 +166,37 @@ export function useParsedDocument(analysisRunId: string | null, enabled: boolean
     ...parsedDocumentQueryOptions(analysisRunId ?? ""),
     enabled: Boolean(analysisRunId && enabled),
   });
+}
+
+export type RecordHumanReview = {
+  verificationId: string;
+  action: HumanReviewAction;
+  overrideStatus?: HumanReviewStatus;
+  note?: string;
+};
+
+export function recordHumanReviewMutationOptions(queryClient: QueryClient, analysisRunId: string) {
+  return mutationOptions({
+    mutationKey: [...HUMAN_REVIEW_MUTATION_KEY, analysisRunId] as const,
+    mutationFn: async ({ verificationId, ...review }: RecordHumanReview): Promise<HumanReview> => {
+      const response = await fetch(`/api/v1/verifications/${encodeURIComponent(verificationId)}/reviews`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(review),
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as HumanReview;
+    },
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: referenceResolutionReportQueryKey(analysisRunId),
+      refetchType: "active",
+    }),
+  });
+}
+
+export function useRecordHumanReview(analysisRunId: string) {
+  const queryClient = useQueryClient();
+  return useMutation(recordHumanReviewMutationOptions(queryClient, analysisRunId));
 }
 
 export function useReferenceResolutionReport(analysisRunId: string | null, enabled: boolean) {
