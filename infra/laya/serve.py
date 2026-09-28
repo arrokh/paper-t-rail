@@ -79,6 +79,7 @@ def main() -> None:
         host=os.environ.get("LAYA_HOST", "0.0.0.0"),
         port=int(os.environ.get("LAYA_PORT", "8000")),
         log_level=os.environ.get("LAYA_LOG_LEVEL", "info"),
+        access_log=False,
     )
 
 

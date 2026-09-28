@@ -92,6 +92,7 @@ class LayaSystemOneProviderContractTest {
             val snapshotJson = factory.toJson(snapshot)
 
             assertEquals(LayaSystemOneProvider.PROVIDER_VERSION, snapshot.systemOne.version)
+            assertTrue(snapshot.systemOne.version.length <= 80)
             assertEquals(LayaSystemOneProvider.PINNED_MODEL_ID, snapshot.systemOne.model)
             assertTrue(snapshot.systemOne.configurationFingerprint!!.matches(Regex("[0-9a-f]{64}")))
             assertEquals("LOCAL", snapshot.systemOne.trustBoundary)
@@ -117,10 +118,10 @@ class LayaSystemOneProviderContractTest {
     }
 
     @Test
-    fun `a configured Laya provider remains manual-only for the default run and cannot receive its payload`() {
+    fun `a configured Laya provider cannot receive payloads for a run pinned to mock`() {
         val settings = settings("http://127.0.0.1:8000")
         val factory = configurationFactory(settings)
-        val snapshot = factory.from(factory.parseRequest(null))
+        val snapshot = factory.from(RunConfigurationRequest(systemOneProvider = "mock"))
         var outboundCallStarted = false
 
         assertEquals("mock", snapshot.systemOne.provider)
@@ -214,6 +215,23 @@ class LayaSystemOneProviderContractTest {
                 assertFalse(failure.message.orEmpty().contains("candidate passage"))
                 assertFalse(failure.message.orEmpty().contains(server.baseUrl))
             }
+        }
+    }
+
+    @Test
+    fun `classifies an over-limit HTTP 422 without exposing its response body`() {
+        LayaTestServer(
+            { _, _ -> """{"detail":"Complete state and questions exceed the 1024-token context limit."}""" },
+            status = 422,
+        ).use { server ->
+            val failure = assertThrows(LayaSystemOneProviderException::class.java) {
+                provider(settings(server.baseUrl)).evaluate(request(listOf(passage("candidate passage"))))
+            }
+
+            assertEquals(LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED, failure.failureReasonCode)
+            assertFalse(failure.message.orEmpty().contains("candidate passage"))
+            assertFalse(failure.message.orEmpty().contains("Complete state and questions"))
+            assertEquals(1, server.requests.size)
         }
     }
 

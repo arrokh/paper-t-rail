@@ -79,6 +79,18 @@ class EvidenceAggregationPolicyTest {
     }
 
     @Test
+    fun `aggregation thresholds reject values outside the normalized range`() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
+            EvidenceAggregationThresholds(
+                directSupport = 1.01,
+                partialSupport = 0.7,
+                contradiction = 0.8,
+                comparabilityMargin = 0.08,
+            )
+        }
+    }
+
+    @Test
     fun `invalid provider scores are rejected before aggregation`() {
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException::class.java) {
             judgement(EvidenceJudgementKind.DIRECT_SUPPORT, 1.0, confidence = 1.1)

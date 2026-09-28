@@ -139,7 +139,7 @@ class AnalysisRunController(
 
     @Operation(
         summary = "Get parsed document structure, Atomic Claims, resolution status, and inferred links",
-        description = "Returns the immutable parsed structure, extracted Atomic Claims, inferred/provisional all-to-all Claim–Citation Target links scoped to each Citation Context, and current bibliography resolution status projected from separate immutable outcomes when an Analysis Run reaches PARSED. PARSED is an intermediate state: reference resolution may be available, but claim and evidence verification have not run. All source offsets are zero-based and end-exclusive UTF-16 code-unit indexes in normalizedSourceText.",
+        description = "Returns the immutable parsed structure, extracted Atomic Claims, inferred/provisional all-to-all Claim–Citation Target links scoped to each Citation Context, and current bibliography resolution status projected from separate immutable outcomes when an Analysis Run reaches PARSED. PARSED means final Claim–Paper Verification is not complete; local Laya evaluation may have recorded uncalibrated passage judgements without aggregation. All source offsets are zero-based and end-exclusive UTF-16 code-unit indexes in normalizedSourceText.",
     )
     @ApiResponses(
         value = [

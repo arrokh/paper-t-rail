@@ -5,6 +5,7 @@ import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
+import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
@@ -39,11 +40,11 @@ class RunConfigurationFactoryConfiguration {
 
     @Bean
     fun layaSystemOneSettings(
-        @Value("\${paper-trail.providers.laya.enabled:false}") enabled: Boolean,
-        @Value("\${paper-trail.providers.laya.base-url:}") baseUrl: String,
-        @Value("\${paper-trail.providers.laya.api-key:}") apiKey: String,
-        @Value("\${paper-trail.providers.laya.trusted-hosts:laya,localhost,127.0.0.1}") trustedHosts: String,
-        @Value("\${paper-trail.providers.laya.request-timeout-millis:120000}") requestTimeoutMillis: Long,
+        @Value("\${paper-trail.providers.laya.enabled}") enabled: Boolean,
+        @Value("\${paper-trail.providers.laya.base-url}") baseUrl: String,
+        @Value("\${paper-trail.providers.laya.api-key}") apiKey: String,
+        @Value("\${paper-trail.providers.laya.trusted-hosts}") trustedHosts: String,
+        @Value("\${paper-trail.providers.laya.request-timeout-millis}") requestTimeoutMillis: Long,
     ): LayaSystemOneSettings = LayaSystemOneSettings(
         enabled = enabled,
         baseUrl = baseUrl,
@@ -95,26 +96,43 @@ class RunConfigurationFactoryConfiguration {
         @Value("\${paper-trail.analysis.retrieval.final-candidates}") finalCandidateLimit: Int,
         @Value("\${paper-trail.analysis.retrieval.rrf-constant}") reciprocalRankFusionConstant: Int,
         @Value("\${paper-trail.upload.max-claim-citation-pairs}") maxClaimCitationPairs: Int,
-    ): RunConfigurationFactory = RunConfigurationFactory(
-        objectMapper = objectMapper,
-        providerCatalog = providerCatalog,
-        parserId = parserId,
-        parserVersion = parserVersion,
-        languageDetectorVersion = languageDetectorVersion,
-        limits = ValidationLimitsSnapshot(
-            maxUploadBytes = validator.limits.maxBytes,
-            maxPages = validator.limits.maxPages,
-            maxExtractedCharacters = validator.limits.maxExtractedCharacters,
-            maxExtractedCharactersPerPage = validator.limits.maxExtractedCharactersPerPage,
-            minimumExtractedCharacters = validator.limits.minimumExtractedCharacters,
-            minimumLanguageConfidence = validator.limits.minimumLanguageConfidence,
-            maxClaimCitationPairs = maxClaimCitationPairs,
-        ),
-        referenceResolutionConfidenceThreshold = referenceResolutionConfidenceThreshold,
-        retrievalProfileId = retrievalProfileId,
-        vectorCandidateLimit = vectorCandidateLimit,
-        lexicalCandidateLimit = lexicalCandidateLimit,
-        finalCandidateLimit = finalCandidateLimit,
-        reciprocalRankFusionConstant = reciprocalRankFusionConstant,
-    )
+        @Value("\${paper-trail.providers.system-one.default-provider}") defaultSystemOneProvider: String,
+        @Value("\${paper-trail.analysis.local-laya-aggregation.enabled}") localLayaAggregationEnabled: Boolean,
+        @Value("\${paper-trail.analysis.local-laya-aggregation.direct-support-threshold}") directSupportThreshold: Double,
+        @Value("\${paper-trail.analysis.local-laya-aggregation.partial-support-threshold}") partialSupportThreshold: Double,
+        @Value("\${paper-trail.analysis.local-laya-aggregation.contradiction-threshold}") contradictionThreshold: Double,
+        @Value("\${paper-trail.analysis.local-laya-aggregation.comparability-margin}") comparabilityMargin: Double,
+    ): RunConfigurationFactory {
+        val aggregationThresholds = EvidenceAggregationThresholds(
+            directSupport = directSupportThreshold,
+            partialSupport = partialSupportThreshold,
+            contradiction = contradictionThreshold,
+            comparabilityMargin = comparabilityMargin,
+        )
+        return RunConfigurationFactory(
+            objectMapper = objectMapper,
+            providerCatalog = providerCatalog,
+            parserId = parserId,
+            parserVersion = parserVersion,
+            languageDetectorVersion = languageDetectorVersion,
+            limits = ValidationLimitsSnapshot(
+                maxUploadBytes = validator.limits.maxBytes,
+                maxPages = validator.limits.maxPages,
+                maxExtractedCharacters = validator.limits.maxExtractedCharacters,
+                maxExtractedCharactersPerPage = validator.limits.maxExtractedCharactersPerPage,
+                minimumExtractedCharacters = validator.limits.minimumExtractedCharacters,
+                minimumLanguageConfidence = validator.limits.minimumLanguageConfidence,
+                maxClaimCitationPairs = maxClaimCitationPairs,
+            ),
+            referenceResolutionConfidenceThreshold = referenceResolutionConfidenceThreshold,
+            retrievalProfileId = retrievalProfileId,
+            vectorCandidateLimit = vectorCandidateLimit,
+            lexicalCandidateLimit = lexicalCandidateLimit,
+            finalCandidateLimit = finalCandidateLimit,
+            reciprocalRankFusionConstant = reciprocalRankFusionConstant,
+            evidenceAggregationThresholds = aggregationThresholds.takeIf { localLayaAggregationEnabled },
+            localLayaAggregationEnabled = localLayaAggregationEnabled,
+            defaultSystemOneProvider = defaultSystemOneProvider,
+        )
+    }
 }

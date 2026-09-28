@@ -15,6 +15,26 @@ function statusLabel(outcome: VerificationOutcome): string {
   return `Machine result: ${outcome.finalStatus?.replaceAll("_", " ").toLowerCase() ?? "missing domain status"}`;
 }
 
+function failureDescription(reason: string): string {
+  if (reason === "SYSTEM_ONE_CONTEXT_LIMIT_EXCEEDED") {
+    return "The complete Laya request exceeded the 1,024-token context limit. The evidence was not truncated, and no complete judgement set was stored for this pair.";
+  }
+  if (reason === "SYSTEM_ONE_REQUEST_REJECTED") {
+    return "System One rejected the request before producing a judgement. No fallback provider was used.";
+  }
+  return reason.replaceAll("_", " ").toLowerCase();
+}
+
+function noJudgementMessage(reason: string | null): string {
+  if (reason === "SYSTEM_ONE_CONTEXT_LIMIT_EXCEEDED") {
+    return "No complete System One judgement set was stored because the request exceeded Laya's 1,024-token context limit; evidence was not truncated.";
+  }
+  if (reason === "SYSTEM_ONE_REQUEST_REJECTED") {
+    return "No System One judgement was recorded because the provider rejected the request.";
+  }
+  return "No System One Evidence Judgement was recorded for this Claim–Reference pair.";
+}
+
 export function ClaimEvidencePassages({
   analysisRunId,
   outcome,
@@ -24,6 +44,10 @@ export function ClaimEvidencePassages({
   outcome: VerificationOutcome;
   indexingStatus: IndexingStatus | null;
 }) {
+  const judgedPassages = outcome.evidencePassages.flatMap((passage) =>
+    passage.evidenceJudgement ? [{ passage, judgement: passage.evidenceJudgement }] : [],
+  );
+
   return (
     <li className="space-y-3 rounded-lg border border-border bg-card p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -61,9 +85,38 @@ export function ClaimEvidencePassages({
       {outcome.processingFailureReason && (
         <Alert variant="destructive">
           <AlertTitle>Verification pair incomplete</AlertTitle>
-          <AlertDescription>{outcome.processingFailureReason.replaceAll("_", " ").toLowerCase()}</AlertDescription>
+          <AlertDescription>{failureDescription(outcome.processingFailureReason)}</AlertDescription>
         </Alert>
       )}
+      <section aria-labelledby={`system-one-results-${outcome.id}`} className="space-y-2 border-t border-border pt-3">
+        <h4 id={`system-one-results-${outcome.id}`} className="font-mono text-xs tracking-wide text-muted-foreground uppercase">System One results</h4>
+        {judgedPassages.length > 0 ? (
+          <ul className="space-y-2">
+            {judgedPassages.map(({ passage, judgement }) => (
+              <li key={passage.id} className="rounded-md border border-border/80 bg-muted/10 p-3">
+                <p className="m-0 text-xs font-medium">Evidence Passage · fused rank {passage.fusedRank}</p>
+                <div className="my-2 flex flex-wrap gap-2">
+                  <Badge variant="outline">{judgement.judgement.replaceAll("_", " ").toLowerCase()}</Badge>
+                  <Badge variant="secondary">role: {judgement.evidenceRole.replaceAll("_", " ").toLowerCase()}</Badge>
+                </div>
+                <p className="m-0 text-xs text-muted-foreground">Provider {judgement.providerId} · model {judgement.modelId ?? "not recorded"} · version {judgement.providerVersion}</p>
+                <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <dt className="font-mono text-muted-foreground">Provisional rubric strength</dt>
+                    <dd className="m-0 font-mono">{judgement.calibratedStrength.toFixed(3)}</dd>
+                  </div>
+                  <div>
+                    <dt className="font-mono text-muted-foreground">Judgement confidence</dt>
+                    <dd className="m-0 font-mono">{judgement.confidence.toFixed(3)}</dd>
+                  </div>
+                </dl>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="m-0 text-sm text-muted-foreground">{noJudgementMessage(outcome.processingFailureReason)}</p>
+        )}
+      </section>
       {outcome.aggregatorVersion && <p className="m-0 text-xs text-muted-foreground">Deterministic aggregation policy: {outcome.aggregatorVersion}</p>}
       <HumanReviewPanel
         analysisRunId={analysisRunId}
@@ -88,7 +141,7 @@ export function ClaimEvidencePassages({
                   {passage.evidenceJudgement && (
                     <div className="space-y-2 rounded-md border border-border bg-card p-3">
                       <p className="m-0 text-sm font-medium">Evidence Judgement · {passage.evidenceJudgement.providerId} {passage.evidenceJudgement.modelId ?? ""} {passage.evidenceJudgement.providerVersion}</p>
-                      <p className="m-0 text-xs text-muted-foreground">{passage.evidenceJudgement.judgement.replaceAll("_", " ").toLowerCase()} · role: {passage.evidenceJudgement.evidenceRole.replaceAll("_", " ").toLowerCase()} · calibrated strength {passage.evidenceJudgement.calibratedStrength.toFixed(3)}</p>
+                      <p className="m-0 text-xs text-muted-foreground">{passage.evidenceJudgement.judgement.replaceAll("_", " ").toLowerCase()} · role: {passage.evidenceJudgement.evidenceRole.replaceAll("_", " ").toLowerCase()} · provisional rubric strength {passage.evidenceJudgement.calibratedStrength.toFixed(3)}</p>
                       <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
                         {([
                           ["Judgement confidence", passage.evidenceJudgement.confidence],

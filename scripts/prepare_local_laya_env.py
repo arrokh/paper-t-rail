@@ -46,8 +46,14 @@ def configure_local_laya(env_path: Path = ENV_PATH, example_path: Path = EXAMPLE
     if "LAYA_ENABLED" not in values:
         lines = set_value(lines, "LAYA_ENABLED", "true")
         values["LAYA_ENABLED"] = "true"
+    if "LOCAL_LAYA_AGGREGATION_ENABLED" not in values:
+        lines = set_value(lines, "LOCAL_LAYA_AGGREGATION_ENABLED", "true")
+        values["LOCAL_LAYA_AGGREGATION_ENABLED"] = "true"
 
     enabled = values["LAYA_ENABLED"].lower() == "true"
+    if not enabled and values.get("SYSTEM_ONE_DEFAULT_PROVIDER", "laya") == "laya":
+        lines = set_value(lines, "SYSTEM_ONE_DEFAULT_PROVIDER", "mock")
+        values["SYSTEM_ONE_DEFAULT_PROVIDER"] = "mock"
     key = values.get("LAYA_API_KEY", "")
     if enabled and not key:
         lines = set_value(lines, "LAYA_API_KEY", secrets.token_hex(32))

@@ -23,3 +23,7 @@ Treat the generated OpenAPI document as the API contract; do not rely on inferre
 ## Kotlin imports
 
 Kotlin imports are file-scoped: keep them in the import block immediately below the `package` declaration. Never write fully qualified class or type names inline when an ordinary import is appropriate; use an explicit import alias only to resolve a genuine name collision.
+
+## Configuration defaults
+
+Keep Spring application-property defaults in `api/src/main/resources/application.yml`. In `api/src/main/kotlin/com/papertrail/api/config/`, inject declared properties without repeating fallback values in `@Value` placeholders. When a default changes, keep the effective Compose environment in `infra/docker-compose.yml` and `.env.example` aligned, and update the relevant provider documentation.

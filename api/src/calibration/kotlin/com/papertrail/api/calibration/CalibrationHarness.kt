@@ -36,6 +36,7 @@ class CalibrationHarness {
             appendLine("- Required evidence cases include direct support, partial support, contradiction, comparable conflict, and high-confidence/low-scope abstention.")
             appendLine("- Reference implementation: `${ScholarlyMetadataMatcher.POLICY_VERSION}` via the production matcher, including its ambiguity abstention.")
             appendLine("- Evidence implementation: `${EvidenceJudgement.STRENGTH_RUBRIC_VERSION}` and `${EvidenceAggregationPolicy.POLICY_VERSION}` via the production strength and aggregation policies.")
+            appendLine("- This harness evaluates aggregation over fixture-supplied Evidence Judgements; it does not invoke a System One provider or measure Laya judgement accuracy, role accuracy, or confidence calibration.")
             appendLine("- A resolved reference is a positive prediction only when the selected candidate ID equals the fixture's expected candidate ID. Precision is true-positive resolutions divided by all automatic resolutions. False-auto-resolution rate is also reported against the entire cohort.")
             appendLine("- Status agreement is exact final-status agreement; conflict agreement is reported separately.")
             appendLine("- Candidate policy snapshots below are benchmark inputs only. Runtime run snapshots are created independently; no threshold is promoted by this harness.")

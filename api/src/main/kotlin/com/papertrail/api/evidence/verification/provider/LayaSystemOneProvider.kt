@@ -61,14 +61,37 @@ class LayaSystemOneProvider(
 
     private fun evaluatePassage(claim: String, passage: EvidencePassageForJudgement): EvidenceJudgement {
         val response = sendRequest(createRequest(claim, passage))
-        if (response.statusCode() !in 200..299) {
-            throw LayaSystemOneProviderException("Laya System One returned HTTP ${response.statusCode()}.")
-        }
         val body = response.body()
         if (body.size > LayaSystemOneSettings.MAX_RESPONSE_BYTES) {
             throw LayaSystemOneProviderException("Laya System One response exceeded the configured response limit.")
         }
+        if (response.statusCode() !in 200..299) {
+            val failureReasonCode = if (response.statusCode() == 422) rejectionReasonCode(body) else null
+            val message = when (failureReasonCode) {
+                LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED ->
+                    "Laya System One rejected a request that exceeds its context limit."
+                LayaSystemOneProviderException.REQUEST_REJECTED ->
+                    "Laya System One rejected the request before producing a judgement."
+                else -> "Laya System One returned HTTP ${response.statusCode()}."
+            }
+            throw LayaSystemOneProviderException(message, failureReasonCode)
+        }
         return mapResponse(body, passage.id)
+    }
+
+    private fun rejectionReasonCode(body: ByteArray): String {
+        val response = runCatching { objectMapper.readTree(body) }.getOrNull()
+        return if (containsContextLimitRejection(response)) {
+            LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED
+        } else {
+            LayaSystemOneProviderException.REQUEST_REJECTED
+        }
+    }
+
+    private fun containsContextLimitRejection(node: JsonNode?): Boolean {
+        if (node == null) return false
+        if (node.isTextual) return CONTEXT_LIMIT_REJECTION_DETAIL in node.asText()
+        return node.elements().asSequence().any(::containsContextLimitRejection)
     }
 
     private fun createRequest(claim: String, passage: EvidencePassageForJudgement): HttpRequest {
@@ -320,6 +343,7 @@ class LayaSystemOneProvider(
 
         private const val CONNECT_TIMEOUT_SECONDS = 5L
         private const val LAYA_RUNTIME_MODEL_NAME = "laya-rl-agent"
+        private const val CONTEXT_LIMIT_REJECTION_DETAIL = "exceed the 1024-token context limit"
         private const val JUDGEMENT_QUESTION = "judgement"
         private const val ROLE_QUESTION = "evidence_role"
         private const val DIRECTNESS_QUESTION = "directness"

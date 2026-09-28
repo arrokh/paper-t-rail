@@ -25,6 +25,7 @@ class LocalDevConfigTest(unittest.TestCase):
             key = re.search(r"^LAYA_API_KEY=([0-9a-f]{64})$", contents, re.MULTILINE)
             self.assertIsNotNone(key)
             self.assertIn("POSTGRES_PASSWORD=example", contents)
+            self.assertIn("LOCAL_LAYA_AGGREGATION_ENABLED=true", contents)
             self.assertEqual(stat.S_IMODE(env_path.stat().st_mode), 0o600)
 
     def test_replaces_a_quoted_blank_key_when_local_enablement_is_true(self):
@@ -40,13 +41,53 @@ class LocalDevConfigTest(unittest.TestCase):
     def test_preserves_an_explicitly_disabled_local_provider(self):
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
-            env_path.write_text("LAYA_ENABLED=false\nLAYA_API_KEY=\n", encoding="utf-8")
+            env_path.write_text(
+                "LAYA_ENABLED=false\nSYSTEM_ONE_DEFAULT_PROVIDER=laya\nLAYA_API_KEY=\n",
+                encoding="utf-8",
+            )
 
             enabled = configure_local_laya(env_path, Path(directory) / "unused-example")
 
             self.assertFalse(enabled)
             self.assertIn("LAYA_ENABLED=false", env_path.read_text(encoding="utf-8"))
             self.assertIn("LAYA_API_KEY=", env_path.read_text(encoding="utf-8"))
+            self.assertIn("SYSTEM_ONE_DEFAULT_PROVIDER=mock", env_path.read_text(encoding="utf-8"))
+
+    def test_defaults_to_mock_when_legacy_env_disables_laya_without_a_system_one_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("LAYA_ENABLED=false\nLAYA_API_KEY=\n", encoding="utf-8")
+
+            configure_local_laya(env_path, Path(directory) / "unused-example")
+
+            self.assertIn("SYSTEM_ONE_DEFAULT_PROVIDER=mock", env_path.read_text(encoding="utf-8"))
+
+    def test_preserves_local_aggregation_setting_and_thresholds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                "LAYA_ENABLED=true\nLOCAL_LAYA_AGGREGATION_ENABLED=true\n"
+                "LOCAL_LAYA_AGGREGATION_DIRECT_SUPPORT_THRESHOLD=0.80\n",
+                encoding="utf-8",
+            )
+
+            configure_local_laya(env_path, Path(directory) / "unused-example")
+
+            contents = env_path.read_text(encoding="utf-8")
+            self.assertIn("LOCAL_LAYA_AGGREGATION_ENABLED=true", contents)
+            self.assertIn("LOCAL_LAYA_AGGREGATION_DIRECT_SUPPORT_THRESHOLD=0.80", contents)
+
+    def test_preserves_an_explicit_local_aggregation_opt_out(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                "LAYA_ENABLED=true\nLOCAL_LAYA_AGGREGATION_ENABLED=false\nLAYA_API_KEY=key\n",
+                encoding="utf-8",
+            )
+
+            configure_local_laya(env_path, Path(directory) / "unused-example")
+
+            self.assertIn("LOCAL_LAYA_AGGREGATION_ENABLED=false", env_path.read_text(encoding="utf-8"))
 
     def test_preserves_an_existing_private_api_key(self):
         with tempfile.TemporaryDirectory() as directory:
