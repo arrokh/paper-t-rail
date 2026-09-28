@@ -1,5 +1,6 @@
 package com.papertrail.api.evidence.report
 
+import io.swagger.v3.oas.annotations.media.Schema
 import java.util.UUID
 
 data class EvidencePassageReport(
@@ -21,5 +22,8 @@ data class EvidencePassageReport(
     val language: String,
     val languageDetectorVersion: String,
     val retrievalProfile: EvidenceRetrievalProfileReport,
+    @field:Schema(description = "Optional parent-passage Evidence Judgement. Diagnostic span judgements are reported separately and never populate this field.")
     val evidenceJudgement: EvidenceJudgementReport?,
+    @field:Schema(description = "Optional source-traceable Laya sentence-span diagnostics under this immutable parent passage. Span judgements are never rolled up into a parent Evidence Judgement or final Claim–Paper status.")
+    val diagnosticSpans: List<EvidencePassageSpanReport> = emptyList(),
 )

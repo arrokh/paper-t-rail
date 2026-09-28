@@ -148,13 +148,32 @@ function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
 
-test("new-run preferences default to local Laya when exposed and mock otherwise", () => {
-  const directoryWithLaya = {
+test("new-run preferences default to local Ollama when exposed and feature-hash otherwise", () => {
+  const directoryWithOllama = {
     ...directory,
     providers: {
       ...directory.providers,
+      embedding: [
+        ...directory.providers.embedding,
+        {
+          role: "embedding",
+          providerId: "ollama",
+          displayName: "Ollama embeddings (nomic-embed-text:v1.5)",
+          version: "v1",
+          model: "nomic-embed-text:v1.5",
+          trustBoundary: "LOCAL",
+          dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"],
+          retentionDisclosure: null,
+        },
+      ],
+    },
+  };
+  const directoryWithLaya = {
+    ...directoryWithOllama,
+    providers: {
+      ...directoryWithOllama.providers,
       systemOne: [
-        ...directory.providers.systemOne,
+        ...directoryWithOllama.providers.systemOne,
         {
           role: "systemOne",
           providerId: "laya",
@@ -171,6 +190,7 @@ test("new-run preferences default to local Laya when exposed and mock otherwise"
 
   assert.deepEqual(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS), {
     ...localSelections,
+    embeddingProvider: "ollama",
     systemOneProvider: "laya",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",

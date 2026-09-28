@@ -14,7 +14,7 @@ MAX_OPTION_TOKENS = 48
 MIN_OPTION_BUDGET = 16
 
 
-def install_context_guard(router: Any) -> None:
+def install_context_guard(router: Any) -> Any:
     """Reject requests before Router inference if any full sequence exceeds 1024 tokens."""
     agent = router.load(PINNED_MODEL_ALIAS)
     context_limit = int(agent.cfg.get("max_len", 0))
@@ -32,6 +32,7 @@ def install_context_guard(router: Any) -> None:
         return original_predict(state, questions, model=model)
 
     router.predict = guarded_predict
+    return agent
 
 
 def measure_request_tokens(agent: Any, state: Any, questions: dict[str, dict[str, Any]]) -> list[int]:

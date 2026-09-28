@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 import { HumanReviewPanel } from "@/features/reference-resolution/components/human-review-panel";
+import { EvidencePassageSpanDiagnostics } from "@/features/reference-resolution/components/evidence-passage-span-diagnostics";
 
 type VerificationOutcome = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["verificationOutcomes"][number];
 type IndexingStatus = NonNullable<ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["citedPaperAccess"]>["evidenceIndexing"] extends infer Indexing
@@ -132,7 +133,9 @@ export function ClaimEvidencePassages({
                 <CollapsibleTrigger className="flex min-h-11 w-full flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
                   <span className="font-medium">Evidence Passage · fused rank {passage.fusedRank}</span>
                   <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    {passage.evidenceJudgement ? `${passage.evidenceJudgement.judgement.replaceAll("_", " ").toLowerCase()} · ${passage.evidenceJudgement.evidenceRole.replaceAll("_", " ").toLowerCase()}` : "not semantically assessed"}
+                    {passage.evidenceJudgement
+                      ? `${passage.evidenceJudgement.judgement.replaceAll("_", " ").toLowerCase()} · ${passage.evidenceJudgement.evidenceRole.replaceAll("_", " ").toLowerCase()}`
+                      : passage.diagnosticSpans.length > 0 ? "span diagnostics only · no parent judgement" : "not semantically assessed"}
                     <span>Vector {passage.vectorRank ?? "—"} · lexical {passage.lexicalRank ?? "—"}</span>
                   </span>
                 </CollapsibleTrigger>
@@ -158,6 +161,7 @@ export function ClaimEvidencePassages({
                       </dl>
                     </div>
                   )}
+                  <EvidencePassageSpanDiagnostics passageId={passage.id} spans={passage.diagnosticSpans} />
                   <dl className="grid gap-3 text-xs sm:grid-cols-2">
                     <div className="min-w-0 space-y-1">
                       <dt className="font-mono uppercase text-muted-foreground">Section</dt>

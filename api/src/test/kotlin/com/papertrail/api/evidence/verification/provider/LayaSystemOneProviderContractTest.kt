@@ -30,6 +30,42 @@ import java.util.UUID
 
 class LayaSystemOneProviderContractTest {
     @Test
+    fun `preflights all six complete question sequences through the pinned local sidecar`() {
+        val counts = listOf(700, 710, 720, 730, 740, 750)
+        LayaTestServer(
+            response = { _, _ -> fixtureResponse() },
+            preflightResponse = mapper.writeValueAsString(mapOf("tokenCounts" to counts, "contextLimit" to 1024)),
+        ).use { server ->
+            val passage = passage("evidence needing tokenizer preflight")
+            val measured = provider(settings(server.baseUrl)).tokenCounts("complete claim", passage)
+
+            assertEquals(counts, measured)
+            assertEquals(1, server.requests.size)
+            assertEquals("/v1/systemone/preflight", server.paths.single())
+            assertEquals("complete claim", server.requests.single().path("state").path("claim").asText())
+            assertEquals(passage.text, server.requests.single().path("state").path("evidence").asText())
+            assertEquals(6, server.requests.single().path("questions").size())
+            assertEquals("Bearer test-sidecar-key", server.authorization)
+        }
+    }
+
+    @Test
+    fun `rejects malformed preflight metadata without exposing submitted text`() {
+        LayaTestServer(
+            response = { _, _ -> fixtureResponse() },
+            preflightResponse = """{"tokenCounts":[1],"contextLimit":512}""",
+        ).use { server ->
+            val failure = assertThrows(LayaSystemOneProviderException::class.java) {
+                provider(settings(server.baseUrl)).tokenCounts("private claim", passage("private evidence"))
+            }
+
+            assertFalse(failure.message.orEmpty().contains("private claim"))
+            assertFalse(failure.message.orEmpty().contains("private evidence"))
+            assertEquals(1, server.requests.size)
+        }
+    }
+
+    @Test
     fun `maps recorded System One responses to all Evidence Judgement kinds and score fields`() {
         val kinds = listOf(
             EvidenceJudgementKind.DIRECT_SUPPORT,
@@ -321,10 +357,13 @@ class LayaSystemOneProviderContractTest {
         private val response: (Int, JsonNode) -> String,
         private val status: Int = 200,
         private val bodyDelayMillis: Long = 0,
+        private val preflightResponse: String = """{"tokenCounts":[10,10,10,10,10,10],"contextLimit":1024}""",
     ) : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val baseUrl: String get() = "http://127.0.0.1:${server.address.port}"
         val requests = mutableListOf<JsonNode>()
+        val paths = mutableListOf<String>()
+        private var inferenceRequestCount = 0
         var authorization: String? = null
             private set
 
@@ -333,7 +372,13 @@ class LayaSystemOneProviderContractTest {
                 authorization = exchange.requestHeaders.getFirst("Authorization")
                 val body = mapper.readTree(exchange.requestBody.readAllBytes().toString(StandardCharsets.UTF_8))
                 requests.add(body)
-                val bytes = response(requests.lastIndex, body).toByteArray(StandardCharsets.UTF_8)
+                paths.add(exchange.requestURI.path)
+                val responseBody = if (exchange.requestURI.path.endsWith("/preflight")) {
+                    preflightResponse
+                } else {
+                    response(inferenceRequestCount++, body)
+                }
+                val bytes = responseBody.toByteArray(StandardCharsets.UTF_8)
                 if (bodyDelayMillis > 0) Thread.sleep(bodyDelayMillis)
                 runCatching {
                     exchange.sendResponseHeaders(status, bytes.size.toLong())

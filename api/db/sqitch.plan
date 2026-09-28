@@ -14,3 +14,4 @@ traceable_evidence_retrieval [cited_paper_access] 2026-09-26T00:00:00Z Paper T-R
 conflict_aware_evidence_coverage [traceable_evidence_retrieval] 2026-09-26T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist conflict-aware judgements and all claim-reference verification outcomes
 human_reviews [conflict_aware_evidence_coverage] 2026-09-26T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Keep append-only human assessments separate from machine results
 source_document_deletion [human_reviews] 2026-09-27T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Tombstone and remove deleted document data while guarding workers
+laya_evidence_passage_spans [source_document_deletion] 2026-09-27T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist tokenizer-budgeted Laya span diagnostics independently of parent judgements

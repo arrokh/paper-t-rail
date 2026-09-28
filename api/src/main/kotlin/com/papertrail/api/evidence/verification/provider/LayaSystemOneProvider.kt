@@ -11,6 +11,7 @@ import com.papertrail.api.evidence.verification.domain.SemanticJudgementResult
 import org.springframework.stereotype.Component
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
@@ -29,7 +30,7 @@ import java.util.concurrent.TimeoutException
 class LayaSystemOneProvider(
     private val settings: LayaSystemOneSettings,
     private val objectMapper: ObjectMapper,
-) : SystemOneProvider {
+) : SystemOneProvider, SystemOneRequestPreflight {
     override val providerId = LayaSystemOneSettings.PROVIDER_ID
     override val version = LayaSystemOneSettings.PROVIDER_VERSION
     override val modelId = LayaSystemOneSettings.PINNED_MODEL_ID
@@ -39,11 +40,33 @@ class LayaSystemOneProvider(
         .followRedirects(HttpClient.Redirect.NEVER)
         .build()
 
+    override fun tokenCounts(claim: String, passage: EvidencePassageForJudgement): List<Int> {
+        requireConfigured()
+        if (claim.isBlank() || passage.text.isBlank()) {
+            throw LayaSystemOneProviderException("Laya System One requires non-empty Atomic Claims and Evidence Passages.")
+        }
+        val response = sendRequest(createRequest(claim, passage, preflight = true))
+        if (response.statusCode() !in 200..299) {
+            throw LayaSystemOneProviderException("Laya System One preflight returned HTTP ${response.statusCode()}.")
+        }
+        val body = try {
+            objectMapper.readTree(response.body())
+        } catch (_: IOException) {
+            throw LayaSystemOneProviderException("Laya System One preflight returned a malformed response.")
+        }
+        val counts = body?.get("tokenCounts")
+        if (body?.path("contextLimit")?.asInt() != LayaSystemOneSettings.MODEL_CONTEXT_TOKENS ||
+            counts == null || !counts.isArray || counts.size() != QUESTION_SEQUENCE_COUNT ||
+            counts.any { !it.isIntegralNumber || !it.canConvertToInt() || it.intValue() < 0 }
+        ) {
+            throw LayaSystemOneProviderException("Laya System One preflight returned unsupported token counts.")
+        }
+        return counts.map { it.intValue() }
+    }
+
     override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult {
         if (request.evidencePassages.isEmpty()) return SemanticJudgementResult(emptyList())
-        if (!settings.isSelectable || settings.endpointUri == null) {
-            throw LayaSystemOneProviderException("Laya System One is not configured as an authenticated local provider.")
-        }
+        requireConfigured()
         if (request.atomicClaim.text.isBlank() || request.evidencePassages.any { it.text.isBlank() }) {
             throw LayaSystemOneProviderException("Laya System One requires non-empty Atomic Claims and Evidence Passages.")
         }
@@ -94,8 +117,13 @@ class LayaSystemOneProvider(
         return node.elements().asSequence().any(::containsContextLimitRejection)
     }
 
-    private fun createRequest(claim: String, passage: EvidencePassageForJudgement): HttpRequest {
+    private fun createRequest(
+        claim: String,
+        passage: EvidencePassageForJudgement,
+        preflight: Boolean = false,
+    ): HttpRequest {
         val endpoint = settings.endpointUri ?: throw LayaSystemOneProviderException("Laya System One endpoint is unavailable.")
+        val requestUri = if (preflight) URI.create("${endpoint.toASCIIString()}/preflight") else endpoint
         val state = linkedMapOf("claim" to claim, "evidence" to passage.text)
         passage.sectionHeading?.takeIf(String::isNotBlank)?.let { state["section"] = it }
         val requestBody = try {
@@ -109,12 +137,18 @@ class LayaSystemOneProvider(
         } catch (_: IOException) {
             throw LayaSystemOneProviderException("Laya System One request could not be encoded.")
         }
-        return HttpRequest.newBuilder(endpoint)
+        return HttpRequest.newBuilder(requestUri)
             .timeout(Duration.ofMillis(settings.requestTimeoutMillis))
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer ${settings.apiKey}")
             .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody))
             .build()
+    }
+
+    private fun requireConfigured() {
+        if (!settings.isSelectable || settings.endpointUri == null) {
+            throw LayaSystemOneProviderException("Laya System One is not configured as an authenticated local provider.")
+        }
     }
 
     private fun sendRequest(request: HttpRequest): HttpResponse<ByteArray> {
@@ -351,6 +385,7 @@ class LayaSystemOneProvider(
         private const val STUDY_DESIGN_QUESTION = "study_design_quality"
         private const val RELEVANCE_QUESTION = "relevance"
         private const val PROBABILITY_SUM_TOLERANCE = 0.02
+        private const val QUESTION_SEQUENCE_COUNT = 6
 
         private val SCORE_LEVEL_LABELS = listOf("none", "low", "moderate", "high", "complete")
         private val JUDGEMENT_VALUES = setOf(

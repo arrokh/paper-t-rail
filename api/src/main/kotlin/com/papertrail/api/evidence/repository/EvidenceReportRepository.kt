@@ -4,6 +4,7 @@ import com.papertrail.api.evidence.report.EvidenceIndexingReport
 import com.papertrail.api.evidence.report.EvidenceJudgementReport
 import com.papertrail.api.evidence.report.EvidencePassageReport
 import com.papertrail.api.evidence.report.EvidenceRetrievalProfileReport
+import com.papertrail.api.evidence.verification.repository.EvidencePassageSpanRepository
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import java.sql.ResultSet
@@ -12,6 +13,7 @@ import java.util.UUID
 @Repository
 class EvidenceReportRepository(
     private val jdbc: JdbcTemplate,
+    private val spanRepository: EvidencePassageSpanRepository,
 ) {
     fun indexingReportsByReference(analysisRunId: UUID): Map<UUID, EvidenceIndexingReport> = jdbc.query(
         """
@@ -61,7 +63,8 @@ class EvidenceReportRepository(
         analysisRunId,
     ).toMap()
 
-    fun passagesByVerification(analysisRunId: UUID): Map<UUID, List<EvidencePassageReport>> = jdbc.query(
+    fun passagesByVerification(analysisRunId: UUID): Map<UUID, List<EvidencePassageReport>> {
+        val passageRows = jdbc.query(
         """
         SELECT candidate.verification_id,
                candidate.id,
@@ -163,7 +166,12 @@ class EvidenceReportRepository(
             )
         },
         analysisRunId,
-    ).groupBy({ it.first }, { it.second })
+    )
+        val spanReports = spanRepository.diagnosticReportsByEvidenceCandidate(passageRows.map { it.second.id }.toSet())
+        return passageRows.map { (verificationId, passage) ->
+            verificationId to passage.copy(diagnosticSpans = spanReports[passage.id].orEmpty())
+        }.groupBy({ it.first }, { it.second })
+    }
 
     private fun ResultSet.toRetrievalProfileReport() = EvidenceRetrievalProfileReport(
         profileId = getString("profile_id"),

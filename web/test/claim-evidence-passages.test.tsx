@@ -54,6 +54,7 @@ const outcome: Verification = {
       relevance: 0.9,
       calibratedStrength: 0.88,
     },
+    diagnosticSpans: [],
     retrievalProfile: {
       profileId: "postgres-hybrid-rrf-v1",
       vectorCandidateLimit: 10,
@@ -155,6 +156,143 @@ describe("Claim Evidence Passages", () => {
 
     expect(screen.getByText(outcome.evidencePassages[0].text)).toBeTruthy();
     expect(screen.getByText("The later study found no improvement in the measured outcome.")).toBeTruthy();
+  });
+
+  it("keeps mixed span judgements as diagnostics under the original passage without a parent result", () => {
+    const parentPassage = outcome.evidencePassages[0];
+    const diagnosticOnly: Verification = {
+      ...outcome,
+      processingStatus: "INCOMPLETE",
+      processingFailureReason: "SYSTEM_ONE_INCOMPLETE",
+      finalStatus: null,
+      aggregatorVersion: null,
+      evidencePassages: [{
+        ...parentPassage,
+        evidenceJudgement: null,
+        diagnosticSpans: [
+          {
+            id: "span-1",
+            spanIndex: 0,
+            coreStartOffset: 0,
+            coreEndOffset: 15,
+            contextStartOffset: 0,
+            contextEndOffset: 15,
+            coreText: "The intervention",
+            contextText: "The intervention",
+            tokenCounts: [900, 910, 920, 930, 940, 950],
+            status: "COMPLETED",
+            failureReason: null,
+            providerId: "laya",
+            modelId: "typed-decisions@pinned",
+            providerVersion: "runtime/mapping",
+            judgementRubricVersion: "weighted-evidence-role-scope-design-v1",
+            splittingPolicyVersion: "laya-sentence-greedy-context-v1",
+            evidenceJudgement: parentPassage.evidenceJudgement,
+          },
+          {
+            id: "span-2",
+            spanIndex: 1,
+            coreStartOffset: 16,
+            coreEndOffset: 30,
+            contextStartOffset: 0,
+            contextEndOffset: 30,
+            coreText: "improved the outcome",
+            contextText: "The intervention improved the outcome",
+            tokenCounts: [901, 911, 921, 931, 941, 951],
+            status: "COMPLETED",
+            failureReason: null,
+            providerId: "laya",
+            modelId: "typed-decisions@pinned",
+            providerVersion: "runtime/mapping",
+            judgementRubricVersion: "weighted-evidence-role-scope-design-v1",
+            splittingPolicyVersion: "laya-sentence-greedy-context-v1",
+            evidenceJudgement: {
+              ...parentPassage.evidenceJudgement!,
+              judgement: "CONTRADICTS",
+            },
+          },
+        ],
+      }],
+    };
+
+    renderPassages(diagnosticOnly);
+    expect(screen.getByText("Machine result unavailable · incomplete pair")).toBeTruthy();
+    expect(screen.queryByText("Machine result: supported")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /span diagnostics only · no parent judgement/ }));
+
+    const diagnostics = screen.getByRole("region", { name: /Diagnostic sentence spans for Evidence Passage passage-1/ });
+    expect(within(diagnostics).getByText("direct support")).toBeTruthy();
+    expect(within(diagnostics).getByText("contradicts")).toBeTruthy();
+    expect(within(diagnostics).getByText(/never combined into a parent Evidence Judgement or final Claim–Paper status/)).toBeTruthy();
+    expect(within(diagnostics).getAllByText("Core source offsets (0-based, end-exclusive):").map((label) => label.parentElement?.textContent)).toEqual(
+      expect.arrayContaining(["Core source offsets (0-based, end-exclusive): 0–15 · The intervention"]),
+    );
+    expect(within(diagnostics).getAllByText("Judged source window (0-based, end-exclusive):").map((label) => label.parentElement?.textContent)).toEqual(
+      expect.arrayContaining(["Judged source window (0-based, end-exclusive): 0–30 · The intervention improved the outcome"]),
+    );
+  });
+
+  it("shows failed required spans as incomplete even while another span is still pending", () => {
+    const parentPassage = outcome.evidencePassages[0];
+    const incomplete: Verification = {
+      ...outcome,
+      processingStatus: "INCOMPLETE",
+      processingFailureReason: "SYSTEM_ONE_INCOMPLETE",
+      finalStatus: null,
+      aggregatorVersion: null,
+      evidencePassages: [{
+        ...parentPassage,
+        evidenceJudgement: null,
+        diagnosticSpans: [
+          {
+            id: "span-failed",
+            spanIndex: 0,
+            coreStartOffset: 0,
+            coreEndOffset: 15,
+            contextStartOffset: 0,
+            contextEndOffset: 15,
+            coreText: "The intervention",
+            contextText: "The intervention",
+            tokenCounts: [900, 910, 920, 930, 940, 950],
+            status: "FAILED",
+            failureReason: "SINGLE_SENTENCE_EXCEEDS_CONTEXT_LIMIT",
+            providerId: "laya",
+            modelId: "typed-decisions@pinned",
+            providerVersion: "runtime/mapping",
+            judgementRubricVersion: "weighted-evidence-role-scope-design-v1",
+            splittingPolicyVersion: "laya-sentence-greedy-context-v1",
+            evidenceJudgement: null,
+          },
+          {
+            id: "span-pending",
+            spanIndex: 1,
+            coreStartOffset: 16,
+            coreEndOffset: 30,
+            contextStartOffset: 0,
+            contextEndOffset: 30,
+            coreText: "improved the outcome",
+            contextText: "The intervention improved the outcome",
+            tokenCounts: [900, 910, 920, 930, 940, 950],
+            status: "PENDING",
+            failureReason: null,
+            providerId: "laya",
+            modelId: "typed-decisions@pinned",
+            providerVersion: "runtime/mapping",
+            judgementRubricVersion: "weighted-evidence-role-scope-design-v1",
+            splittingPolicyVersion: "laya-sentence-greedy-context-v1",
+            evidenceJudgement: null,
+          },
+        ],
+      }],
+    };
+
+    renderPassages(incomplete);
+    fireEvent.click(screen.getByRole("button", { name: /span diagnostics only · no parent judgement/ }));
+
+    const diagnostics = screen.getByRole("region", { name: /Diagnostic sentence spans for Evidence Passage passage-1/ });
+    expect(within(diagnostics).getByText("incomplete")).toBeTruthy();
+    expect(within(diagnostics).getByText(/One or more required spans are missing or incomplete/)).toBeTruthy();
+    expect(within(diagnostics).getByText("Incomplete reason: single sentence exceeds context limit")).toBeTruthy();
   });
 
   it("shows processing failure as an incomplete pair with no fabricated domain status", () => {

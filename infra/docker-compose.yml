@@ -117,8 +117,8 @@ services:
       HF_HOME: /models/hf
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
-    expose:
-      - "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
     volumes:
       - laya_model_data:/models
     healthcheck:

@@ -51,6 +51,10 @@ _Avoid_: sentence when referring to a proposition extracted from a sentence.
 A ranked passage from the exact Cited Paper Asset retrieved for one Atomic Claim × Cited Reference; retrieval makes it a candidate, not a semantic judgement.
 _Avoid_: evidence when referring to a passage whose source or location is not identified.
 
+**Evidence Passage Span**:
+A source-traceable sentence or sentence group within an over-limit Evidence Passage, with its own non-overlapping core range and optional adjacent-sentence context. Its judgement is diagnostic under the parent passage, not a separate Evidence Passage assessment or final Claim–Paper Verification.
+_Avoid_: sub-passage when it obscures the parent relationship or implies an independent assessment.
+
 **Evidence Retrieval Profile**:
 The immutable identity and parameters of the vectorizer, lexical/vector candidate limits, and fusion method used to rank Evidence Passages for an Analysis Run.
 _Avoid_: embedding model alone when referring to the complete reproducible retrieval configuration.

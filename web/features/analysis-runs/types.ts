@@ -12,6 +12,26 @@ export type EvidenceJudgement = {
   calibratedStrength: number;
 };
 
+export type EvidencePassageSpanDiagnostic = {
+  id: string;
+  spanIndex: number;
+  coreStartOffset: number;
+  coreEndOffset: number;
+  contextStartOffset: number;
+  contextEndOffset: number;
+  coreText: string;
+  contextText: string;
+  tokenCounts: number[];
+  status: "PENDING" | "COMPLETED" | "FAILED" | "INCOMPLETE";
+  failureReason: string | null;
+  providerId: string;
+  modelId: string;
+  providerVersion: string;
+  judgementRubricVersion: string;
+  splittingPolicyVersion: string;
+  evidenceJudgement: EvidenceJudgement | null;
+};
+
 export type EvidenceRetrievalProfile = {
   profileId: string;
   vectorCandidateLimit: number;
@@ -81,6 +101,7 @@ export type ClaimReferenceVerificationOutcome = {
     languageDetectorVersion: string;
     retrievalProfile: EvidenceRetrievalProfile;
     evidenceJudgement: EvidenceJudgement | null;
+    diagnosticSpans: EvidencePassageSpanDiagnostic[];
   }>;
   humanReviews: HumanReview[];
 };

@@ -26,7 +26,7 @@ class ReferenceResolutionReportController(
 ) {
     @Operation(
         summary = "Get the Reference Resolution Report",
-        description = "Returns persisted conservative bibliography-resolution results, Canonical Paper identities, configured matching policy, and per-run threshold. Claim and evidence analysis is not implied by a parsed run.",
+        description = "Returns persisted conservative bibliography-resolution results, Canonical Paper identities, configured matching policy, and per-run threshold, plus Claim–Reference outcomes and ranked Evidence Passages. An over-limit passage selected for local Laya evaluation may include ordered sentence-span diagnostics with exact offsets, context overlap, token counts, provenance, and incomplete reasons. Span judgements remain under their immutable parent passage and are never rolled up into a parent Evidence Judgement or final Claim–Paper status; processing-incomplete pairs have no final domain status.",
     )
     @ApiResponses(
         value = [
