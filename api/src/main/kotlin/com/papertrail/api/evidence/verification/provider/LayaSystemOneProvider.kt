@@ -30,7 +30,7 @@ import java.util.concurrent.TimeoutException
 class LayaSystemOneProvider(
     private val settings: LayaSystemOneSettings,
     private val objectMapper: ObjectMapper,
-) : SystemOneProvider, SystemOneRequestPreflight {
+) : LayaEvaluationProvider, SystemOneRequestPreflight {
     override val providerId = LayaSystemOneSettings.PROVIDER_ID
     override val version = LayaSystemOneSettings.PROVIDER_VERSION
     override val modelId = LayaSystemOneSettings.PINNED_MODEL_ID
@@ -64,17 +64,35 @@ class LayaSystemOneProvider(
         return counts.map { it.intValue() }
     }
 
-    override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult {
-        if (request.evidencePassages.isEmpty()) return SemanticJudgementResult(emptyList())
+    override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult =
+        evaluateRequest(request, captureRawResponses = false).result
+
+    override fun evaluateForCalibration(request: SemanticJudgementRequest): LayaEvaluationProvider.Evaluation =
+        evaluateRequest(request, captureRawResponses = true)
+
+    private fun evaluateRequest(
+        request: SemanticJudgementRequest,
+        captureRawResponses: Boolean,
+    ): LayaEvaluationProvider.Evaluation {
+        if (request.evidencePassages.isEmpty()) {
+            return LayaEvaluationProvider.Evaluation(SemanticJudgementResult(emptyList()), emptyMap(), emptyMap())
+        }
         requireConfigured()
         if (request.atomicClaim.text.isBlank() || request.evidencePassages.any { it.text.isBlank() }) {
             throw LayaSystemOneProviderException("Laya System One requires non-empty Atomic Claims and Evidence Passages.")
         }
 
+        val rawResponses = if (captureRawResponses) mutableMapOf<UUID, ByteArray>() else null
+        val tokenUsage = if (captureRawResponses) mutableMapOf<UUID, LayaEvaluationProvider.TokenUsage>() else null
         return try {
-            SemanticJudgementResult(request.evidencePassages.map { passage ->
-                evaluatePassage(request.atomicClaim.text, passage)
-            })
+            val judgements = request.evidencePassages.map { passage ->
+                evaluatePassage(request.atomicClaim.text, passage, rawResponses, tokenUsage)
+            }
+            LayaEvaluationProvider.Evaluation(
+                result = SemanticJudgementResult(judgements),
+                rawResponseBytesByPassageId = rawResponses?.toMap().orEmpty(),
+                tokenUsageByPassageId = tokenUsage?.toMap().orEmpty(),
+            )
         } catch (exception: LayaSystemOneProviderException) {
             throw exception
         } catch (_: Exception) {
@@ -82,14 +100,20 @@ class LayaSystemOneProvider(
         }
     }
 
-    private fun evaluatePassage(claim: String, passage: EvidencePassageForJudgement): EvidenceJudgement {
+    private fun evaluatePassage(
+        claim: String,
+        passage: EvidencePassageForJudgement,
+        rawResponses: MutableMap<UUID, ByteArray>?,
+        tokenUsage: MutableMap<UUID, LayaEvaluationProvider.TokenUsage>?,
+    ): EvidenceJudgement {
         val response = sendRequest(createRequest(claim, passage))
         val body = response.body()
         if (body.size > LayaSystemOneSettings.MAX_RESPONSE_BYTES) {
             throw LayaSystemOneProviderException("Laya System One response exceeded the configured response limit.")
         }
         if (response.statusCode() !in 200..299) {
-            val failureReasonCode = if (response.statusCode() == 422) rejectionReasonCode(body) else null
+            val rejection = if (response.statusCode() == 422) rejectionDetails(body) else null
+            val failureReasonCode = rejection?.failureReasonCode
             val message = when (failureReasonCode) {
                 LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED ->
                     "Laya System One rejected a request that exceeds its context limit."
@@ -97,18 +121,39 @@ class LayaSystemOneProvider(
                     "Laya System One rejected the request before producing a judgement."
                 else -> "Laya System One returned HTTP ${response.statusCode()}."
             }
-            throw LayaSystemOneProviderException(message, failureReasonCode)
+            throw LayaSystemOneProviderException(message, failureReasonCode, rejection?.measuredSequenceTokenCounts.orEmpty())
         }
-        return mapResponse(body, passage.id)
+        val mapped = mapResponse(body, passage.id, requireTokenUsage = tokenUsage != null)
+        rawResponses?.put(passage.id, body.copyOf())
+        tokenUsage?.put(
+            passage.id,
+            mapped.tokenUsage ?: throw LayaSystemOneProviderException("Laya System One evaluation response has no token usage metadata."),
+        )
+        return mapped.judgement
     }
 
-    private fun rejectionReasonCode(body: ByteArray): String {
+    private fun rejectionDetails(body: ByteArray): RejectionDetails {
         val response = runCatching { objectMapper.readTree(body) }.getOrNull()
         return if (containsContextLimitRejection(response)) {
-            LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED
+            RejectionDetails(
+                failureReasonCode = LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED,
+                measuredSequenceTokenCounts = measuredSequenceTokenCounts(response),
+            )
         } else {
-            LayaSystemOneProviderException.REQUEST_REJECTED
+            RejectionDetails(LayaSystemOneProviderException.REQUEST_REJECTED, emptyList())
         }
+    }
+
+    private fun measuredSequenceTokenCounts(node: JsonNode?): List<Int> {
+        if (node == null) return emptyList()
+        val counts = if (node.isTextual) {
+            val encodedCounts = MEASURED_SEQUENCE_TOKEN_COUNTS.find(node.asText())?.groupValues?.getOrNull(1)
+                ?: return emptyList()
+            encodedCounts.split(',').mapNotNull { it.trim().toIntOrNull() }
+        } else {
+            node.elements().asSequence().flatMap { child -> measuredSequenceTokenCounts(child).asSequence() }.toList()
+        }
+        return counts.takeIf { it.size == QUESTION_SEQUENCE_COUNT && it.all { count -> count > 0 } }.orEmpty()
     }
 
     private fun containsContextLimitRejection(node: JsonNode?): Boolean {
@@ -211,7 +256,11 @@ class LayaSystemOneProvider(
             }
         }
 
-    private fun mapResponse(body: ByteArray, evidenceCandidateId: UUID): EvidenceJudgement {
+    private fun mapResponse(
+        body: ByteArray,
+        evidenceCandidateId: UUID,
+        requireTokenUsage: Boolean,
+    ): MappedResponse {
         val response = try {
             objectMapper.readTree(body)
         } catch (_: IOException) {
@@ -222,7 +271,7 @@ class LayaSystemOneProvider(
         ) {
             throw LayaSystemOneProviderException("Laya System One response does not identify the pinned runtime and checkpoint.")
         }
-        validateUsage(response.get("usage"))
+        val tokenUsage = if (requireTokenUsage) validateUsage(response.get("usage")) else null
         val answers = response.get("answers")
         if (answers == null || !answers.isObject || answers.fieldNames().asSequence().toSet() != EXPECTED_ANSWER_IDS) {
             throw LayaSystemOneProviderException("Laya System One response does not contain the supported judgement answers.")
@@ -232,7 +281,7 @@ class LayaSystemOneProvider(
         val roleAnswer = validateChoice(answers.get(ROLE_QUESTION), ROLE_QUESTION, ROLE_VALUES)
         val judgement = EvidenceJudgementKind.valueOf(judgementAnswer.path("choice").asText())
         val evidenceRole = EvidenceRole.valueOf(roleAnswer.path("choice").asText())
-        return EvidenceJudgement(
+        val judgementResult = EvidenceJudgement(
             evidenceCandidateId = evidenceCandidateId,
             judgement = judgement,
             evidenceRole = evidenceRole,
@@ -242,14 +291,19 @@ class LayaSystemOneProvider(
             studyDesignQuality = normalizedScore(answers.get(STUDY_DESIGN_QUESTION), STUDY_DESIGN_QUESTION, STUDY_DESIGN_LEVELS),
             relevance = normalizedScore(answers.get(RELEVANCE_QUESTION), RELEVANCE_QUESTION, RELEVANCE_LEVELS),
         )
+        return MappedResponse(judgementResult, tokenUsage)
     }
 
-    private fun validateUsage(usage: JsonNode?) {
+    private fun validateUsage(usage: JsonNode?): LayaEvaluationProvider.TokenUsage {
         if (usage == null || !usage.isObject || !nonNegativeInteger(usage.get("input_tokens")) ||
-            !nonNegativeInteger(usage.get("output_tokens"))
+            usage.path("input_tokens").longValue() == 0L || !nonNegativeInteger(usage.get("output_tokens"))
         ) {
             throw LayaSystemOneProviderException("Laya System One response contains unsupported usage metadata.")
         }
+        return LayaEvaluationProvider.TokenUsage(
+            inputTokens = usage.path("input_tokens").longValue(),
+            outputTokens = usage.path("output_tokens").longValue(),
+        )
     }
 
     private fun validateChoice(answer: JsonNode?, questionId: String, expectedValues: Set<String>): JsonNode {
@@ -370,6 +424,16 @@ class LayaSystemOneProvider(
         "criteria" to SCORE_LEVEL_LABELS,
     )
 
+    private data class MappedResponse(
+        val judgement: EvidenceJudgement,
+        val tokenUsage: LayaEvaluationProvider.TokenUsage?,
+    )
+
+    private data class RejectionDetails(
+        val failureReasonCode: String,
+        val measuredSequenceTokenCounts: List<Int>,
+    )
+
     companion object {
         const val PROVIDER_ID = LayaSystemOneSettings.PROVIDER_ID
         const val PROVIDER_VERSION = LayaSystemOneSettings.PROVIDER_VERSION
@@ -378,6 +442,7 @@ class LayaSystemOneProvider(
         private const val CONNECT_TIMEOUT_SECONDS = 5L
         private const val LAYA_RUNTIME_MODEL_NAME = "laya-rl-agent"
         private const val CONTEXT_LIMIT_REJECTION_DETAIL = "exceed the 1024-token context limit"
+        private val MEASURED_SEQUENCE_TOKEN_COUNTS = Regex("Measured complete-sequence token counts: ([0-9, ]+)\\.")
         private const val JUDGEMENT_QUESTION = "judgement"
         private const val ROLE_QUESTION = "evidence_role"
         private const val DIRECTNESS_QUESTION = "directness"

@@ -119,6 +119,51 @@ class LayaSystemOneProviderContractTest {
     }
 
     @Test
+    fun `standard provider evaluation remains compatible when token usage metadata is absent`() {
+        val responseWithoutUsage = mapper.readTree(fixtureResponse()) as ObjectNode
+        responseWithoutUsage.remove("usage")
+        LayaTestServer(response = { _, _ -> mapper.writeValueAsString(responseWithoutUsage) }).use { server ->
+            val provider = provider(settings(server.baseUrl))
+            val request = request(listOf(passage("The calibration passage.")))
+
+            assertEquals(EvidenceJudgementKind.DIRECT_SUPPORT, provider.evaluate(request).evidenceJudgements.single().judgement)
+            val evaluationFailure = assertThrows(LayaSystemOneProviderException::class.java) {
+                provider.evaluateForCalibration(request)
+            }
+            assertFalse(evaluationFailure.message.orEmpty().contains("The calibration passage"))
+        }
+    }
+
+    @Test
+    fun `calibration evaluation rejects malformed usage metadata`() {
+        listOf(-1, 0).forEach { inputTokens ->
+            val responseWithInvalidUsage = fixtureResponse { (it.path("usage") as ObjectNode).put("input_tokens", inputTokens) }
+            LayaTestServer(response = { _, _ -> responseWithInvalidUsage }).use { server ->
+                val failure = assertThrows(LayaSystemOneProviderException::class.java) {
+                    provider(settings(server.baseUrl)).evaluateForCalibration(request(listOf(passage("The calibration passage."))))
+                }
+
+                assertFalse(failure.message.orEmpty().contains("The calibration passage"))
+                assertFalse(failure.message.orEmpty().contains(inputTokens.toString()))
+            }
+        }
+    }
+
+    @Test
+    fun `calibration evaluation preserves exact successful provider response bytes`() {
+        val rawResponse = fixtureResponse()
+        LayaTestServer(response = { _, _ -> rawResponse }).use { server ->
+            val passage = passage("The calibration passage.")
+
+            val evaluation = provider(settings(server.baseUrl)).evaluateForCalibration(request(listOf(passage)))
+
+            assertEquals(rawResponse, evaluation.rawResponseBytesByPassageId.getValue(passage.id).toString(StandardCharsets.UTF_8))
+            assertEquals(listOf(passage.id), evaluation.result.evidenceJudgements.map { it.evidenceCandidateId })
+            assertEquals(LayaEvaluationProvider.TokenUsage(inputTokens = 1_000, outputTokens = 0), evaluation.tokenUsageByPassageId.getValue(passage.id))
+        }
+    }
+
+    @Test
     fun `pins checkpoint runtime mapping and endpoint fingerprint without persisting credentials`() {
         LayaTestServer(response = { _, _ -> fixtureResponse() }).use { server ->
             val settings = settings(server.baseUrl, apiKey = "private-sidecar-key")
@@ -235,8 +280,6 @@ class LayaSystemOneProviderContractTest {
             fixtureResponse { (it.path("answers").path("judgement") as ObjectNode).put("confidence", 1.1) },
             fixtureResponse { (it.path("answers").path("directness").path("legend") as ObjectNode).put("0", "unexpected") },
             fixtureResponse { (it.path("answers").path("directness") as ObjectNode).put("score", 5.0) },
-            fixtureResponse { (it.path("usage") as ObjectNode).put("input_tokens", -1) },
-            fixtureResponse { (it.path("usage") as ObjectNode).replace("input_tokens", mapper.readTree("18446744073709551616")) },
             mapper.writeValueAsString(fixtureNode().deepCopy<JsonNode>().also {
                 val answers = it.path("answers") as ObjectNode
                 (answers.path("judgement") as ObjectNode).put("choice", "NOT_A_JUDGEMENT")
@@ -257,7 +300,7 @@ class LayaSystemOneProviderContractTest {
     @Test
     fun `classifies an over-limit HTTP 422 without exposing its response body`() {
         LayaTestServer(
-            { _, _ -> """{"detail":"Complete state and questions exceed the 1024-token context limit."}""" },
+            { _, _ -> """{"detail":"Complete state and questions exceed the 1024-token context limit. Measured complete-sequence token counts: 1178, 1024, 1025, 900, 901, 902."}""" },
             status = 422,
         ).use { server ->
             val failure = assertThrows(LayaSystemOneProviderException::class.java) {
@@ -265,9 +308,25 @@ class LayaSystemOneProviderContractTest {
             }
 
             assertEquals(LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED, failure.failureReasonCode)
+            assertEquals(listOf(1_178, 1_024, 1_025, 900, 901, 902), failure.measuredSequenceTokenCounts)
             assertFalse(failure.message.orEmpty().contains("candidate passage"))
             assertFalse(failure.message.orEmpty().contains("Complete state and questions"))
             assertEquals(1, server.requests.size)
+        }
+    }
+
+    @Test
+    fun `does not preserve partial context measurements as complete sequence counts`() {
+        LayaTestServer(
+            { _, _ -> """{"detail":"Complete state and questions exceed the 1024-token context limit. Measured complete-sequence token counts: 1178, 1024, 1025."}""" },
+            status = 422,
+        ).use { server ->
+            val failure = assertThrows(LayaSystemOneProviderException::class.java) {
+                provider(settings(server.baseUrl)).evaluate(request(listOf(passage("candidate passage"))))
+            }
+
+            assertEquals(LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED, failure.failureReasonCode)
+            assertTrue(failure.measuredSequenceTokenCounts.isEmpty())
         }
     }
 
