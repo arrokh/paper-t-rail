@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   availableProviderSelections,
   consentRequirements,
-  createRunConfiguration,
   DEFAULT_PROVIDER_SELECTIONS,
+  createRunConfiguration,
   missingConsents,
   retainRequiredApprovals,
   selectableProviderOptions,
@@ -148,7 +148,7 @@ function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
 
-test("local configuration defaults to Laya when it is available", () => {
+test("new-run preferences default to local Laya when exposed and mock otherwise", () => {
   const directoryWithLaya = {
     ...directory,
     providers: {
@@ -159,8 +159,8 @@ test("local configuration defaults to Laya when it is available", () => {
           role: "systemOne",
           providerId: "laya",
           displayName: "Laya System One (local evaluation)",
-          version: "laya-serve-pinned",
-          model: "typed-decisions",
+          version: "laya-serve-0.3.20@23a17522aa4942da6cce53a995a275760320b691/pt-ej-v1",
+          model: "convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3",
           trustBoundary: "LOCAL",
           dataCategories: ["atomic_claims", "evidence_passages"],
           retentionDisclosure: null,
@@ -169,8 +169,82 @@ test("local configuration defaults to Laya when it is available", () => {
     },
   };
 
-  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "mock");
-  assert.equal(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "laya");
+  assert.deepEqual(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS), {
+    ...localSelections,
+    systemOneProvider: "laya",
+    scholarlyMetadataProvider: "crossref",
+    openAccessProvider: "unpaywall",
+  });
+  assert.deepEqual(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS), {
+    ...localSelections,
+    scholarlyMetadataProvider: "crossref",
+    openAccessProvider: "unpaywall",
+  });
+});
+
+test("new-run preferences explicitly fall back to safe providers when preferred providers are unavailable", () => {
+  const safeDirectory = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      scholarlyMetadata: directory.providers.scholarlyMetadata.filter(({ providerId }) => providerId !== "crossref"),
+      openAccess: directory.providers.openAccess.filter(({ providerId }) => providerId !== "unpaywall"),
+    },
+  };
+  const selections = availableProviderSelections(safeDirectory, DEFAULT_PROVIDER_SELECTIONS);
+
+  assert.deepEqual(selections, localSelections);
+});
+
+test("unavailable selections reconcile to the intended fallback instead of directory ordering", () => {
+  const recordedMetadata = directory.providers.scholarlyMetadata.find(({ providerId }) => providerId === "recorded-fixtures");
+  const recordedOpenAccess = directory.providers.openAccess.find(({ providerId }) => providerId === "recorded-fixtures");
+  const reorderedDirectory = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      scholarlyMetadata: [
+        { ...recordedMetadata, providerId: "another-local-provider" },
+        recordedMetadata,
+      ],
+      openAccess: [
+        { ...recordedOpenAccess, providerId: "another-local-provider" },
+        recordedOpenAccess,
+      ],
+    },
+  };
+
+  assert.deepEqual(
+    availableProviderSelections(reorderedDirectory, DEFAULT_PROVIDER_SELECTIONS),
+    localSelections,
+  );
+});
+
+test("Laya is not preferred unless the selectable provider is locally executed", () => {
+  const externalLayaDirectory = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      systemOne: [
+        ...directory.providers.systemOne,
+        {
+          ...directory.providers.systemOne[0],
+          providerId: "laya",
+          trustBoundary: "EXTERNAL",
+          dataCategories: ["atomic_claims", "evidence_passages"],
+          retentionDisclosure: "Reviewed disclosure.",
+        },
+      ],
+    },
+  };
+
+  assert.equal(
+    availableProviderSelections(externalLayaDirectory, {
+      ...DEFAULT_PROVIDER_SELECTIONS,
+      systemOneProvider: "laya",
+    }).systemOneProvider,
+    "mock",
+  );
 });
 
 test("provider selections fall back to an available open-access provider", () => {
