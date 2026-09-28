@@ -14,7 +14,7 @@ export type ProviderSelections = {
 export const DEFAULT_PROVIDER_SELECTIONS: ProviderSelections = {
   claimExtractorProvider: "heuristic",
   embeddingProvider: "local",
-  systemOneProvider: "mock",
+  systemOneProvider: "laya",
   scholarlyMetadataProvider: "crossref",
   openAccessProvider: "unpaywall",
 };

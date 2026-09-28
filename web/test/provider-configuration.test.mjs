@@ -148,7 +148,7 @@ function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
 
-test("new-run preferences keep mock as the System One default while local Laya remains selectable", () => {
+test("new-run preferences default to local Laya when exposed and mock otherwise", () => {
   const directoryWithLaya = {
     ...directory,
     providers: {
@@ -171,17 +171,15 @@ test("new-run preferences keep mock as the System One default while local Laya r
 
   assert.deepEqual(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS), {
     ...localSelections,
+    systemOneProvider: "laya",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
-  assert.equal(
-    availableProviderSelections(directoryWithLaya, {
-      ...DEFAULT_PROVIDER_SELECTIONS,
-      systemOneProvider: "laya",
-    }).systemOneProvider,
-    "laya",
-  );
-  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "mock");
+  assert.deepEqual(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS), {
+    ...localSelections,
+    scholarlyMetadataProvider: "crossref",
+    openAccessProvider: "unpaywall",
+  });
 });
 
 test("new-run preferences explicitly fall back to safe providers when preferred providers are unavailable", () => {

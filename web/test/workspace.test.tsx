@@ -164,12 +164,9 @@ describe("interactive workspace remote state", () => {
     const { container } = renderWorkspace();
     await screen.findByText("Crossref REST API data access");
     const evidenceAssessment = screen.getByLabelText("Evidence assessment") as HTMLSelectElement;
-    expect(evidenceAssessment.value).toBe("mock");
+    expect(evidenceAssessment.value).toBe("laya");
     expect((screen.getByLabelText("Bibliography resolution") as HTMLSelectElement).value).toBe("crossref");
     expect((screen.getByLabelText("Cited full-text access") as HTMLSelectElement).value).toBe("unpaywall");
-
-    fireEvent.change(evidenceAssessment, { target: { value: "laya" } });
-    expect(evidenceAssessment.value).toBe("laya");
 
     const externalApprovals = screen.getAllByRole("checkbox");
     expect(externalApprovals).toHaveLength(4);
