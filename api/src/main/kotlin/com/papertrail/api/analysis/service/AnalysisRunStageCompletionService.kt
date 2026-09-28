@@ -2,6 +2,7 @@ package com.papertrail.api.analysis.service
 
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
 import com.papertrail.api.document.service.lockActiveAnalysisRun
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
@@ -112,6 +113,35 @@ class AnalysisRunStageCompletionService(
             Boolean::class.java,
             analysisRunId,
         ) == true
+        val layaAggregationMode = jdbc.queryForObject(
+            """
+            SELECT CASE
+                     WHEN configuration_snapshot #>> '{systemOne,provider}' = ?
+                      AND configuration_snapshot #>> '{aggregation,executionStatus}' = 'NOT_RUN' THEN 'JUDGEMENT_ONLY'
+                     WHEN configuration_snapshot #>> '{systemOne,provider}' = ?
+                      AND configuration_snapshot #>> '{aggregation,executionStatus}' = 'PENDING' THEN 'LOCAL_AGGREGATION'
+                     ELSE 'NONE'
+                   END
+              FROM analysis_runs
+             WHERE id = ?
+            """.trimIndent(),
+            String::class.java,
+            LayaSystemOneSettings.PROVIDER_ID,
+            LayaSystemOneSettings.PROVIDER_ID,
+            analysisRunId,
+        ) ?: "NONE"
+        val layaEvaluationOnly = layaAggregationMode == "JUDGEMENT_ONLY"
+        val localLayaAggregation = layaAggregationMode == "LOCAL_AGGREGATION"
+        val layaJudgementCount = if (layaEvaluationOnly || localLayaAggregation) {
+            jdbc.queryForObject(
+                "SELECT count(*) FROM evidence_judgements WHERE analysis_run_id = ? AND system_one_provider = ?",
+                Long::class.java,
+                analysisRunId,
+                LayaSystemOneSettings.PROVIDER_ID,
+            ) ?: 0L
+        } else {
+            0L
+        }
         if (verificationPipelineConfigured) markOrphanedPendingVerifications(analysisRunId)
         val verificationCounts = jdbc.queryForObject(
             """
@@ -123,9 +153,20 @@ class AnalysisRunStageCompletionService(
             { rs, _ -> VerificationCounts(rs.getInt("total"), rs.getInt("completed"), rs.getInt("incomplete")) },
             analysisRunId,
         ) ?: VerificationCounts(0, 0, 0)
+        val failedLayaEvaluationCount = if (layaEvaluationOnly) {
+            jdbc.queryForObject(
+                "SELECT count(*) FROM claim_paper_verifications WHERE analysis_run_id = ? AND processing_status = 'FAILED'",
+                Long::class.java,
+                analysisRunId,
+            ) ?: 0L
+        } else {
+            0L
+        }
         val atomicClaims = parsed.citationContexts.flatMap { it.atomicClaims }
         val inferredClaimTargetLinkCount = atomicClaims.sumOf { it.citationTargets.size }
-        val warning = failedTaskCount > 0 || (verificationPipelineConfigured && verificationCounts.incomplete > 0)
+        val warning = failedTaskCount > 0 ||
+            (verificationPipelineConfigured && verificationCounts.incomplete > 0) ||
+            (layaEvaluationOnly && failedLayaEvaluationCount > 0)
         val finalStatus = when {
             verificationPipelineConfigured && warning -> "COMPLETED_WITH_WARNINGS"
             verificationPipelineConfigured -> "COMPLETED"
@@ -133,9 +174,17 @@ class AnalysisRunStageCompletionService(
             else -> "PARSED"
         }
         val progressMessage = when {
+            localLayaAggregation && warning -> "Local Laya aggregation used $layaJudgementCount uncalibrated Laya Evidence Judgement(s) and experimental thresholds, but ${verificationCounts.incomplete} Claim–Reference Verification pair(s) are incomplete. Results are not production-calibrated."
+            localLayaAggregation -> "Local Laya aggregation completed for ${verificationCounts.total} Claim–Reference Verification pair(s) using $layaJudgementCount uncalibrated Laya Evidence Judgement(s) and experimental thresholds. Results are not human-reviewed or production-approved."
             verificationPipelineConfigured && warning -> "The Evidence Coverage Report is ready, but ${verificationCounts.incomplete} Claim–Reference Verification pair(s) are incomplete after processing failures."
             verificationPipelineConfigured -> "The Evidence Coverage Report is complete for ${verificationCounts.total} Claim–Reference Verification pair(s)."
+            layaEvaluationOnly && warning && failedLayaEvaluationCount > 0 && layaJudgementCount > 0 -> "Laya produced $layaJudgementCount uncalibrated Evidence Judgement(s), but $failedLayaEvaluationCount Claim–Reference pair(s) could not be judged; final Claim–Paper Verification remains NOT_RUN."
+            layaEvaluationOnly && warning && failedLayaEvaluationCount > 0 -> "Laya evaluation left $failedLayaEvaluationCount Claim–Reference pair(s) unjudged; final Claim–Paper Verification remains NOT_RUN."
+            layaEvaluationOnly && warning && layaJudgementCount > 0 -> "Laya produced $layaJudgementCount uncalibrated Evidence Judgement(s), but $failedTaskCount pipeline task(s) failed; final Claim–Paper Verification remains NOT_RUN."
+            layaEvaluationOnly && warning -> "Laya evaluation was incomplete because $failedTaskCount pipeline task(s) failed; final Claim–Paper Verification remains NOT_RUN."
             warning -> "Parsed structure is ready, but $failedTaskCount reference-resolution, cited-paper access, or Evidence Passage indexing task(s) failed; semantic verification has not run."
+            layaEvaluationOnly && layaJudgementCount > 0 -> "Laya produced $layaJudgementCount uncalibrated Evidence Judgement(s); final Claim–Paper Verification remains NOT_RUN."
+            layaEvaluationOnly -> "Laya is selected for evaluation, but no eligible full-text Evidence Passage was available; no Laya judgement was produced and final verification remains NOT_RUN."
             else -> "Parsed structure and reference resolution are ready; semantic verification was not configured for this Analysis Run."
         }
         val updated = jdbc.update(

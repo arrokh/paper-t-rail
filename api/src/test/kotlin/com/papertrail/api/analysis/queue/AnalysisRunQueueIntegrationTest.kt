@@ -36,11 +36,16 @@ import com.papertrail.api.review.repository.HumanReviewRepository
 import com.papertrail.api.review.repository.JdbcHumanReviewRepository
 import com.papertrail.api.review.service.HumanReviewService
 import com.papertrail.api.scholarly.acquisition.domain.TerminalVerificationStatus
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneProviderException
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.MockSystemOneProvider
 import com.papertrail.api.evidence.verification.provider.SystemOneProvider
 import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementRequest
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementResult
+import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
+import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
+import com.papertrail.api.evidence.verification.domain.EvidenceRole
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.evidence.verification.repository.JdbcClaimReferenceVerificationRepository
 import com.papertrail.api.evidence.verification.repository.EvidenceJudgementRepository
@@ -1236,6 +1241,160 @@ class AnalysisRunQueueIntegrationTest {
         assertTrue(reference.verificationOutcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
         assertTrue(reference.verificationOutcomes.all { it.verificationScope == "NONE" })
         assertTrue(reference.verificationOutcomes.all { it.terminalReason == "LANGUAGE_UNSUPPORTED" })
+    }
+
+    @Test
+    fun `runs selected Laya for eligible passages when local aggregation is disabled`() {
+        val (analysisRunId, layaCallCount) = runLayaPipeline(localLayaAggregationEnabled = false)
+        val report = referenceResolutionService().report(analysisRunId)!!
+        val reference = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }
+        val passages = reference.verificationOutcomes.flatMap { it.evidencePassages }
+
+        assertTrue(layaCallCount > 0)
+        assertTrue(passages.any { it.evidenceJudgement?.providerId == LayaSystemOneSettings.PROVIDER_ID })
+        assertEquals("PARSED", report.runStatus)
+        assertEquals("NOT_RUN", report.evidenceCoverage.executionStatus)
+        assertTrue(reference.verificationOutcomes.filter { it.verificationScope == "FULL_TEXT" }
+            .all { it.finalStatus == null })
+        assertTrue(jdbc.queryForObject(
+            "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            analysisRunId,
+        )!!.contains("uncalibrated Evidence Judgement"))
+        assertEquals(
+            layaCallCount.toLong(),
+            jdbc.queryForObject(
+                "SELECT count(*) FROM evidence_judgements WHERE analysis_run_id = ? AND system_one_provider = ?",
+                Long::class.java,
+                analysisRunId,
+                LayaSystemOneSettings.PROVIDER_ID,
+            ),
+        )
+    }
+
+    @Test
+    fun `records a Laya context-limit rejection as an incomplete pair without retrying the request`() {
+        val (analysisRunId, layaCallCount) = runLayaPipeline(
+            localLayaAggregationEnabled = false,
+            providerFailureReasonCode = LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED,
+        )
+        val report = referenceResolutionService().report(analysisRunId)!!
+        val failedPairs = report.referenceResolution.entries.flatMap { it.verificationOutcomes }
+            .filter { it.processingFailureReason == LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED }
+        val progressMessage = jdbc.queryForObject(
+            "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            analysisRunId,
+        )!!
+
+        assertTrue(layaCallCount > 0)
+        assertEquals(layaCallCount, failedPairs.size)
+        assertEquals("COMPLETED_WITH_WARNINGS", report.runStatus)
+        assertEquals("NOT_RUN", report.evidenceCoverage.executionStatus)
+        assertTrue(progressMessage.contains("pair(s) unjudged"))
+        assertTrue(failedPairs.isNotEmpty())
+        assertTrue(failedPairs.all { it.finalStatus == null })
+        assertEquals(0L, jdbc.queryForObject(
+            "SELECT count(*) FROM evidence_judgements WHERE analysis_run_id = ? AND system_one_provider = ?",
+            Long::class.java,
+            analysisRunId,
+            LayaSystemOneSettings.PROVIDER_ID,
+        ))
+    }
+
+    @Test
+    fun `explicit local Laya aggregation persists final statuses and labels them experimental`() {
+        val (analysisRunId, layaCallCount) = runLayaPipeline(localLayaAggregationEnabled = true)
+        val report = referenceResolutionService().report(analysisRunId)!!
+        val reference = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }
+        val semanticOutcomes = reference.verificationOutcomes.filter { it.verificationScope == "FULL_TEXT" }
+
+        assertTrue(layaCallCount > 0)
+        assertEquals("COMPLETED", report.runStatus)
+        assertEquals("COMPLETED", report.evidenceCoverage.executionStatus)
+        assertEquals(0.8, report.evidenceCoverage.thresholds?.get("directSupport"))
+        assertEquals(0.7, report.evidenceCoverage.thresholds?.get("partialSupport"))
+        assertEquals(0.8, report.evidenceCoverage.thresholds?.get("contradiction"))
+        assertEquals(0.08, report.evidenceCoverage.thresholds?.get("comparabilityMargin"))
+        assertTrue(semanticOutcomes.isNotEmpty())
+        assertTrue(semanticOutcomes.all { it.processingStatus == "COMPLETED" && it.finalStatus == "SUPPORTED" })
+        assertTrue(jdbc.queryForObject(
+            "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            analysisRunId,
+        )!!.contains("uncalibrated Laya"))
+        assertEquals(
+            layaCallCount.toLong(),
+            jdbc.queryForObject(
+                "SELECT count(*) FROM evidence_judgements WHERE analysis_run_id = ? AND system_one_provider = ?",
+                Long::class.java,
+                analysisRunId,
+                LayaSystemOneSettings.PROVIDER_ID,
+            ),
+        )
+    }
+
+    private fun runLayaPipeline(
+        localLayaAggregationEnabled: Boolean,
+        providerFailureReasonCode: String? = null,
+    ): Pair<UUID, Int> {
+        val layaSettings = LayaSystemOneSettings(
+            enabled = true,
+            baseUrl = "http://127.0.0.1:8000",
+            apiKey = "test-sidecar-key",
+            trustedHosts = setOf("127.0.0.1"),
+        )
+        val layaCatalog = ProviderCatalog.safeDefaults(layaSystemOneSettings = layaSettings)
+        val configured = configurationFactory(
+            providerCatalog = layaCatalog,
+            localLayaAggregationEnabled = localLayaAggregationEnabled,
+        ).from(RunConfigurationRequest(systemOneProvider = LayaSystemOneSettings.PROVIDER_ID))
+        val configuration = if (localLayaAggregationEnabled) configured else {
+            configured.copy(aggregation = AggregationPolicySnapshot("NOT_RUN", null, null, null))
+        }
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val layaCalls = AtomicInteger()
+        val layaProvider = object : SystemOneProvider {
+            override val providerId = LayaSystemOneSettings.PROVIDER_ID
+            override val version = LayaSystemOneSettings.PROVIDER_VERSION
+            override val modelId = LayaSystemOneSettings.PINNED_MODEL_ID
+
+            override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult {
+                if (providerFailureReasonCode != null) {
+                    layaCalls.incrementAndGet()
+                    throw LayaSystemOneProviderException("Test provider rejected the request.", providerFailureReasonCode)
+                }
+                return SemanticJudgementResult(request.evidencePassages.map { passage ->
+                    layaCalls.incrementAndGet()
+                    EvidenceJudgement(
+                        evidenceCandidateId = passage.id,
+                        judgement = EvidenceJudgementKind.DIRECT_SUPPORT,
+                        evidenceRole = EvidenceRole.PRIMARY_FINDING,
+                        confidence = 0.8,
+                        directness = 0.8,
+                        claimScopeMatch = 0.8,
+                        studyDesignQuality = 0.8,
+                        relevance = 0.8,
+                    )
+                })
+            }
+        }
+        val resolutionService = referenceResolutionService()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler(resolutionService = resolutionService).handle(documentEvent)
+
+        processReferenceResolutionEvents(
+            analysisRunId = created.analysisRunId,
+            resolutionService = resolutionService,
+            systemOneProvider = layaProvider,
+            providerCatalog = layaCatalog,
+        )
+        return created.analysisRunId to layaCalls.get()
     }
 
     @Test
@@ -2443,6 +2602,7 @@ class AnalysisRunQueueIntegrationTest {
     private fun configurationFactory(
         providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
         maxClaimCitationPairs: Int = ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
+        localLayaAggregationEnabled: Boolean = false,
     ) = RunConfigurationFactory(
         objectMapper = objectMapper,
         providerCatalog = providerCatalog,
@@ -2459,6 +2619,7 @@ class AnalysisRunQueueIntegrationTest {
             maxClaimCitationPairs = maxClaimCitationPairs,
         ),
         evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
+        localLayaAggregationEnabled = localLayaAggregationEnabled,
     )
 
     private fun claimReferenceVerificationRepository(): ClaimReferenceVerificationRepository = JdbcClaimReferenceVerificationRepository(jdbc)
@@ -2549,6 +2710,7 @@ class AnalysisRunQueueIntegrationTest {
         parser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
         systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
         embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
+        providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
     ): CitedPaperIndexingRequestedHandler {
         val repository = EvidenceRetrievalRepository(
             jdbc,
@@ -2572,7 +2734,7 @@ class AnalysisRunQueueIntegrationTest {
             EvidenceVerificationService(
                 jdbc,
                 objectMapper,
-                ProviderCallGate(ProviderCatalog.safeDefaults()),
+                ProviderCallGate(providerCatalog),
                 listOf(systemOneProvider),
                 EvidenceJudgementRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
                 claimReferenceVerificationRepository(),
@@ -2601,6 +2763,8 @@ class AnalysisRunQueueIntegrationTest {
         citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
         embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
+        systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
+        providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -2617,6 +2781,8 @@ class AnalysisRunQueueIntegrationTest {
             citedPaperParser,
             resolutionService,
             embeddingProviders,
+            systemOneProvider,
+            providerCatalog,
         )
     }
 
@@ -2627,6 +2793,8 @@ class AnalysisRunQueueIntegrationTest {
         citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
         embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
+        systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
+        providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -2649,7 +2817,9 @@ class AnalysisRunQueueIntegrationTest {
         val indexingHandler = citedPaperIndexingEventHandler(
             resolutionService = resolutionService,
             parser = citedPaperParser,
+            systemOneProvider = systemOneProvider,
             embeddingProviders = embeddingProviders,
+            providerCatalog = providerCatalog,
         )
         indexingEvents.forEach(indexingHandler::handle)
     }

@@ -120,6 +120,16 @@ class JdbcClaimReferenceVerificationRepository(
         verificationId,
     ) == 1
 
+    override fun failVerification(verificationId: UUID, reason: String): Boolean = jdbc.update(
+        """
+        UPDATE claim_paper_verifications
+           SET processing_status = 'FAILED', processing_failure_reason = ?, updated_at = now()
+         WHERE id = ? AND processing_status = 'PENDING' AND verification_scope = 'FULL_TEXT'
+        """.trimIndent(),
+        reason,
+        verificationId,
+    ) == 1
+
     override fun failReference(analysisRunId: UUID, bibliographyEntryId: UUID, reason: String) {
         failPending(analysisRunId, bibliographyEntryId, reason, null)
     }

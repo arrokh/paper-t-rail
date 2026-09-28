@@ -4,6 +4,7 @@ import {
   availableProviderSelections,
   consentRequirements,
   createRunConfiguration,
+  DEFAULT_PROVIDER_SELECTIONS,
   missingConsents,
   retainRequiredApprovals,
   selectableProviderOptions,
@@ -146,6 +147,31 @@ const localSelections = {
 function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
+
+test("local configuration defaults to Laya when it is available", () => {
+  const directoryWithLaya = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      systemOne: [
+        ...directory.providers.systemOne,
+        {
+          role: "systemOne",
+          providerId: "laya",
+          displayName: "Laya System One (local evaluation)",
+          version: "laya-serve-pinned",
+          model: "typed-decisions",
+          trustBoundary: "LOCAL",
+          dataCategories: ["atomic_claims", "evidence_passages"],
+          retentionDisclosure: null,
+        },
+      ],
+    },
+  };
+
+  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "mock");
+  assert.equal(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "laya");
+});
 
 test("provider selections fall back to an available open-access provider", () => {
   const selections = availableProviderSelections(directory, selectionsWith({

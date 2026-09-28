@@ -1,17 +1,30 @@
-COMPOSE = docker compose -f infra/docker-compose.yml
+COMPOSE = docker compose --env-file "$$(if [ -f .env ]; then printf .env; else printf .env.example; fi)" -f infra/docker-compose.yml
 MISE = mise exec --
 # Keep command-line CHANGE data out of shell source text in the revert target.
 export CHANGE
 
-.PHONY: dev infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-web lint-web typecheck-web build-web calibrate benchmark-processing validate
+.PHONY: dev dev-laya dev-app infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya validate
 
-dev: infra-up migrate
+dev: dev-app
+
+dev-app: dev-laya
 	$(COMPOSE) up -d --build api worker web
+
+dev-laya: migrate
+	@set -eu; \
+	laya_enabled=$$(python3 scripts/prepare_local_laya_env.py --enabled-only); \
+	if [ "$$laya_enabled" = true ]; then \
+		echo 'Preparing and starting the local Laya sidecar (first run downloads the pinned model).'; \
+		$(COMPOSE) --profile laya-evaluation run --rm laya-model-download; \
+		$(COMPOSE) --profile laya-evaluation up -d --build --wait laya; \
+	else \
+		echo 'LAYA_ENABLED=false; skipping the optional Laya sidecar.'; \
+	fi
 
 infra-up:
 	$(COMPOSE) up -d postgres redis minio
 
-migrate:
+migrate: infra-up
 	set -a; if [ -f .env ]; then . ./.env; fi; set +a; $(COMPOSE) --profile migration run --rm sqitch deploy "db:pg://$${POSTGRES_USER:-papertrail}:$${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/$${POSTGRES_DB:-papertrail}"
 
 # Print each Sqitch event oldest-first as ID, local timestamp/action, and title.
@@ -38,16 +51,33 @@ verify-db:
 	set -a; if [ -f .env ]; then . ./.env; fi; set +a; $(COMPOSE) --profile migration run --rm sqitch verify "db:pg://$${POSTGRES_USER:-papertrail}:$${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/$${POSTGRES_DB:-papertrail}"
 
 infra-down:
-	$(COMPOSE) down
+	$(COMPOSE) --profile laya-evaluation down
 
 # Destructive: removes all local documents, runs, queue state, and stored objects.
 clean:
-	$(COMPOSE) down --volumes --remove-orphans
+	$(COMPOSE) --profile laya-evaluation down --volumes --remove-orphans
 
-test: test-api test-web lint-web typecheck-web build-web calibrate
+test: test-api test-laya test-web lint-web typecheck-web build-web calibrate
 
 test-api:
 	cd api && $(MISE) ./gradlew test
+
+test-laya:
+	python3 -m unittest discover -s infra/laya -p 'test_*.py' -v
+
+laya-up: dev-laya
+	@set -eu; \
+	laya_enabled=$$(python3 scripts/prepare_local_laya_env.py --enabled-only); \
+	if [ "$$laya_enabled" != true ]; then \
+		echo 'Set LAYA_ENABLED=true in .env to start the optional Laya sidecar.' >&2; exit 1; \
+	fi
+	$(COMPOSE) up -d --build --force-recreate api worker
+
+laya-model-download:
+	$(COMPOSE) --profile laya-evaluation run --rm laya-model-download
+
+benchmark-laya:
+	$(COMPOSE) --profile laya-evaluation exec -T laya python /app/benchmark_runtime.py
 
 test-web:
 	cd web && $(MISE) pnpm test

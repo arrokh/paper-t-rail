@@ -7,6 +7,7 @@ import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.EMBEDDING_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
+import com.papertrail.api.infrastructure.providers.ProviderNotSelectableException
 import com.papertrail.api.infrastructure.providers.ProviderRegistration
 import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
 import com.papertrail.api.infrastructure.providers.OPEN_ACCESS_ROLE
@@ -17,6 +18,7 @@ import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 
 class RunConfigurationFactory(
     private val objectMapper: ObjectMapper,
@@ -33,6 +35,8 @@ class RunConfigurationFactory(
     private val finalCandidateLimit: Int = 5,
     private val reciprocalRankFusionConstant: Int = 60,
     private val evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
+    private val localLayaAggregationEnabled: Boolean = false,
+    private val defaultSystemOneProvider: String = "mock",
 ) {
     init {
         require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
@@ -45,6 +49,10 @@ class RunConfigurationFactory(
         }
         require(reciprocalRankFusionConstant > 0) { "Reciprocal-rank fusion constant must be positive." }
         require(limits.maxClaimCitationPairs > 0) { "The claim-citation pair limit must be positive." }
+        require(defaultSystemOneProvider.isNotBlank()) { "Default System One provider must be configured." }
+        require(!localLayaAggregationEnabled || evidenceAggregationThresholds != null) {
+            "Local Laya aggregation requires explicitly configured thresholds."
+        }
     }
 
     fun parseRequest(node: JsonNode?): RunConfigurationRequest {
@@ -56,6 +64,13 @@ class RunConfigurationFactory(
         fun provider(name: String, default: String): String {
             val value = node.get(name) ?: return default
             require(value.isTextual && value.asText().isNotBlank()) { "Analysis configuration field '$name' must be a non-empty string." }
+            return value.asText()
+        }
+        fun optionalSystemOneProvider(): String? {
+            val value = node.get("systemOneProvider") ?: return null
+            require(value.isTextual && value.asText().isNotBlank()) {
+                "Analysis configuration field 'systemOneProvider' must be a non-empty string."
+            }
             return value.asText()
         }
         val providerConsents = node.get("externalProviderConsents")?.let { consents ->
@@ -80,18 +95,30 @@ class RunConfigurationFactory(
         return RunConfigurationRequest(
             claimExtractorProvider = provider("claimExtractorProvider", "heuristic"),
             embeddingProvider = provider("embeddingProvider", "local"),
-            systemOneProvider = provider("systemOneProvider", "mock"),
+            systemOneProvider = optionalSystemOneProvider(),
             scholarlyMetadataProvider = provider("scholarlyMetadataProvider", "recorded-fixtures"),
             openAccessProvider = provider("openAccessProvider", "recorded-fixtures"),
             externalProviderConsents = providerConsents,
         )
     }
 
+    /** Omitted Laya defaults fall back only when Laya is not selectable; explicit choices fail closed. */
+    private fun defaultSystemOneRegistration(requestedProvider: String?): ProviderRegistration {
+        if (requestedProvider != null) return providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, requestedProvider)
+
+        return try {
+            providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, defaultSystemOneProvider)
+        } catch (exception: ProviderNotSelectableException) {
+            if (defaultSystemOneProvider != LayaSystemOneSettings.PROVIDER_ID) throw exception
+            providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, "mock")
+        }
+    }
+
     fun from(request: RunConfigurationRequest): AnalysisConfigurationSnapshot {
         val selected = listOf(
             providerCatalog.requireSelectable(CLAIM_EXTRACTOR_ROLE, request.claimExtractorProvider),
             providerCatalog.requireSelectable(EMBEDDING_ROLE, request.embeddingProvider),
-            providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, request.systemOneProvider),
+            defaultSystemOneRegistration(request.systemOneProvider),
             providerCatalog.requireSelectable(SCHOLARLY_METADATA_ROLE, request.scholarlyMetadataProvider),
             providerCatalog.requireSelectable(OPEN_ACCESS_ROLE, request.openAccessProvider),
         )
@@ -108,6 +135,7 @@ class RunConfigurationFactory(
         }
         val embeddingSelection = selected[1].toSelection()
         val embeddingProfile = EmbeddingProfile.from(embeddingSelection)
+        val aggregationThresholds = aggregationThresholdsFor(selected[2].providerId)
         val consentSnapshots = requiredConsents.map { (providerId, requiredCategories) ->
             val consent = suppliedConsents.getValue(providerId)
             val suppliedCategories = consent.dataCategories.map { id ->
@@ -148,13 +176,18 @@ class RunConfigurationFactory(
                 confidenceThreshold = referenceResolutionConfidenceThreshold,
             ),
             aggregation = AggregationPolicySnapshot(
-                executionStatus = if (evidenceAggregationThresholds == null) "NOT_RUN" else "PENDING",
-                verificationPolicyVersion = evidenceAggregationThresholds?.let { EvidenceJudgement.STRENGTH_RUBRIC_VERSION },
-                aggregationPolicyVersion = evidenceAggregationThresholds?.let { EvidenceAggregationPolicy.POLICY_VERSION },
-                thresholds = evidenceAggregationThresholds?.asMap(),
+                executionStatus = if (aggregationThresholds == null) "NOT_RUN" else "PENDING",
+                verificationPolicyVersion = aggregationThresholds?.let { EvidenceJudgement.STRENGTH_RUBRIC_VERSION },
+                aggregationPolicyVersion = aggregationThresholds?.let { EvidenceAggregationPolicy.POLICY_VERSION },
+                thresholds = aggregationThresholds?.asMap(),
             ),
             externalProviderConsents = consentSnapshots,
         )
+    }
+
+    private fun aggregationThresholdsFor(systemOneProvider: String): EvidenceAggregationThresholds? {
+        if (localLayaAggregationEnabled && systemOneProvider != LayaSystemOneSettings.PROVIDER_ID) return null
+        return evidenceAggregationThresholds
     }
 
     private fun ProviderRegistration.toSelection(): ProviderSelection = ProviderSelection(

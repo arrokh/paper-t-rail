@@ -5,12 +5,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
+import com.papertrail.api.infrastructure.providers.ProviderNotSelectableException
 import com.papertrail.api.infrastructure.providers.ProviderRegistration
 import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
@@ -76,11 +78,103 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
+    fun `uses the deployment System One default when a request omits the provider`() {
+        val layaSettings = LayaSystemOneSettings(
+            enabled = true,
+            baseUrl = "http://127.0.0.1:8000",
+            apiKey = "test-sidecar-key",
+            trustedHosts = setOf("127.0.0.1"),
+        )
+        val layaFactory = factoryFor(
+            providerCatalog = ProviderCatalog.safeDefaults(layaSystemOneSettings = layaSettings),
+            defaultSystemOneProvider = "laya",
+        )
+
+        val request = layaFactory.parseRequest(jacksonObjectMapper().readTree("{}"))
+        val snapshot = layaFactory.from(request)
+
+        assertEquals("laya", snapshot.systemOne.provider)
+    }
+
+    @Test
+    fun `uses mock for an omitted selection when the configured Laya default is unavailable`() {
+        val layaDefaultFactory = factoryFor(
+            providerCatalog = ProviderCatalog.safeDefaults(layaSystemOneSettings = LayaSystemOneSettings.disabled()),
+            defaultSystemOneProvider = LayaSystemOneSettings.PROVIDER_ID,
+        )
+
+        assertEquals("mock", layaDefaultFactory.from(layaDefaultFactory.parseRequest(null)).systemOne.provider)
+        assertThrows(ProviderNotSelectableException::class.java) {
+            layaDefaultFactory.from(RunConfigurationRequest(systemOneProvider = LayaSystemOneSettings.PROVIDER_ID))
+        }
+    }
+
+    @Test
     fun `pins the configured claim-citation pair limit and rejects non-positive limits`() {
         val configured = factoryFor(maxClaimCitationPairs = 12).from(RunConfigurationRequest())
 
         assertEquals(12, configured.validationLimits.maxClaimCitationPairs)
         assertThrows(IllegalArgumentException::class.java) { factoryFor(maxClaimCitationPairs = 0) }
+    }
+
+    @Test
+    fun `enables local experimental aggregation only for selectable Laya runs`() {
+        val layaSettings = LayaSystemOneSettings(
+            enabled = true,
+            baseUrl = "http://127.0.0.1:8000",
+            apiKey = "test-sidecar-key",
+            trustedHosts = setOf("127.0.0.1"),
+        )
+        val layaFactory = factoryFor(
+            providerCatalog = ProviderCatalog.safeDefaults(layaSystemOneSettings = layaSettings),
+            defaultSystemOneProvider = LayaSystemOneSettings.PROVIDER_ID,
+            evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
+            localLayaAggregationEnabled = true,
+        )
+
+        val layaSnapshot = layaFactory.from(layaFactory.parseRequest(null))
+
+        assertEquals("laya", layaSnapshot.systemOne.provider)
+        assertEquals("PENDING", layaSnapshot.aggregation.executionStatus)
+        assertEquals(0.8, layaSnapshot.aggregation.thresholds?.get("directSupport"))
+        assertEquals(0.7, layaSnapshot.aggregation.thresholds?.get("partialSupport"))
+        assertEquals(0.8, layaSnapshot.aggregation.thresholds?.get("contradiction"))
+        assertEquals(0.08, layaSnapshot.aggregation.thresholds?.get("comparabilityMargin"))
+
+        val mockSnapshot = factoryFor(
+            evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
+            localLayaAggregationEnabled = true,
+        ).from(RunConfigurationRequest())
+
+        assertEquals("mock", mockSnapshot.systemOne.provider)
+        assertEquals("NOT_RUN", mockSnapshot.aggregation.executionStatus)
+        assertEquals(null, mockSnapshot.aggregation.thresholds)
+    }
+
+    @Test
+    fun `local Laya aggregation requires explicit thresholds when enabled`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            factoryFor(localLayaAggregationEnabled = true)
+        }
+    }
+
+    @Test
+    fun `local Laya aggregation is disabled when its opt-in flag is false`() {
+        val layaSettings = LayaSystemOneSettings(
+            enabled = true,
+            baseUrl = "http://127.0.0.1:8000",
+            apiKey = "test-sidecar-key",
+            trustedHosts = setOf("127.0.0.1"),
+        )
+        val layaFactory = factoryFor(
+            providerCatalog = ProviderCatalog.safeDefaults(layaSystemOneSettings = layaSettings),
+            defaultSystemOneProvider = LayaSystemOneSettings.PROVIDER_ID,
+        )
+
+        val snapshot = layaFactory.from(layaFactory.parseRequest(null))
+
+        assertEquals("NOT_RUN", snapshot.aggregation.executionStatus)
+        assertEquals(null, snapshot.aggregation.thresholds)
     }
 
     @Test
@@ -351,10 +445,13 @@ class RunConfigurationFactoryTest {
         finalCandidateLimit: Int = 5,
         reciprocalRankFusionConstant: Int = 60,
         evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
+        localLayaAggregationEnabled: Boolean = false,
         maxClaimCitationPairs: Int = ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
+        providerCatalog: ProviderCatalog = reviewedExternalProviderCatalog(),
+        defaultSystemOneProvider: String = "mock",
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
-        providerCatalog = reviewedExternalProviderCatalog(),
+        providerCatalog = providerCatalog,
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
         languageDetectorVersion = "0.6",
@@ -373,6 +470,8 @@ class RunConfigurationFactoryTest {
         finalCandidateLimit = finalCandidateLimit,
         reciprocalRankFusionConstant = reciprocalRankFusionConstant,
         evidenceAggregationThresholds = evidenceAggregationThresholds,
+        localLayaAggregationEnabled = localLayaAggregationEnabled,
+        defaultSystemOneProvider = defaultSystemOneProvider,
     )
 
     @Test

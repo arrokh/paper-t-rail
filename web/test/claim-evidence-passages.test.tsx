@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
@@ -85,6 +85,10 @@ describe("Claim Evidence Passages", () => {
 
     expect(screen.getByText(outcome.claimText)).toBeTruthy();
     expect(screen.getByText("Machine result: supported")).toBeTruthy();
+    const systemOneResults = screen.getByRole("region", { name: "System One results" });
+    expect(within(systemOneResults).getByText("direct support")).toBeTruthy();
+    expect(within(systemOneResults).getByText("Provider mock · model mock-v1 · version v1")).toBeTruthy();
+    expect(within(systemOneResults).getByText("Provisional rubric strength")).toBeTruthy();
     expect(screen.getByText("Human review history")).toBeTruthy();
     expect(screen.getByText("No human reviews recorded.")).toBeTruthy();
     expect(screen.getByText(outcome.citationContextText)).toBeTruthy();
@@ -96,12 +100,27 @@ describe("Claim Evidence Passages", () => {
     fireEvent.click(screen.getByRole("button", { name: /Evidence Passage · fused rank 1/ }));
 
     expect(screen.getByText(outcome.evidencePassages[0].text)).toBeTruthy();
-    expect(screen.getByText("direct support · role: primary finding · calibrated strength 0.880")).toBeTruthy();
+    expect(screen.getByText("direct support · role: primary finding · provisional rubric strength 0.880")).toBeTruthy();
     expect(screen.getByText("Section 1 · Results")).toBeTruthy();
     expect(screen.getByText("3–4")).toBeTruthy();
     expect(screen.getByText("grobid · 0.9.1-crf")).toBeTruthy();
     expect(screen.getByText(/postgres-hybrid-rrf-v1 · vector top 10 · lexical top 10 · final 5 · RRF 60/)).toBeTruthy();
     expect(screen.getByText("b".repeat(64))).toBeTruthy();
+  });
+
+  it("explains when a Claim–Reference pair has no System One judgement", () => {
+    const notJudged: Verification = {
+      ...outcome,
+      processingStatus: "PENDING",
+      finalStatus: null,
+      aggregatorVersion: null,
+      evidencePassages: [{ ...outcome.evidencePassages[0], evidenceJudgement: null }],
+    };
+
+    renderPassages(notJudged);
+
+    const systemOneResults = screen.getByRole("region", { name: "System One results" });
+    expect(within(systemOneResults).getByText("No System One Evidence Judgement was recorded for this Claim–Reference pair.")).toBeTruthy();
   });
 
   it("keeps comparably strong support and contradiction passages visible together", () => {
@@ -153,5 +172,21 @@ describe("Claim Evidence Passages", () => {
     expect(screen.getByText("evidence verification retries exhausted")).toBeTruthy();
     expect(screen.queryByText("supported")).toBeNull();
     expect(screen.getByText("Processing stopped before this Claim–Reference Verification completed.")).toBeTruthy();
+  });
+
+  it("explains a terminal Laya context-limit rejection without implying truncation", () => {
+    const overLimit: Verification = {
+      ...outcome,
+      processingStatus: "INCOMPLETE",
+      processingFailureReason: "SYSTEM_ONE_CONTEXT_LIMIT_EXCEEDED",
+      finalStatus: null,
+      evidencePassages: [],
+    };
+
+    renderPassages(overLimit);
+
+    expect(screen.getByText("The complete Laya request exceeded the 1,024-token context limit. The evidence was not truncated, and no complete judgement set was stored for this pair.")).toBeTruthy();
+    const systemOneResults = screen.getByRole("region", { name: "System One results" });
+    expect(within(systemOneResults).getByText(/request exceeded Laya's 1,024-token context limit/)).toBeTruthy();
   });
 });

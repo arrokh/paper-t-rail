@@ -62,7 +62,7 @@ The Compose service tags are exact release tags (no `latest`). OCI digests below
 | Local claim extraction | `heuristic:v1` (versioned in the run configuration) |
 | Bibliography resolution | `recorded-fixtures:v1` provider; threshold `0.9`; no remote metadata requests |
 | Open-access discovery | `recorded-fixtures:v1`; no external content-host requests |
-| System One | `mock:v1` is selected as the local default but no semantic verification call is made in a `PARSED` run |
+| System One | These 2026-09-27 benchmark runs pinned `mock:v1`; no semantic verification call is made in a `PARSED` run. Current local `make dev` selection is documented in the [provider matrix](../agents/provider-matrix.md). |
 | Embeddings / retrieval | `feature-hash-384-v1` and `postgres-hybrid-rrf-v1`; deterministic local retrieval. No semantic verifier was invoked in these `PARSED` runs. |
 | Web build matrix (not part of the processing measurement) | Node `24.11.0-alpine`; pnpm `12.6.0`; Next.js `16.3.6`; React `19.1.0`; dependency versions locked by `web/pnpm-lock.yaml` |
 
