@@ -76,6 +76,21 @@ class EvidenceJudgementRepository(
         }
     }
 
+    fun persistedEvidenceCandidateIds(verificationId: UUID, evidenceCandidateIds: Set<UUID>): Set<UUID> {
+        if (evidenceCandidateIds.isEmpty()) return emptySet()
+        val placeholders = evidenceCandidateIds.joinToString(", ") { "?" }
+        return jdbc.query(
+            """
+            SELECT evidence_candidate_id
+              FROM evidence_judgements
+             WHERE verification_id = ? AND evidence_candidate_id IN ($placeholders)
+            """.trimIndent(),
+            { rs, _ -> rs.getObject("evidence_candidate_id", UUID::class.java) },
+            verificationId,
+            *evidenceCandidateIds.toTypedArray(),
+        ).toSet()
+    }
+
     fun persistAndLoad(
         analysisRunId: UUID,
         bibliographyEntryId: UUID,

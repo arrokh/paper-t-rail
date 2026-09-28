@@ -14,6 +14,7 @@ import com.papertrail.api.infrastructure.providers.OPEN_ACCESS_ROLE
 import com.papertrail.api.infrastructure.providers.SCHOLARLY_METADATA_ROLE
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
 import com.papertrail.api.evidence.domain.EmbeddingProfile
+import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
@@ -66,10 +67,10 @@ class RunConfigurationFactory(
             require(value.isTextual && value.asText().isNotBlank()) { "Analysis configuration field '$name' must be a non-empty string." }
             return value.asText()
         }
-        fun optionalSystemOneProvider(): String? {
-            val value = node.get("systemOneProvider") ?: return null
+        fun optionalProvider(name: String): String? {
+            val value = node.get(name) ?: return null
             require(value.isTextual && value.asText().isNotBlank()) {
-                "Analysis configuration field 'systemOneProvider' must be a non-empty string."
+                "Analysis configuration field '$name' must be a non-empty string."
             }
             return value.asText()
         }
@@ -94,12 +95,25 @@ class RunConfigurationFactory(
         } ?: emptyList()
         return RunConfigurationRequest(
             claimExtractorProvider = provider("claimExtractorProvider", "heuristic"),
-            embeddingProvider = provider("embeddingProvider", "local"),
-            systemOneProvider = optionalSystemOneProvider(),
+            embeddingProvider = optionalProvider("embeddingProvider"),
+            systemOneProvider = optionalProvider("systemOneProvider"),
             scholarlyMetadataProvider = provider("scholarlyMetadataProvider", "recorded-fixtures"),
             openAccessProvider = provider("openAccessProvider", "recorded-fixtures"),
             externalProviderConsents = providerConsents,
         )
+    }
+
+    /** Prefer local Ollama when available, but keep the safe feature-hash fallback for other deployments. */
+    private fun defaultEmbeddingRegistration(requestedProvider: String?): ProviderRegistration {
+        if (requestedProvider != null) return providerCatalog.requireSelectable(EMBEDDING_ROLE, requestedProvider)
+
+        val ollama = try {
+            providerCatalog.requireSelectable(EMBEDDING_ROLE, OllamaEmbeddingSettings.PROVIDER_ID)
+        } catch (_: ProviderNotSelectableException) {
+            null
+        }
+        return ollama?.takeIf { it.trustBoundary == ProviderTrustBoundary.LOCAL }
+            ?: providerCatalog.requireSelectable(EMBEDDING_ROLE, "local")
     }
 
     /** Omitted Laya defaults fall back only when Laya is not selectable; explicit choices fail closed. */
@@ -117,7 +131,7 @@ class RunConfigurationFactory(
     fun from(request: RunConfigurationRequest): AnalysisConfigurationSnapshot {
         val selected = listOf(
             providerCatalog.requireSelectable(CLAIM_EXTRACTOR_ROLE, request.claimExtractorProvider),
-            providerCatalog.requireSelectable(EMBEDDING_ROLE, request.embeddingProvider),
+            defaultEmbeddingRegistration(request.embeddingProvider),
             defaultSystemOneRegistration(request.systemOneProvider),
             providerCatalog.requireSelectable(SCHOLARLY_METADATA_ROLE, request.scholarlyMetadataProvider),
             providerCatalog.requireSelectable(OPEN_ACCESS_ROLE, request.openAccessProvider),

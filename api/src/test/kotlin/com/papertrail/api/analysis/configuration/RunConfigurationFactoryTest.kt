@@ -6,6 +6,7 @@ import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
@@ -75,6 +76,38 @@ class RunConfigurationFactoryTest {
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
         assertEquals(0.9, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"]["thresholds"].isNull)
+    }
+
+    @Test
+    fun `prefers local Ollama for an omitted embedding selection and keeps feature-hash fallback`() {
+        val localOllama = OllamaEmbeddingSettings(
+            enabled = true,
+            baseUrl = "http://127.0.0.1:11434",
+            modelId = "nomic-embed-text:v1.5",
+            dimension = 768,
+            trustedHosts = setOf("127.0.0.1"),
+        )
+        val localOllamaFactory = factoryFor(
+            providerCatalog = ProviderCatalog.safeDefaults(ollamaEmbeddingSettings = localOllama),
+        )
+
+        val ollama = localOllamaFactory.from(localOllamaFactory.parseRequest(jacksonObjectMapper().readTree("{}"))).embedding
+
+        assertEquals("ollama", ollama.provider)
+        assertEquals("nomic-embed-text:v1.5", ollama.model)
+        assertEquals(768, ollama.embeddingDimension)
+
+        val externalOllamaFactory = factoryFor(
+            providerCatalog = ProviderCatalog.safeDefaults(
+                ollamaEmbeddingSettings = localOllama.copy(
+                    baseUrl = "http://embedding.example:11434",
+                    trustedHosts = setOf("localhost"),
+                    enablementReviewed = true,
+                    retentionDisclosure = "Reviewed external Ollama retention terms.",
+                ),
+            ),
+        )
+        assertEquals("local", externalOllamaFactory.from(externalOllamaFactory.parseRequest(null)).embedding.provider)
     }
 
     @Test

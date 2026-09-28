@@ -31,6 +31,7 @@ import com.papertrail.api.evidence.service.EvidenceRetrievalService
 import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
 import com.papertrail.api.evidence.repository.EvidenceReportRepository
 import com.papertrail.api.evidence.report.EvidenceCoverageReportRepository
+import com.papertrail.api.evidence.verification.domain.LayaEvidencePassageSpanPlanner
 import com.papertrail.api.review.domain.HumanReviewAction
 import com.papertrail.api.review.repository.HumanReviewRepository
 import com.papertrail.api.review.repository.JdbcHumanReviewRepository
@@ -40,8 +41,10 @@ import com.papertrail.api.evidence.verification.provider.LayaSystemOneProviderEx
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.MockSystemOneProvider
 import com.papertrail.api.evidence.verification.provider.SystemOneProvider
+import com.papertrail.api.evidence.verification.provider.SystemOneRequestPreflight
 import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementRequest
+import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementResult
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
@@ -49,6 +52,7 @@ import com.papertrail.api.evidence.verification.domain.EvidenceRole
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.evidence.verification.repository.JdbcClaimReferenceVerificationRepository
 import com.papertrail.api.evidence.verification.repository.EvidenceJudgementRepository
+import com.papertrail.api.evidence.verification.repository.EvidencePassageSpanRepository
 import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
 import com.papertrail.api.evidence.embedding.EmbeddingProvider
 import com.papertrail.api.evidence.embedding.EmbeddingRequestContext
@@ -1337,6 +1341,12 @@ class AnalysisRunQueueIntegrationTest {
     private fun runLayaPipeline(
         localLayaAggregationEnabled: Boolean,
         providerFailureReasonCode: String? = null,
+        tokenCountForPassage: (EvidencePassageForJudgement) -> Int = { 1 },
+        judgementForResult: (Int) -> EvidenceJudgementKind = { EvidenceJudgementKind.DIRECT_SUPPORT },
+        failOnceAtEvaluation: Int? = null,
+        failOnceReasonCode: String? = null,
+        retryIndexingOnce: Boolean = false,
+        paperText: String? = null,
     ): Pair<UUID, Int> {
         val layaSettings = LayaSystemOneSettings(
             enabled = true,
@@ -1354,21 +1364,35 @@ class AnalysisRunQueueIntegrationTest {
         }
         val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
         val layaCalls = AtomicInteger()
-        val layaProvider = object : SystemOneProvider {
+        val evaluationAttempts = AtomicInteger()
+        val successfulJudgements = AtomicInteger()
+        val layaProvider = object : SystemOneProvider, SystemOneRequestPreflight {
             override val providerId = LayaSystemOneSettings.PROVIDER_ID
             override val version = LayaSystemOneSettings.PROVIDER_VERSION
             override val modelId = LayaSystemOneSettings.PINNED_MODEL_ID
 
+            override fun tokenCounts(claim: String, passage: EvidencePassageForJudgement): List<Int> =
+                List(6) { tokenCountForPassage(passage) }
+
             override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult {
+                val attempt = evaluationAttempts.incrementAndGet()
                 if (providerFailureReasonCode != null) {
                     layaCalls.incrementAndGet()
                     throw LayaSystemOneProviderException("Test provider rejected the request.", providerFailureReasonCode)
                 }
+                if (attempt == failOnceAtEvaluation) {
+                    layaCalls.incrementAndGet()
+                    if (failOnceReasonCode != null) {
+                        throw LayaSystemOneProviderException("Temporary test provider failure.", failOnceReasonCode)
+                    }
+                    throw IllegalStateException("Temporary test provider failure.")
+                }
                 return SemanticJudgementResult(request.evidencePassages.map { passage ->
                     layaCalls.incrementAndGet()
+                    val resultIndex = successfulJudgements.incrementAndGet()
                     EvidenceJudgement(
                         evidenceCandidateId = passage.id,
-                        judgement = EvidenceJudgementKind.DIRECT_SUPPORT,
+                        judgement = judgementForResult(resultIndex),
                         evidenceRole = EvidenceRole.PRIMARY_FINDING,
                         confidence = 0.8,
                         directness = 0.8,
@@ -1388,13 +1412,141 @@ class AnalysisRunQueueIntegrationTest {
         )!!
         eventHandler(resolutionService = resolutionService).handle(documentEvent)
 
+        val providerFactories = if (paperText == null) {
+            listOf(RecordedFixtureOpenAccessProviderFactory(objectMapper, ProviderCallGate(layaCatalog)))
+        } else {
+            listOf(
+                controlledOpenAccessFactory(
+                    OpenAccessDiscovery(
+                        metadataAvailable = true,
+                        abstractAvailable = false,
+                        locations = listOf(OpenAccessLocation(
+                            "fixture://controlled/laya-span-test",
+                            "CC0-1.0",
+                            "publishedVersion",
+                            "repository",
+                            "recorded-fixtures",
+                        )),
+                        providerId = "recorded-fixtures",
+                        discoveredAt = Instant.now(),
+                    ),
+                    paperText,
+                    AtomicInteger(),
+                    onlyDoi = "10.5555/papertrail.fixture.reference-resolution.2024",
+                ),
+            )
+        }
         processReferenceResolutionEvents(
             analysisRunId = created.analysisRunId,
+            providerFactories = providerFactories,
             resolutionService = resolutionService,
             systemOneProvider = layaProvider,
             providerCatalog = layaCatalog,
+            retryIndexingOnce = retryIndexingOnce,
         )
         return created.analysisRunId to layaCalls.get()
+    }
+
+    @Test
+    fun `a complete Laya request at the exact tokenizer limit keeps the existing passage path`() {
+        val text = "Prior results support the method. The study reports evidence in the treatment group. Later results do not support the method."
+        val (analysisRunId, layaCallCount) = runLayaPipeline(
+            localLayaAggregationEnabled = true,
+            tokenCountForPassage = { LayaSystemOneSettings.MODEL_CONTEXT_TOKENS },
+            paperText = text,
+        )
+        val outcomes = referenceResolutionService().report(analysisRunId)!!
+            .referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        val passages = outcomes.flatMap { it.evidencePassages }
+
+        assertTrue(passages.isNotEmpty())
+        assertEquals(passages.size, layaCallCount)
+        assertTrue(passages.all { it.diagnosticSpans.isEmpty() })
+        assertTrue(passages.all { it.evidenceJudgement?.providerId == LayaSystemOneSettings.PROVIDER_ID })
+        assertTrue(outcomes.all { it.finalStatus == "SUPPORTED" })
+        assertEquals(0L, jdbc.queryForObject(
+            "SELECT count(*) FROM laya_evidence_passage_spans WHERE analysis_run_id = ?",
+            Long::class.java,
+            analysisRunId,
+        ))
+    }
+
+    @Test
+    fun `an over-limit single sentence is persisted as incomplete without inference or truncation`() {
+        val text = "Prior results support the method and reproduce it for the treatment group using carefully collected observations and independently validated outcomes."
+        val (analysisRunId, layaCallCount) = runLayaPipeline(
+            localLayaAggregationEnabled = false,
+            tokenCountForPassage = { LayaSystemOneSettings.MODEL_CONTEXT_TOKENS + 1 },
+            paperText = text,
+        )
+        val outcomes = referenceResolutionService().report(analysisRunId)!!
+            .referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        val spans = outcomes.flatMap { it.evidencePassages }.flatMap { it.diagnosticSpans }
+
+        assertEquals(0, layaCallCount)
+        assertTrue(spans.isNotEmpty())
+        assertTrue(spans.all { it.status == "INCOMPLETE" })
+        assertTrue(spans.all { it.failureReason == "SINGLE_SENTENCE_EXCEEDS_CONTEXT_LIMIT" })
+        assertTrue(spans.all { it.coreText == text && it.contextText == text })
+        assertTrue(outcomes.all {
+            it.processingStatus == "INCOMPLETE" &&
+                it.processingFailureReason == "SYSTEM_ONE_INCOMPLETE" &&
+                it.finalStatus == null
+        })
+        assertEquals("COMPLETED_WITH_WARNINGS", referenceResolutionService().report(analysisRunId)!!.runStatus)
+        assertTrue(jdbc.queryForObject(
+            "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            analysisRunId,
+        )!!.contains("required span(s) are missing or incomplete"))
+    }
+
+    @Test
+    fun `over-limit passage spans persist independently and retries skip successful span judgements`() {
+        val text = "Prior results support the method. The study reports evidence in the treatment group. Later results do not support the method."
+        val (analysisRunId, layaCallCount) = runLayaPipeline(
+            localLayaAggregationEnabled = true,
+            tokenCountForPassage = { passage -> 500 + passage.text.count { it == '.' } * 260 },
+            judgementForResult = { index ->
+                if (index % 2 == 1) EvidenceJudgementKind.DIRECT_SUPPORT else EvidenceJudgementKind.CONTRADICTS
+            },
+            failOnceAtEvaluation = 2,
+            failOnceReasonCode = "TEST_RETRYABLE_FAILURE",
+            retryIndexingOnce = true,
+            paperText = text,
+        )
+        val report = referenceResolutionService().report(analysisRunId)!!
+        val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        val diagnosticPassages = outcomes.flatMap { it.evidencePassages }.filter { it.diagnosticSpans.isNotEmpty() }
+        val spans = diagnosticPassages.flatMap { it.diagnosticSpans }
+        val lastSpanPerPassage = diagnosticPassages.map { it.diagnosticSpans.last() }
+
+        assertTrue(diagnosticPassages.isNotEmpty())
+        assertEquals(spans.size + 1, layaCallCount)
+        assertTrue(diagnosticPassages.all { it.diagnosticSpans.size == 2 })
+        assertTrue(spans.all { it.status == "COMPLETED" })
+        assertEquals(setOf("DIRECT_SUPPORT", "CONTRADICTS"), spans.mapNotNull { it.evidenceJudgement?.judgement }.toSet())
+        assertTrue(diagnosticPassages.all { it.evidenceJudgement == null })
+        assertTrue(spans.all { it.tokenCounts.size == 6 && it.tokenCounts.all { count -> count <= 1024 } })
+        assertTrue(lastSpanPerPassage.all { it.contextStartOffset < it.coreStartOffset })
+        lastSpanPerPassage.forEach { span ->
+            val parentText = diagnosticPassages.single { span in it.diagnosticSpans }.text
+            assertEquals(parentText.substring(span.coreStartOffset, span.coreEndOffset), span.coreText)
+            assertEquals(parentText.substring(span.contextStartOffset, span.contextEndOffset), span.contextText)
+        }
+        assertTrue(outcomes.all { it.processingStatus == "INCOMPLETE" && it.finalStatus == null })
+        assertEquals(spans.size.toLong(), jdbc.queryForObject(
+            "SELECT count(*) FROM laya_evidence_passage_spans WHERE analysis_run_id = ? AND status = 'COMPLETED'",
+            Long::class.java,
+            analysisRunId,
+        ))
+        diagnosticPassages.forEach { passage ->
+            assertEquals(0L, jdbc.queryForObject(
+                "SELECT count(*) FROM evidence_judgements WHERE evidence_candidate_id = ?",
+                Long::class.java,
+                passage.id,
+            ))
+        }
     }
 
     @Test
@@ -2637,7 +2789,18 @@ class AnalysisRunQueueIntegrationTest {
         claimReferenceVerificationRepository(),
         ReferenceResolutionRepository(jdbc, objectMapper),
         CitedPaperAccessRepository(jdbc, objectMapper),
-        EvidenceCoverageReportRepository(jdbc, EvidenceReportRepository(jdbc), humanReviewRepository()),
+        EvidenceCoverageReportRepository(
+            jdbc,
+            EvidenceReportRepository(
+                jdbc,
+                EvidencePassageSpanRepository(
+                    jdbc,
+                    objectMapper,
+                    TransactionTemplate(DataSourceTransactionManager(dataSource)),
+                ),
+            ),
+            humanReviewRepository(),
+        ),
         lookupFactories,
     )
 
@@ -2654,11 +2817,13 @@ class AnalysisRunQueueIntegrationTest {
         discovery: OpenAccessDiscovery?,
         fullText: String?,
         fetchCalls: AtomicInteger,
+        onlyDoi: String? = null,
     ): OpenAccessProviderFactory = object : OpenAccessProviderFactory {
         override val providerId = "recorded-fixtures"
 
         override fun forRun(configuration: AnalysisConfigurationSnapshot): OpenAccessProvider = object : OpenAccessProvider {
-            override fun discover(reference: BibliographyReference): OpenAccessDiscovery? = discovery
+            override fun discover(reference: BibliographyReference): OpenAccessDiscovery? =
+                discovery.takeIf { onlyDoi == null || reference.doi == onlyDoi }
 
             override fun fetch(location: OpenAccessLocation): AcquiredFullText {
                 fetchCalls.incrementAndGet()
@@ -2737,6 +2902,8 @@ class AnalysisRunQueueIntegrationTest {
                 ProviderCallGate(providerCatalog),
                 listOf(systemOneProvider),
                 EvidenceJudgementRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+                EvidencePassageSpanRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+                LayaEvidencePassageSpanPlanner(),
                 claimReferenceVerificationRepository(),
             ),
             stageCompletionService(resolutionService),
@@ -2765,6 +2932,7 @@ class AnalysisRunQueueIntegrationTest {
         embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
         systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
         providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
+        retryIndexingOnce: Boolean = false,
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -2783,6 +2951,7 @@ class AnalysisRunQueueIntegrationTest {
             embeddingProviders,
             systemOneProvider,
             providerCatalog,
+            retryIndexingOnce,
         )
     }
 
@@ -2795,6 +2964,7 @@ class AnalysisRunQueueIntegrationTest {
         embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
         systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
         providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
+        retryIndexingOnce: Boolean = false,
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -2821,7 +2991,20 @@ class AnalysisRunQueueIntegrationTest {
             embeddingProviders = embeddingProviders,
             providerCatalog = providerCatalog,
         )
-        indexingEvents.forEach(indexingHandler::handle)
+        var retriedAfterProviderFailure = false
+        indexingEvents.forEach { event ->
+            if (!retryIndexingOnce || retriedAfterProviderFailure) {
+                indexingHandler.handle(event)
+            } else {
+                val failure = runCatching { indexingHandler.handle(event) }.exceptionOrNull()
+                if (failure != null) {
+                    assertEquals("Temporary test provider failure.", failure.message)
+                    retriedAfterProviderFailure = true
+                    indexingHandler.handle(event)
+                }
+            }
+        }
+        if (retryIndexingOnce) assertTrue(retriedAfterProviderFailure)
     }
 
     private fun issueSevenConfigurationJson(): String {
@@ -2980,6 +3163,14 @@ class AnalysisRunQueueIntegrationTest {
             val sourceDocumentDeletionMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("source_document_deletion.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(sourceDocumentDeletionMigrationVerification)) }
+            }
+            val layaEvidencePassageSpansMigration = migrationDirectory.resolve("laya_evidence_passage_spans.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(layaEvidencePassageSpansMigration)) }
+            }
+            val layaEvidencePassageSpansMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("laya_evidence_passage_spans.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(layaEvidencePassageSpansMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

@@ -1,0 +1,3 @@
+# Prefer Ollama Embeddings for New Analysis Runs
+
+Local Compose already starts Ollama with the pinned `nomic-embed-text:v1.5` model, so new-run provider selection now prefers Ollama when it is selectable; feature-hash remains the safe fallback when it is unavailable. External Ollama endpoints still require the existing per-run consent before sending embeddings input, and the immutable run snapshot pins the selected provider and embedding profile. Existing Analysis Runs are unchanged. This supersedes the default-selection portion of [ADR 0007](0007-deterministic-local-hybrid-evidence-retrieval.md), not its deterministic retrieval design.

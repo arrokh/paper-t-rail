@@ -1,0 +1,4 @@
+DROP TRIGGER laya_evidence_passage_spans_require_active_source_document ON laya_evidence_passage_spans;
+DROP TRIGGER laya_evidence_passage_spans_have_monotonic_status ON laya_evidence_passage_spans;
+DROP FUNCTION enforce_laya_evidence_passage_span_transition();
+DROP TABLE laya_evidence_passage_spans;

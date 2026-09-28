@@ -18,6 +18,7 @@ from download_model import (
     sha256_file,
 )
 from laya_serve_preflight import install_context_guard
+from preflight_endpoint import PreflightEndpoint
 
 
 def verified_checkpoint(cache_home: Path) -> Path:
@@ -67,8 +68,9 @@ def build_app():
         models={"typed-decisions": str(checkpoint)},
     )
     router.preload(["typed-decisions"])
-    install_context_guard(router)
-    return ApiKeyMiddleware(create_app(router=router), os.environ["LAYA_API_KEY"].strip())
+    agent = install_context_guard(router)
+    app = PreflightEndpoint(create_app(router=router), agent)
+    return ApiKeyMiddleware(app, os.environ["LAYA_API_KEY"].strip())
 
 
 def main() -> None:

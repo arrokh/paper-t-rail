@@ -44,6 +44,7 @@ COPY --chown=laya:laya infra/laya/api_key_auth.py /app/api_key_auth.py
 COPY --chown=laya:laya infra/laya/download_model.py /app/download_model.py
 COPY --chown=laya:laya infra/laya/benchmark_runtime.py /app/benchmark_runtime.py
 COPY --chown=laya:laya infra/laya/laya_serve_preflight.py /app/laya_serve_preflight.py
+COPY --chown=laya:laya infra/laya/preflight_endpoint.py /app/preflight_endpoint.py
 COPY --chown=laya:laya infra/laya/serve.py /app/serve.py
 
 USER laya
