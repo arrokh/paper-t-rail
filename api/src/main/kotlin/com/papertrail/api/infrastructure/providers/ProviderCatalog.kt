@@ -3,6 +3,7 @@ package com.papertrail.api.infrastructure.providers
 import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import java.security.MessageDigest
 
 const val CLAIM_EXTRACTOR_ROLE = "claimExtractor"
@@ -157,6 +158,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
             unpaywallRetentionDisclosure: String? = null,
             unpaywallContactEmail: String? = null,
             ollamaEmbeddingSettings: OllamaEmbeddingSettings = OllamaEmbeddingSettings.disabled(),
+            layaSystemOneSettings: LayaSystemOneSettings = LayaSystemOneSettings.disabled(),
         ): ProviderCatalog {
             require(!unpaywallEnabled || !unpaywallContactEmail.isNullOrBlank()) {
                 "Unpaywall requires a configured provider contact email before it can be enabled."
@@ -290,6 +292,17 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                 ),
                 ProviderRegistration(
                     role = SYSTEM_ONE_ROLE,
+                    providerId = LayaSystemOneSettings.PROVIDER_ID,
+                    displayName = "Laya System One (local evaluation)",
+                    version = LayaSystemOneSettings.PROVIDER_VERSION,
+                    model = LayaSystemOneSettings.PINNED_MODEL_ID,
+                    trustBoundary = layaSystemOneSettings.trustBoundary,
+                    enabled = layaSystemOneSettings.isSelectable,
+                    dataCategories = setOf(DataCategory.ATOMIC_CLAIMS, DataCategory.EVIDENCE_PASSAGES),
+                    configurationFingerprint = layaSystemOneSettings.configurationFingerprint,
+                ),
+                ProviderRegistration(
+                    role = SYSTEM_ONE_ROLE,
                     providerId = "jev",
                     displayName = "Jev hosted System One",
                     version = "configured-model",
@@ -348,10 +361,13 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
             !(selected.provider == "local" && selected.embeddingDimension == null)
         val embeddingConfigurationChanged = role == EMBEDDING_ROLE &&
             (selected.configurationFingerprint != registration.configurationFingerprint || embeddingDimensionChanged)
+        val systemOneConfigurationChanged = role == SYSTEM_ONE_ROLE &&
+            selected.configurationFingerprint != registration.configurationFingerprint
         if (selected.version != registration.version || selected.model != registration.model ||
             selected.trustBoundary != registration.trustBoundary.id ||
             selected.dataCategories.toSet() != registration.dataCategories.map(DataCategory::id).toSet() ||
-            scholarlyConfigurationChanged || openAccessConfigurationChanged || embeddingConfigurationChanged
+            scholarlyConfigurationChanged || openAccessConfigurationChanged || embeddingConfigurationChanged ||
+            systemOneConfigurationChanged
         ) {
             throw ProviderCallRejectedException("Provider '$providerId' configuration or payload mapping changed after this Analysis Run was created.")
         }

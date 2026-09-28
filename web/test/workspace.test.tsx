@@ -50,7 +50,7 @@ const preferredProviderDirectory = {
     ...unpaywallOnlyProviderDirectory.providers,
     systemOne: [
       ...providerDirectory.providers.systemOne,
-      { role: "systemOne", providerId: "laya", displayName: "Laya local System One", version: "v1", model: "laya-calibrated", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null },
+      { role: "systemOne", providerId: "laya", displayName: "Laya System One (local evaluation)", version: "laya-serve-0.3.20@23a17522aa4942da6cce53a995a275760320b691/pt-ej-v1", model: "convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null },
     ],
     scholarlyMetadata: [
       ...providerDirectory.providers.scholarlyMetadata,
@@ -163,9 +163,13 @@ describe("interactive workspace remote state", () => {
 
     const { container } = renderWorkspace();
     await screen.findByText("Crossref REST API data access");
-    expect((screen.getByLabelText("Evidence assessment") as HTMLSelectElement).value).toBe("laya");
+    const evidenceAssessment = screen.getByLabelText("Evidence assessment") as HTMLSelectElement;
+    expect(evidenceAssessment.value).toBe("mock");
     expect((screen.getByLabelText("Bibliography resolution") as HTMLSelectElement).value).toBe("crossref");
     expect((screen.getByLabelText("Cited full-text access") as HTMLSelectElement).value).toBe("unpaywall");
+
+    fireEvent.change(evidenceAssessment, { target: { value: "laya" } });
+    expect(evidenceAssessment.value).toBe("laya");
 
     const externalApprovals = screen.getAllByRole("checkbox");
     expect(externalApprovals).toHaveLength(4);

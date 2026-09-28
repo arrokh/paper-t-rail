@@ -67,6 +67,13 @@ paper-trail:
       lexical-candidates: ${PAPER_RETRIEVAL_LEXICAL_CANDIDATES:10}
       final-candidates: ${PAPER_RETRIEVAL_FINAL_CANDIDATES:5}
       rrf-constant: ${PAPER_RETRIEVAL_RRF_CONSTANT:60}
+    # Local default; production deployments must explicitly set this to false.
+    local-laya-aggregation:
+      enabled: ${LOCAL_LAYA_AGGREGATION_ENABLED:true}
+      direct-support-threshold: ${LOCAL_LAYA_AGGREGATION_DIRECT_SUPPORT_THRESHOLD:0.80}
+      partial-support-threshold: ${LOCAL_LAYA_AGGREGATION_PARTIAL_SUPPORT_THRESHOLD:0.70}
+      contradiction-threshold: ${LOCAL_LAYA_AGGREGATION_CONTRADICTION_THRESHOLD:0.80}
+      comparability-margin: ${LOCAL_LAYA_AGGREGATION_COMPARABILITY_MARGIN:0.08}
     cited-paper-max-bytes: ${PAPER_MAX_CITED_PAPER_BYTES:52428800}
     cited-paper-max-extracted-characters: ${PAPER_MAX_CITED_PAPER_EXTRACTED_CHARACTERS:5000000}
   # Local consent-flow/acquisition testing defaults. Deployments must verify terms and replace test values.
@@ -97,6 +104,15 @@ paper-trail:
       request-timeout-millis: ${OLLAMA_REQUEST_TIMEOUT_MILLIS:60000}
       external-enablement-reviewed: ${OLLAMA_EXTERNAL_ENABLEMENT_REVIEWED:false}
       external-retention-disclosure: "${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:}"
+    system-one:
+      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:laya}
+    laya:
+      # Enabled as an optional evaluation candidate; selection still requires valid authenticated settings.
+      enabled: ${LAYA_ENABLED:true}
+      base-url: ${LAYA_BASE_URL:http://laya:8000}
+      api-key: ${LAYA_API_KEY:}
+      trusted-hosts: ${LAYA_TRUSTED_HOSTS:laya,localhost,127.0.0.1}
+      request-timeout-millis: ${LAYA_REQUEST_TIMEOUT_MILLIS:120000}
 
 scalar:
   enabled: ${API_DOCS_ENABLED:true}

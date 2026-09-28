@@ -31,6 +31,8 @@ interface ClaimReferenceVerificationRepository {
         aggregatorVersion: String,
     ): Boolean
 
+    fun failVerification(verificationId: UUID, reason: String): Boolean
+
     fun failReference(analysisRunId: UUID, bibliographyEntryId: UUID, reason: String)
 
     fun failFullText(analysisRunId: UUID, bibliographyEntryId: UUID, reason: String)

@@ -14,7 +14,7 @@ export type ProviderSelections = {
 export const DEFAULT_PROVIDER_SELECTIONS: ProviderSelections = {
   claimExtractorProvider: "heuristic",
   embeddingProvider: "local",
-  systemOneProvider: "laya",
+  systemOneProvider: "mock",
   scholarlyMetadataProvider: "crossref",
   openAccessProvider: "unpaywall",
 };
@@ -103,7 +103,7 @@ export function availableProviderSelections(
 ): ProviderSelections {
   const selectAvailable = (role: ProviderRole, field: keyof ProviderSelections) => {
     const options = selectableProviderOptions(directory, role);
-    // The API directory is the enablement gate; Laya is a default only as a local selectable option.
+    // The API directory gates availability; Laya is retained only as a local selectable provider.
     const preferred = options.find((provider) =>
       provider.providerId === selections[field]
       && (role !== "systemOne" || provider.providerId !== "laya" || provider.trustBoundary === "LOCAL"),
@@ -111,9 +111,10 @@ export function availableProviderSelections(
     const safeFallback = options.find((provider) =>
       provider.providerId === SAFE_FALLBACK_PROVIDER_SELECTIONS[field],
     );
+    const firstSelectableFallback = role === "systemOne" ? undefined : options[0]?.providerId;
     return preferred?.providerId
       ?? safeFallback?.providerId
-      ?? options[0]?.providerId
+      ?? firstSelectableFallback
       ?? selections[field];
   };
 

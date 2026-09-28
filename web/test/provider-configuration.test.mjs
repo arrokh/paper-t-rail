@@ -148,8 +148,8 @@ function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
 
-test("new-run preferences choose reviewed providers when the API exposes them", () => {
-  const reviewedDirectory = {
+test("new-run preferences keep mock as the System One default while local Laya remains selectable", () => {
+  const directoryWithLaya = {
     ...directory,
     providers: {
       ...directory.providers,
@@ -158,9 +158,9 @@ test("new-run preferences choose reviewed providers when the API exposes them", 
         {
           role: "systemOne",
           providerId: "laya",
-          displayName: "Laya local System One",
-          version: "v1",
-          model: "laya-calibrated",
+          displayName: "Laya System One (local evaluation)",
+          version: "laya-serve-0.3.20@23a17522aa4942da6cce53a995a275760320b691/pt-ej-v1",
+          model: "convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3",
           trustBoundary: "LOCAL",
           dataCategories: ["atomic_claims", "evidence_passages"],
           retentionDisclosure: null,
@@ -169,12 +169,19 @@ test("new-run preferences choose reviewed providers when the API exposes them", 
     },
   };
 
-  assert.deepEqual(availableProviderSelections(reviewedDirectory, DEFAULT_PROVIDER_SELECTIONS), {
+  assert.deepEqual(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS), {
     ...localSelections,
-    systemOneProvider: "laya",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
+  assert.equal(
+    availableProviderSelections(directoryWithLaya, {
+      ...DEFAULT_PROVIDER_SELECTIONS,
+      systemOneProvider: "laya",
+    }).systemOneProvider,
+    "laya",
+  );
+  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "mock");
 });
 
 test("new-run preferences explicitly fall back to safe providers when preferred providers are unavailable", () => {
@@ -234,7 +241,10 @@ test("Laya is not preferred unless the selectable provider is locally executed",
   };
 
   assert.equal(
-    availableProviderSelections(externalLayaDirectory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider,
+    availableProviderSelections(externalLayaDirectory, {
+      ...DEFAULT_PROVIDER_SELECTIONS,
+      systemOneProvider: "laya",
+    }).systemOneProvider,
     "mock",
   );
 });

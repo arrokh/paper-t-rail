@@ -7,6 +7,8 @@ import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementRequest
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneProviderException
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.SystemOneProvider
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.evidence.verification.repository.EvidenceJudgementRepository
@@ -30,24 +32,29 @@ class EvidenceVerificationService(
     fun verifyReference(analysisRunId: UUID, bibliographyEntryId: UUID) {
         val configuration = loadConfiguration(analysisRunId)
         val aggregationSnapshot = configuration.aggregation
-        if (aggregationSnapshot.executionStatus == "NOT_RUN") return
-        require(aggregationSnapshot.executionStatus == "PENDING") {
+        val evaluationOnly = aggregationSnapshot.executionStatus == "NOT_RUN" &&
+            configuration.systemOne.provider == LayaSystemOneSettings.PROVIDER_ID
+        if (aggregationSnapshot.executionStatus == "NOT_RUN" && !evaluationOnly) return
+        require(aggregationSnapshot.executionStatus == "PENDING" || evaluationOnly) {
             "Conflict-aware verification is not configured for this Analysis Run."
         }
-        require(aggregationSnapshot.verificationPolicyVersion == EvidenceJudgement.STRENGTH_RUBRIC_VERSION) {
-            "The pinned evidence-strength rubric is unavailable."
+        if (!evaluationOnly) {
+            require(aggregationSnapshot.verificationPolicyVersion == EvidenceJudgement.STRENGTH_RUBRIC_VERSION) {
+                "The pinned evidence-strength rubric is unavailable."
+            }
+            require(aggregationSnapshot.aggregationPolicyVersion == EvidenceAggregationPolicy.POLICY_VERSION) {
+                "The pinned evidence aggregation policy is unavailable."
+            }
         }
-        require(aggregationSnapshot.aggregationPolicyVersion == EvidenceAggregationPolicy.POLICY_VERSION) {
-            "The pinned evidence aggregation policy is unavailable."
-        }
-        val thresholds = thresholdsFrom(aggregationSnapshot.thresholds)
+        val policy = if (evaluationOnly) null else EvidenceAggregationPolicy(
+            thresholdsFrom(aggregationSnapshot.thresholds),
+        )
         val providerSelection = configuration.systemOne
         val provider = systemOneProviders.singleOrNull {
             it.providerId == providerSelection.provider &&
                 it.version == providerSelection.version &&
                 it.modelId == providerSelection.model
         } ?: throw IllegalStateException("The pinned System One provider is unavailable.")
-        val policy = EvidenceAggregationPolicy(thresholds)
 
         judgementRepository.pendingRequests(analysisRunId, bibliographyEntryId).forEach { pending ->
             val requestedIds = pending.request.evidencePassages.map { it.id }.toSet()
@@ -55,7 +62,13 @@ class EvidenceVerificationService(
                 emptyList()
             } else {
                 jdbc.requireActiveAnalysisRun(analysisRunId)
-                evaluateThroughProviderGate(provider, configuration, pending.request)
+                try {
+                    evaluateThroughProviderGate(provider, configuration, pending.request)
+                } catch (exception: LayaSystemOneProviderException) {
+                    val failureReasonCode = exception.failureReasonCode ?: throw exception
+                    verificationRepository.failVerification(pending.verificationId, failureReasonCode)
+                    return@forEach
+                }
             }
             require(providerJudgements.map(EvidenceJudgement::evidenceCandidateId).toSet() == requestedIds &&
                 providerJudgements.size == requestedIds.size
@@ -72,11 +85,12 @@ class EvidenceVerificationService(
             require(persisted.map(EvidenceJudgement::evidenceCandidateId).toSet() == requestedIds &&
                 persisted.size == requestedIds.size
             ) { "Persisted System One judgements do not match the requested Evidence Passages." }
-            val decision = policy.aggregate(persisted)
+            if (evaluationOnly) return@forEach
+            val decision = requireNotNull(policy).aggregate(persisted)
             val completed = verificationRepository.complete(
                 verificationId = pending.verificationId,
                 decision = decision,
-                aggregatorVersion = aggregationSnapshot.aggregationPolicyVersion,
+                aggregatorVersion = requireNotNull(aggregationSnapshot.aggregationPolicyVersion),
             )
             if (!completed && !verificationRepository.isCompleted(pending.verificationId)) {
                 throw IllegalStateException("Claim–Reference Verification could not be completed after aggregation.")
