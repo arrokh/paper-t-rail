@@ -67,7 +67,7 @@ paper-trail:
       lexical-candidates: ${PAPER_RETRIEVAL_LEXICAL_CANDIDATES:10}
       final-candidates: ${PAPER_RETRIEVAL_FINAL_CANDIDATES:5}
       rrf-constant: ${PAPER_RETRIEVAL_RRF_CONSTANT:60}
-    # Local default; production deployments must explicitly set this to false.
+    # Owner-approved experimental default; all resulting judgements/statuses remain uncalibrated.
     local-laya-aggregation:
       enabled: ${LOCAL_LAYA_AGGREGATION_ENABLED:true}
       direct-support-threshold: ${LOCAL_LAYA_AGGREGATION_DIRECT_SUPPORT_THRESHOLD:0.80}
