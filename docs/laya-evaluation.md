@@ -114,6 +114,14 @@ The draft aggregation fixture is also insufficient for release: it has six synth
 | Calibration and release meaning | Synthetic evidence did not establish accuracy; calibration was `NOT_APPROVED`. | Still `NOT_APPROVED`; all new judgements and statuses remain explicitly uncalibrated. | Enabling aggregation changes behavior, not evidence quality or approval. A target-specific GO is still separate. |
 | Opt-out | Base Spring was implicitly opted out unless overridden. | Set `LOCAL_LAYA_AGGREGATION_ENABLED=false` to keep final statuses `NOT_RUN`. Until a target-specific GO, disable Laya and select mock. | Operators can suppress aggregation explicitly; an unapproved target should also use `LAYA_ENABLED=false` and `SYSTEM_ONE_DEFAULT_PROVIDER=mock`. |
 
+### Selected evaluation plan (calibration remains `NOT_APPROVED`)
+
+Per the repository owner's direction, use the exact Laya checkpoint/runtime/prompt/output mapping pinned in #21; retain the existing judgement, role, score, and expected Claim–Paper label schema; split by whole Cited Paper; and use independent double review with adjudication where practical. Compare all three documented threshold arms on frozen Laya outputs: permissive (`0.70/0.65/0.70`, margin `0.10`), design-baseline (`0.80/0.70/0.80`, margin `0.08`), and conservative (`0.90/0.85/0.90`, margin `0.05`). None is pre-approved.
+
+**Provisional pass bar:** zero observed false decisive `SUPPORTED` or `CONTRADICTED` outcomes on the locked held-out set. Report per-class precision/recall, role and score agreement, confidence calibration, abstention/coverage, sample counts, and uncertainty. If the sample or uncertainty is insufficient to judge the predeclared bar, collect more human labels and keep calibration `NOT_APPROVED`; a passing metric report still requires explicit human reviewer approval of the exact rubric, thresholds, and policy version. A target-specific deployment GO remains separate.
+
+The domain-specific, legally usable corpus and qualified human labelers have not yet been selected. The existing synthetic fixture and the current one-paper operational observations are not calibration data.
+
 Human review and target-specific approval in issue [#45](https://github.com/arrokh/paper-t-rail/issues/45) are still required for:
 
 1. **Dataset and labels:** approve legally usable, in-domain Cited Papers; cover every judgement class (`DIRECT_SUPPORT`, `PARTIAL_SUPPORT`, `CONTRADICTS`, `UNRELATED`, `INSUFFICIENT`), each evidence role, scope/qualifier mismatches, secondary reports, conflicts, and abstention. Obtain independent human labels for judgement, role, scope/design scores, and expected Claim–Paper outcomes; adjudicate disagreements and hold out whole papers from tuning.
