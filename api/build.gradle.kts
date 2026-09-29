@@ -61,6 +61,11 @@ val calibrationSourceSet = sourceSets.create("calibration") {
     runtimeClasspath += sourceSets.main.get().output
 }
 
+sourceSets.named("test") {
+    compileClasspath += calibrationSourceSet.output
+    runtimeClasspath += calibrationSourceSet.output
+}
+
 configurations[calibrationSourceSet.implementationConfigurationName]
     .extendsFrom(configurations.implementation.get())
 configurations[calibrationSourceSet.runtimeOnlyConfigurationName]
@@ -78,6 +83,41 @@ tasks.register<JavaExec>("calibrate") {
         repositoryRoot.resolve("docs/benchmarks/v1-calibration.md").absolutePath,
     )
     workingDir = repositoryRoot
+}
+
+tasks.register<JavaExec>("evaluateLaya") {
+    group = "verification"
+    description = "Runs one pre-registered Laya evaluation split against the pinned local provider."
+    dependsOn(tasks.named(calibrationSourceSet.classesTaskName))
+    classpath = calibrationSourceSet.runtimeClasspath
+    mainClass.set("com.papertrail.api.calibration.LayaEvaluationMainKt")
+    workingDir = project.projectDir.parentFile
+    doFirst {
+        val dataset = project.findProperty("layaDataset")?.toString()
+            ?: throw GradleException("Pass -PlayaDataset=<dataset.json>.")
+        val split = project.findProperty("layaSplit")?.toString()
+            ?: throw GradleException("Pass -PlayaSplit=calibration|held-out.")
+        val results = project.findProperty("layaResults")?.toString()
+            ?: throw GradleException("Pass -PlayaResults=<results.json>.")
+        val report = project.findProperty("layaReport")?.toString()
+            ?: throw GradleException("Pass -PlayaReport=<report.md>.")
+        val plan = project.findProperty("layaPlan")?.toString()
+        setArgs(listOfNotNull(dataset, split, results, report, plan))
+    }
+}
+
+tasks.register<JavaExec>("fingerprintLaya") {
+    group = "verification"
+    description = "Prints local dataset, held-out split, and source revision pins without invoking Laya."
+    dependsOn(tasks.named(calibrationSourceSet.classesTaskName))
+    classpath = calibrationSourceSet.runtimeClasspath
+    mainClass.set("com.papertrail.api.calibration.LayaEvaluationFingerprintMainKt")
+    workingDir = project.projectDir.parentFile
+    doFirst {
+        val dataset = project.findProperty("layaDataset")?.toString()
+            ?: throw GradleException("Pass -PlayaDataset=<dataset.json>.")
+        setArgs(listOf(dataset))
+    }
 }
 
 springBoot {

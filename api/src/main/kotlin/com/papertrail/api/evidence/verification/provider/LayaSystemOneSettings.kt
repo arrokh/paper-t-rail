@@ -42,6 +42,8 @@ data class LayaSystemOneSettings(
         const val REQUEST_MODEL_ALIAS = "typed-decisions"
         const val PINNED_MODEL_ID = "convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3"
         const val PINNED_RUNTIME_VERSION = "laya-serve-0.3.20@23a17522aa4942da6cce53a995a275760320b691"
+        // Bump whenever the six question definitions, instructions, or scoring rubrics change.
+        const val PROMPT_VERSION_ID = "paper-trail-laya-evidence-judgement-prompt-v1"
         const val OUTPUT_MAPPING_VERSION = "paper-trail-evidence-judgement-v1"
         const val OUTPUT_MAPPING_VERSION_ID = "pt-ej-v1"
         const val PROVIDER_VERSION = "$PINNED_RUNTIME_VERSION/$OUTPUT_MAPPING_VERSION_ID"

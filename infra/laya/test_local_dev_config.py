@@ -16,7 +16,7 @@ class LocalDevConfigTest(unittest.TestCase):
             root = Path(directory)
             env_path = root / ".env"
             example_path = root / ".env.example"
-            example_path.write_text("POSTGRES_PASSWORD=example\nLAYA_ENABLED=true\nLAYA_API_KEY=\n", encoding="utf-8")
+            example_path.write_text("POSTGRES_PASSWORD=example\nLAYA_API_KEY=\n", encoding="utf-8")
 
             enabled = configure_local_laya(env_path, example_path)
 
@@ -25,6 +25,8 @@ class LocalDevConfigTest(unittest.TestCase):
             key = re.search(r"^LAYA_API_KEY=([0-9a-f]{64})$", contents, re.MULTILINE)
             self.assertIsNotNone(key)
             self.assertIn("POSTGRES_PASSWORD=example", contents)
+            self.assertIn("LAYA_ENABLED=true", contents)
+            self.assertIn("SYSTEM_ONE_DEFAULT_PROVIDER=laya", contents)
             self.assertIn("LOCAL_LAYA_AGGREGATION_ENABLED=true", contents)
             self.assertEqual(stat.S_IMODE(env_path.stat().st_mode), 0o600)
 
