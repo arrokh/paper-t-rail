@@ -284,7 +284,7 @@ class LayaEvaluationReport {
             isHighRiskError(gold, prediction.judgement)
         }
         val completed = observations.filter { it.result.prediction != null }
-        metrics["high_risk.error_count"] = errors.size.toDouble()
+        metrics["high_risk.error_count"] = errors.size.toDouble().takeIf { completed.isNotEmpty() }
         metrics["high_risk.error_rate"] = ratio(errors.size, completed.size)
         output.appendLine("## High-risk errors")
         output.appendLine("Cross-polarity support/contradiction errors and false decisive predictions against gold UNRELATED/INSUFFICIENT are listed by opaque case ID only.")
@@ -354,7 +354,7 @@ class LayaEvaluationReport {
                 result.predictedStatus in DECISIVE_STATUSES && result.predictedStatus != result.expectedStatus
             }
             val falseDecisiveRate = ratio(falseDecisive, complete.size)
-            metrics["$prefix.false_decisive_count"] = falseDecisive.toDouble()
+            metrics["$prefix.false_decisive_count"] = falseDecisive.toDouble().takeIf { complete.isNotEmpty() }
             metrics["$prefix.false_decisive_rate"] = falseDecisiveRate
             val falseDecisiveInterval = bootstrap.intervalForAggregates(results) { sample ->
                 val done = sample.filter { it.predictedStatus != null }

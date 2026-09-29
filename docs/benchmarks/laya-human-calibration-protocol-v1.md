@@ -38,7 +38,7 @@ Before running the held-out set, the human reviewer must freeze a dated evaluati
 - the numerical safety bar for each decision-relevant metric and the acceptable handling of high-risk errors;
 - the aggregation policy version and every threshold/margin candidate to compare on the frozen Laya outputs.
 
-This draft intentionally sets **no numerical safety bar**. The reviewer must supply and approve those values before evaluation; results produced without a predeclared bar cannot justify a production GO or threshold selection.
+Issue #45 records a **provisional pass criterion**: zero observed false decisive `SUPPORTED` or `CONTRADICTED` outcomes on the locked held-out set. This draft remains `NOT_APPROVED` and does not approve a complete numerical safety bar. Before held-out evaluation, the human reviewer must pre-register the exact dataset/split, decision-relevant metrics, sample and uncertainty adequacy rule, treatment of high-risk errors, and any additional metric thresholds. Meeting the provisional criterion alone is not calibration approval or a target-specific GO; results without an approved predeclared plan cannot justify threshold selection or release.
 
 Run the exact pinned candidate on every eligible held-out case without truncation or provider fallback. Preserve the raw provider response/output needed for audit in the approved local dataset store, bound to the dataset and candidate versions. Record token-limit rejections, request failures, timeouts, and malformed responses as incomplete coverage with their reason; never fabricate a judgement or silently drop a failed case. Reports must not contain claim text, Evidence Passage text, request bodies, API keys, or query strings.
 
@@ -63,4 +63,4 @@ A human reviewer must separately review the exact target deployment's artifact/l
 
 ## Current status
 
-No legally usable in-domain release dataset, human-adjudicated held-out labels, or predeclared numerical safety bar is included in the repository. The current `paper-t-rail-v1-calibration-draft` fixture is synthetic and remains `DRAFT`; its aggregation harness does not call Laya. This document is a draft procedure only, not evidence that any protocol step or production gate has passed.
+No legally usable in-domain release dataset or human-adjudicated held-out labels is included in the repository, and the complete numerical safety bar and protocol remain unapproved. Issue #45 records only the provisional zero-false-decisive criterion described above. The current `paper-t-rail-v1-calibration-draft` fixture is synthetic and remains `DRAFT`; its aggregation harness does not call Laya. This document is a draft procedure only, not evidence that any protocol step or production gate has passed.

@@ -145,6 +145,8 @@ class LayaEvaluationHarnessTest {
             checkpoint = LayaSystemOneSettings.PINNED_MODEL_ID,
             runtime = LayaSystemOneSettings.PINNED_RUNTIME_VERSION,
             outputMapping = LayaSystemOneSettings.OUTPUT_MAPPING_VERSION,
+            contextLimitTokens = LayaSystemOneSettings.MODEL_CONTEXT_TOKENS,
+            promptVersion = LayaSystemOneSettings.PROMPT_VERSION_ID,
         ),
         papers = cases.map(LayaEvaluationDataset.Case::citedPaperId).distinct().map(::paper),
         cases = cases,

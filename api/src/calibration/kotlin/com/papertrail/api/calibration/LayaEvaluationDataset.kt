@@ -173,8 +173,8 @@ data class LayaEvaluationDataset(
         val checkpoint: String,
         val runtime: String,
         val outputMapping: String,
-        val contextLimitTokens: Int = LayaSystemOneSettings.MODEL_CONTEXT_TOKENS,
-        val promptVersion: String = LayaSystemOneSettings.PROMPT_VERSION_ID,
+        val contextLimitTokens: Int,
+        val promptVersion: String,
     ) {
         fun validate() {
             require(checkpoint == LayaSystemOneSettings.PINNED_MODEL_ID &&

@@ -1,5 +1,8 @@
 package com.papertrail.api.calibration
 
+import com.fasterxml.jackson.databind.JsonMappingException
+import com.fasterxml.jackson.databind.node.ObjectNode
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidenceRole
@@ -57,11 +60,32 @@ class LayaEvaluationDatasetTest {
     }
 
     @Test
+    fun `requires explicit prompt and context pins in the dataset file`() {
+        val mapper = jacksonObjectMapper()
+        listOf("promptVersion", "contextLimitTokens").forEach { field ->
+            val datasetNode = mapper.valueToTree<ObjectNode>(draftDataset())
+            datasetNode.with("candidate").remove(field)
+
+            if (field == "promptVersion") {
+                assertThrows(JsonMappingException::class.java) {
+                    mapper.treeToValue(datasetNode, LayaEvaluationDataset::class.java)
+                }
+            } else {
+                assertThrows(IllegalArgumentException::class.java) {
+                    mapper.treeToValue(datasetNode, LayaEvaluationDataset::class.java).validate()
+                }
+            }
+        }
+    }
+
+    @Test
     fun `rejects datasets pinned to any other candidate`() {
         val wrongCandidate = LayaEvaluationDataset.Candidate(
             checkpoint = "unreviewed/model@main",
             runtime = LayaSystemOneSettings.PINNED_RUNTIME_VERSION,
             outputMapping = LayaSystemOneSettings.OUTPUT_MAPPING_VERSION,
+            contextLimitTokens = LayaSystemOneSettings.MODEL_CONTEXT_TOKENS,
+            promptVersion = LayaSystemOneSettings.PROMPT_VERSION_ID,
         )
 
         val error = assertThrows(IllegalArgumentException::class.java) {
@@ -103,6 +127,8 @@ class LayaEvaluationDatasetTest {
         checkpoint = LayaSystemOneSettings.PINNED_MODEL_ID,
         runtime = LayaSystemOneSettings.PINNED_RUNTIME_VERSION,
         outputMapping = LayaSystemOneSettings.OUTPUT_MAPPING_VERSION,
+        contextLimitTokens = LayaSystemOneSettings.MODEL_CONTEXT_TOKENS,
+        promptVersion = LayaSystemOneSettings.PROMPT_VERSION_ID,
     )
 
     private fun paper(id: String) = LayaEvaluationDataset.PaperProvenance(

@@ -95,6 +95,8 @@ class LayaEvaluationPlanTest {
                 checkpoint = LayaSystemOneSettings.PINNED_MODEL_ID,
                 runtime = LayaSystemOneSettings.PINNED_RUNTIME_VERSION,
                 outputMapping = LayaSystemOneSettings.OUTPUT_MAPPING_VERSION,
+                contextLimitTokens = LayaSystemOneSettings.MODEL_CONTEXT_TOKENS,
+                promptVersion = LayaSystemOneSettings.PROMPT_VERSION_ID,
             ),
             papers = listOf(paper("paper-cal"), paper("paper-test")),
             cases = cases,
