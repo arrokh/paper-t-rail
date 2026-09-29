@@ -2860,7 +2860,7 @@ Verifying claims
 Aggregating report
 ```
 
-TanStack Query owns browser-fetched provider-directory, recent Analysis Run, parsed-document, and Reference Resolution Report state. The recent-run query fetches the cursor-paginated list through the same-origin Next.js proxy and polls every 2.5 seconds only while at least one run on the displayed page is nonterminal (`QUEUED`, `PROCESSING`, or `PARSED`). Polling stops once every displayed run is terminal (`COMPLETED`, `COMPLETED_WITH_WARNINGS`, or `FAILED`). Upload and re-analysis are mutations; after either succeeds, refresh the recent-run list and select the created Analysis Run. Query and mutation loading/error states are the UI's source of truth; do not mirror remote state in component state.
+TanStack Query owns browser-fetched provider-directory, recent Analysis Run, parsed-document, and Reference Resolution Report state. The recent-run query fetches the cursor-paginated list through the same-origin Next.js proxy and polls every 2.5 seconds only while at least one run is queued or processing. It pauses interval polling in background tabs and refreshes when the tab regains focus; parsed runs do not keep the list polling because they are stable between worker-owned processing. The list also offers an explicit refresh action. Upload and re-analysis are mutations; after either succeeds, refresh the recent-run list and select the created Analysis Run. Query and mutation loading/error states are the UI's source of truth; do not mirror remote state in component state.
 
 SSE can be added later.
 

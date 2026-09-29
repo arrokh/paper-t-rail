@@ -18,10 +18,6 @@ function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 
-function queryWithData(data) {
-  return { state: { data } };
-}
-
 test("provider-directory query exposes loading, successful data, and the safe API error message", async (context) => {
   const client = new QueryClient();
   const originalFetch = globalThis.fetch;
@@ -206,13 +202,9 @@ test("Human Review mutation appends a separate result and refreshes the active r
   assert.deepEqual(client.getQueryData(referenceResolutionReportQueryKey("run-1")).humanReviews, [createdReview]);
 });
 
-test("recent-run polling stays active while any displayed run is nonterminal and stops after terminal statuses", () => {
+test("recent-run list does not poll automatically and refreshes when the window regains focus", () => {
   const options = recentAnalysisRunsQueryOptions(null);
-  const interval = options.refetchInterval;
 
-  assert.equal(interval(queryWithData({ items: [{ status: "PROCESSING" }, { status: "FAILED" }] })), 2500);
-  assert.equal(interval(queryWithData({ items: [{ status: "QUEUED" }, { status: "PARSED" }] })), 2500);
-  assert.equal(interval(queryWithData({ items: [{ status: "COMPLETED" }, { status: "COMPLETED_WITH_WARNINGS" }] })), false);
-  assert.equal(interval(queryWithData({ items: [{ status: "FAILED" }] })), false);
-  assert.equal(interval(queryWithData({ items: [] })), false);
+  assert.equal(options.refetchInterval, undefined);
+  assert.equal(options.refetchOnWindowFocus, true);
 });
