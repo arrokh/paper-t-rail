@@ -44,6 +44,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.test.context.bean.override.mockito.MockitoBean
@@ -71,6 +72,9 @@ import java.util.UUID
 @AutoConfigureMockMvc
 @ExtendWith(OutputCaptureExtension::class)
 class OpenApiDocumentationTest {
+    @Value("\${paper-trail.analysis.local-laya-aggregation.enabled}")
+    private var localLayaAggregationEnabled: Boolean = true
+
     @Autowired
     private lateinit var mockMvc: MockMvc
 
@@ -106,6 +110,11 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var unpaywallDiscoveryCache: UnpaywallDiscoveryCache
+
+    @Test
+    fun `base Spring configuration enables experimental Laya aggregation by default`() {
+        assertTrue(localLayaAggregationEnabled)
+    }
 
     @Test
     fun `OpenAPI contract describes the existing analysis run endpoints and PDF upload`() {
