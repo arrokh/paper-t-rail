@@ -59,7 +59,7 @@ infra-down:
 clean:
 	$(COMPOSE) --profile laya-evaluation down --volumes --remove-orphans
 
-test: test-api test-laya test-web lint-web typecheck-web build-web calibrate
+test: test-api test-laya test-web lint-web typecheck-web build-web
 
 test-api:
 	cd api && $(MISE) ./gradlew test
@@ -135,6 +135,7 @@ typecheck-web:
 build-web:
 	cd web && $(MISE) pnpm run build
 
+# Optional diagnostic calibration harness; not required by the standard test/validate targets.
 calibrate:
 	cd api && $(MISE) ./gradlew calibrate
 

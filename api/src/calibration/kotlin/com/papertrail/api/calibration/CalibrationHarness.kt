@@ -24,12 +24,12 @@ class CalibrationHarness {
         return buildString {
             appendLine("# V1 Reference and Evidence Calibration Benchmark")
             appendLine()
-            appendLine("> **${fixture.fixtureStatus.name}: NOT RELEASE CALIBRATION EVIDENCE.** Candidate metrics over draft labels are exploratory only. Human adjudication and explicit release review remain required; this report never approves or activates a policy.")
+            appendLine("> **${fixture.fixtureStatus.name}: OPTIONAL RESEARCH ONLY.** Candidate metrics over draft labels are exploratory and do not establish accuracy or calibration. This report does not approve or activate a policy.")
             appendLine()
             appendLine("## Fixture and method")
             appendLine()
             appendLine("- Fixture: `${fixture.fixtureId}` (schema version ${fixture.schemaVersion}; ${fixture.fixtureStatus.name})")
-            appendLine("- Release calibration: `${fixture.releaseCalibrationStatus}`")
+            appendLine("- Calibration research status: `${fixture.releaseCalibrationStatus}`")
             appendLine("- Label provenance: ${fixture.provenance.description}")
             appendLine("- Labels with human review: $reviewedLabelCount / $totalLabelCount")
             appendLine("- Fixture contract: versioned JSON cases carry expected outcomes, provenance, and `adjudication.state` (`DRAFT` or `HUMAN_REVIEWED`). Human-reviewed labels require reviewer, ISO-8601 `reviewedAt`, and rationale; draft labels must not include review metadata.")
@@ -79,9 +79,9 @@ class CalibrationHarness {
                 }
             }
             appendLine()
-            appendLine("## Interpretation and release gate")
+            appendLine("## Interpretation and limitations")
             appendLine()
-            appendLine("This versioned fixture is intentionally synthetic and its labels are `DRAFT`; its numbers demonstrate reproducible harness behavior, not real-world precision or calibration. Do not use these results to select or approve thresholds. Before any release-calibration claim, replace or supplement draft cases with provenance-bearing human-adjudicated labels, review the benchmark method and results, and explicitly approve a policy. Runtime configuration enables experimental evidence aggregation by default per issue #45, but this synthetic fixture does not exercise Laya inference or establish calibration; generated judgements and statuses must remain explicitly uncalibrated. Set `LOCAL_LAYA_AGGREGATION_ENABLED=false` to keep final statuses `NOT_RUN`. Below-threshold and ambiguous reference candidates must remain `UNRESOLVED`.")
+            appendLine("This versioned fixture is intentionally synthetic and its labels are `DRAFT`; its numbers demonstrate reproducible harness behavior, not real-world precision or calibration. Do not use these results to select or approve thresholds. Any future evaluation research should use provenance-bearing human-adjudicated labels and report its method and limitations; such research is optional and does not gate product use or release. Runtime configuration enables experimental evidence aggregation by default per issue #45, but this fixture does not exercise Laya inference or establish calibration. Generated judgements and statuses must remain explicitly uncalibrated. Set `LOCAL_LAYA_AGGREGATION_ENABLED=false` to keep final statuses `NOT_RUN`. Below-threshold and ambiguous reference candidates must remain `UNRESOLVED`.")
             appendLine()
             appendLine("Rebuild this report with `make calibrate` (or `cd api && ./gradlew calibrate`).")
         }

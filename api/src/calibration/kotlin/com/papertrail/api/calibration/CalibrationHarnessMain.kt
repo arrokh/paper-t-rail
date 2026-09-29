@@ -16,5 +16,5 @@ fun main(args: Array<String>) {
     Files.createDirectories(reportPath.toAbsolutePath().parent)
     Files.writeString(reportPath, report)
     println("Calibration report written to ${reportPath.toAbsolutePath()}")
-    println("Fixture ${fixture.fixtureId}: ${fixture.fixtureStatus}; release calibration ${fixture.releaseCalibrationStatus}.")
+    println("Fixture ${fixture.fixtureId}: ${fixture.fixtureStatus}; calibration research status ${fixture.releaseCalibrationStatus}.")
 }
