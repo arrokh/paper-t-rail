@@ -140,12 +140,12 @@ spring:
     activate:
       on-profile: production
 
-# Production defaults select the requested Laya provider. This does not imply calibration or
-# accuracy approval; aggregation remains disabled until human review.
+# Production defaults select Laya and enable experimental aggregation per the owner decision.
+# Outputs remain uncalibrated; deployments without a target-specific GO must opt out explicitly.
 paper-trail:
   analysis:
     local-laya-aggregation:
-      enabled: ${LOCAL_LAYA_AGGREGATION_ENABLED:false}
+      enabled: ${LOCAL_LAYA_AGGREGATION_ENABLED:true}
   providers:
     system-one:
       default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:laya}

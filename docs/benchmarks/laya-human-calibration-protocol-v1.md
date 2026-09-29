@@ -1,6 +1,6 @@
 # Laya Human Calibration Protocol (Draft)
 
-> **Status: DRAFT — NOT APPROVED FOR RELEASE.** This protocol records the minimum review process requested by issue [#45](https://github.com/arrokh/paper-t-rail/issues/45). It does not contain an approved dataset, numerical safety bar, production approval, or calibration result. Do not use it to enable production Laya or aggregation.
+> **Status: DRAFT — NOT APPROVED FOR RELEASE.** This protocol records the minimum review process requested by issue [#45](https://github.com/arrokh/paper-t-rail/issues/45). It does not contain an approved dataset, numerical safety bar, target-specific production approval, or calibration result. The owner-authorized production profile defaults to Laya and experimental aggregation, but this protocol draft and those defaults do not establish accuracy, calibration, or a target-specific GO.
 
 - Protocol ID: `laya-human-calibration-v1-draft`
 - Candidate checkpoint: `convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3`
@@ -59,7 +59,7 @@ Apply each pre-registered aggregation candidate to the frozen Laya outputs, then
 
 ## 5. Deployment decision
 
-A human reviewer must separately review the exact target deployment's artifact/license and provenance, private authenticated network boundary and no-egress behavior, retention/deletion behavior, failure semantics, and rollback plan. Record reviewer, date, rationale, exact deployment scope, and explicit GO/NO-GO in `docs/agents/provider-matrix.md`. A GO must cite the frozen held-out report and show that the predeclared safety bar was met. A target-specific NO-GO requires that target to opt out with `LAYA_ENABLED=false` and `SYSTEM_ONE_DEFAULT_PROVIDER=mock`; aggregation remains disabled unless separately approved. The production Spring profile's Laya-enabled/Laya-selected defaults are an owner-authorized configuration choice recorded in issue #45, not evidence that the candidate passed this protocol. Local experimental results do not establish accuracy or calibration approval.
+A human reviewer must separately review the exact target deployment's artifact/license and provenance, private authenticated network boundary and no-egress behavior, retention/deletion behavior, failure semantics, and rollback plan. Record reviewer, date, rationale, exact deployment scope, and explicit GO/NO-GO in `docs/agents/provider-matrix.md`. A GO must cite the frozen held-out report and show that the predeclared safety bar was met. A target-specific NO-GO requires that target to opt out with `LAYA_ENABLED=false`, `SYSTEM_ONE_DEFAULT_PROVIDER=mock`, and `LOCAL_LAYA_AGGREGATION_ENABLED=false`. The production Spring profile defaults Laya enabled/selected and experimental aggregation enabled per the owner-authorized configuration choice recorded in issue #45; this profile default is not evidence that the candidate passed this protocol or that any target is approved. Local experimental results do not establish accuracy or calibration approval.
 
 ## Current status
 

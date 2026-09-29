@@ -7,14 +7,14 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner
 
 class ProductionProviderDefaultsTest {
     @Test
-    fun `production profile defaults to Laya while keeping aggregation disabled`() {
+    fun `production profile defaults to Laya with experimental aggregation enabled`() {
         ApplicationContextRunner()
             .withInitializer(ConfigDataApplicationContextInitializer())
             .withPropertyValues("spring.profiles.active=production")
             .run { context ->
                 assertEquals("true", context.environment.getProperty("paper-trail.providers.laya.enabled"))
                 assertEquals("laya", context.environment.getProperty("paper-trail.providers.system-one.default-provider"))
-                assertEquals("false", context.environment.getProperty("paper-trail.analysis.local-laya-aggregation.enabled"))
+                assertEquals("true", context.environment.getProperty("paper-trail.analysis.local-laya-aggregation.enabled"))
             }
     }
 
