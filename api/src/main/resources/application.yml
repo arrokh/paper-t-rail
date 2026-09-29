@@ -141,7 +141,7 @@ spring:
       on-profile: production
 
 # Production defaults select Laya and enable experimental aggregation per the owner decision.
-# Outputs remain uncalibrated; deployments without a target-specific GO must opt out explicitly.
+# Outputs remain uncalibrated; this configuration default does not establish accuracy or approval.
 paper-trail:
   analysis:
     local-laya-aggregation:

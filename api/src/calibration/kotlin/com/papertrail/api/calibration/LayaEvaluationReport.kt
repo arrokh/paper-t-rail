@@ -49,7 +49,7 @@ class LayaEvaluationReport {
             appendLine(if (run.split == LayaEvaluationDataset.Split.HELD_OUT) "# Laya held-out evaluation" else "# Laya calibration evaluation")
             appendLine()
             if (dataset.status == LayaEvaluationDataset.DatasetStatus.DRAFT) {
-                appendLine("> **DRAFT — NOT RELEASE CALIBRATION EVIDENCE.** This report cannot establish production readiness or approval.")
+                appendLine("> **DRAFT — OPTIONAL RESEARCH ONLY.** This report does not establish accuracy or calibration; all product outputs remain uncalibrated.")
                 appendLine()
             }
             appendLine("- Dataset: `${dataset.datasetId}` (schema ${dataset.schemaVersion}; ${dataset.status})")

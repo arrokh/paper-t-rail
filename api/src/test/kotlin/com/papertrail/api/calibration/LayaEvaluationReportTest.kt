@@ -37,7 +37,7 @@ class LayaEvaluationReportTest {
 
         val report = LayaEvaluationReport().render(dataset, run)
 
-        assertTrue(report.contains("DRAFT — NOT RELEASE CALIBRATION EVIDENCE"))
+        assertTrue(report.contains("DRAFT — OPTIONAL RESEARCH ONLY"))
         assertTrue(report.contains("Coverage: 2/3"))
         assertTrue(report.contains("Brier score against adjudicated correctness: 0.265"))
         assertTrue(report.contains("Expected calibration error (10 bins): 0.450"))

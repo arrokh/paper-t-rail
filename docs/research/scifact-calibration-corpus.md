@@ -1,10 +1,10 @@
-# SciFact as a Laya calibration corpus candidate
+# Optional research: SciFact as an evaluation-corpus candidate
 
 ## Recommendation
 
-Select **scientific citation-claim verification** as the initial research domain and use **SciFact as a limited, external benchmark candidate**, not as the complete Laya calibration corpus and not as approval evidence by itself.
+If optional evaluation research is pursued, use **SciFact as a limited, external benchmark candidate** for scientific citation-claim verification—not as a complete Laya calibration corpus or approval evidence by itself. This research is not a product or release requirement.
 
-SciFact is unusually well aligned with Paper T-Rail's claim-to-cited-paper problem: its claims were rewritten from scientific citation sentences, and annotators labeled cited-paper abstracts with support/refute/no-information outcomes and sentence rationales. Its released claim/evidence annotations are CC BY 4.0. However, the corpus consists of abstracts rather than full text, does not provide Paper T-Rail's Evidence Roles or four ordinal score fields, and lacks the full set of product judgement categories. Its public split is claim-based and does not promise a Cited-Paper-disjoint held-out set. These gaps prevent it from satisfying issue #45 alone.
+SciFact is unusually well aligned with Paper T-Rail's claim-to-cited-paper problem: its claims were rewritten from scientific citation sentences, and annotators labeled cited-paper abstracts with support/refute/no-information outcomes and sentence rationales. Its released claim/evidence annotations are CC BY 4.0. However, the corpus consists of abstracts rather than full text, does not provide Paper T-Rail's Evidence Roles or four ordinal score fields, and lacks the full set of product judgement categories. Its public split is claim-based and does not promise a Cited-Paper-disjoint held-out set. These gaps limit its usefulness as a standalone research resource; there is no product or release gate tied to completing this work.
 
 ## What SciFact provides
 
@@ -19,7 +19,7 @@ The official repository describes 1,409 expert-written scientific claims and pro
 | Full Cited Paper text | No; the released corpus contains abstracts. | It cannot stand in for the full-text Evidence Passage task; Paper T-Rail does not semantically judge abstract-only access. |
 | Every Evidence Judgement class | No; the core scheme is support/refute/no-information. | `NOINFO` may be a reviewed abstract-level analogue for insufficiency, but is not automatically equivalent to full-text insufficiency; additional labels are needed for partial support and unrelated evidence. |
 | Evidence Role and four ordinal score dimensions | No. | Qualified reviewers must add these labels for the Paper T-Rail calibration protocol. |
-| Paper-disjoint held-out split | Not guaranteed by the official claim-level splits/shared corpus. | Build and validate a new grouped split so no Cited Paper appears in more than one partition; do not reuse the official split as the release holdout without this check. |
+| Paper-disjoint evaluation split | Not guaranteed by the official claim-level splits/shared corpus. | If used for research, build and validate a grouped split so no Cited Paper appears in more than one partition. |
 
 ## License and acquisition assessment
 
@@ -29,12 +29,12 @@ ODC-By 1.0 is an attribution license for database rights. Its own preamble says 
 
 This is also narrower than the current application acquisition policy: `LegalOpenAccessLocationPolicy` accepts CC0, CC BY, and public-domain identifiers, not ODC-By. Do not route SciFact abstracts through the production cited-paper acquisition path unless the policy/legal review explicitly permits it. For a full-text supplement, use an approved source such as the PMC Open Access Subset, verify the individual article license, and download only through PMC's designated OAI-PMH, FTP, or Cloud services; PMC prohibits systematic batch downloading from its main website. Do not treat free-to-read as reusable.
 
-## Selected use and remaining gate
+## Optional research use
 
-1. Use SciFact only as a **supplementary abstract-level benchmark** for its supported outcome/rationale labels, after creating a Cited-Paper-disjoint split and recording the exact release/checksums and applicable rights.
-2. Build the primary calibration set from legally usable, in-domain **full-text Cited Papers** whose article-level license is accepted by the project. Have qualified human reviewers label the existing judgement schema, Evidence Role, four ordinal dimensions, and expected Claim–Paper outcomes/conflicts; double-review and adjudicate as selected in issue #45.
-3. Compare the three predeclared aggregation threshold arms on frozen Laya outputs. Keep calibration `NOT_APPROVED` unless the locked held-out set meets the provisional zero-false-decisive-outcome bar, the sample/uncertainty is sufficient, and a human reviewer approves the exact rubric, thresholds, and policy version.
-4. Keep target-specific deployment GO separate. The current Spring aggregation default and SciFact's public benchmark labels do not approve a target deployment.
+1. SciFact may be used as a **supplementary abstract-level benchmark** for its supported outcome/rationale labels, after creating a Cited-Paper-disjoint split and recording the exact release/checksums and applicable rights.
+2. Any broader calibration research would need legally usable, in-domain **full-text Cited Papers** whose article-level licenses are accepted by the project. Reviewers could label the existing judgement schema, Evidence Role, ordinal dimensions, and expected Claim–Paper outcomes/conflicts, with independent review and adjudication.
+3. Researchers could compare predeclared aggregation threshold arms on frozen Laya outputs and report uncertainty and limitations. No result changes the product's uncalibrated status unless separately decided; completion or approval of this research is not a product or release requirement.
+4. The current Spring aggregation default and SciFact's public benchmark labels do not establish model accuracy or calibration.
 
 ## Sources
 

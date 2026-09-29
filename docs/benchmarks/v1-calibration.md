@@ -1,11 +1,11 @@
-# V1 Reference and Evidence Calibration Benchmark
+# Optional V1 Reference and Evidence Calibration Benchmark
 
-> **DRAFT: NOT RELEASE CALIBRATION EVIDENCE.** Candidate metrics over draft labels are exploratory only. Human adjudication and explicit release review remain required; this report never approves or activates a policy.
+> **OPTIONAL DRAFT: NOT A RELEASE REQUIREMENT OR CALIBRATION EVIDENCE.** Candidate metrics over draft labels are exploratory only. Human adjudication is not required for product release; this report never approves or activates a policy.
 
 ## Fixture and method
 
 - Fixture: `paper-t-rail-v1-calibration-draft` (schema version 1; DRAFT)
-- Release calibration: `NOT_APPROVED`
+- Calibration research status: `NOT_APPROVED`
 - Label provenance: Hand-authored synthetic known-answer scenarios for exercising reference matching and evidence aggregation. No case is drawn from or adjudicated against a scholarly paper.
 - Labels with human review: 0 / 11
 - Fixture contract: versioned JSON cases carry expected outcomes, provenance, and `adjudication.state` (`DRAFT` or `HUMAN_REVIEWED`). Human-reviewed labels require reviewer, ISO-8601 `reviewedAt`, and rationale; draft labels must not include review metadata.
@@ -82,8 +82,8 @@ Evidence case outcomes by candidate:
 | `aggregation-conservative-example` | `evidence-high-confidence-low-scope` | DRAFT | INSUFFICIENT_EVIDENCE | INSUFFICIENT_EVIDENCE | false / false | yes |
 | `aggregation-conservative-example` | `evidence-secondary-report-only` | DRAFT | INSUFFICIENT_EVIDENCE | INSUFFICIENT_EVIDENCE | false / false | yes |
 
-## Interpretation and release gate
+## Interpretation and limitations
 
-This versioned fixture is intentionally synthetic and its labels are `DRAFT`; its numbers demonstrate reproducible harness behavior, not real-world precision or calibration. Do not use these results to select or approve thresholds. Before any release-calibration claim, replace or supplement draft cases with provenance-bearing human-adjudicated labels, review the benchmark method and results, and explicitly approve a policy. Runtime configuration enables experimental evidence aggregation by default per issue #45, but this synthetic fixture does not exercise Laya inference or establish calibration; generated judgements and statuses must remain explicitly uncalibrated. Set `LOCAL_LAYA_AGGREGATION_ENABLED=false` to keep final statuses `NOT_RUN`. Below-threshold and ambiguous reference candidates must remain `UNRESOLVED`.
+This versioned fixture is intentionally synthetic and its labels are `DRAFT`; its numbers demonstrate reproducible harness behavior, not real-world precision or calibration. Do not use these results to characterize model quality or imply calibration. Calibration is not a product or release requirement, and this optional report does not validate thresholds or outputs. Runtime configuration enables experimental evidence aggregation by default, but this synthetic fixture does not exercise Laya inference; generated judgements and statuses must remain explicitly uncalibrated. Set `LOCAL_LAYA_AGGREGATION_ENABLED=false` to keep final statuses `NOT_RUN`. Below-threshold and ambiguous reference candidates must remain `UNRESOLVED`.
 
 Rebuild this report with `make calibrate` (or `cd api && ./gradlew calibrate`).
