@@ -271,6 +271,7 @@ describe("Analysis Run Paper Review", () => {
 
     expect(screen.getByRole("heading", { name: "Citing contexts" })).toBeTruthy();
     expect(screen.getByText("The intervention improved the measured outcome [1].")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /A\. Author/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Review AI result: supported/ }));
     expect(onSelectOutcome).toHaveBeenCalledWith(outcome.id, "b0");
   });

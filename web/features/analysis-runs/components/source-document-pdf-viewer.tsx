@@ -8,7 +8,19 @@ import { sourceDocumentPdfAccessQueryOptions } from "@/features/analysis-runs/qu
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 
-export function SourceDocumentPdfViewer({ analysisRunId, filename }: { analysisRunId: string; filename: string }) {
+function buildPdfTextFragmentUrl(viewUrl: string, text: string | null) {
+  const normalizedText = text?.replace(/\s+/g, " ").trim();
+  if (!normalizedText) return viewUrl;
+
+  const textCharacters = Array.from(normalizedText);
+  const matchText = textCharacters.length > 120
+    ? textCharacters.slice(0, 120).join("").replace(/\s+\S*$/, "")
+    : normalizedText;
+  const documentUrl = viewUrl.split("#", 1)[0];
+  return `${documentUrl}#:~:text=${encodeURIComponent(matchText)}`;
+}
+
+export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText }: { analysisRunId: string; filename: string; highlightText: string | null }) {
   const pdfQuery = useQuery(sourceDocumentPdfAccessQueryOptions(analysisRunId));
 
   return (
@@ -43,7 +55,7 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename }: { analysisR
       </div>
 
       <p className="m-0 text-xs leading-relaxed text-muted-foreground">
-        Citation links use parsed source text. The parser does not provide reliable PDF page coordinates for exact jumps or highlights.
+        Selecting a bibliography entry or citing passage searches its text in the PDF. The match can be approximate because parsed data does not include PDF page coordinates, and browser support varies.
       </p>
 
       {pdfQuery.isPending && (
@@ -68,7 +80,8 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename }: { analysisR
 
       {pdfQuery.data && (
         <iframe
-          src={pdfQuery.data.viewUrl}
+          key={`${analysisRunId}:${highlightText ?? "original"}`}
+          src={buildPdfTextFragmentUrl(pdfQuery.data.viewUrl, highlightText)}
           title={`Original uploaded PDF: ${filename}`}
           referrerPolicy="no-referrer"
           className="source-document-pdf-size w-full rounded-lg border border-border bg-muted/20"

@@ -37,7 +37,7 @@ export function PipelineResultMetricFilters({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">Select cards to filter. Use a card’s help button to learn what it means. No selection or all cards selected shows everything.</p>
-        <Button type="button" variant="ghost" size="sm" disabled={selectedValues.size === 0} onClick={onReset}>
+        <Button type="button" variant="ghost" size="sm" className="ml-auto shrink-0" disabled={selectedValues.size === 0} onClick={onReset}>
           <RotateCcw aria-hidden="true" />
           Reset filters
         </Button>
@@ -53,15 +53,15 @@ export function PipelineResultMetricFilters({
                 aria-pressed={selected}
                 onClick={() => onToggle(option.id)}
                 className={cn(
-                  "h-auto min-h-16 w-full min-w-0 justify-start rounded-xl border p-0 text-left whitespace-normal shadow-none",
+                  "h-24 w-full min-w-0 justify-start rounded-xl border p-0 text-left whitespace-normal shadow-none",
                   selected ? "border-primary/70 bg-primary/10 hover:bg-primary/15" : "border-border bg-card hover:bg-muted/60",
                 )}
               >
-                <span className="flex w-full min-w-0 flex-col gap-1 p-3 pr-10">
-                  <span className="flex w-full min-w-0 items-start justify-between gap-2">
-                    <span className="min-w-0 text-xs leading-relaxed text-muted-foreground">{option.label}</span>
+                <span className="flex h-full w-full min-w-0 flex-col justify-between p-2 pr-10">
+                  <span className="min-h-12 min-w-0 line-clamp-3 text-xs leading-4 text-muted-foreground">
+                    {option.label}
                   </span>
-                  <span className="font-mono text-lg font-semibold text-foreground">{option.value}</span>
+                  <span className="font-mono text-lg font-semibold leading-6 text-foreground">{option.value}</span>
                 </span>
               </Button>
               <Popover modal={false}>
