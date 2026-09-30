@@ -1,0 +1,24 @@
+---
+interface Props {
+  variant: "far-left" | "near-left" | "right" | "high-right";
+  left: string;
+  top: string;
+  width: string;
+  duration: string;
+}
+
+const { variant, left, top, width, duration } = Astro.props;
+---
+
+<div
+  class:list={["hero-scene__cloud", `hero-scene__cloud--${variant}`]}
+  style={`--cloud-left: ${left}; --cloud-top: ${top}; --cloud-width: ${width}; --cloud-duration: ${duration};`}
+>
+  <div class="hero-scene__cloud-track">
+    {[0, 1].map(() => (
+      <span class="hero-scene__cloud-panel">
+        <img src="/images/hero/cloud-wisp.png" alt="" width="800" height="200" loading="eager" decoding="async" />
+      </span>
+    ))}
+  </div>
+</div>

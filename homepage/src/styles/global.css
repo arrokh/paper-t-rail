@@ -1,0 +1,29 @@
+@import "@fontsource-variable/fraunces/index.css";
+@import "@fontsource-variable/ibm-plex-sans/index.css";
+@import "@fontsource/press-start-2p/latin-400.css";
+@import "@paper-t-rail/design-system/tokens.css";
+@import "./landing.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  background: var(--ptr-paper);
+  color: var(--ptr-ink);
+  font-family: var(--ptr-font-body);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

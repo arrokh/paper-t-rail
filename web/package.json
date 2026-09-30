@@ -18,6 +18,9 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/ibm-plex-sans": "^5.3.0",
+    "@paper-t-rail/design-system": "link:../packages/design-system",
     "@tanstack/react-query": "^5.103.2",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",

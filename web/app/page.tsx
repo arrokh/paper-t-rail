@@ -6,11 +6,8 @@ export default function Home() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-5 sm:px-6 sm:py-8">
       <header className="flex items-center justify-between gap-4 border-b border-border/80 pb-4">
-        <Link href="/" className="inline-flex items-center gap-3 rounded-md font-semibold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Paper T-Rail home">
-          <span className="grid size-9 place-items-center rounded-xl rounded-bl-sm bg-primary font-serif text-lg text-primary-foreground" aria-hidden="true">
-            P
-          </span>
-          <span>Paper T-Rail</span>
+        <Link href="/" className="inline-flex min-h-11 items-center rounded-md font-heading text-[clamp(18px,2vw,25px)] font-[760] tracking-[-0.04em] text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Paper T-Rail home">
+          Paper T-Rail
         </Link>
         <Badge variant="outline" className="h-auto gap-2 rounded-full px-3 py-1.5 font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">
           <span className="size-2 rounded-full bg-primary ring-4 ring-primary/10" aria-hidden="true" />

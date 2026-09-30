@@ -1,0 +1,1 @@
+The pixel icons in this directory are copied from [Pixelarticons](https://github.com/halfmage/pixelarticons), a pixel-art icon set distributed under the MIT License. They are used as CSS masks so each service can color them with its own semantic tokens.

@@ -5,12 +5,18 @@ LAYA_EVALUATION_SOURCE_PATHS = api infra/laya infra/docker-compose.yml Makefile 
 # Keep command-line CHANGE data out of shell source text in the revert target.
 export CHANGE
 
-.PHONY: dev dev-laya dev-app infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
+.PHONY: dev dev-laya dev-app homepage-dev homepage-build infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
 
 dev: dev-app
 
 dev-app: dev-laya
-	$(COMPOSE) up -d --build api worker web
+	$(COMPOSE) up -d --build api worker web homepage
+
+homepage-dev:
+	cd homepage && $(MISE) pnpm dev
+
+homepage-build:
+	cd homepage && $(MISE) pnpm build
 
 dev-laya: migrate
 	@set -eu; \
