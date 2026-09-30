@@ -432,6 +432,8 @@ const questions = [
   const resetHeroFogParallax = () => {
     heroForMotion?.style.setProperty("--hero-title-fog-x", "0px");
     heroForMotion?.style.setProperty("--hero-title-fog-y", "0px");
+    heroForMotion?.style.setProperty("--hero-lake-fog-x", "0px");
+    heroForMotion?.style.setProperty("--hero-lake-fog-y", "0px");
     heroForMotion?.style.setProperty("--hero-train-fog-x", "0px");
     heroForMotion?.style.setProperty("--hero-train-fog-y", "0px");
   };
@@ -445,8 +447,10 @@ const questions = [
     pointerFrame = window.requestAnimationFrame(() => {
       heroForMotion.style.setProperty("--hero-title-fog-x", `${horizontal * 12}px`);
       heroForMotion.style.setProperty("--hero-title-fog-y", `${vertical * 8}px`);
-      heroForMotion.style.setProperty("--hero-train-fog-x", `${horizontal * -8}px`);
-      heroForMotion.style.setProperty("--hero-train-fog-y", `${vertical * -5}px`);
+      heroForMotion.style.setProperty("--hero-lake-fog-x", `${horizontal * 30}px`);
+      heroForMotion.style.setProperty("--hero-lake-fog-y", `${vertical * 18}px`);
+      heroForMotion.style.setProperty("--hero-train-fog-x", `${horizontal * -36}px`);
+      heroForMotion.style.setProperty("--hero-train-fog-y", `${vertical * -22}px`);
     });
   };
 

@@ -1797,9 +1797,10 @@ html.has-scroll-nav .hero {
 .hero-scene__lake-fog {
   position: absolute;
   z-index: 2;
-  inset: 67% 0 13%;
-  overflow: hidden;
+  inset: 63% -8% 7%;
   pointer-events: none;
+  transform: translate3d(var(--hero-lake-fog-x, 0px), var(--hero-lake-fog-y, 0px), 0);
+  transition: transform 900ms ease-out;
 }
 
 .hero-scene__lake-fog::before,
@@ -2280,15 +2281,14 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 .hero-scene__train-fog {
   position: absolute;
   z-index: 4;
-  right: 20%;
-  bottom: 4svh;
-  width: 60%;
-  height: 20%;
-  overflow: hidden;
+  right: -12%;
+  bottom: 5.5svh;
+  left: -12%;
+  height: 24%;
   opacity: 0.7;
   pointer-events: none;
   transform: translate3d(var(--hero-train-fog-x, 0px), var(--hero-train-fog-y, 0px), 0);
-  transition: transform 620ms ease-out;
+  transition: transform 760ms ease-out;
 }
 
 .hero-scene__train-fog::before,
@@ -2455,7 +2455,7 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   .hero-scene__train-wrap {
     bottom: calc(31.6svh - 157px - clamp(10px, 2.56vw, 12px));
   }
-  .hero-scene__train-fog { bottom: 14svh; height: 16%; }
+  .hero-scene__train-fog { bottom: 12svh; height: 22%; }
 
   .hero-scene__cloud--far-left { top: 10%; }
   .hero-scene__cloud--near-left { top: 17%; }
@@ -2495,6 +2495,7 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .hero-scene__lake-fog,
   .hero-scene__title-fog,
   .hero-scene__train-fog,
   .train-consist--round-headlamp::before,
