@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
-import { ChevronLeft, ChevronRight, Download, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Focus, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -115,13 +115,26 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
   }
 
   return (
-    <section aria-labelledby="original-paper-heading" className="min-w-0 space-y-3">
+    <section aria-labelledby="original-paper-heading" className="flex min-w-0 flex-col gap-3 md:h-full md:min-h-0">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h3 id="original-paper-heading" className="m-0 truncate text-sm font-semibold">Original uploaded paper</h3>
           <p className="m-0 truncate text-xs text-muted-foreground">{filename}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            aria-label="Focus Paper Review"
+            title="Focus Paper Review"
+            onClick={() => document.getElementById("paper-review-card")?.scrollIntoView({
+              behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+              block: "start",
+            })}
+          >
+            <Focus aria-hidden="true" />
+          </Button>
           {pdfQuery.data && (
             <Button type="button" variant="outline" size="sm" onClick={() => void pdfQuery.refetch()} disabled={pdfQuery.isFetching}>
               <RotateCcw aria-hidden="true" />
@@ -148,7 +161,7 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
       {pdfQuery.isPending && (
         <div role="status" aria-label="Loading original paper" className="space-y-2">
           <span className="sr-only">Loading original paper…</span>
-          <Skeleton className="source-document-pdf-size w-full rounded-lg" />
+          <Skeleton className="source-document-pdf-size w-full rounded-lg md:min-h-0 md:flex-1" />
         </div>
       )}
 
@@ -166,8 +179,8 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
       )}
 
       {pdfDocumentUrl && !documentError && (
-        <div className="min-w-0 overflow-hidden rounded-lg border border-border bg-card shadow-sm">
-          <div className="flex min-w-0 flex-wrap items-center gap-1 rounded-t-lg bg-foreground px-2 py-1.5 text-background sm:gap-2 sm:px-3">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm md:min-h-0">
+          <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-1 rounded-t-lg bg-foreground px-2 py-1.5 text-background sm:gap-2 sm:px-3">
             <Button type="button" variant="ghost" size="icon-sm" aria-label="Previous PDF page" title="Previous PDF page" disabled={!pdfDocument || pageNumber <= 1} onClick={() => goToPage(pageNumber - 1)} className="text-background hover:bg-background/15 hover:text-background">
               <ChevronLeft aria-hidden="true" />
             </Button>
@@ -206,7 +219,7 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
           </div>
 
           {pdfDocument && pdfjs && (
-            <div className="relative min-w-0">
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               <SourceDocumentPdfPage
                 pdfDocument={pdfDocument}
                 pdfjs={pdfjs}
@@ -226,7 +239,7 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
           )}
 
           {!pdfDocument && (
-            <div role="status" aria-label="Loading original PDF" className="source-document-pdf-size flex items-center justify-center gap-2 bg-background/80 text-sm text-muted-foreground">
+            <div role="status" aria-label="Loading original PDF" className="source-document-pdf-size flex items-center justify-center gap-2 bg-background/80 text-sm text-muted-foreground md:min-h-0 md:flex-1">
               <Spinner aria-hidden="true" />
               Loading PDF…
             </div>

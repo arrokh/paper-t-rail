@@ -7,51 +7,36 @@ const setupUrl = "https://github.com/arrokh/paper-t-rail";
 
 const architecture = [
   {
-    name: "Public homepage",
-    system: "Astro",
-    detail: "Introduces the product and leads researchers into the workspace.",
+    name: "Read the PDF",
+    system: "Source parsing · claim extraction",
+    detail: "Parse the uploaded PDF and persist its structure, citations, and Atomic Claims.",
+    asset: "/images/architecture/stage-source.svg",
   },
   {
-    name: "Research workspace",
-    system: "Next.js",
-    detail: "Receives an English, text-based academic PDF and shows persisted runs.",
+    name: "Resolve references",
+    system: "Bibliography · identity matching",
+    detail: "Resolve supported bibliography entries to canonical scholarly papers.",
+    asset: "/images/architecture/stage-references.svg",
   },
   {
-    name: "Analysis API",
-    system: "Spring Boot + Kotlin",
-    detail: "Creates an immutable Analysis Run with its provenance.",
+    name: "Acquire cited sources",
+    system: "Legal full-text access",
+    detail: "Discover eligible cited-paper sources and record their access provenance.",
+    asset: "/images/architecture/stage-sources.svg",
   },
   {
-    name: "Async queue",
-    system: "Redis Streams",
-    detail: "Hands longer-running analysis work to the worker.",
+    name: "Prepare evidence",
+    system: "Parsing · chunking · retrieval",
+    detail: "Prepare eligible cited full text and retrieve candidate Evidence Passages.",
+    asset: "/images/architecture/stage-evidence.svg",
   },
   {
-    name: "Worker + providers",
-    system: "Parsing · retrieval · judgement",
-    detail: "GROBID and provider adapters process the source and cited papers.",
-  },
-  {
-    name: "Evidence record",
-    system: "PostgreSQL + pgvector · object storage",
-    detail: "Stores run metadata, search vectors, and source artifacts.",
-  },
-  {
-    name: "Coverage report",
-    system: "Evidence Coverage Report",
-    detail: "Returns traced findings to the workspace for human review.",
-  },
-  {
-    name: "Researcher review",
-    system: "Human decision",
-    detail: "Inspects the traceable findings and decides what to review next.",
+    name: "Assess evidence",
+    system: "Passage judgement · aggregation",
+    detail: "Record evidence judgements and aggregate Claim–Reference outcomes for review.",
+    asset: "/images/architecture/stage-assessment.svg",
   },
 ];
-
-const architecturePackets = Array.from({ length: architecture.length - 1 }, (_, index) => ({
-  position: `${11.6 + index * 12.45}%`,
-  delay: `${index * 220}ms`,
-}));
 
 const questions = [
   {
@@ -82,6 +67,7 @@ const questions = [
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f7f0de" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta
       name="description"
       content="Follow citation-backed claims from your research draft to candidate evidence in cited papers, then make the review decision yourself."
@@ -281,26 +267,16 @@ const questions = [
           processing separate from the research workspace.
         </p>
       </div>
-      <figure class="architecture-diagram" aria-labelledby="architecture-heading" aria-describedby="architecture-flow">
-        <img
-          src="/images/architecture/paper-trail-night-bridge.png"
-          alt="Eight connected service landmarks in 8-bit pixel art along a blue stone railway bridge, with a gold data path and dashed worker and provider zone."
-          width="2167"
-          height="726"
-          loading="lazy"
-          decoding="async"
-        />
-        <span class="architecture-diagram__packets" aria-hidden="true">
-          {architecturePackets.map(({ position, delay }) => (
-            <span class="architecture-diagram__packet" style={`--packet-position: ${position}; --flow-delay: ${delay}`}></span>
-          ))}
-        </span>
-      </figure>
       <div class="architecture-route">
-        <ol id="architecture-flow" class="architecture-flow" aria-label="Paper T-Rail system architecture, from public homepage through analysis to human review">
+        <svg class="architecture-route__track" viewBox="0 0 1000 630" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+          <polyline points="250,95 750,95 750,315 250,315 250,535" class="architecture-route__rail" />
+          <polyline points="250,95 750,95 750,315 250,315 250,535" class="architecture-route__line" />
+        </svg>
+        <ol id="architecture-flow" class="architecture-flow" aria-label="Five Analysis Run stages, connected in a zigzag route">
           {architecture.map((step, index) => (
-            <li class="architecture-node" style={`--flow-delay: ${index * 220}ms`}>
+            <li class:list={["architecture-node", `architecture-node--${index + 1}`]} style={`--flow-delay: ${index * 180}ms`}>
               <span class="architecture-node__step">{String(index + 1).padStart(2, "0")}</span>
+              <img class="architecture-node__asset" src={step.asset} alt="" width="64" height="64" loading="lazy" decoding="async" />
               <div class="architecture-node__copy">
                 <h3>{step.name}</h3>
                 <p class="architecture-node__system">{step.system}</p>
@@ -376,12 +352,6 @@ const questions = [
         aria-label="by nooroctavian.id (opens in a new tab)"
       >by nooroctavian.id</a>
     </div>
-    <nav aria-label="Footer navigation">
-      <a href="#about">About</a>
-      <a href="#example">Example</a>
-      <a href="#architecture">Architecture</a>
-      <a href="#faq">FAQ</a>
-    </nav>
   </footer>
     </main>
 
@@ -398,6 +368,54 @@ const questions = [
     headerObserver.observe(hero);
   }
 
+</script>
+
+<script is:inline>
+  const heroForMotion = document.querySelector(".hero");
+  const trainForMotion = document.querySelector(".train-consist--round-headlamp");
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let pointerFrame = 0;
+  let headlampTimer = 0;
+
+  const resetHeroParallax = () => {
+    heroForMotion?.style.setProperty("--hero-parallax-x", "0px");
+    heroForMotion?.style.setProperty("--hero-parallax-y", "0px");
+  };
+
+  const updateHeroParallax = (event) => {
+    if (!heroForMotion || reducedMotion.matches || event.pointerType === "touch") return;
+    const bounds = heroForMotion.getBoundingClientRect();
+    const horizontal = (event.clientX - bounds.left) / bounds.width - 0.5;
+    const vertical = (event.clientY - bounds.top) / bounds.height - 0.5;
+    window.cancelAnimationFrame(pointerFrame);
+    pointerFrame = window.requestAnimationFrame(() => {
+      heroForMotion.style.setProperty("--hero-parallax-x", `${horizontal * 12}px`);
+      heroForMotion.style.setProperty("--hero-parallax-y", `${vertical * 8}px`);
+    });
+  };
+
+  const setHeadlamp = (isOn) => trainForMotion?.setAttribute("data-headlamp", isOn ? "on" : "off");
+  const scheduleHeadlampChange = () => {
+    if (reducedMotion.matches || !trainForMotion) return;
+    headlampTimer = window.setTimeout(() => {
+      const isCurrentlyOn = trainForMotion.getAttribute("data-headlamp") !== "off";
+      setHeadlamp(!isCurrentlyOn);
+      scheduleHeadlampChange();
+    }, 1800 + Math.random() * 13200);
+  };
+
+  const updateMotionPreference = () => {
+    window.clearTimeout(headlampTimer);
+    window.cancelAnimationFrame(pointerFrame);
+    resetHeroParallax();
+    setHeadlamp(true);
+    if (!reducedMotion.matches) scheduleHeadlampChange();
+  };
+
+  heroForMotion?.addEventListener("pointermove", updateHeroParallax, { passive: true });
+  heroForMotion?.addEventListener("pointerleave", resetHeroParallax, { passive: true });
+  reducedMotion.addEventListener("change", updateMotionPreference);
+  updateMotionPreference();
 </script>
 
   </body>

@@ -139,7 +139,7 @@ export function SourceDocumentPdfPage({
   }, [highlightedItemIndexes, textLayerRevision]);
 
   return (
-    <div ref={viewerRef} data-page-ready={pageReady} className="source-document-pdf-size source-document-pdf-page min-w-0 overflow-auto rounded-b-lg border border-t-0 border-border bg-muted/40 p-2 sm:p-3">
+    <div ref={viewerRef} data-page-ready={pageReady} className="source-document-pdf-size source-document-pdf-page min-w-0 overflow-auto rounded-b-lg border border-t-0 border-border bg-muted/40 p-2 sm:p-3 md:min-h-0 md:flex-1">
       <div className="relative mx-auto w-fit bg-white shadow-sm">
         <canvas ref={canvasRef} aria-hidden="true" className="block" />
         <div ref={textLayerRef} className="source-document-pdf-text-layer textLayer" aria-hidden="true" />

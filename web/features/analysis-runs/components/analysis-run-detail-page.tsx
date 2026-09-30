@@ -14,6 +14,7 @@ import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/componen
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
 import { normalizePipelineStageId, type PipelineStageId } from "@/features/analysis-runs/pipeline";
+import { ANALYSIS_RUN_STATUS_CLASS_NAMES, analysisRunStatusLabel } from "@/features/analysis-runs/run-status";
 import {
   useAnalysisRun,
   useParsedDocument,
@@ -22,25 +23,12 @@ import {
 import type { AnalysisRun } from "@/features/analysis-runs/types";
 import { cn } from "@/lib/utils";
 
-const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
-  QUEUED: "border-border bg-muted text-muted-foreground",
-  PROCESSING: "border-primary/25 bg-primary/10 text-primary",
-  PARSED: "border-primary/20 bg-primary/5 text-primary",
-  COMPLETED: "border-primary/20 bg-primary/5 text-primary",
-  COMPLETED_WITH_WARNINGS: "border-warning/40 bg-warning/10 text-warning-foreground",
-  FAILED: "border-destructive/25 bg-destructive/10 text-destructive",
-};
-
 const ANALYSIS_RUN_VIEW_TAB_CLASS_NAME = cn(
   "h-full min-w-32 px-4 font-semibold text-foreground/75",
   "hover:bg-accent hover:text-accent-foreground",
   "data-active:bg-primary data-active:text-primary-foreground data-active:shadow-sm",
   "data-active:hover:bg-primary data-active:hover:text-primary-foreground",
 );
-
-function statusLabel(status: AnalysisRun["status"]): string {
-  return status.replaceAll("_", " ").toLowerCase();
-}
 
 function isParsedDocumentReady(status: AnalysisRun["status"]): boolean {
   return status === "PARSED" || status === "COMPLETED" || status === "COMPLETED_WITH_WARNINGS";
@@ -89,7 +77,7 @@ function updateQueryParameters(updates: Record<string, string | null>) {
 }
 
 function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
-  return <Badge variant="outline" className={cn("shrink-0 capitalize", STATUS_CLASS_NAMES[status])}>{statusLabel(status)}</Badge>;
+  return <Badge variant="outline" className={cn("shrink-0 capitalize", ANALYSIS_RUN_STATUS_CLASS_NAMES[status])}>{analysisRunStatusLabel(status)}</Badge>;
 }
 
 function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
@@ -261,7 +249,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
           className="mx-auto h-12 w-fit max-w-full rounded-lg border border-border bg-muted/70 p-1 shadow-sm"
         >
           <TabsTrigger value="pipeline" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
-            Pipeline
+            Analysis Pipeline
           </TabsTrigger>
           <TabsTrigger
             value="review"

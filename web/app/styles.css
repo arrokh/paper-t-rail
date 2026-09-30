@@ -402,7 +402,16 @@
 
   .source-document-pdf-size {
     height: 65vh;
+    max-height: calc(100svh - 10rem);
     min-height: 24rem;
+  }
+
+  @media (min-width: 768px) {
+    #paper-review-card .source-document-pdf-size {
+      height: 100%;
+      max-height: none;
+      min-height: 0;
+    }
   }
 
   .source-document-pdf-text-layer {

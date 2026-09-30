@@ -175,8 +175,8 @@ export function AnalysisRunPaperReview({
       </header>
 
       <div className="relative left-1/2 w-[100cqw] -translate-x-1/2 px-4 sm:px-5 lg:px-6">
-        <Card id="paper-review-card" className="w-full scroll-mt-4 py-0 shadow-sm">
-          <CardContent className="space-y-4 px-4 py-3 sm:px-6 sm:py-4">
+        <Card id="paper-review-card" className="w-full scroll-mt-2 py-0 shadow-sm md:h-[calc(100svh-1rem)] md:min-h-[32rem]">
+          <CardContent className="space-y-4 px-4 py-3 sm:px-6 sm:py-4 md:flex md:h-full md:flex-col md:space-y-0">
             <div className="flex gap-2 md:hidden" role="group" aria-label="Choose Paper Review panel">
               <Button type="button" variant={mobilePane === "paper" ? "secondary" : "outline"} aria-pressed={mobilePane === "paper"} onClick={() => setMobilePane("paper")} className="flex-1">
                 <FileText aria-hidden="true" /> Paper
@@ -186,11 +186,11 @@ export function AnalysisRunPaperReview({
               </Button>
             </div>
 
-            <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.9fr)] md:items-start">
-              <div className={cn("min-w-0", mobilePane === "paper" ? "block" : "hidden", "md:block")}>
+            <div className="grid min-w-0 gap-4 md:min-h-0 md:flex-1 md:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.9fr)] md:grid-rows-1 md:items-stretch md:overflow-hidden">
+              <div className={cn("min-w-0", mobilePane === "paper" ? "block" : "hidden", "md:h-full md:min-h-0 md:block")}>
                 <SourceDocumentPdfViewer analysisRunId={run.id} filename={run.filename} highlightText={pdfHighlightText} />
               </div>
-              <aside className={cn("min-w-0", mobilePane === "details" ? "block" : "hidden", "md:block")} aria-label="Paper Review details">
+              <aside className={cn("min-w-0", mobilePane === "details" ? "block" : "hidden", "md:flex md:h-full md:min-h-0 md:flex-col")} aria-label="Paper Review details">
                 <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-muted/60 p-1" role="group" aria-label="Review detail type">
                   <Button
                     type="button"
@@ -212,7 +212,7 @@ export function AnalysisRunPaperReview({
                   </Button>
                 </div>
                 {selectedDetailSection === "results" && selectedPair && (
-                  <section aria-label="Selected pair quick access" className="mb-3 space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
+                  <section aria-label="Selected pair quick access" className="mb-3 shrink-0 space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-3 md:max-h-[45%] md:overflow-y-auto">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="min-w-0 flex-1 space-y-1">
                         <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected pair · {selectedPair.entry.localReferenceKey}</p>
@@ -249,7 +249,7 @@ export function AnalysisRunPaperReview({
                   </section>
                 )}
                 {selectedDetailSection === "citations" && selectedReference && (
-                  <section aria-label="Selected bibliography quick access" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
+                  <section aria-label="Selected bibliography quick access" className="mb-3 shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/25 bg-primary/5 p-3 md:max-h-[45%] md:overflow-y-auto">
                     <div className="min-w-0 flex-1 space-y-1">
                       <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected bibliography · {selectedReference.localReferenceKey}</p>
                       <p className="m-0 break-words text-sm font-medium">{selectedReference.title ?? selectedReference.rawText}</p>
@@ -276,7 +276,7 @@ export function AnalysisRunPaperReview({
                     />
                   </section>
                 )}
-                <div className="min-h-96 space-y-3 md:max-h-[calc(100vh-16rem)] md:overflow-y-auto md:p-2">
+                <div className="min-h-96 space-y-3 md:min-h-0 md:flex-1 md:overflow-y-auto md:p-2">
                   {selectedDetailSection === "results" ? (
                     <ResultsDetails
                       run={run}

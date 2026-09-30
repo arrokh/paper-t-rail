@@ -53,15 +53,15 @@ export function PipelineResultMetricFilters({
                 aria-pressed={selected}
                 onClick={() => onToggle(option.id)}
                 className={cn(
-                  "h-24 w-full min-w-0 justify-start rounded-xl border p-0 text-left whitespace-normal shadow-none",
+                  "h-[4.5rem] w-full min-w-0 justify-start rounded-xl border p-0 text-left whitespace-normal shadow-none",
                   selected ? "border-primary/70 bg-primary/10 hover:bg-primary/15" : "border-border bg-card hover:bg-muted/60",
                 )}
               >
                 <span className="flex h-full w-full min-w-0 flex-col justify-between p-2 pr-10">
-                  <span className="min-h-12 min-w-0 line-clamp-3 text-xs leading-4 text-muted-foreground">
+                  <span className="min-h-8 min-w-0 line-clamp-2 text-xs leading-4 text-muted-foreground">
                     {option.label}
                   </span>
-                  <span className="font-mono text-lg font-semibold leading-6 text-foreground">{option.value}</span>
+                  <span className="font-mono text-base font-semibold leading-5 text-foreground">{option.value}</span>
                 </span>
               </Button>
               <Popover modal={false}>

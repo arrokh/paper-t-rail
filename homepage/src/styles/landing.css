@@ -2152,3 +2152,310 @@ html.has-page-load-cover .page-load-cover.is-exiting {
     transform: translateX(115%);
   }
 }
+
+/* Section rhythm and service-wide CTA roles. */
+.landing-section {
+  display: grid;
+  min-height: 100svh;
+  align-items: center;
+}
+
+#about { background: var(--ptr-paper-bright); }
+#example { background: var(--ptr-paper-muted); }
+#architecture { background: var(--ptr-paper-soft); }
+#faq { background: var(--ptr-paper); }
+
+.final-station {
+  min-height: 100svh;
+  background: var(--ptr-paper-gold);
+  color: var(--ptr-ink);
+}
+
+.final-station h2 { color: var(--ptr-ink); }
+.final-station .pixel-label { color: var(--ptr-gold-ink); }
+
+.hero .landing-button--primary {
+  border-color: var(--ptr-hero-ground);
+  background: var(--ptr-gold);
+  color: var(--ptr-ink);
+}
+
+.landing-page a.hero .landing-button--primary,
+.landing-page a.landing-button--primary {
+  color: var(--ptr-ink);
+}
+
+.hero .landing-button--primary:hover { background: var(--ptr-gold-bright); }
+
+.site-header__cta.landing-button--primary {
+  border-color: var(--ptr-red);
+  background: var(--ptr-red);
+  color: var(--ptr-paper-bright);
+}
+
+.landing-page a.site-header__cta.landing-button--primary { color: var(--ptr-paper-bright); }
+.site-header__cta.landing-button--primary:hover { background: var(--ptr-red-hover); }
+
+.site-footer {
+  display: flex;
+  min-height: 104px;
+  justify-content: center;
+  padding-block: 20px;
+  text-align: center;
+}
+
+.site-footer__identity {
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The hero keeps its clouds above the wordmark and lets the fog move independently. */
+.hero__content {
+  position: relative;
+  z-index: 6;
+  transform: translate3d(
+    var(--hero-parallax-x, 0px),
+    calc(-10svh + var(--hero-parallax-y, 0px)),
+    0
+  );
+  will-change: transform;
+}
+
+.hero-scene__cloud--far-left { top: 12%; }
+.hero-scene__cloud--near-left { top: 19%; }
+.hero-scene__cloud--right { top: 16%; }
+.hero-scene__cloud--high-right { top: 7%; }
+
+.hero-scene__title-fog {
+  position: absolute;
+  z-index: 3;
+  inset: 21% -4% 10%;
+  overflow: hidden;
+  opacity: 0.78;
+  pointer-events: none;
+  transform: translate3d(var(--hero-parallax-x, 0px), var(--hero-parallax-y, 0px), 0);
+  transition: transform 180ms ease-out;
+}
+
+.hero-scene__title-fog::before,
+.hero-scene__title-fog::after {
+  position: absolute;
+  inset: -10%;
+  content: "";
+  filter: blur(12px);
+  will-change: transform;
+}
+
+.hero-scene__title-fog::before {
+  background:
+    radial-gradient(ellipse 26% 24% at 26% 32%, color-mix(in srgb, var(--ptr-paper-blue) 17%, transparent), transparent 76%),
+    radial-gradient(ellipse 30% 27% at 67% 43%, color-mix(in srgb, var(--ptr-paper-bright) 12%, transparent), transparent 78%),
+    radial-gradient(ellipse 34% 25% at 51% 81%, color-mix(in srgb, var(--ptr-paper-blue) 21%, transparent), transparent 78%);
+  animation: hero-title-fog-drift 38s ease-in-out infinite alternate;
+}
+
+.hero-scene__title-fog::after {
+  background:
+    radial-gradient(ellipse 30% 18% at 14% 75%, color-mix(in srgb, var(--ptr-paper-bright) 13%, transparent), transparent 76%),
+    radial-gradient(ellipse 27% 22% at 84% 65%, color-mix(in srgb, var(--ptr-paper-blue) 17%, transparent), transparent 75%);
+  animation: hero-title-fog-drift 54s ease-in-out -16s infinite alternate-reverse;
+}
+
+.hero-scene__train-wrap {
+  bottom: 4svh;
+  transform: translate3d(calc(-50% + var(--hero-parallax-x, 0px)), var(--hero-parallax-y, 0px), 0);
+  transition: transform 180ms ease-out;
+}
+
+.hero-scene__train { animation: none; filter: none; }
+
+.train-consist--round-headlamp::before,
+.train-consist--round-headlamp::after {
+  transition: opacity 220ms steps(2, end);
+}
+
+.train-consist--round-headlamp[data-headlamp="off"]::before,
+.train-consist--round-headlamp[data-headlamp="off"]::after {
+  opacity: 0;
+}
+
+@keyframes hero-title-fog-drift {
+  from { transform: translate3d(-2%, 1%, 0); }
+  to { transform: translate3d(2%, -1%, 0); }
+}
+
+/* Five real Analysis Run stages on a right-angle pixel rail. */
+.architecture-route {
+  position: relative;
+  width: min(100%, 1120px);
+  margin: 38px auto 0;
+}
+
+.architecture-route__track {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  shape-rendering: crispEdges;
+}
+
+.architecture-route__rail,
+.architecture-route__line {
+  fill: none;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.architecture-route__rail { stroke: var(--ptr-ink); stroke-width: 18; }
+.architecture-route__line { stroke: var(--ptr-gold); stroke-width: 6; stroke-dasharray: 8 14; }
+
+.architecture-flow {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(190px, auto));
+  gap: 30px 44px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.architecture-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  align-items: start;
+  gap: 8px 14px;
+  min-width: 0;
+  min-height: 190px;
+  padding: 16px;
+  border: 2px solid var(--ptr-ink);
+  background: var(--ptr-paper-bright);
+  box-shadow: 4px 4px 0 var(--ptr-border);
+  text-align: left;
+}
+
+.architecture-node--1 { grid-area: 1 / 1; }
+.architecture-node--2 { grid-area: 1 / 2; }
+.architecture-node--3 { grid-area: 2 / 2; }
+.architecture-node--4 { grid-area: 2 / 1; }
+.architecture-node--5 { grid-area: 3 / 1; }
+
+.architecture-node__step {
+  grid-column: 1 / -1;
+  color: var(--ptr-red);
+  font-family: var(--ptr-font-pixel);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.architecture-node__asset {
+  grid-column: 1;
+  grid-row: 2;
+  display: block;
+  width: 64px;
+  height: 64px;
+  image-rendering: pixelated;
+  animation: architecture-stage-pulse 2.4s steps(3, end) infinite;
+  animation-delay: var(--flow-delay);
+}
+
+.architecture-node__copy {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+}
+
+.architecture-node__copy h3 {
+  margin: 0 !important;
+  color: var(--ptr-ink);
+  font-family: var(--ptr-font-display);
+  font-size: clamp(18px, 1.7vw, 23px);
+  line-height: 1.12;
+}
+
+.architecture-node__system {
+  margin: 7px 0 0 !important;
+  color: var(--ptr-teal);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.architecture-node__detail {
+  margin: 7px 0 0 !important;
+  color: var(--ptr-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.architecture-notes { position: relative; z-index: 1; }
+
+@keyframes architecture-stage-pulse {
+  0%, 100% { transform: translateY(0); }
+  33% { transform: translateY(-3px); }
+  66% { transform: translateY(1px); }
+}
+
+@media (max-width: 760px) {
+  .landing-section { min-height: 100svh; }
+  .hero-scene__train-wrap { bottom: 15svh; }
+
+  .hero-scene__cloud--far-left { top: 10%; }
+  .hero-scene__cloud--near-left { top: 17%; }
+  .hero-scene__cloud--right { top: 14%; }
+  .hero-scene__cloud--high-right { top: 5%; }
+
+  .hero-scene__title-fog {
+    inset: 23% -18% 13%;
+  }
+
+  .architecture-route { margin-top: 26px; }
+  .architecture-route__track { display: none; }
+
+  .architecture-route::before {
+    position: absolute;
+    z-index: 0;
+    inset: 0 auto 0 50%;
+    border-left: 6px dashed var(--ptr-gold);
+    content: "";
+    transform: translateX(-50%);
+  }
+
+  .architecture-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .architecture-node {
+    width: min(100%, 35rem);
+    min-height: 0;
+    margin-inline: auto;
+    padding: 14px;
+  }
+
+  .architecture-node__asset { width: 52px; height: 52px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero__content,
+  .hero-scene__title-fog,
+  .hero-scene__train-wrap,
+  .train-consist--round-headlamp::before,
+  .train-consist--round-headlamp::after {
+    transition: none;
+  }
+
+  .hero-scene__title-fog::before,
+  .hero-scene__title-fog::after,
+  .architecture-node__asset {
+    animation: none;
+  }
+}

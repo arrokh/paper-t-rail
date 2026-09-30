@@ -9,11 +9,11 @@ import { PIPELINE_STAGES, PIPELINE_STAGE_STATE_LABELS, pipelineStageState, type 
 import type { AnalysisRun } from "@/features/analysis-runs/types";
 
 const STATE_CLASSES = {
-  waiting: "border-border bg-background text-muted-foreground",
-  active: "border-primary bg-primary/5 text-primary shadow-sm",
+  waiting: "border-border bg-card text-muted-foreground",
+  active: "border-info-foreground/35 bg-info text-info-foreground shadow-sm",
   pending: "border-border bg-muted/50 text-muted-foreground",
-  complete: "border-primary/25 bg-primary/5 text-primary",
-  ready: "border-primary/25 bg-card text-primary",
+  complete: "border-success-foreground/25 bg-success text-success-foreground",
+  ready: "border-info-foreground/25 bg-info/55 text-info-foreground",
   unavailable: "border-border bg-muted/50 text-muted-foreground",
   failed: "border-destructive/35 bg-destructive/5 text-destructive",
   warning: "border-warning/50 bg-warning/10 text-warning-foreground",
@@ -106,9 +106,9 @@ export function AnalysisPipelineChart({
                   aria-current={selected ? "step" : undefined}
                   aria-label={`${stage.number} ${stage.label}: ${PIPELINE_STAGE_STATE_LABELS[state]}${selected ? ", selected stage" : ""}`}
                   className={cn(
-                    "group flex h-full min-h-[14rem] min-w-0 flex-1 flex-col items-start justify-start gap-2 rounded-xl border px-3 py-3 text-left whitespace-normal transition-colors",
+                    "group flex h-full min-h-[11rem] min-w-0 flex-1 flex-col items-start justify-start gap-2 rounded-xl border px-3 py-3 text-left whitespace-normal transition-colors",
                     STATE_CLASSES[state],
-                    selected && "border-primary bg-primary/10 text-foreground shadow-md ring-2 ring-primary ring-offset-2 ring-offset-background",
+                    selected && "border-ring shadow-md ring-2 ring-ring ring-offset-2 ring-offset-background",
                   )}
                   onClick={() => onSelectStage(stage.id)}
                 >

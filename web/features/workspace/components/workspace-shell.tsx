@@ -5,11 +5,17 @@ import { PageTransitionLink } from "@/features/workspace/components/page-transit
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 border-b border-border/80 px-4 py-4 sm:px-6">
-        <PageTransitionLink direction="back" href="/" className="inline-flex items-center gap-3 rounded-md font-semibold tracking-tight text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Paper T-Rail home">
-          <span className="grid size-9 place-items-center rounded-xl rounded-bl-sm bg-primary font-serif text-lg text-primary-foreground" aria-hidden="true">P</span>
-          <span>Paper T-Rail</span>
-        </PageTransitionLink>
+      <header className="w-full border-b border-border bg-card">
+        <div className="mx-auto flex w-full max-w-6xl items-center px-4 py-3 sm:px-6">
+          <PageTransitionLink
+            direction="back"
+            href="/"
+            className="inline-flex items-center rounded-md font-heading text-2xl font-[760] tracking-[-0.04em] text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            aria-label="Paper T-Rail home"
+          >
+            Paper T-Rail
+          </PageTransitionLink>
+        </div>
       </header>
 
       <main className="workspace-content mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8">
@@ -18,18 +24,25 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
       <BackToTopFab />
 
-      <footer className="mx-auto mt-auto flex w-full max-w-6xl items-center justify-center border-t border-border/80 px-4 py-5 text-center text-xs leading-relaxed text-muted-foreground sm:px-6">
-        <span>
-          Paper T-Rail by{" "}
+      <footer className="mt-auto w-full border-t border-border bg-card px-4 py-5 text-center sm:px-6">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-1">
+          <PageTransitionLink
+            direction="back"
+            href="/"
+            className="rounded-sm font-heading text-lg font-[760] tracking-[-0.04em] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            aria-label="Paper T-Rail home"
+          >
+            Paper T-Rail
+          </PageTransitionLink>
           <a
             href="https://nooroctavian.id/"
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-sm underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
-            nooroctavian.id
+            by nooroctavian.id
           </a>
-        </span>
+        </div>
       </footer>
     </div>
   );

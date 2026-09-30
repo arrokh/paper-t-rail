@@ -19,6 +19,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner";
 import { AnalysisRunTableRowsSkeleton } from "@/features/analysis-runs/components/analysis-run-loading";
 import { useDeleteSourceDocument, useRecentAnalysisRuns } from "@/features/analysis-runs/queries/analysis-run-queries";
+import { ANALYSIS_RUN_STATUS_CLASS_NAMES, analysisRunStatusLabel } from "@/features/analysis-runs/run-status";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
 import { PageTransitionLink } from "@/features/workspace/components/page-transition";
 import type { AnalysisRun } from "@/features/analysis-runs/types";
@@ -35,21 +36,8 @@ const STATUS_FILTERS = [
 type RunStatus = AnalysisRun["status"];
 const EMPTY_RUNS: AnalysisRun[] = [];
 
-const STATUS_CLASS_NAMES: Record<RunStatus, string> = {
-  QUEUED: "border-border bg-muted text-muted-foreground",
-  PROCESSING: "border-primary/25 bg-primary/10 text-primary",
-  PARSED: "border-primary/20 bg-primary/5 text-primary",
-  COMPLETED: "border-primary/20 bg-primary/5 text-primary",
-  COMPLETED_WITH_WARNINGS: "border-warning/40 bg-warning/10 text-warning-foreground",
-  FAILED: "border-destructive/25 bg-destructive/10 text-destructive",
-};
-
 function isRunStatus(value: string | null): value is RunStatus {
   return STATUS_FILTERS.some(([status]) => status === value);
-}
-
-function formatStatus(status: RunStatus): string {
-  return status.replaceAll("_", " ").toLowerCase();
 }
 
 function formatCreatedAt(value: string): string {
@@ -341,8 +329,8 @@ export function AnalysisRunsTable({
                     <time dateTime={run.createdAt}>{formatCreatedAt(run.createdAt)}</time>
                   </td>
                   <td className="px-4 py-4">
-                    <Badge variant="outline" className={cn("capitalize", STATUS_CLASS_NAMES[run.status])}>
-                      {formatStatus(run.status)}
+                    <Badge variant="outline" className={cn("capitalize", ANALYSIS_RUN_STATUS_CLASS_NAMES[run.status])}>
+                      {analysisRunStatusLabel(run.status)}
                     </Badge>
                   </td>
                   <td className="px-3 py-3">
