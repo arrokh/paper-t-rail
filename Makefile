@@ -5,10 +5,13 @@ LAYA_EVALUATION_SOURCE_PATHS = api infra/laya infra/docker-compose.yml Makefile 
 # Keep command-line CHANGE data out of shell source text in the revert target.
 export CHANGE
 
-.PHONY: local dev dev-laya dev-app homepage-dev homepage-build infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
+.PHONY: local dev dev-stop dev-laya dev-app homepage-dev homepage-build infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
 
 DEV_SELECTABLE_SERVICES := api worker web homepage laya
 DEV_APP_SERVICES := api worker web homepage
+DEV_STOP_REQUESTED_SERVICES := $(if $(filter dev-stop,$(MAKECMDGOALS)),$(filter-out dev-stop,$(MAKECMDGOALS)))
+DEV_STOP_INVALID_SERVICES := $(filter-out $(DEV_SELECTABLE_SERVICES),$(DEV_STOP_REQUESTED_SERVICES))
+DEV_STOP_COMPOSE_PROFILE := $(if $(filter laya,$(DEV_STOP_REQUESTED_SERVICES)),--profile laya-evaluation)
 # Select container-backed services and host-run frontends after `local`.
 LOCAL_SELECTABLE_SERVICES := api worker web homepage laya
 LOCAL_REQUESTED_SERVICES := $(if $(filter local,$(MAKECMDGOALS)),$(filter-out local,$(MAKECMDGOALS)))
@@ -38,6 +41,18 @@ endif
 $(LOCAL_REQUESTED_SERVICES):
 	@:
 else
+ifneq ($(filter dev-stop,$(MAKECMDGOALS)),)
+ifeq ($(strip $(DEV_STOP_REQUESTED_SERVICES)),)
+$(error Usage: make dev-stop <service...>. Choose from: $(DEV_SELECTABLE_SERVICES))
+endif
+ifneq ($(strip $(DEV_STOP_INVALID_SERVICES)),)
+$(error Unsupported service(s) for `make dev-stop`: $(DEV_STOP_INVALID_SERVICES). Choose from: $(DEV_SELECTABLE_SERVICES))
+endif
+
+.PHONY: $(DEV_STOP_REQUESTED_SERVICES)
+$(DEV_STOP_REQUESTED_SERVICES):
+	@:
+else
 ifneq ($(filter dev,$(MAKECMDGOALS)),)
 ifneq ($(strip $(DEV_INVALID_SERVICES)),)
 $(error Unsupported service(s) for `make dev`: $(DEV_INVALID_SERVICES). Choose from: $(DEV_SELECTABLE_SERVICES))
@@ -64,6 +79,7 @@ DEV_BUILD_LAYA := true
 api worker web homepage laya:
 	@echo 'Use `make dev $@` to start or rebuild this service.' >&2
 	@exit 2
+endif
 endif
 endif
 
@@ -117,6 +133,16 @@ ifneq ($(strip $(LOCAL_FRONTEND_SERVICES)),)
 	trap 'for pid in $$pids; do kill "$$pid" 2>/dev/null || :; done' INT TERM EXIT; \
 	wait
 endif
+
+dev-stop:
+	@set -eu; \
+	containers=$$($(COMPOSE) $(DEV_STOP_COMPOSE_PROFILE) ps --all -q $(DEV_STOP_REQUESTED_SERVICES)); \
+	if [ -n "$$containers" ]; then \
+		echo 'Stopping selected Compose service(s): $(DEV_STOP_REQUESTED_SERVICES)'; \
+		$(COMPOSE) $(DEV_STOP_COMPOSE_PROFILE) stop $(DEV_STOP_REQUESTED_SERVICES); \
+	else \
+		echo 'No containers found for selected service(s): $(DEV_STOP_REQUESTED_SERVICES)'; \
+	fi
 
 dev: $(DEV_PREREQUISITES)
 ifneq ($(strip $(DEV_BUILD_SERVICES)),)
