@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type Ref } from "react";
+import { RotateCcw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import { ReferenceResolutionBadge } from "@/features/reference-resolution/compon
 import { BackLink } from "@/features/workspace/components/back-link";
 import { PIPELINE_STAGES, pipelineStage, type PipelineStageId } from "@/features/analysis-runs/pipeline";
 import { PipelineResultMetricFilters, type PipelineResultFilterOption } from "@/features/analysis-runs/components/pipeline-result-metric-filters";
-import { usePipelineResultFilter } from "@/features/analysis-runs/hooks/use-pipeline-result-filter";
+import { usePipelineResultFilter, usePipelineStageFilterReset } from "@/features/analysis-runs/hooks/use-pipeline-result-filter";
 import type { AnalysisRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 import { cn } from "@/lib/utils";
 
@@ -21,10 +22,10 @@ type ReportEntry = ReferenceResolutionReportResponse["referenceResolution"]["ent
 type VerificationOutcome = ReportEntry["verificationOutcomes"][number];
 
 const SOURCE_RESULT_FILTERS = [
-  { id: "sections", label: "Sections" },
-  { id: "citations", label: "Citation Contexts" },
-  { id: "claims", label: "Atomic Claims" },
-  { id: "bibliography", label: "Bibliography Entries" },
+  { id: "sections", label: "Sections", description: "Document headings and their source-text spans persisted by the PDF parser." },
+  { id: "citations", label: "Citation Contexts", description: "Source passages where citation markers were found, with their parsed citation occurrences." },
+  { id: "claims", label: "Atomic Claims", description: "Claims extracted from citation contexts. Links from claims to references are inferred and provisional." },
+  { id: "bibliography", label: "Bibliography Entries", description: "Reference entries parsed from the document’s bibliography." },
 ] as const;
 const SOURCE_RESULT_FILTER_IDS = SOURCE_RESULT_FILTERS.map(({ id }) => id);
 
@@ -41,6 +42,8 @@ const VERIFICATION_STATUS_FILTERS = [
   "UNSUPPORTED_REFERENCE_TYPE",
   "INCOMPLETE",
 ] as const;
+const VERIFICATION_SUMMARY_FILTERS = ["ALL_PAIRS", "COMPLETED_PAIRS", "COMPARABLE_CONFLICTS"] as const;
+const VERIFICATION_RESULTS_FILTERS = ["ALL_PAIRS", "WITH_EVIDENCE_PASSAGES", "WITH_JUDGEMENTS", "INCOMPLETE_PAIRS"] as const;
 
 function scrollIntoViewAndWaitForCompletion(element: HTMLElement): Promise<void> {
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -93,6 +96,21 @@ function ResultMetric({ label, value }: { label: string; value: number | string 
 
 function matchesSelectedFilter(selectedValues: ReadonlySet<string>, value: string): boolean {
   return selectedValues.size === 0 || selectedValues.has(value);
+}
+
+function matchesVerificationSummaryFilter(selectedValues: ReadonlySet<string>, outcome: VerificationOutcome): boolean {
+  return selectedValues.size === 0
+    || selectedValues.has("ALL_PAIRS")
+    || (selectedValues.has("COMPLETED_PAIRS") && outcome.processingStatus === "COMPLETED")
+    || (selectedValues.has("COMPARABLE_CONFLICTS") && outcome.evidenceConflict);
+}
+
+function matchesVerificationResultsFilter(selectedValues: ReadonlySet<string>, outcome: VerificationOutcome): boolean {
+  return selectedValues.size === 0
+    || selectedValues.has("ALL_PAIRS")
+    || (selectedValues.has("WITH_EVIDENCE_PASSAGES") && outcome.evidencePassages.length > 0)
+    || (selectedValues.has("WITH_JUDGEMENTS") && outcome.evidencePassages.some((passage) => passage.evidenceJudgement))
+    || (selectedValues.has("INCOMPLETE_PAIRS") && outcome.processingStatus !== "COMPLETED");
 }
 
 function RunResultsUnavailable({ stage, run }: { stage: PipelineStageId; run: AnalysisRun }) {
@@ -356,11 +374,11 @@ function ReferenceMatchResults({ report, view }: { report: ReferenceResolutionRe
   const resolution = report.referenceResolution;
   const { selectedValues, toggleValue, reset } = usePipelineResultFilter("references", RESOLUTION_STATUS_FILTERS);
   const filterOptions: PipelineResultFilterOption[] = [
-    { id: "RESOLVED", label: "Resolved", value: resolution.summary.resolved },
-    { id: "UNRESOLVED", label: "Unresolved", value: resolution.summary.unresolved },
-    { id: "UNSUPPORTED_REFERENCE_TYPE", label: "Unsupported reference type", value: resolution.summary.unsupportedReferenceType },
-    { id: "NOT_ATTEMPTED", label: "Not attempted", value: resolution.summary.notAttempted },
-    { id: "RESOLUTION_FAILED", label: "Resolution failed", value: resolution.summary.failed },
+    { id: "RESOLVED", label: "Resolved", description: "Matched to a Canonical Paper under this run’s reference-matching policy.", value: resolution.summary.resolved },
+    { id: "UNRESOLVED", label: "Unresolved", description: "Matching ran, but no candidate met the configured threshold.", value: resolution.summary.unresolved },
+    { id: "UNSUPPORTED_REFERENCE_TYPE", label: "Unsupported reference type", description: "The Bibliography Entry type is not supported for automatic matching.", value: resolution.summary.unsupportedReferenceType },
+    { id: "NOT_ATTEMPTED", label: "Not attempted", description: "Matching was skipped because the entry was outside the configured policy.", value: resolution.summary.notAttempted },
+    { id: "RESOLUTION_FAILED", label: "Resolution failed", description: "The matching attempt failed before a result could be stored.", value: resolution.summary.failed },
   ];
   const displayedEntries = resolution.entries.filter((entry) => matchesSelectedFilter(selectedValues, entry.status));
 
@@ -372,7 +390,7 @@ function ReferenceMatchResults({ report, view }: { report: ReferenceResolutionRe
         selectedValues={selectedValues}
         onToggle={toggleValue}
         onReset={reset}
-        className="sm:grid-cols-3 xl:grid-cols-5"
+        className="sm:grid-cols-3"
       />
       {resolution.entries.length === 0 ? <p className="text-sm text-muted-foreground">No Bibliography Entries were available for resolution.</p> : displayedEntries.length === 0 ? <p className="text-sm text-muted-foreground">No entries match the selected resolution statuses.</p> : (
         <ol className="space-y-2">
@@ -477,11 +495,11 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
   }
 
   const accessFilterOptions: PipelineResultFilterOption[] = [
-    { id: "FULL_TEXT_AVAILABLE", label: "Full text available", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "FULL_TEXT_AVAILABLE").length },
-    { id: "ABSTRACT_ONLY", label: "Abstract only", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "ABSTRACT_ONLY").length },
-    { id: "METADATA_ONLY", label: "Metadata only", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "METADATA_ONLY").length },
-    { id: "UNAVAILABLE", label: "Unavailable", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "UNAVAILABLE").length },
-    { id: "NO_ACCESS_RESULT", label: "No access result", value: entries.filter((entry) => !entry.citedPaperAccess).length },
+    { id: "FULL_TEXT_AVAILABLE", label: "Full text available", description: "A legal full-text source was located and recorded for this Cited Paper.", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "FULL_TEXT_AVAILABLE").length },
+    { id: "ABSTRACT_ONLY", label: "Abstract only", description: "An abstract is available, but no usable full-text source was recorded.", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "ABSTRACT_ONLY").length },
+    { id: "METADATA_ONLY", label: "Metadata only", description: "Bibliographic metadata is available, but no abstract or full-text source was found.", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "METADATA_ONLY").length },
+    { id: "UNAVAILABLE", label: "Unavailable", description: "Access lookup ran but found no usable full text or abstract.", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "UNAVAILABLE").length },
+    { id: "NO_ACCESS_RESULT", label: "No access result", description: "No access lookup result was persisted, often because an earlier stage skipped the lookup.", value: entries.filter((entry) => !entry.citedPaperAccess).length },
   ];
   const displayedEntries = entries.filter((entry) => matchesSelectedFilter(selectedValues, entry.citedPaperAccess?.accessStatus ?? "NO_ACCESS_RESULT"));
   return (
@@ -492,7 +510,7 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
         selectedValues={selectedValues}
         onToggle={toggleValue}
         onReset={reset}
-        className="sm:grid-cols-3 xl:grid-cols-5"
+        className="sm:grid-cols-3"
       />
       {entries.length === 0 ? <p className="text-sm text-muted-foreground">No Cited Papers were available for access lookup.</p> : displayedEntries.length === 0 ? <p className="text-sm text-muted-foreground">No references match the selected access statuses.</p> : (
         <ol className="space-y-3">
@@ -552,12 +570,12 @@ function IndexingResults({ run, report, view }: { run: AnalysisRun; report: Refe
     return indexing?.status ?? "NOT_STARTED";
   };
   const indexingFilterOptions: PipelineResultFilterOption[] = [
-    { id: "NOT_STARTED", label: "Not started", value: entries.filter((entry) => indexingStatus(entry) === "NOT_STARTED").length },
-    { id: "WAITING", label: "Waiting", value: entries.filter((entry) => indexingStatus(entry) === "WAITING").length },
-    { id: "IN_PROGRESS", label: "In progress", value: entries.filter((entry) => indexingStatus(entry) === "IN_PROGRESS").length },
-    { id: "COMPLETED", label: "Complete", value: entries.filter((entry) => indexingStatus(entry) === "COMPLETED").length },
-    { id: "SKIPPED", label: "Skipped", value: entries.filter((entry) => indexingStatus(entry) === "SKIPPED").length },
-    { id: "FAILED", label: "Failed", value: entries.filter((entry) => indexingStatus(entry) === "FAILED").length },
+    { id: "NOT_STARTED", label: "Not started", description: "No evidence-indexing work has started for this Cited Paper.", value: entries.filter((entry) => indexingStatus(entry) === "NOT_STARTED").length },
+    { id: "WAITING", label: "Waiting", description: "Evidence-indexing work is queued and has not started yet.", value: entries.filter((entry) => indexingStatus(entry) === "WAITING").length },
+    { id: "IN_PROGRESS", label: "In progress", description: "The worker is processing eligible full text for evidence retrieval.", value: entries.filter((entry) => indexingStatus(entry) === "IN_PROGRESS").length },
+    { id: "COMPLETED", label: "Complete", description: "Indexing finished and evidence passages are available for retrieval.", value: entries.filter((entry) => indexingStatus(entry) === "COMPLETED").length },
+    { id: "SKIPPED", label: "Skipped", description: "Indexing was bypassed, usually because no eligible acquired full text was available.", value: entries.filter((entry) => indexingStatus(entry) === "SKIPPED").length },
+    { id: "FAILED", label: "Failed", description: "Indexing was attempted but failed; review the item’s failure details.", value: entries.filter((entry) => indexingStatus(entry) === "FAILED").length },
   ];
   const displayedEntries = entries.filter((entry) => matchesSelectedFilter(selectedValues, indexingStatus(entry)));
 
@@ -596,32 +614,53 @@ function IndexingResults({ run, report, view }: { run: AnalysisRun; report: Refe
   );
 }
 
-function VerificationResults({ runId, report, view, statusFilter }: { runId: string; report: ReferenceResolutionReportResponse; view: string; statusFilter?: ReadonlySet<string> }) {
+function VerificationResults({
+  runId,
+  report,
+  view,
+  statusFilter,
+  summaryFilter,
+}: {
+  runId: string;
+  report: ReferenceResolutionReportResponse;
+  view: string;
+  statusFilter?: ReadonlySet<string>;
+  summaryFilter?: ReadonlySet<string>;
+}) {
   const outcomes: Array<{ outcome: VerificationOutcome; entry: ReportEntry }> = report.referenceResolution.entries.flatMap((entry) =>
     entry.verificationOutcomes.map((outcome) => ({ outcome, entry })),
   );
+  const { selectedValues: resultMetricFilters, toggleValue, reset } = usePipelineResultFilter(
+    "verification",
+    VERIFICATION_RESULTS_FILTERS,
+    "verificationResultsFilter",
+  );
   const displayedOutcomes = outcomes.filter(({ outcome }) => {
     if (view === "judge" && !outcome.evidencePassages.some((passage) => passage.evidenceJudgement) && !outcome.processingFailureReason) return false;
-    if (!statusFilter) return true;
-    const status = outcome.finalStatus ?? "INCOMPLETE";
-    return matchesSelectedFilter(statusFilter, status);
+    const statusMatches = !statusFilter || matchesSelectedFilter(statusFilter, outcome.finalStatus ?? "INCOMPLETE");
+    const summaryMatches = !summaryFilter || matchesVerificationSummaryFilter(summaryFilter, outcome);
+    return statusMatches && summaryMatches && matchesVerificationResultsFilter(resultMetricFilters, outcome);
   });
   const judged = outcomes.filter(({ outcome }) => outcome.evidencePassages.some((passage) => passage.evidenceJudgement)).length;
   const passages = outcomes.reduce((count, { outcome }) => count + outcome.evidencePassages.length, 0);
+  const incomplete = outcomes.filter(({ outcome }) => outcome.processingStatus !== "COMPLETED").length;
+  const resultMetricOptions: PipelineResultFilterOption[] = [
+    { id: "ALL_PAIRS", label: "Claim × Reference pairs", description: "All Claim–Reference verification pairs created for this Analysis Run.", value: outcomes.length },
+    { id: "WITH_EVIDENCE_PASSAGES", label: "Evidence Passages", description: "Pairs that have one or more ranked Evidence Passages available for review.", value: passages },
+    { id: "WITH_JUDGEMENTS", label: "Pairs with judgements", description: "Pairs with at least one persisted System One judgement on an Evidence Passage.", value: judged },
+    { id: "INCOMPLETE_PAIRS", label: "Incomplete pairs", description: "Pairs whose verification processing has not reached a completed state.", value: incomplete },
+  ];
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <ResultMetric label="Claim × Reference pairs" value={outcomes.length} />
-        <ResultMetric label="Evidence Passages" value={passages} />
-        <ResultMetric label="Pairs with judgements" value={judged} />
-        <ResultMetric label="Incomplete pairs" value={outcomes.filter(({ outcome }) => outcome.processingStatus === "INCOMPLETE").length} />
-      </div>
-      <p className="text-sm leading-relaxed text-muted-foreground">
-        {view === "retrieve"
-          ? "Each listed outcome connects a Citation Context and an inferred claim-to-reference link to its ranked Evidence Passages. Retrieval makes a passage a candidate; it does not itself mean support."
-          : "Persisted System One judgements appear inside each Evidence Passage. Final Claim–Paper statuses are produced by the deterministic aggregation stage."}
-      </p>
-      {displayedOutcomes.length === 0 ? <p className="text-sm text-muted-foreground">{statusFilter && statusFilter.size > 0 ? "No verification pairs match the selected statuses." : view === "judge" ? "No persisted System One judgement is available for this run." : "No Claim–Reference verification pairs were created for this run."}</p> : (
+      <PipelineResultMetricFilters
+        label="Filter claim-reference results by available evidence"
+        options={resultMetricOptions}
+        selectedValues={resultMetricFilters}
+        onToggle={toggleValue}
+        onReset={reset}
+        className="sm:grid-cols-4"
+      />
+      {displayedOutcomes.length === 0 ? <p className="text-sm text-muted-foreground">{statusFilter?.size || summaryFilter?.size || resultMetricFilters.size ? "No verification pairs match the selected filters." : view === "judge" ? "No persisted System One judgement is available for this run." : "No Claim–Reference verification pairs were created for this run."}</p> : (
         <ol className="space-y-3">
           {displayedOutcomes.map(({ outcome, entry }) => (
             <li key={outcome.id} className="rounded-lg border border-border bg-muted/10 p-3">
@@ -648,15 +687,25 @@ function ReportResults({ report, view }: { report: ReferenceResolutionReportResp
   const coverage = report.evidenceCoverage;
   const counts = coverage.summary;
   const { selectedValues, toggleValue, reset } = usePipelineResultFilter("verification", VERIFICATION_STATUS_FILTERS);
+  const {
+    selectedValues: selectedSummaryFilters,
+    toggleValue: toggleSummaryFilter,
+    reset: resetSummaryFilters,
+  } = usePipelineResultFilter("verification", VERIFICATION_SUMMARY_FILTERS, "verificationSummaryFilter");
   const outcomeFilterOptions: PipelineResultFilterOption[] = [
-    { id: "SUPPORTED", label: "Supported", value: counts.supported },
-    { id: "PARTIALLY_SUPPORTED", label: "Partially supported", value: counts.partiallySupported },
-    { id: "CONTRADICTED", label: "Contradicted", value: counts.contradicted },
-    { id: "INSUFFICIENT_EVIDENCE", label: "Insufficient evidence", value: counts.insufficientEvidence },
-    { id: "INACCESSIBLE", label: "Inaccessible", value: counts.inaccessible },
-    { id: "UNRESOLVED", label: "Unresolved", value: counts.unresolved },
-    { id: "UNSUPPORTED_REFERENCE_TYPE", label: "Unsupported reference type", value: counts.unsupportedReferenceType },
-    { id: "INCOMPLETE", label: "Incomplete", value: counts.incompleteVerifications },
+    { id: "SUPPORTED", label: "Supported", description: "Evidence directly supports the claim within the cited reference.", value: counts.supported },
+    { id: "PARTIALLY_SUPPORTED", label: "Partially supported", description: "Evidence supports part of the claim, but not its full scope.", value: counts.partiallySupported },
+    { id: "CONTRADICTED", label: "Contradicted", description: "Evidence in the cited reference conflicts with the claim.", value: counts.contradicted },
+    { id: "INSUFFICIENT_EVIDENCE", label: "Insufficient evidence", description: "Available evidence passages are not enough to assess the claim.", value: counts.insufficientEvidence },
+    { id: "INACCESSIBLE", label: "Inaccessible", description: "The claim could not be assessed because usable evidence was unavailable.", value: counts.inaccessible },
+    { id: "UNRESOLVED", label: "Unresolved", description: "Reference matching did not identify a Canonical Paper, so no evidence judgement was produced.", value: counts.unresolved },
+    { id: "UNSUPPORTED_REFERENCE_TYPE", label: "Unsupported reference type", description: "This reference type is outside the verification flow supported by this run.", value: counts.unsupportedReferenceType },
+    { id: "INCOMPLETE", label: "Incomplete", description: "Verification did not finish, so no final outcome was assigned.", value: counts.incompleteVerifications },
+  ];
+  const summaryFilterOptions: PipelineResultFilterOption[] = [
+    { id: "ALL_PAIRS", label: "Claim–Reference pairs", description: "Show all persisted Claim–Reference verification pairs.", value: counts.totalVerifications },
+    { id: "COMPLETED_PAIRS", label: "Completed pairs", description: "Show pairs whose verification processing reached a completed state.", value: counts.completedVerifications },
+    { id: "COMPARABLE_CONFLICTS", label: "Comparable conflicts", description: "Show pairs with comparable evidence that conflicts across passages.", value: counts.evidenceConflicts },
   ];
   return (
     <div className="space-y-5">
@@ -664,23 +713,32 @@ function ReportResults({ report, view }: { report: ReferenceResolutionReportResp
         <AlertTitle>{view === "aggregate" ? "Deterministic aggregation" : "Research triage, not certification"}</AlertTitle>
         <AlertDescription>{view === "aggregate" ? "Final statuses use the policy and thresholds pinned to this Analysis Run. Incomplete pairs do not receive fabricated domain statuses." : coverage.triageDisclaimer}</AlertDescription>
       </Alert>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <ResultMetric label="Claim–Reference pairs" value={counts.totalVerifications} />
-        <ResultMetric label="Completed pairs" value={counts.completedVerifications} />
-        <ResultMetric label="Comparable conflicts" value={counts.evidenceConflicts} />
-      </div>
+      <PipelineResultMetricFilters
+        label="Filter verification pairs by completion and conflict"
+        options={summaryFilterOptions}
+        selectedValues={selectedSummaryFilters}
+        onToggle={toggleSummaryFilter}
+        onReset={resetSummaryFilters}
+        className="sm:grid-cols-3"
+      />
       <PipelineResultMetricFilters
         label="Filter claim-reference pairs by final verification status"
         options={outcomeFilterOptions}
         selectedValues={selectedValues}
         onToggle={toggleValue}
         onReset={reset}
-        className="sm:grid-cols-4 xl:grid-cols-4"
+        className="sm:grid-cols-4"
       />
       {view === "summary" && report.referenceResolution.entries.length > 0 && (
         <section className="space-y-3" aria-labelledby="claim-outcomes-heading">
           <h4 id="claim-outcomes-heading" className="font-heading font-semibold">Claim-level results</h4>
-          <VerificationResults runId={report.analysisRunId} report={report} view="retrieve" statusFilter={selectedValues} />
+          <VerificationResults
+            runId={report.analysisRunId}
+            report={report}
+            view="retrieve"
+            statusFilter={selectedValues}
+            summaryFilter={selectedSummaryFilters}
+          />
         </section>
       )}
     </div>
@@ -749,6 +807,7 @@ export function AnalysisRunStageResults({
   const stageSelectionRequestRef = useRef(0);
   const [showStickyNavigation, setShowStickyNavigation] = useState(false);
   const stage = PIPELINE_STAGES.find((candidate) => candidate.id === selectedStage) ?? PIPELINE_STAGES[0];
+  const stageFilterReset = usePipelineStageFilterReset(stage.id);
   const sourceResultFilter = usePipelineResultFilter("source", SOURCE_RESULT_FILTER_IDS);
   const needsParsedDocument = stage.id === "source";
   const needsReport = ["references", "access", "evidence", "verification"].includes(stage.id);
@@ -756,10 +815,10 @@ export function AnalysisRunStageResults({
   const error = needsParsedDocument ? parsedError : needsReport ? reportError : null;
   const sourceClaimCount = parsedDocument?.citationContexts.reduce((count, context) => count + context.atomicClaims.length, 0) ?? 0;
   const sourceResultFilterOptions: PipelineResultFilterOption[] = [
-    { id: "sections", label: "Sections", value: parsedDocument?.sections.length ?? 0 },
-    { id: "citations", label: "Citation Contexts", value: parsedDocument?.citationContexts.length ?? 0 },
-    { id: "claims", label: "Atomic Claims", value: sourceClaimCount },
-    { id: "bibliography", label: "Bibliography Entries", value: parsedDocument?.bibliographyEntries.length ?? 0 },
+    { id: "sections", label: "Sections", description: "Document headings and their source-text spans persisted by the PDF parser.", value: parsedDocument?.sections.length ?? 0 },
+    { id: "citations", label: "Citation Contexts", description: "Source passages where citation markers were found, with their parsed citation occurrences.", value: parsedDocument?.citationContexts.length ?? 0 },
+    { id: "claims", label: "Atomic Claims", description: "Claims extracted from citation contexts. Links from claims to references are inferred and provisional.", value: sourceClaimCount },
+    { id: "bibliography", label: "Bibliography Entries", description: "Reference entries parsed from the document’s bibliography.", value: parsedDocument?.bibliographyEntries.length ?? 0 },
   ];
 
   async function selectStageFromStickyNavigation(nextStage: PipelineStageId) {
@@ -838,7 +897,19 @@ export function AnalysisRunStageResults({
             label="Back to Analysis Runs"
           />
           <PipelineStageQuickNavigation selectedStage={stage.id} onSelectStage={selectStageFromStickyNavigation} />
-          <span aria-hidden="true" className="size-8" />
+          {stageFilterReset.hasActiveFilters ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Reset filters for this pipeline stage"
+              title="Reset filters for this pipeline stage"
+              className="size-8 rounded-full text-muted-foreground hover:text-foreground"
+              onClick={stageFilterReset.reset}
+            >
+              <RotateCcw aria-hidden="true" />
+            </Button>
+          ) : <span aria-hidden="true" className="size-8" />}
         </div>
       </div>
 

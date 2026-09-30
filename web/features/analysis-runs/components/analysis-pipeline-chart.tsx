@@ -28,7 +28,7 @@ function StepStateIcon({ state }: { state: keyof typeof STATE_CLASSES }) {
 
 function ConditionalPathHelp() {
   return (
-    <TooltipProvider delay={300}>
+    <TooltipProvider delay={100}>
       <Tooltip disableHoverablePopup>
         <TooltipTrigger
           render={
