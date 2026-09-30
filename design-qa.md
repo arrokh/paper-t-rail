@@ -15,7 +15,7 @@
 - Desktop visual review: local Astro preview at `http://127.0.0.1:4322/#architecture`, 1280 × 720 CSS px. The 01→02 top row and 03→04 return row follow the right-angle track; stage 05 continues below the fold. The section remains readable as the user scrolls through its full content.
 - Mobile visual review: local Astro preview at `http://127.0.0.1:4322/#architecture`, 390 × 844 CSS px. The five cards stack on a centered gold route, and the document width is 375 px within the 390 px viewport.
 - Hero review at 1280 × 720 and 390 × 844 CSS px confirmed the clouds sit above the title, the title and train remain fixed while separate fog layers parallax around them, and the train meets the bridge deck. The headlamp was observed in its off state; its runtime switches randomly between on and off at intervals no longer than 15 seconds.
-- The workspace and homepage use the same Fraunces Paper T-Rail wordmark, red-and-paper favicon mark, centered one-line footer identity, shared paper palette, and shared font tokens. The homepage primary CTA uses gold with ink; the header CTA uses red with paper text.
+- The workspace and homepage use the same Fraunces Paper T-Rail wordmark, red-and-paper favicon mark, centered one-line footer identity, shared paper palette, and shared font tokens. The homepage hero and header setup CTAs use the same red fill and bright-paper text.
 - The mobile page and the Paper Review workspace have no horizontal overflow at 390 CSS px.
 - The inline desktop and mobile browser captures were reviewed in this session; the browser tool does not persist those captures as files.
 
@@ -41,6 +41,13 @@
 - Desktop visual review: `http://127.0.0.1:4321/#top` at 1762 × 1190 CSS px. The bridge deck begins at about 986px and the train ends at about 982px, keeping the train seated on the smaller bridge.
 - Mobile visual review: the same hero at 390 × 844 CSS px. The deck begins at about 653px and the train ends at about 651px; the scaled bridge crop keeps the deck aligned.
 - Browser console check: no warnings or errors.
+
+### Homepage annotation revision
+
+- The passenger-car dimming overlays now follow each sprite window's position; their dark fill matches the train-night ground. The round headlamp and beam bob in phase with the locomotive, with animation disabled for reduced-motion preferences.
+- Cloud loops use visibly varied durations from 86 to 280 seconds, with the far-left layer slowest. The title, lake, and train fog layers drift slowly from right to left and respect reduced-motion preferences.
+- The hero setup CTA matches the navbar CTA's red fill, paper text, and hover color. The closing setup section is removed, and the FAQ height follows its content instead of filling the viewport.
+- `mise exec -- pnpm --dir homepage build` passed after these changes. A fresh browser recapture was not completed in this pass because browser automation refused navigation to the local preview URL; the latest desktop and mobile rendering remains visually unverified.
 
 ## Build checks
 

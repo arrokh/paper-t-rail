@@ -14,14 +14,18 @@ interface Props {
 const { className = "", loading = "lazy" } = Astro.props;
 
 const segments: TrainSegment[] = [
-  { width: "0.244", sourceStart: "0", windowLefts: [24, 34, 46, 57, 68, 79], windowWidth: "6%" },
-  { width: "0.2", sourceStart: "0.244", windowLefts: [8, 23, 38, 52, 67, 81], windowWidth: "7.5%" },
-  { width: "0.2", sourceStart: "0.444", windowLefts: [10, 25, 40, 54, 69, 84], windowWidth: "7.5%" },
+  { width: "0.244", sourceStart: "0", windowLefts: [24.6, 34.6, 45, 55.6, 66, 76.4], windowWidth: "5.6%" },
+  { width: "0.2", sourceStart: "0.244", windowLefts: [8.6, 21.6, 34.3, 46.9, 59.9, 72.6], windowWidth: "6.9%" },
+  { width: "0.2", sourceStart: "0.444", windowLefts: [10.9, 23.9, 36.5, 49, 61.7, 74.6], windowWidth: "6.9%" },
   { width: "0.204", sourceStart: "0.644" },
 ];
 ---
 
-<div class:list={["train-consist", "train-consist--round-headlamp", className]} aria-hidden="true">
+<div
+  class:list={["train-consist", "train-consist--round-headlamp", className]}
+  style={`--locomotive-motion-delay: ${(segments.length - 1) * 240}ms`}
+  aria-hidden="true"
+>
   {
     segments.map((segment, index) => (
       <span

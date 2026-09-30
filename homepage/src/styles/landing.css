@@ -175,8 +175,7 @@
   color: var(--rail-paper-light);
 }
 
-.hero__art,
-.final-station__art {
+.hero__art {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -186,8 +185,7 @@
   object-position: center 58%;
 }
 
-.hero__shade,
-.final-station__shade {
+.hero__shade {
   position: absolute;
   z-index: -1;
   inset: 0;
@@ -350,8 +348,7 @@
   gap: 16px;
 }
 
-.section-heading h2,
-.final-station h2 {
+.section-heading h2 {
   color: var(--rail-ink);
   font-family: "Fraunces Variable", Georgia, serif;
   font-size: clamp(34px, 5vw, 58px);
@@ -793,45 +790,6 @@
   line-height: 1.55;
 }
 
-.final-station {
-  position: relative;
-  isolation: isolate;
-  display: grid;
-  min-height: 350px;
-  place-items: center;
-  overflow: hidden;
-  background: var(--rail-navy);
-  color: var(--rail-paper-light);
-  text-align: center;
-}
-
-.final-station__art {
-  object-position: center 73%;
-}
-
-.final-station__shade {
-  background: rgb(3 26 39 / 52%);
-}
-
-.final-station__content {
-  display: flex;
-  width: min(780px, calc(100% - 40px));
-  flex-direction: column;
-  align-items: center;
-  gap: 20px;
-  padding-block: 58px;
-}
-
-.final-station h2 {
-  color: var(--rail-paper-light);
-  font-size: clamp(36px, 5vw, 59px);
-}
-
-.final-station__content > p:last-child {
-  color: var(--ptr-paper-muted);
-  font-size: 14px;
-}
-
 .site-footer {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1037,14 +995,6 @@
 
   .faq-list summary {
     font-size: 18px;
-  }
-
-  .final-station {
-    min-height: 370px;
-  }
-
-  .final-station__art {
-    object-position: 58% 72%;
   }
 
   .site-footer {
@@ -1299,8 +1249,8 @@ html.has-scroll-nav .hero {
   position: absolute;
   z-index: 1;
   top: 43%;
-  left: 84.1%;
-  width: min(15.8%, clamp(34px, 9vw, 136px));
+  left: 82.5%;
+  width: min(14.5%, clamp(34px, 9vw, 136px));
   height: clamp(14px, 2.2vw, 36px);
   background: linear-gradient(90deg, rgb(255 242 189 / 54%), rgb(255 226 147 / 23%) 34%, transparent 100%);
   clip-path: polygon(0 42%, 100% 0, 100% 100%, 0 58%);
@@ -1308,6 +1258,7 @@ html.has-scroll-nav .hero {
   filter: blur(3px);
   opacity: 0.8;
   transform: translateY(-50%);
+  animation: train-headlamp-motion 1.6s steps(2, end) var(--locomotive-motion-delay) infinite;
   pointer-events: none;
 }
 
@@ -1315,7 +1266,7 @@ html.has-scroll-nav .hero {
   position: absolute;
   z-index: 2;
   top: 43%;
-  left: 84.1%;
+  left: 82.5%;
   width: clamp(10px, 1.1vw, 18px);
   aspect-ratio: 1;
   border-radius: 50%;
@@ -1323,6 +1274,7 @@ html.has-scroll-nav .hero {
   content: "";
   filter: drop-shadow(0 0 7px rgb(244 201 101 / 82%));
   transform: translate(-50%, -50%);
+  animation: train-headlamp-motion-centered 1.6s steps(2, end) var(--locomotive-motion-delay) infinite;
 }
 
 .train-consist__car {
@@ -1352,7 +1304,7 @@ html.has-scroll-nav .hero {
   top: 39%;
   left: var(--window-left);
   width: var(--window-width);
-  height: 12%;
+  height: 10%;
   background: var(--ptr-hero-ground);
   opacity: 0;
   pointer-events: none;
@@ -1372,6 +1324,18 @@ html.has-scroll-nav .hero {
   0%, 100% { transform: translateY(0); }
   35% { transform: translateY(-1.5px); }
   70% { transform: translateY(0.5px); }
+}
+
+@keyframes train-headlamp-motion {
+  0%, 100% { transform: translateY(-50%); }
+  35% { transform: translateY(calc(-50% - 1.5px)); }
+  70% { transform: translateY(calc(-50% + 0.5px)); }
+}
+
+@keyframes train-headlamp-motion-centered {
+  0%, 100% { transform: translate(-50%, -50%); }
+  35% { transform: translate(-50%, calc(-50% - 1.5px)); }
+  70% { transform: translate(-50%, calc(-50% + 0.5px)); }
 }
 
 @keyframes hero-train-lights {
@@ -1431,7 +1395,9 @@ html.has-scroll-nav .hero {
   }
 
   .hero-scene__train,
-  .train-consist__car {
+  .train-consist__car,
+  .train-consist--round-headlamp::before,
+  .train-consist--round-headlamp::after {
     animation: none;
   }
 
@@ -1613,23 +1579,6 @@ html.has-scroll-nav .hero {
   border-width: 2px;
 }
 
-.final-station {
-  min-height: 300px;
-  border-top: 1px solid var(--rail-line);
-  background: var(--ptr-paper-soft);
-  color: var(--rail-ink);
-}
-
-.final-station__content {
-  gap: 18px;
-  padding-block: 52px;
-}
-
-.final-station h2 {
-  max-width: 780px;
-  color: var(--rail-ink);
-}
-
 @media (max-width: 760px) {
   .site-header {
     min-height: 58px;
@@ -1656,9 +1605,6 @@ html.has-scroll-nav .hero {
     min-height: 220px;
   }
 
-  .final-station {
-    min-height: 260px;
-  }
 }
 
 @media (max-width: 420px) {
@@ -1818,7 +1764,7 @@ html.has-scroll-nav .hero {
     radial-gradient(ellipse 26% 60% at 42% 43%, rgb(106 145 163 / 15%), transparent 78%),
     radial-gradient(ellipse 20% 56% at 76% 59%, rgb(124 158 174 / 16%), transparent 77%),
     radial-gradient(ellipse 12% 48% at 96% 39%, rgb(109 146 164 / 13%), transparent 75%);
-  animation: hero-lake-fog-drift 54s ease-in-out infinite alternate;
+  animation: hero-lake-fog-drift 112s linear infinite;
 }
 
 .hero-scene__lake-fog::after {
@@ -1826,7 +1772,7 @@ html.has-scroll-nav .hero {
     radial-gradient(ellipse 24% 48% at 24% 37%, rgb(104 143 160 / 12%), transparent 76%),
     radial-gradient(ellipse 18% 52% at 59% 65%, rgb(122 155 170 / 12%), transparent 76%),
     radial-gradient(ellipse 28% 46% at 88% 43%, rgb(103 142 160 / 11%), transparent 78%);
-  animation: hero-lake-fog-drift 82s ease-in-out -17s infinite alternate-reverse;
+  animation: hero-lake-fog-drift 154s linear -43s infinite;
 }
 
 .hero-scene__train {
@@ -1839,8 +1785,8 @@ html.has-scroll-nav .hero {
 }
 
 @keyframes hero-lake-fog-drift {
-  from { transform: translate3d(-5%, 0, 0); }
-  to { transform: translate3d(5%, 0, 0); }
+  from { transform: translate3d(3%, 0, 0); }
+  to { transform: translate3d(-3%, 0, 0); }
 }
 
 @keyframes hero-bridge-tile-loop {
@@ -2179,27 +2125,19 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 #architecture { background: var(--ptr-paper-soft); }
 #faq { background: var(--ptr-paper); }
 
-.final-station {
-  min-height: 100svh;
-  background: var(--ptr-paper-gold);
-  color: var(--ptr-ink);
-}
-
-.final-station h2 { color: var(--ptr-ink); }
-.final-station .pixel-label { color: var(--ptr-gold-ink); }
+.landing-section.faq-section { min-height: 0; }
 
 .hero .landing-button--primary {
-  border-color: var(--ptr-hero-ground);
-  background: var(--ptr-gold);
-  color: var(--ptr-ink);
+  border-color: var(--ptr-red);
+  background: var(--ptr-red);
+  color: var(--ptr-paper-bright);
 }
 
-.landing-page a.hero .landing-button--primary,
 .landing-page a.landing-button--primary {
-  color: var(--ptr-ink);
+  color: var(--ptr-paper-bright);
 }
 
-.hero .landing-button--primary:hover { background: var(--ptr-gold-bright); }
+.hero .landing-button--primary:hover { background: var(--ptr-red-hover); }
 
 .site-header__cta.landing-button--primary {
   border-color: var(--ptr-red);
@@ -2262,14 +2200,14 @@ html.has-page-load-cover .page-load-cover.is-exiting {
     radial-gradient(ellipse 26% 24% at 26% 32%, color-mix(in srgb, var(--ptr-paper-blue) 17%, transparent), transparent 76%),
     radial-gradient(ellipse 30% 27% at 67% 43%, color-mix(in srgb, var(--ptr-paper-bright) 12%, transparent), transparent 78%),
     radial-gradient(ellipse 34% 25% at 51% 81%, color-mix(in srgb, var(--ptr-paper-blue) 21%, transparent), transparent 78%);
-  animation: hero-title-fog-drift 38s ease-in-out infinite alternate;
+  animation: hero-title-fog-drift 116s linear infinite;
 }
 
 .hero-scene__title-fog::after {
   background:
     radial-gradient(ellipse 30% 18% at 14% 75%, color-mix(in srgb, var(--ptr-paper-bright) 13%, transparent), transparent 76%),
     radial-gradient(ellipse 27% 22% at 84% 65%, color-mix(in srgb, var(--ptr-paper-blue) 17%, transparent), transparent 75%);
-  animation: hero-title-fog-drift 54s ease-in-out -16s infinite alternate-reverse;
+  animation: hero-title-fog-drift 148s linear -52s infinite;
 }
 
 .hero-scene__train-wrap {
@@ -2305,14 +2243,14 @@ html.has-page-load-cover .page-load-cover.is-exiting {
     radial-gradient(ellipse 29% 32% at 24% 63%, color-mix(in srgb, var(--ptr-paper-blue) 28%, transparent), transparent 76%),
     radial-gradient(ellipse 36% 29% at 53% 43%, color-mix(in srgb, var(--ptr-paper-bright) 13%, transparent), transparent 78%),
     radial-gradient(ellipse 31% 36% at 79% 61%, color-mix(in srgb, var(--ptr-paper-blue) 23%, transparent), transparent 77%);
-  animation: hero-title-fog-drift 46s ease-in-out -8s infinite alternate;
+  animation: hero-title-fog-drift 108s linear infinite;
 }
 
 .hero-scene__train-fog::after {
   background:
     radial-gradient(ellipse 34% 25% at 38% 75%, color-mix(in srgb, var(--ptr-paper-bright) 12%, transparent), transparent 75%),
     radial-gradient(ellipse 27% 33% at 72% 35%, color-mix(in srgb, var(--ptr-paper-blue) 20%, transparent), transparent 76%);
-  animation: hero-title-fog-drift 61s ease-in-out -24s infinite alternate-reverse;
+  animation: hero-title-fog-drift 142s linear -39s infinite;
 }
 
 .hero-scene__train { transform: none; animation: none; filter: none; }
@@ -2328,8 +2266,8 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 }
 
 @keyframes hero-title-fog-drift {
-  from { transform: translate3d(-2%, 1%, 0); }
-  to { transform: translate3d(2%, -1%, 0); }
+  from { transform: translate3d(3%, 0, 0); }
+  to { transform: translate3d(-3%, 0, 0); }
 }
 
 /* Five real Analysis Run stages on a right-angle pixel rail. */
