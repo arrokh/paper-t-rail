@@ -1,6 +1,7 @@
 ---
 import "../styles/global.css";
 import HeroScene from "../components/hero/HeroScene.astro";
+import CloudflareWebAnalytics from "../components/CloudflareWebAnalytics.astro";
 
 const workspaceUrl = import.meta.env.PUBLIC_WORKSPACE_URL || "http://127.0.0.1:3000";
 const setupUrl = "https://github.com/arrokh/paper-t-rail";
@@ -400,5 +401,6 @@ const questions = [
 
 </script>
 
+    <CloudflareWebAnalytics />
   </body>
 </html>
