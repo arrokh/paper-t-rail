@@ -2778,6 +2778,14 @@ GET /api/v1/analysis-runs/{id}
 
 The detail response includes persisted stage and work-item execution progress. The list response omits the per-item progress collection. Per-item states describe worker execution, not the matching, access, or verification outcome. New progress is persisted for new Analysis Runs; historical runs without progress records remain readable and use their run status and final counters as a limited fallback.
 
+### Original Source Document PDF
+
+```http
+GET /api/v1/analysis-runs/{id}/source-document
+```
+
+Returns the exact PDF uploaded for the Analysis Run, including before worker processing completes. The service verifies that the stored PDF content hash agrees with both the Analysis Run and Source Document records. A deleted or missing run/document returns `404`, an integrity mismatch returns `409`, and temporary object storage failures return `503`. The successful `application/pdf` response includes an inline `Content-Disposition` filename, `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`.
+
 ### Parsed document structure
 
 ```http

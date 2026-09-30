@@ -178,6 +178,29 @@ import java.util.concurrent.atomic.AtomicInteger
 @Testcontainers
 class AnalysisRunQueueIntegrationTest {
     @Test
+    fun `original source PDF is available for a queued run and rejects deleted or changed sources`() {
+        val created = createQueuedRun()
+        val source = analysisRunService().getSourcePdf(created.analysisRunId)
+
+        assertEquals("paper.pdf", source.filename)
+        assertArrayEquals("integration pdf bytes".toByteArray(), source.content)
+
+        val objectKey = "source/${created.documentId}/${created.hash}.pdf"
+        objectStore.put(objectKey, "changed PDF bytes".toByteArray())
+        val changed = assertThrows(ResponseStatusException::class.java) {
+            analysisRunService().getSourcePdf(created.analysisRunId)
+        }
+        assertEquals(HttpStatus.CONFLICT, changed.statusCode)
+        objectStore.put(objectKey, "integration pdf bytes".toByteArray())
+
+        jdbc.update("INSERT INTO source_document_tombstones (document_id) VALUES (?)", created.documentId)
+        val deleted = assertThrows(ResponseStatusException::class.java) {
+            analysisRunService().getSourcePdf(created.analysisRunId)
+        }
+        assertEquals(HttpStatus.NOT_FOUND, deleted.statusCode)
+    }
+
+    @Test
     fun `document deletion removes scoped data and preserves assets referenced by an unrelated active run`() {
         val deleted = createQueuedRun()
         val documentEvent = jdbc.queryForObject(

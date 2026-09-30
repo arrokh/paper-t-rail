@@ -201,6 +201,47 @@ class AnalysisRunService(
             ?: throw ResponseStatusException(HttpStatus.CONFLICT, "Parsed document structure is not available until parsing completes.")
     }
 
+    fun getSourcePdf(runId: UUID): AnalysisRunSourcePdf {
+        val source = jdbc.query(
+            """
+            SELECT document.filename, document.object_key, document.sha256 AS document_sha256,
+                   run.source_content_sha256
+              FROM analysis_runs run
+              JOIN source_documents document ON document.id = run.document_id
+             WHERE run.id = ?
+               AND NOT EXISTS (
+                   SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = document.id
+               )
+            """.trimIndent(),
+            { resultSet, _ ->
+                StoredRunSourceDocument(
+                    filename = resultSet.getString("filename"),
+                    objectKey = resultSet.getString("object_key"),
+                    documentSha256 = resultSet.getString("document_sha256"),
+                    runSourceSha256 = resultSet.getString("source_content_sha256"),
+                )
+            },
+            runId,
+        ).firstOrNull() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
+
+        val content = try {
+            objectStore.get(source.objectKey)
+        } catch (exception: Exception) {
+            logger.atWarn()
+                .addKeyValue("analysisRunId", runId)
+                .addKeyValue("errorType", exception.javaClass.simpleName)
+                .log("Stored Source Document unavailable for viewing")
+            throw ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "The stored Source Document is temporarily unavailable.")
+        }
+
+        val actualHash = sha256Hex(content)
+        if (source.documentSha256 != source.runSourceSha256 || actualHash != source.runSourceSha256) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "The stored Source Document does not match this Analysis Run.")
+        }
+
+        return AnalysisRunSourcePdf(filename = source.filename, content = content)
+    }
+
     fun list(limit: Int = 25, cursorToken: String? = null, query: String? = null, status: String? = null): AnalysisRunPage {
         val pageSize = limit.coerceIn(1, 100)
         val cursor = cursorToken?.let(AnalysisRunCursorCodec::decode)
@@ -363,6 +404,13 @@ class AnalysisRunService(
     )
 
     private data class StoredDocument(val id: UUID, val filename: String, val objectKey: String, val sha256: String)
+
+    private data class StoredRunSourceDocument(
+        val filename: String,
+        val objectKey: String,
+        val documentSha256: String,
+        val runSourceSha256: String,
+    )
 
     companion object {
         private const val MAX_FILENAME_QUERY_LENGTH = 200

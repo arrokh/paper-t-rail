@@ -23,7 +23,8 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
   const headers = new Headers();
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
-  headers.set("accept", "application/json");
+  const accept = request.headers.get("accept");
+  if (accept) headers.set("accept", accept);
   headers.set("x-request-id", requestId);
 
   try {
@@ -36,6 +37,8 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
     const responseHeaders = new Headers();
     const upstreamType = upstream.headers.get("content-type");
     if (upstreamType) responseHeaders.set("content-type", upstreamType);
+    const contentDisposition = upstream.headers.get("content-disposition");
+    if (contentDisposition) responseHeaders.set("content-disposition", contentDisposition);
     responseHeaders.set("cache-control", "no-store");
     responseHeaders.set("x-request-id", requestId);
     logStructured({

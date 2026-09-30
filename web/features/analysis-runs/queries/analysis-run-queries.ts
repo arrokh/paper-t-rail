@@ -177,6 +177,7 @@ export function deleteSourceDocumentMutationOptions(queryClient: QueryClient) {
         queryClient.removeQueries({ queryKey: analysisRunQueryKey(runId), exact: true });
         queryClient.removeQueries({ queryKey: ["analysis-runs", "parsed-document", runId], exact: true });
         queryClient.removeQueries({ queryKey: referenceResolutionReportQueryKey(runId), exact: true });
+        queryClient.removeQueries({ queryKey: sourceDocumentPdfQueryKey(runId), exact: true });
       });
       await refreshRecentAnalysisRuns(queryClient);
     },
@@ -215,6 +216,28 @@ export function parsedDocumentQueryOptions(analysisRunId: string) {
 
 export function referenceResolutionReportQueryKey(analysisRunId: string) {
   return ["analysis-runs", "report", analysisRunId] as const;
+}
+
+export function sourceDocumentPdfQueryKey(analysisRunId: string) {
+  return ["analysis-runs", "source-pdf", analysisRunId] as const;
+}
+
+export function sourceDocumentPdfQueryOptions(analysisRunId: string) {
+  return queryOptions({
+    queryKey: sourceDocumentPdfQueryKey(analysisRunId),
+    queryFn: async ({ signal }): Promise<Blob> => {
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/source-document`, {
+        headers: { accept: "application/pdf" },
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      return response.blob();
+    },
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
 }
 
 export function referenceResolutionReportQueryOptions(analysisRunId: string) {

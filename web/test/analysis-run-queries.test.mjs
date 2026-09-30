@@ -6,6 +6,8 @@ import {
   recentAnalysisRunsQueryOptions,
   referenceResolutionReportQueryKey,
   referenceResolutionReportQueryOptions,
+  sourceDocumentPdfQueryKey,
+  sourceDocumentPdfQueryOptions,
   recordHumanReviewMutationOptions,
   uploadAnalysisRunMutationOptions,
 } from "../features/analysis-runs/queries/analysis-run-queries.ts";
@@ -208,4 +210,37 @@ test("recent-run list polls only while a run is active and refreshes when the wi
   assert.equal(options.refetchInterval({ state: { data: { items: [{ status: "PROCESSING" }] } } }), 2500);
   assert.equal(options.refetchInterval({ state: { data: { items: [{ status: "COMPLETED" }] } } }), false);
   assert.equal(options.refetchOnWindowFocus, true);
+});
+
+test("original source PDF query preserves the PDF bytes and reports API errors", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  const bytes = new TextEncoder().encode("%PDF-1.7 original upload");
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(bytes, { status: 200, headers: { "content-type": "application/pdf" } });
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const query = sourceDocumentPdfQueryOptions("run-1");
+  const pdf = await client.fetchQuery(query);
+
+  assert.equal(request.url, "/api/v1/analysis-runs/run-1/source-document");
+  assert.equal(request.options.headers.accept, "application/pdf");
+  assert.equal(pdf.type, "application/pdf");
+  assert.deepEqual(new Uint8Array(await pdf.arrayBuffer()), bytes);
+  assert.deepEqual(client.getQueryData(sourceDocumentPdfQueryKey("run-1")), pdf);
+
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ code: "SOURCE_UNAVAILABLE", message: "The stored Source Document is temporarily unavailable." }),
+    { status: 503, headers: { "content-type": "application/json" } },
+  );
+  await assert.rejects(
+    client.fetchQuery({ ...sourceDocumentPdfQueryOptions("run-2"), retry: false }),
+    { message: "The stored Source Document is temporarily unavailable." },
+  );
 });

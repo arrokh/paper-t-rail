@@ -331,3 +331,10 @@
     width: 100%;
   }
 }
+
+@layer components {
+  .source-document-pdf-size {
+    height: 65vh;
+    min-height: 24rem;
+  }
+}

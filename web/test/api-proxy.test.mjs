@@ -77,6 +77,39 @@ test("API proxy forwards the request ID, returns it to the caller, and emits str
   assert.equal("body" in record, false);
 });
 
+test("API proxy preserves PDF response bytes and inline filename for the source-document viewer", async (context) => {
+  const originalFetch = globalThis.fetch;
+  console.info = () => {};
+  let upstreamRequest;
+  const pdfBytes = new TextEncoder().encode("%PDF-1.7 source document");
+  globalThis.fetch = async (url, options) => {
+    upstreamRequest = { url, options };
+    return new Response(pdfBytes, {
+      status: 200,
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": "inline; filename*=UTF-8''source%20paper.pdf",
+      },
+    });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; });
+
+  const response = await GET(
+    {
+      method: "GET",
+      headers: new Headers({ accept: "application/pdf" }),
+      nextUrl: new URL("http://localhost/api/v1/analysis-runs/run-1/source-document"),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    },
+    { params: Promise.resolve({ path: ["analysis-runs", "run-1", "source-document"] }) },
+  );
+
+  assert.equal(upstreamRequest.options.headers.get("accept"), "application/pdf");
+  assert.equal(response.headers.get("content-type"), "application/pdf");
+  assert.equal(response.headers.get("content-disposition"), "inline; filename*=UTF-8''source%20paper.pdf");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), pdfBytes);
+});
+
 test("API proxy replaces an invalid request ID with a generated UUID", async (context) => {
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;

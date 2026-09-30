@@ -5,7 +5,9 @@ import { ChevronDown } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnalysisPipelineChart } from "@/features/analysis-runs/components/analysis-pipeline-chart";
+import { AnalysisRunPaperReview } from "@/features/analysis-runs/components/analysis-run-paper-review";
 import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/components/analysis-run-loading";
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
@@ -66,12 +68,12 @@ function analysisRunBreadcrumbItems(currentLabel: string, listHref: string, back
   ] as const;
 }
 
-function updatePipelineQuery(
-  step: PipelineStageId,
-) {
+function updateQueryParameters(updates: Record<string, string | null>) {
   const params = new URLSearchParams(window.location.search);
-  params.set("step", step);
-  params.delete("substep");
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === null) params.delete(key);
+    else params.set(key, value);
+  }
   const query = params.toString();
   const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
   window.history.replaceState(null, "", nextUrl);
@@ -126,6 +128,15 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const run = runQuery.data ?? null;
   const stageParam = searchParams.get("step");
   const selectedStage = normalizePipelineStageId(stageParam);
+  const selectedView = searchParams.get("view") === "review" ? "review" : "pipeline";
+  const selectedOutcomeId = searchParams.get("reviewPair");
+  const selectedReferenceKey = searchParams.get("reviewReference");
+  const reviewDetailParam = searchParams.get("reviewDetail");
+  const selectedReviewDetail = reviewDetailParam === "citations"
+    ? "citations"
+    : reviewDetailParam === "results" || selectedOutcomeId || !selectedReferenceKey
+      ? "results"
+      : "citations";
   const sourceStep = run?.pipeline?.stages.find((stage) => stage.id === "source")?.steps.find((step) => step.id === "parse-document");
   const parsedReady = Boolean(run && (sourceStep?.status === "COMPLETED" || isParsedDocumentReady(run.status)));
   const parsedQuery = useParsedDocument(analysisRunId, parsedReady);
@@ -155,7 +166,25 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const backHref = homeHrefFor(searchParams, run.id);
 
   function selectStage(stage: PipelineStageId) {
-    updatePipelineQuery(stage);
+    updateQueryParameters({ step: stage, substep: null });
+  }
+
+  function selectReviewPair(outcomeId: string, localReferenceKey: string) {
+    updateQueryParameters({ view: "review", reviewPair: outcomeId, reviewReference: localReferenceKey, reviewDetail: "results" });
+  }
+
+  function selectReviewReference(localReferenceKey: string) {
+    const currentReferenceKey = new URLSearchParams(window.location.search).get("reviewReference");
+    updateQueryParameters({
+      view: "review",
+      reviewReference: localReferenceKey,
+      reviewPair: currentReferenceKey === localReferenceKey ? new URLSearchParams(window.location.search).get("reviewPair") : null,
+      reviewDetail: "citations",
+    });
+  }
+
+  function selectReviewDetail(detail: "results" | "citations") {
+    updateQueryParameters({ view: "review", reviewDetail: detail });
   }
 
   return (
@@ -183,22 +212,53 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
 
       <AnalysisRunProvenance run={run} />
 
-      <AnalysisPipelineChart run={run} selectedStage={selectedStage} onSelectStage={selectStage} />
-
-      {selectedStage && (
-        <AnalysisRunStageResults
-          run={run}
-          selectedStage={selectedStage}
-          backHref={backHref}
-          parsedDocument={parsedDocument}
-          report={report}
-          parsedLoading={parsedReady && parsedQuery.isPending}
-          reportLoading={parsedReady && reportQuery.isPending}
-          parsedError={parsedError}
-          reportError={reportError}
-          onSelectStage={selectStage}
-        />
-      )}
+      <Tabs
+        value={selectedView}
+        onValueChange={(value) => {
+          if (typeof value !== "string") return;
+          updateQueryParameters({ view: value === "review" ? "review" : null });
+        }}
+        className="gap-5"
+      >
+        <TabsList aria-label="Analysis Run views" className="h-10 w-full sm:w-fit">
+          <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
+          <TabsTrigger value="review">Paper Review</TabsTrigger>
+        </TabsList>
+        <TabsContent value="pipeline" className="space-y-6">
+          <AnalysisPipelineChart run={run} selectedStage={selectedStage} onSelectStage={selectStage} />
+          {selectedStage && (
+            <AnalysisRunStageResults
+              run={run}
+              selectedStage={selectedStage}
+              backHref={backHref}
+              parsedDocument={parsedDocument}
+              report={report}
+              parsedLoading={parsedReady && parsedQuery.isPending}
+              reportLoading={parsedReady && reportQuery.isPending}
+              parsedError={parsedError}
+              reportError={reportError}
+              onSelectStage={selectStage}
+            />
+          )}
+        </TabsContent>
+        <TabsContent value="review">
+          <AnalysisRunPaperReview
+            run={run}
+            parsedDocument={parsedDocument}
+            report={report}
+            parsedLoading={parsedReady && parsedQuery.isPending}
+            reportLoading={parsedReady && reportQuery.isPending}
+            parsedError={parsedError}
+            reportError={reportError}
+            selectedOutcomeId={selectedOutcomeId}
+            selectedReferenceKey={selectedReferenceKey}
+            selectedDetailSection={selectedReviewDetail}
+            onSelectOutcome={selectReviewPair}
+            onSelectReference={selectReviewReference}
+            onSelectDetailSection={selectReviewDetail}
+          />
+        </TabsContent>
+      </Tabs>
     </article>
   );
 }
