@@ -377,20 +377,24 @@ const questions = [
   let pointerFrame = 0;
   let headlampTimer = 0;
 
-  const resetHeroParallax = () => {
-    heroForMotion?.style.setProperty("--hero-parallax-x", "0px");
-    heroForMotion?.style.setProperty("--hero-parallax-y", "0px");
+  const resetHeroFogParallax = () => {
+    heroForMotion?.style.setProperty("--hero-title-fog-x", "0px");
+    heroForMotion?.style.setProperty("--hero-title-fog-y", "0px");
+    heroForMotion?.style.setProperty("--hero-train-fog-x", "0px");
+    heroForMotion?.style.setProperty("--hero-train-fog-y", "0px");
   };
 
-  const updateHeroParallax = (event) => {
+  const updateHeroFogParallax = (event) => {
     if (!heroForMotion || reducedMotion.matches || event.pointerType === "touch") return;
     const bounds = heroForMotion.getBoundingClientRect();
     const horizontal = (event.clientX - bounds.left) / bounds.width - 0.5;
     const vertical = (event.clientY - bounds.top) / bounds.height - 0.5;
     window.cancelAnimationFrame(pointerFrame);
     pointerFrame = window.requestAnimationFrame(() => {
-      heroForMotion.style.setProperty("--hero-parallax-x", `${horizontal * 12}px`);
-      heroForMotion.style.setProperty("--hero-parallax-y", `${vertical * 8}px`);
+      heroForMotion.style.setProperty("--hero-title-fog-x", `${horizontal * 12}px`);
+      heroForMotion.style.setProperty("--hero-title-fog-y", `${vertical * 8}px`);
+      heroForMotion.style.setProperty("--hero-train-fog-x", `${horizontal * -8}px`);
+      heroForMotion.style.setProperty("--hero-train-fog-y", `${vertical * -5}px`);
     });
   };
 
@@ -407,13 +411,13 @@ const questions = [
   const updateMotionPreference = () => {
     window.clearTimeout(headlampTimer);
     window.cancelAnimationFrame(pointerFrame);
-    resetHeroParallax();
+    resetHeroFogParallax();
     setHeadlamp(true);
     if (!reducedMotion.matches) scheduleHeadlampChange();
   };
 
-  heroForMotion?.addEventListener("pointermove", updateHeroParallax, { passive: true });
-  heroForMotion?.addEventListener("pointerleave", resetHeroParallax, { passive: true });
+  heroForMotion?.addEventListener("pointermove", updateHeroFogParallax, { passive: true });
+  heroForMotion?.addEventListener("pointerleave", resetHeroFogParallax, { passive: true });
   reducedMotion.addEventListener("change", updateMotionPreference);
   updateMotionPreference();
 </script>

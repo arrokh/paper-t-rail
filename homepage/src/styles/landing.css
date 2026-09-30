@@ -1232,7 +1232,7 @@ html.has-scroll-nav .hero {
   display: block;
   height: auto;
   image-rendering: pixelated;
-  transform: translate3d(-50%, var(--hero-parallax-y, 0px), 0);
+  transform: translate3d(-50%, 0, 0);
   will-change: transform;
 }
 
@@ -2211,16 +2211,11 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   white-space: nowrap;
 }
 
-/* The hero keeps its clouds above the wordmark and lets the fog move independently. */
+/* Keep the title and train still; only the surrounding fog follows the pointer. */
 .hero__content {
   position: relative;
   z-index: 6;
-  transform: translate3d(
-    var(--hero-parallax-x, 0px),
-    calc(-10svh + var(--hero-parallax-y, 0px)),
-    0
-  );
-  will-change: transform;
+  transform: translateY(-10svh);
 }
 
 .hero-scene__cloud--far-left { top: 12%; }
@@ -2235,8 +2230,8 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   overflow: hidden;
   opacity: 0.78;
   pointer-events: none;
-  transform: translate3d(var(--hero-parallax-x, 0px), var(--hero-parallax-y, 0px), 0);
-  transition: transform 180ms ease-out;
+  transform: translate3d(var(--hero-title-fog-x, 0px), var(--hero-title-fog-y, 0px), 0);
+  transition: transform 420ms ease-out;
 }
 
 .hero-scene__title-fog::before,
@@ -2265,8 +2260,45 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 
 .hero-scene__train-wrap {
   bottom: 4svh;
-  transform: translate3d(calc(-50% + var(--hero-parallax-x, 0px)), var(--hero-parallax-y, 0px), 0);
-  transition: transform 180ms ease-out;
+  transform: translateX(-50%);
+}
+
+.hero-scene__train-fog {
+  position: absolute;
+  z-index: 4;
+  right: 20%;
+  bottom: 4svh;
+  width: 60%;
+  height: 20%;
+  overflow: hidden;
+  opacity: 0.7;
+  pointer-events: none;
+  transform: translate3d(var(--hero-train-fog-x, 0px), var(--hero-train-fog-y, 0px), 0);
+  transition: transform 620ms ease-out;
+}
+
+.hero-scene__train-fog::before,
+.hero-scene__train-fog::after {
+  position: absolute;
+  inset: -16%;
+  content: "";
+  filter: blur(12px);
+  will-change: transform;
+}
+
+.hero-scene__train-fog::before {
+  background:
+    radial-gradient(ellipse 29% 32% at 24% 63%, color-mix(in srgb, var(--ptr-paper-blue) 28%, transparent), transparent 76%),
+    radial-gradient(ellipse 36% 29% at 53% 43%, color-mix(in srgb, var(--ptr-paper-bright) 13%, transparent), transparent 78%),
+    radial-gradient(ellipse 31% 36% at 79% 61%, color-mix(in srgb, var(--ptr-paper-blue) 23%, transparent), transparent 77%);
+  animation: hero-title-fog-drift 46s ease-in-out -8s infinite alternate;
+}
+
+.hero-scene__train-fog::after {
+  background:
+    radial-gradient(ellipse 34% 25% at 38% 75%, color-mix(in srgb, var(--ptr-paper-bright) 12%, transparent), transparent 75%),
+    radial-gradient(ellipse 27% 33% at 72% 35%, color-mix(in srgb, var(--ptr-paper-blue) 20%, transparent), transparent 76%);
+  animation: hero-title-fog-drift 61s ease-in-out -24s infinite alternate-reverse;
 }
 
 .hero-scene__train { animation: none; filter: none; }
@@ -2407,6 +2439,7 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 @media (max-width: 760px) {
   .landing-section { min-height: 100svh; }
   .hero-scene__train-wrap { bottom: 15svh; }
+  .hero-scene__train-fog { bottom: 14svh; height: 16%; }
 
   .hero-scene__cloud--far-left { top: 10%; }
   .hero-scene__cloud--near-left { top: 17%; }
@@ -2446,9 +2479,8 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero__content,
   .hero-scene__title-fog,
-  .hero-scene__train-wrap,
+  .hero-scene__train-fog,
   .train-consist--round-headlamp::before,
   .train-consist--round-headlamp::after {
     transition: none;
@@ -2456,6 +2488,8 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 
   .hero-scene__title-fog::before,
   .hero-scene__title-fog::after,
+  .hero-scene__train-fog::before,
+  .hero-scene__train-fog::after,
   .architecture-node__asset {
     animation: none;
   }
