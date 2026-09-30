@@ -272,7 +272,7 @@ describe("Analysis Run Paper Review", () => {
     await waitFor(() => expect(pdfJsMocks.getDocument).toHaveBeenCalledWith({ url: "http://127.0.0.1:9000/source-documents/view-signed", withCredentials: false }));
     await waitFor(() => expect(screen.getByLabelText("PDF page number").getAttribute("max")).toBe("3"));
     expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe("http://127.0.0.1:9000/source-documents/download-signed");
-    expect(screen.getByText("Text of PDF page 1: Uploaded paper page one.")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("Text of PDF page 1: Uploaded paper page one.")).toBeTruthy());
   });
 
   it("renews MinIO URLs only when Refresh PDF is explicitly selected", async () => {
@@ -300,7 +300,7 @@ describe("Analysis Run Paper Review", () => {
     expect(issue).toBe(2);
   });
 
-  it("finds and highlights the selected AI result passage in the original PDF", async () => {
+  it("highlights the selected Atomic Claim and citation marker in the original PDF", async () => {
     installSourcePdfResponse();
     installPdfJsDocument(["Front matter.", outcome.citationContextText, "References."]);
     renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0", selectedDetailSection: "results" });
@@ -309,7 +309,11 @@ describe("Analysis Run Paper Review", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show in PDF" }));
 
     await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("2"));
-    expect(screen.getByText("Match found · page 2")).toBeTruthy();
+    await waitFor(() => expect([...document.querySelectorAll("mark[data-pdf-search-match='true']")].map((mark) => mark.textContent)).toEqual([
+      outcome.claimText.replace(/\.$/u, ""),
+      "[1].",
+    ]));
+    expect(screen.getByText("Selected text found · page 2")).toBeTruthy();
   });
 
   it("highlights an atomic claim from its Claim results card in the original PDF", async () => {
@@ -321,7 +325,11 @@ describe("Analysis Run Paper Review", () => {
     fireEvent.click(screen.getByRole("button", { name: `Show atomic claim in PDF: ${outcome.claimText}` }));
 
     await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("2"));
-    expect(screen.getByText("Match found · page 2")).toBeTruthy();
+    await waitFor(() => expect([...document.querySelectorAll("mark[data-pdf-search-match='true']")].map((mark) => mark.textContent)).toEqual([
+      outcome.claimText.replace(/\.$/u, ""),
+      "[1].",
+    ]));
+    expect(screen.getByText("Selected text found · page 2")).toBeTruthy();
   });
 
   it("finds and highlights the selected bibliography entry in the original PDF", async () => {
@@ -333,7 +341,7 @@ describe("Analysis Run Paper Review", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show in PDF" }));
 
     await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("3"));
-    expect(screen.getByText("Match found · page 3")).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("1 of 3 selected passages found · page 3"));
   });
 
   it("groups parsed claims with linked bibliography references and reports a selected AI pair", async () => {

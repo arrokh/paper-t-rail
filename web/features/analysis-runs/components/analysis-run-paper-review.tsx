@@ -110,7 +110,7 @@ export function AnalysisRunPaperReview({
   onSelectDetailSection: (section: "results" | "citations") => void;
 }) {
   const [mobilePane, setMobilePane] = useState<"paper" | "details">("paper");
-  const [pdfHighlightOverride, setPdfHighlightOverride] = useState<{ selectionKey: string; text: string[] } | null>(null);
+  const [pdfHighlightOverride, setPdfHighlightOverride] = useState<{ selectionKey: string; text: string[]; contextText: string | null } | null>(null);
   const entries = report?.referenceResolution.entries ?? EMPTY_REFERENCE_ENTRIES;
   const outcomeGroups = useMemo(() => buildOutcomeGroups(entries), [entries]);
   const references = useMemo(() => sourceReferences(parsedDocument, report), [parsedDocument, report]);
@@ -125,14 +125,14 @@ export function AnalysisRunPaperReview({
     }
     if (!selectedPair) return [];
 
-    const parsedContext = parsedDocument?.citationContexts.find((context) =>
-      context.atomicClaims.some((claim) => claim.id === selectedPair.outcome.atomicClaimId),
-    );
-    return uniqueSearchCandidates(selectedPair.outcome.citationContextText, parsedContext?.text, selectedPair.outcome.claimText);
-  }, [parsedDocument, selectedDetailSection, selectedPair, selectedReference]);
+    return uniqueSearchCandidates(selectedPair.outcome.claimText, ...selectedPair.outcome.citationMarkers);
+  }, [selectedDetailSection, selectedPair, selectedReference]);
   const pdfHighlightText = pdfHighlightOverride?.selectionKey === selectionKey
     ? pdfHighlightOverride.text
     : selectedPdfSearchText.length > 0 ? selectedPdfSearchText : null;
+  const pdfHighlightContextText = pdfHighlightOverride?.selectionKey === selectionKey
+    ? pdfHighlightOverride.contextText
+    : selectedDetailSection === "results" ? selectedPair?.outcome.citationContextText ?? null : null;
   const citationContexts = useMemo(() => {
     if (!parsedDocument || !selectedReferenceKey) return [];
     return parsedDocument.citationContexts.filter((context) =>
@@ -154,13 +154,14 @@ export function AnalysisRunPaperReview({
       setPdfHighlightOverride({
         selectionKey: `${selectedDetailSection}:${selectedOutcomeId ?? ""}:${referenceKey}`,
         text: uniqueSearchCandidates(highlightText, reference?.rawText),
+        contextText: null,
       });
     }
     onSelectReference(referenceKey);
   }
 
-  function highlightInPdf(text: string | string[]) {
-    setPdfHighlightOverride({ selectionKey, text: uniqueSearchCandidates(...(Array.isArray(text) ? text : [text])) });
+  function highlightInPdf(text: string | string[], contextText: string | null = null) {
+    setPdfHighlightOverride({ selectionKey, text: uniqueSearchCandidates(...(Array.isArray(text) ? text : [text])), contextText });
     setMobilePane("paper");
     scrollToPaperReviewCard();
   }
@@ -186,7 +187,12 @@ export function AnalysisRunPaperReview({
 
             <div className="grid min-w-0 gap-4 md:min-h-0 md:flex-1 md:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.9fr)] md:grid-rows-1 md:items-stretch md:overflow-hidden">
               <div className={cn("min-w-0", mobilePane === "paper" ? "block" : "hidden", "md:h-full md:min-h-0 md:block")}>
-                <SourceDocumentPdfViewer analysisRunId={run.id} filename={run.filename} highlightText={pdfHighlightText} />
+                <SourceDocumentPdfViewer
+                  analysisRunId={run.id}
+                  filename={run.filename}
+                  highlightText={pdfHighlightText}
+                  highlightContextText={pdfHighlightContextText}
+                />
               </div>
               <aside className={cn("min-w-0", mobilePane === "details" ? "block" : "hidden", "md:flex md:h-full md:min-h-0 md:flex-col")} aria-label="Paper Review details">
                 <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-muted/60 p-1" role="group" aria-label="Review detail type">
@@ -220,7 +226,12 @@ export function AnalysisRunPaperReview({
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
-                        <Button type="button" variant="secondary" size="sm" onClick={() => highlightInPdf([selectedPair.outcome.citationContextText, selectedPair.outcome.claimText])}>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => highlightInPdf(selectedPdfSearchText, selectedPair.outcome.citationContextText)}
+                        >
                           <Search aria-hidden="true" />
                           Show in PDF
                         </Button>
@@ -329,7 +340,7 @@ function ResultsDetails({
   parsedError: string | null;
   reportError: string | null;
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
-  onHighlightInPdf: (text: string | string[]) => void;
+  onHighlightInPdf: (text: string | string[], contextText?: string | null) => void;
 }) {
   const statuses = PAPER_REVIEW_FILTER_OPTIONS.map((option) => option.id);
   const { selectedValues, toggleValue, reset } = usePipelineResultFilter("verification", statuses, "reviewFilter");
@@ -375,7 +386,11 @@ function ResultsDetails({
           ) : (
             <div className="space-y-3">
               {filteredGroups.map((group) => {
-                const sourceContextCandidates = uniqueSearchCandidates(...group.outcomes.map(({ outcome }) => outcome.citationContextText));
+                const sourceHighlightCandidates = uniqueSearchCandidates(
+                  group.claimText,
+                  ...group.outcomes.flatMap(({ outcome }) => outcome.citationMarkers),
+                );
+                const sourceContextText = group.outcomes[0]?.outcome.citationContextText ?? null;
                 return (
                   <Card key={group.claimId} size="sm">
                     <CardHeader>
@@ -386,9 +401,9 @@ function ResultsDetails({
                           variant="secondary"
                           size="sm"
                           aria-label={`Show atomic claim in PDF: ${group.claimText}`}
-                          title={sourceContextCandidates.length > 0 ? "Highlight source context in PDF" : "No source context available to find in the PDF"}
-                          disabled={sourceContextCandidates.length === 0}
-                          onClick={() => onHighlightInPdf(sourceContextCandidates)}
+                          title={sourceHighlightCandidates.length > 0 ? "Highlight the Atomic Claim and citation markers in the PDF" : "No claim or citation text is available to find in the PDF"}
+                          disabled={sourceHighlightCandidates.length === 0}
+                          onClick={() => onHighlightInPdf(sourceHighlightCandidates, sourceContextText)}
                         >
                           <Highlighter aria-hidden="true" />
                           Show in PDF

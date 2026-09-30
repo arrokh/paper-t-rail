@@ -12,15 +12,25 @@ import { sourceDocumentPdfAccessQueryOptions } from "@/features/analysis-runs/qu
 import { scrollToPaperReviewCard } from "@/features/analysis-runs/scroll-to-paper-review-card";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-import { findPdfTextMatch, type PdfTextMatch } from "@/features/analysis-runs/components/pdf-text-search";
+import { findPdfTextMatches, type PdfTextMatches } from "@/features/analysis-runs/components/pdf-text-search";
 import { SourceDocumentPdfPage } from "@/features/analysis-runs/components/source-document-pdf-page";
 
 type PdfJsLibrary = typeof import("pdfjs-dist");
-type SearchResult = PdfTextMatch & { pageNumber: number };
+type SearchResult = PdfTextMatches & { pageNumber: number };
 type LoadedPdf = { url: string; library: PdfJsLibrary; document: PDFDocumentProxy };
 type PdfSearchState = { key: string; result: SearchResult | null; message?: string };
 
-export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText }: { analysisRunId: string; filename: string; highlightText: string | null | string[] }) {
+export function SourceDocumentPdfViewer({
+  analysisRunId,
+  filename,
+  highlightText,
+  highlightContextText = null,
+}: {
+  analysisRunId: string;
+  filename: string;
+  highlightText: string | null | string[];
+  highlightContextText?: string | null;
+}) {
   const pdfQuery = useQuery(sourceDocumentPdfAccessQueryOptions(analysisRunId));
   const [loadedPdf, setLoadedPdf] = useState<LoadedPdf | null>(null);
   const [pageState, setPageState] = useState<{ url: string; pageNumber: number; pageInput: string } | null>(null);
@@ -41,12 +51,16 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
   const pageNumber = pageState?.url === pdfDocumentUrl ? pageState.pageNumber : 1;
   const pageInput = pageState?.url === pdfDocumentUrl ? pageState.pageInput : "1";
   const documentError = documentErrorState?.url === pdfDocumentUrl ? documentErrorState.message : null;
-  const searchKey = `${pdfDocumentUrl ?? ""}:${searchTextKey}`;
+  const searchKey = JSON.stringify([pdfDocumentUrl, searchCandidates, highlightContextText]);
   const activeSearch = searchState?.key === searchKey ? searchState : null;
   const searching = Boolean(pdfDocument && searchCandidates.length > 0 && !activeSearch);
   const searchResult = activeSearch?.result ?? null;
   const searchStatus = activeSearch
-    ? activeSearch.message ?? (activeSearch.result ? `Match found · page ${activeSearch.result.pageNumber}` : "No matching text found in the PDF")
+    ? activeSearch.message ?? (activeSearch.result
+      ? activeSearch.result.matchedTargetCount === activeSearch.result.targetCount
+        ? `Selected text found · page ${activeSearch.result.pageNumber}`
+        : `${activeSearch.result.matchedTargetCount} of ${activeSearch.result.targetCount} selected passages found · page ${activeSearch.result.pageNumber}`
+      : "No matching text found in the PDF")
     : searching ? "Finding selected text in the PDF…" : "";
 
   useEffect(() => {
@@ -84,7 +98,7 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
     let active = true;
     const requestId = ++searchRequestId.current;
 
-    void findTextInDocument(pdfDocument, candidates, textContentCache.current).then((result) => {
+    void findTextInDocument(pdfDocument, candidates, highlightContextText, textContentCache.current).then((result) => {
       if (!active || requestId !== searchRequestId.current) return;
       setSearchState({ key: searchKey, result });
       if (result) {
@@ -98,7 +112,7 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
     return () => {
       active = false;
     };
-  }, [pdfDocument, pdfDocumentUrl, searchKey, searchTextKey]);
+  }, [pdfDocument, pdfDocumentUrl, highlightContextText, searchKey, searchTextKey]);
 
   function goToPage(nextPage: number) {
     const validPage = Math.min(pageCount, Math.max(1, nextPage));
@@ -224,6 +238,7 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
                 pageNumber={pageNumber}
                 zoom={zoom}
                 highlightedItemIndexes={searchResult?.pageNumber === pageNumber ? searchResult.itemIndexes : []}
+                highlightedTextRanges={searchResult?.pageNumber === pageNumber ? searchResult.itemRanges : []}
                 onRenderingChange={setPageRendering}
                 onError={setPageError}
               />
@@ -264,21 +279,32 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
 async function findTextInDocument(
   document: PDFDocumentProxy,
   candidates: readonly string[],
+  context: string | null,
   textCache: Map<number, Awaited<ReturnType<PDFPageProxy["getTextContent"]>>>,
 ): Promise<SearchResult | null> {
-  for (const candidate of candidates) {
-    if (!candidate.trim()) continue;
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      let textContent = textCache.get(pageNumber);
-      if (!textContent) {
-        textContent = await (await document.getPage(pageNumber)).getTextContent();
-        textCache.set(pageNumber, textContent);
-      }
+  let bestMatch: SearchResult | null = null;
 
-      const match = findPdfTextMatch(textContent.items, [candidate]);
-      if (match) return { pageNumber, ...match };
+  for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+    let textContent = textCache.get(pageNumber);
+    if (!textContent) {
+      textContent = await (await document.getPage(pageNumber)).getTextContent();
+      textCache.set(pageNumber, textContent);
     }
+
+    const match = findPdfTextMatches(textContent.items, candidates, context);
+    if (match.matchedTargetCount === 0) continue;
+
+    const result = { pageNumber, ...match };
+    if (
+      !bestMatch
+      || (result.contextMatched && !bestMatch.contextMatched)
+      || (result.contextMatched === bestMatch.contextMatched && result.matchedTargetCount > bestMatch.matchedTargetCount)
+    ) {
+      bestMatch = result;
+    }
+
+    if (result.matchedTargetCount === result.targetCount && (!context || result.contextMatched)) return result;
   }
 
-  return null;
+  return bestMatch;
 }

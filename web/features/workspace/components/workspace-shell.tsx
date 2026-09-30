@@ -18,7 +18,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <main className="workspace-content mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8">
+      <main className="workspace-content mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 pt-4 pb-6 sm:px-6 sm:pt-5 sm:pb-8">
         {children}
       </main>
 

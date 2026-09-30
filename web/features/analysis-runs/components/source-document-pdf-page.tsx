@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
+import type { PdfTextRange } from "@/features/analysis-runs/components/pdf-text-search";
 
 type PdfJsLibrary = typeof import("pdfjs-dist");
 
@@ -11,6 +12,7 @@ export function SourceDocumentPdfPage({
   pageNumber,
   zoom,
   highlightedItemIndexes,
+  highlightedTextRanges,
   onRenderingChange,
   onError,
 }: {
@@ -19,6 +21,7 @@ export function SourceDocumentPdfPage({
   pageNumber: number;
   zoom: number;
   highlightedItemIndexes: number[];
+  highlightedTextRanges: PdfTextRange[];
   onRenderingChange: (rendering: boolean) => void;
   onError: (message: string | null) => void;
 }) {
@@ -109,15 +112,21 @@ export function SourceDocumentPdfPage({
   }, [onError, onRenderingChange, pageNumber, pdfDocument, pdfjs, viewerWidth, zoom]);
 
   useEffect(() => {
-    for (const [index, textDiv] of textDivsRef.current.entries()) {
-      if (highlightedItemIndexes.includes(index)) {
-        textDiv.dataset.pdfSearchMatch = "true";
-      } else {
-        delete textDiv.dataset.pdfSearchMatch;
+    for (const textDiv of textDivsRef.current) {
+      clearPdfSearchHighlights(textDiv);
+    }
+
+    const rangesInReverseTextOrder = [...highlightedTextRanges].sort((first, second) =>
+      second.itemIndex - first.itemIndex || second.startOffset - first.startOffset,
+    );
+    for (const range of rangesInReverseTextOrder) {
+      const textDiv = textDivsRef.current[range.itemIndex];
+      if (!textDiv || !highlightPdfTextRange(textDiv, range.startOffset, range.endOffset)) {
+        if (textDiv) textDiv.dataset.pdfSearchMatch = "true";
       }
     }
 
-    const target = textDivsRef.current[highlightedItemIndexes[0] ?? -1];
+    const target = textDivsRef.current[highlightedTextRanges[0]?.itemIndex ?? highlightedItemIndexes[0] ?? -1];
     const viewer = viewerRef.current;
     if (!target || !viewer) return;
 
@@ -136,7 +145,7 @@ export function SourceDocumentPdfPage({
     const animationFrame = requestAnimationFrame(scrollToMatch);
 
     return () => cancelAnimationFrame(animationFrame);
-  }, [highlightedItemIndexes, textLayerRevision]);
+  }, [highlightedItemIndexes, highlightedTextRanges, textLayerRevision]);
 
   return (
     <div ref={viewerRef} data-page-ready={pageReady} className="source-document-pdf-size source-document-pdf-page min-w-0 overflow-auto rounded-b-lg border border-t-0 border-border bg-muted/40 p-2 sm:p-3 md:min-h-0 md:flex-1">
@@ -147,6 +156,45 @@ export function SourceDocumentPdfPage({
       <p className="sr-only">Text of PDF page {pageNumber}: {accessiblePageText}</p>
     </div>
   );
+}
+
+function clearPdfSearchHighlights(textDiv: HTMLElement) {
+  for (const mark of textDiv.querySelectorAll("mark[data-pdf-search-match='true']")) {
+    mark.replaceWith(...Array.from(mark.childNodes));
+  }
+  delete textDiv.dataset.pdfSearchMatch;
+  textDiv.normalize();
+}
+
+function highlightPdfTextRange(textDiv: HTMLElement, startOffset: number, endOffset: number): boolean {
+  if (startOffset < 0 || endOffset <= startOffset || endOffset > (textDiv.textContent?.length ?? 0)) return false;
+  const startPosition = pdfTextPositionAt(textDiv, startOffset);
+  const endPosition = pdfTextPositionAt(textDiv, endOffset);
+  if (!startPosition || !endPosition || startPosition.node !== endPosition.node) return false;
+
+  const range = document.createRange();
+  range.setStart(startPosition.node, startPosition.offset);
+  range.setEnd(endPosition.node, endPosition.offset);
+  const mark = document.createElement("mark");
+  mark.dataset.pdfSearchMatch = "true";
+  range.surroundContents(mark);
+  return true;
+}
+
+function pdfTextPositionAt(element: HTMLElement, characterOffset: number): { node: Text; offset: number } | null {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let remainingOffset = characterOffset;
+  let node = walker.nextNode();
+
+  while (node) {
+    const textNode = node as Text;
+    const textLength = textNode.textContent?.length ?? 0;
+    if (remainingOffset <= textLength) return { node: textNode, offset: remainingOffset };
+    remainingOffset -= textLength;
+    node = walker.nextNode();
+  }
+
+  return null;
 }
 
 function estimatePdfViewerWidth(viewportWidth: number) {

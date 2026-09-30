@@ -442,9 +442,11 @@
     transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1));
   }
 
-  .source-document-pdf-text-layer span[data-pdf-search-match="true"] {
+  .source-document-pdf-text-layer span[data-pdf-search-match="true"],
+  .source-document-pdf-text-layer mark[data-pdf-search-match="true"] {
     border-radius: 2px;
     background-color: color-mix(in srgb, var(--warning) 78%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning-foreground) 42%, transparent);
+    color: transparent;
   }
 }
