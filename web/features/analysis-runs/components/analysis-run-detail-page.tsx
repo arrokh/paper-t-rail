@@ -1,9 +1,11 @@
 "use client";
 
+import { useLayoutEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnalysisPipelineChart } from "@/features/analysis-runs/components/analysis-pipeline-chart";
@@ -130,12 +132,14 @@ function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
 }
 
 export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string }) {
+  const shouldScrollToPaperReview = useRef(false);
   const searchParams = useSearchParams();
   const runQuery = useAnalysisRun(analysisRunId);
   const run = runQuery.data ?? null;
   const stageParam = searchParams.get("step");
   const selectedStage = normalizePipelineStageId(stageParam);
   const selectedView = searchParams.get("view") === "review" ? "review" : "pipeline";
+  const [hasOpenedPaperReview, setHasOpenedPaperReview] = useState(selectedView === "review");
   const selectedOutcomeId = searchParams.get("reviewPair");
   const selectedReferenceKey = searchParams.get("reviewReference");
   const reviewDetailParam = searchParams.get("reviewDetail");
@@ -153,6 +157,19 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const parsedError = parsedQuery.error instanceof Error ? parsedQuery.error.message : parsedQuery.isError ? "Could not load the parsed Source Document." : null;
   const reportError = reportQuery.error instanceof Error ? reportQuery.error.message : reportQuery.isError ? "Could not load the Evidence Coverage Report." : null;
   const homeHref = homeHrefFor(searchParams);
+
+  useLayoutEffect(() => {
+    if (selectedView !== "review" || !shouldScrollToPaperReview.current) return;
+    shouldScrollToPaperReview.current = false;
+
+    const paperReviewCard = document.getElementById("paper-review-card");
+    if (!paperReviewCard) return;
+
+    paperReviewCard.scrollIntoView({
+      behavior: "instant",
+      block: "start",
+    });
+  }, [selectedView]);
 
   if (runQuery.isPending) {
     return <AnalysisRunDetailLoadingState backHref={homeHref} showStageResults={Boolean(selectedStage)} />;
@@ -177,10 +194,22 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   }
 
   function selectReviewPair(outcomeId: string, localReferenceKey: string) {
+    setHasOpenedPaperReview(true);
+    shouldScrollToPaperReview.current = selectedView !== "review";
     updateQueryParameters({ view: "review", reviewPair: outcomeId, reviewReference: localReferenceKey, reviewDetail: "results" });
   }
 
+  function clearReviewPair() {
+    updateQueryParameters({ reviewPair: null, reviewReference: null, reviewDetail: "results" });
+  }
+
+  function clearReviewReference() {
+    updateQueryParameters({ reviewReference: null, reviewDetail: "citations" });
+  }
+
   function selectReviewReference(localReferenceKey: string) {
+    setHasOpenedPaperReview(true);
+    shouldScrollToPaperReview.current = selectedView !== "review";
     const currentReferenceKey = new URLSearchParams(window.location.search).get("reviewReference");
     updateQueryParameters({
       view: "review",
@@ -217,12 +246,12 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
         </Alert>
       )}
 
-      <AnalysisRunProvenance run={run} />
-
       <Tabs
         value={selectedView}
         onValueChange={(value) => {
           if (typeof value !== "string") return;
+          if (value === "review") setHasOpenedPaperReview(true);
+          shouldScrollToPaperReview.current = value === "review";
           updateQueryParameters({ view: value === "review" ? "review" : null });
         }}
         className="gap-5"
@@ -234,12 +263,22 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
           <TabsTrigger value="pipeline" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
             Pipeline
           </TabsTrigger>
-          <TabsTrigger value="review" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
+          <TabsTrigger
+            value="review"
+            onPointerEnter={() => setHasOpenedPaperReview(true)}
+            onFocus={() => setHasOpenedPaperReview(true)}
+            className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}
+          >
             Paper Review
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="pipeline" className="space-y-6">
-          <AnalysisPipelineChart run={run} selectedStage={selectedStage} onSelectStage={selectStage} />
+        <TabsContent value="pipeline" className="analysis-run-view-panel space-y-6">
+          <AnalysisPipelineChart
+            run={run}
+            selectedStage={selectedStage}
+            onSelectStage={selectStage}
+            afterIntro={<AnalysisRunProvenance run={run} />}
+          />
           {selectedStage && (
             <AnalysisRunStageResults
               run={run}
@@ -254,8 +293,18 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
               onSelectStage={selectStage}
             />
           )}
+          {!selectedStage && (
+            <section id="pipeline-results" aria-labelledby="pipeline-results-heading" className="pipeline-results">
+              <Card className="shadow-sm">
+                <CardContent className="flex min-h-40 flex-col items-center justify-center gap-1 py-10 text-center">
+                  <h2 id="pipeline-results-heading" className="m-0 text-base font-semibold">Pipeline results</h2>
+                  <p className="m-0 text-sm text-muted-foreground">Please select a pipeline stage above to view its results.</p>
+                </CardContent>
+              </Card>
+            </section>
+          )}
         </TabsContent>
-        <TabsContent value="review">
+        <TabsContent value="review" keepMounted={hasOpenedPaperReview || selectedView === "review"} className="analysis-run-view-panel">
           <AnalysisRunPaperReview
             run={run}
             parsedDocument={parsedDocument}
@@ -269,6 +318,8 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             selectedDetailSection={selectedReviewDetail}
             onSelectOutcome={selectReviewPair}
             onSelectReference={selectReviewReference}
+            onClearReviewPair={clearReviewPair}
+            onClearSelectedReference={clearReviewReference}
             onSelectDetailSection={selectReviewDetail}
           />
         </TabsContent>

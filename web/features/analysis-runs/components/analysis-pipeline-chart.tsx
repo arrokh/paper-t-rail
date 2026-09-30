@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { ArrowRight, Check, CircleAlert, CircleHelp, Clock3, LoaderCircle, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -66,10 +67,12 @@ export function AnalysisPipelineChart({
   run,
   selectedStage,
   onSelectStage,
+  afterIntro,
 }: {
   run: AnalysisRun | null;
   selectedStage: PipelineStageId | null;
   onSelectStage: (stage: PipelineStageId) => void;
+  afterIntro?: ReactNode;
 }) {
   return (
     <section className="space-y-4" aria-labelledby="pipeline-heading">
@@ -87,6 +90,8 @@ export function AnalysisPipelineChart({
           <ConditionalPathHelp />
         </div>
       </div>
+
+      {afterIntro}
 
       <nav id="analysis-pipeline-stages" className="scroll-mt-4 overflow-x-auto overflow-y-hidden p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Analysis pipeline stages">
         <ol className="flex min-w-[920px] items-stretch gap-2 lg:min-w-0">

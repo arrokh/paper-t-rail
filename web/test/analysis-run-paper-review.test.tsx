@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnalysisRunDetailPage } from "@/features/analysis-runs/components/analysis-run-detail-page";
@@ -10,6 +10,29 @@ const queryHookMocks = vi.hoisted(() => ({
   useParsedDocument: vi.fn(),
   useReferenceResolutionReport: vi.fn(),
 }));
+
+const pdfJsMocks = vi.hoisted(() => {
+  class TextLayer {
+    textDivs: HTMLElement[];
+
+    constructor({ textContentSource, container }: { textContentSource: { items: Array<{ str?: string }> }; container: HTMLElement }) {
+      this.textDivs = textContentSource.items.flatMap((item) => {
+        if (item.str === undefined) return [];
+        const span = document.createElement("span");
+        span.textContent = item.str;
+        container.append(span);
+        return [span];
+      });
+    }
+
+    async render() {}
+    cancel() {}
+  }
+
+  return { getDocument: vi.fn(), GlobalWorkerOptions: { workerSrc: "" }, TextLayer };
+});
+
+vi.mock("pdfjs-dist", () => pdfJsMocks);
 
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(window.location.search),
@@ -144,6 +167,7 @@ const report: ReferenceResolutionReportResponse = {
 };
 
 function installSourcePdfResponse() {
+  installPdfJsDocument();
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url === `/api/v1/analysis-runs/${run.id}/source-document`) {
       return {
@@ -161,16 +185,41 @@ function installSourcePdfResponse() {
   }));
 }
 
+function installPdfJsDocument(pages = ["Uploaded paper page one.", outcome.citationContextText, "A study of outcomes"]): ReturnType<typeof createPdfDocument> {
+  const pdfDocument = createPdfDocument(pages);
+  pdfJsMocks.getDocument.mockReturnValue({ promise: Promise.resolve(pdfDocument), destroy: vi.fn() });
+  return pdfDocument;
+}
+
+function createPdfDocument(pages: string[]) {
+  const pdfPages = pages.map((text) => ({
+    getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale }),
+    getTextContent: async () => ({
+      items: [{ str: text, dir: "ltr", transform: [12, 0, 0, 12, 72, 720], width: 400, height: 12, fontName: "test-font", hasEOL: true }],
+      styles: { "test-font": { ascent: 0.8, descent: -0.2, vertical: false, fontFamily: "Arial" } },
+      lang: "en",
+    }),
+    render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+  }));
+
+  return {
+    numPages: pdfPages.length,
+    getPage: vi.fn(async (pageNumber: number) => pdfPages[pageNumber - 1]),
+  };
+}
+
 type RenderReviewOptions = {
   selectedOutcomeId?: string | null;
   selectedReferenceKey?: string | null;
   selectedDetailSection?: "results" | "citations";
   onSelectOutcome?: (outcomeId: string, referenceKey: string) => void;
   onSelectReference?: (referenceKey: string) => void;
+  onClearReviewPair?: () => void;
+  onClearSelectedReference?: () => void;
   onSelectDetailSection?: (section: "results" | "citations") => void;
 };
 
-function renderReview({ selectedOutcomeId = null, selectedReferenceKey = null, selectedDetailSection = "results", onSelectOutcome = vi.fn(), onSelectReference = vi.fn(), onSelectDetailSection = vi.fn() }: RenderReviewOptions = {}) {
+function renderReview({ selectedOutcomeId = null, selectedReferenceKey = null, selectedDetailSection = "results", onSelectOutcome = vi.fn(), onSelectReference = vi.fn(), onClearReviewPair = vi.fn(), onClearSelectedReference = vi.fn(), onSelectDetailSection = vi.fn() }: RenderReviewOptions = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rendered = render(
     <QueryClientProvider client={queryClient}>
@@ -187,11 +236,13 @@ function renderReview({ selectedOutcomeId = null, selectedReferenceKey = null, s
         selectedDetailSection={selectedDetailSection}
         onSelectOutcome={onSelectOutcome}
         onSelectReference={onSelectReference}
+        onClearReviewPair={onClearReviewPair}
+        onClearSelectedReference={onClearSelectedReference}
         onSelectDetailSection={onSelectDetailSection}
       />
     </QueryClientProvider>,
   );
-  return { ...rendered, queryClient, onSelectOutcome, onSelectReference };
+  return { ...rendered, queryClient, onSelectOutcome, onSelectReference, onClearReviewPair };
 }
 
 function renderDetailPage() {
@@ -209,20 +260,23 @@ afterEach(() => {
   queryHookMocks.useAnalysisRun.mockReset();
   queryHookMocks.useParsedDocument.mockReset();
   queryHookMocks.useReferenceResolutionReport.mockReset();
+  pdfJsMocks.getDocument.mockReset();
+  pdfJsMocks.GlobalWorkerOptions.workerSrc = "";
 });
 
 describe("Analysis Run Paper Review", () => {
-  it("loads the uploaded Source Document directly from a short-lived MinIO URL", async () => {
+  it("loads the uploaded Source Document from its short-lived MinIO URL", async () => {
     installSourcePdfResponse();
     renderReview();
 
-    const pdf = await screen.findByTitle("Original uploaded PDF: uploaded-paper.pdf");
-    await waitFor(() => expect(pdf.getAttribute("src")).toBe("http://127.0.0.1:9000/source-documents/view-signed"));
+    await waitFor(() => expect(pdfJsMocks.getDocument).toHaveBeenCalledWith({ url: "http://127.0.0.1:9000/source-documents/view-signed", withCredentials: false }));
+    await waitFor(() => expect(screen.getByLabelText("PDF page number").getAttribute("max")).toBe("3"));
     expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe("http://127.0.0.1:9000/source-documents/download-signed");
-    expect(screen.getByText(/parser does not provide reliable PDF page coordinates/)).toBeTruthy();
+    expect(screen.getByText("Text of PDF page 1: Uploaded paper page one.")).toBeTruthy();
   });
 
   it("renews MinIO URLs only when Refresh PDF is explicitly selected", async () => {
+    installPdfJsDocument();
     let issue = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (url !== `/api/v1/analysis-runs/${run.id}/source-document`) throw new Error(`Unexpected request: ${url}`);
@@ -240,11 +294,46 @@ describe("Analysis Run Paper Review", () => {
     }));
     renderReview();
 
-    const pdf = await screen.findByTitle("Original uploaded PDF: uploaded-paper.pdf");
-    await waitFor(() => expect(pdf.getAttribute("src")).toBe("http://127.0.0.1:9000/source-documents/view-1"));
+    await waitFor(() => expect(pdfJsMocks.getDocument).toHaveBeenCalledWith({ url: "http://127.0.0.1:9000/source-documents/view-1", withCredentials: false }));
     fireEvent.click(screen.getByRole("button", { name: "Refresh PDF" }));
-    await waitFor(() => expect(pdf.getAttribute("src")).toBe("http://127.0.0.1:9000/source-documents/view-2"));
+    await waitFor(() => expect(pdfJsMocks.getDocument).toHaveBeenCalledWith({ url: "http://127.0.0.1:9000/source-documents/view-2", withCredentials: false }));
     expect(issue).toBe(2);
+  });
+
+  it("finds and highlights the selected AI result passage in the original PDF", async () => {
+    installSourcePdfResponse();
+    installPdfJsDocument(["Front matter.", outcome.citationContextText, "References."]);
+    renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0", selectedDetailSection: "results" });
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Show in PDF" }));
+
+    await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("2"));
+    expect(screen.getByText("Match found · page 2")).toBeTruthy();
+  });
+
+  it("highlights an atomic claim from its Claim results card in the original PDF", async () => {
+    installSourcePdfResponse();
+    installPdfJsDocument(["Front matter.", outcome.citationContextText]);
+    renderReview();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    fireEvent.click(screen.getByRole("button", { name: `Show atomic claim in PDF: ${outcome.claimText}` }));
+
+    await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("2"));
+    expect(screen.getByText("Match found · page 2")).toBeTruthy();
+  });
+
+  it("finds and highlights the selected bibliography entry in the original PDF", async () => {
+    installSourcePdfResponse();
+    installPdfJsDocument(["Front matter.", "Body text.", "A study of outcomes"]);
+    renderReview({ selectedReferenceKey: "b0", selectedDetailSection: "citations" });
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Show in PDF" }));
+
+    await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("3"));
+    expect(screen.getByText("Match found · page 3")).toBeTruthy();
   });
 
   it("groups parsed claims with linked bibliography references and reports a selected AI pair", async () => {
@@ -262,17 +351,33 @@ describe("Analysis Run Paper Review", () => {
     expect(onSelectOutcome).toHaveBeenCalledWith(outcome.id, "b0");
   });
 
+  it("keeps the selected pair bibliography shortcut visible and lets users clear the selection", async () => {
+    installSourcePdfResponse();
+    const { onSelectReference, onClearReviewPair } = renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0" });
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    expect(screen.getByRole("region", { name: "Selected pair quick access" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "View bibliography" }));
+    expect(onSelectReference).toHaveBeenCalledWith("b0");
+    fireEvent.click(screen.getByRole("button", { name: "Clear selected pair" }));
+    expect(onClearReviewPair).toHaveBeenCalledOnce();
+  });
+
   it("connects a selected bibliography entry back to its parsed citation and AI result", async () => {
     installSourcePdfResponse();
+    installPdfJsDocument(["Front matter.", parsedDocument.citationContexts[0].text]);
     const onSelectOutcome = vi.fn();
     renderReview({ selectedReferenceKey: "b0", selectedDetailSection: "citations", onSelectOutcome });
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     fireEvent.click(screen.getByRole("button", { name: "Citations & bibliography" }));
 
-    expect(screen.getByRole("heading", { name: "Citing contexts" })).toBeTruthy();
-    expect(screen.getByText("The intervention improved the measured outcome [1].")).toBeTruthy();
+    const pinnedReference = screen.getByRole("region", { name: "Selected bibliography quick access" });
+    expect(within(pinnedReference).getByRole("heading", { name: "Citing contexts" })).toBeTruthy();
+    expect(within(pinnedReference).getByText("The intervention improved the measured outcome [1].")).toBeTruthy();
     expect(screen.getByRole("button", { name: /A\. Author/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Review AI result: supported/ }));
+    fireEvent.click(within(pinnedReference).getByRole("button", { name: "Find in PDF" }));
+    await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("2"));
+    fireEvent.click(within(pinnedReference).getByRole("button", { name: /Review AI result: supported/ }));
     expect(onSelectOutcome).toHaveBeenCalledWith(outcome.id, "b0");
   });
 
@@ -286,6 +391,27 @@ describe("Analysis Run Paper Review", () => {
     expect(screen.getByRole("heading", { name: "Citing contexts" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "AI results" }));
     expect(onSelectDetailSection).toHaveBeenCalledWith("results");
+  });
+
+  it("clears the selected pair from the Paper Review quick-access card", async () => {
+    installSourcePdfResponse();
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=review&reviewPair=${outcome.id}&reviewReference=b0&reviewDetail=results`);
+
+    renderDetailPage();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    expect(screen.getByRole("region", { name: "Selected pair quick access" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear selected pair" }));
+
+    await waitFor(() => {
+      const searchParams = new URLSearchParams(window.location.search);
+      expect(searchParams.has("reviewPair")).toBe(false);
+      expect(searchParams.has("reviewReference")).toBe(false);
+    });
+    expect(new URLSearchParams(window.location.search).get("reviewDetail")).toBe("results");
   });
 
   it("persists citation and AI result panel selections through the detail URL and reload", async () => {

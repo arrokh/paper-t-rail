@@ -1,11 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, FileText, Link2, Search } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, Highlighter, Link2, Search, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisRunPaperReviewFilters, PAPER_REVIEW_FILTER_OPTIONS } from "@/features/analysis-runs/components/analysis-run-paper-review-filters";
 import { SourceDocumentPdfViewer } from "@/features/analysis-runs/components/source-document-pdf-viewer";
@@ -88,6 +88,8 @@ export function AnalysisRunPaperReview({
   selectedDetailSection,
   onSelectOutcome,
   onSelectReference,
+  onClearReviewPair,
+  onClearSelectedReference,
   onSelectDetailSection,
 }: {
   run: AnalysisRun;
@@ -102,32 +104,34 @@ export function AnalysisRunPaperReview({
   selectedDetailSection: "results" | "citations";
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
   onSelectReference: (localReferenceKey: string) => void;
+  onClearReviewPair: () => void;
+  onClearSelectedReference: () => void;
   onSelectDetailSection: (section: "results" | "citations") => void;
 }) {
   const [mobilePane, setMobilePane] = useState<"paper" | "details">("paper");
-  const [pdfHighlightOverride, setPdfHighlightOverride] = useState<{ selectionKey: string; text: string } | null>(null);
+  const [pdfHighlightOverride, setPdfHighlightOverride] = useState<{ selectionKey: string; text: string[] } | null>(null);
   const entries = report?.referenceResolution.entries ?? EMPTY_REFERENCE_ENTRIES;
   const outcomeGroups = useMemo(() => buildOutcomeGroups(entries), [entries]);
   const references = useMemo(() => sourceReferences(parsedDocument, report), [parsedDocument, report]);
   const allOutcomes = useMemo(() => entries.flatMap((entry) => entry.verificationOutcomes.map((outcome) => ({ entry, outcome }))), [entries]);
   const selectedPair = allOutcomes.find(({ outcome }) => outcome.id === selectedOutcomeId) ?? null;
   const selectedReference = references.find((reference) => reference.localReferenceKey === selectedReferenceKey) ?? null;
+  const selectedReferenceResult = entries.find((entry) => entry.localReferenceKey === selectedReferenceKey) ?? null;
   const selectionKey = `${selectedDetailSection}:${selectedOutcomeId ?? ""}:${selectedReferenceKey ?? ""}`;
   const selectedPdfSearchText = useMemo(() => {
     if (selectedDetailSection === "citations") {
-      return selectedReference ? selectedReference.title ?? selectedReference.rawText : null;
+      return selectedReference ? uniqueSearchCandidates(selectedReference.title, selectedReference.rawText) : [];
     }
-    if (!selectedPair) return null;
+    if (!selectedPair) return [];
 
-    const sourceCitation = parsedDocument?.citationContexts
-      .flatMap((context) => context.atomicClaims)
-      .find((claim) => claim.id === selectedPair.outcome.atomicClaimId)
-      ?.citationTargets.find((target) => target.bibliographyReferenceKey === selectedReferenceKey)?.markerText;
-    return sourceCitation ?? selectedPair.outcome.citationMarkers[0] ?? selectedPair.outcome.citationContextText;
-  }, [parsedDocument, selectedDetailSection, selectedPair, selectedReference, selectedReferenceKey]);
+    const parsedContext = parsedDocument?.citationContexts.find((context) =>
+      context.atomicClaims.some((claim) => claim.id === selectedPair.outcome.atomicClaimId),
+    );
+    return uniqueSearchCandidates(selectedPair.outcome.citationContextText, parsedContext?.text, selectedPair.outcome.claimText);
+  }, [parsedDocument, selectedDetailSection, selectedPair, selectedReference]);
   const pdfHighlightText = pdfHighlightOverride?.selectionKey === selectionKey
     ? pdfHighlightOverride.text
-    : selectedPdfSearchText;
+    : selectedPdfSearchText.length > 0 ? selectedPdfSearchText : null;
   const citationContexts = useMemo(() => {
     if (!parsedDocument || !selectedReferenceKey) return [];
     return parsedDocument.citationContexts.filter((context) =>
@@ -144,71 +148,163 @@ export function AnalysisRunPaperReview({
 
   function chooseReference(referenceKey: string, highlightText?: string) {
     setMobilePane("details");
-    if (highlightText) setPdfHighlightOverride({ selectionKey: `${selectedDetailSection}:${selectedOutcomeId ?? ""}:${referenceKey}`, text: highlightText });
+    if (highlightText) {
+      const reference = references.find((candidate) => candidate.localReferenceKey === referenceKey);
+      setPdfHighlightOverride({
+        selectionKey: `${selectedDetailSection}:${selectedOutcomeId ?? ""}:${referenceKey}`,
+        text: uniqueSearchCandidates(highlightText, reference?.rawText),
+      });
+    }
     onSelectReference(referenceKey);
   }
 
-  function highlightInPdf(text: string) {
-    setPdfHighlightOverride({ selectionKey, text });
+  function highlightInPdf(text: string | string[]) {
+    setPdfHighlightOverride({ selectionKey, text: uniqueSearchCandidates(...(Array.isArray(text) ? text : [text])) });
     setMobilePane("paper");
+    document.getElementById("paper-review-card")?.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+      block: "start",
+    });
   }
 
   return (
-    <section aria-labelledby="paper-review-heading" className="space-y-4">
+    <section aria-labelledby="paper-review-heading" className="analysis-run-paper-review space-y-4">
       <header className="space-y-1">
         <h2 id="paper-review-heading" className="m-0 text-lg font-semibold">Paper Review</h2>
         <p className="m-0 text-sm text-muted-foreground">Read the uploaded paper alongside parsed citations, bibliography links, and recorded AI judgements.</p>
       </header>
 
-      <div className="flex gap-2 md:hidden" role="group" aria-label="Choose Paper Review panel">
-        <Button type="button" variant={mobilePane === "paper" ? "secondary" : "outline"} aria-pressed={mobilePane === "paper"} onClick={() => setMobilePane("paper")} className="flex-1">
-          <FileText aria-hidden="true" /> Paper
-        </Button>
-        <Button type="button" variant={mobilePane === "details" ? "secondary" : "outline"} aria-pressed={mobilePane === "details"} onClick={() => setMobilePane("details")} className="flex-1">
-          <Link2 aria-hidden="true" /> Details
-        </Button>
-      </div>
+      <div className="relative left-1/2 w-[100cqw] -translate-x-1/2 px-4 sm:px-5 lg:px-6">
+        <Card id="paper-review-card" className="w-full scroll-mt-4 py-0 shadow-sm">
+          <CardContent className="space-y-4 px-4 py-3 sm:px-6 sm:py-4">
+            <div className="flex gap-2 md:hidden" role="group" aria-label="Choose Paper Review panel">
+              <Button type="button" variant={mobilePane === "paper" ? "secondary" : "outline"} aria-pressed={mobilePane === "paper"} onClick={() => setMobilePane("paper")} className="flex-1">
+                <FileText aria-hidden="true" /> Paper
+              </Button>
+              <Button type="button" variant={mobilePane === "details" ? "secondary" : "outline"} aria-pressed={mobilePane === "details"} onClick={() => setMobilePane("details")} className="flex-1">
+                <Link2 aria-hidden="true" /> Details
+              </Button>
+            </div>
 
-      <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.9fr)] md:items-start">
-        <div className={cn("min-w-0", mobilePane === "paper" ? "block" : "hidden", "md:block")}>
-          <SourceDocumentPdfViewer analysisRunId={run.id} filename={run.filename} highlightText={pdfHighlightText} />
-        </div>
-        <aside className={cn("min-w-0", mobilePane === "details" ? "block" : "hidden", "md:block")} aria-label="Paper Review details">
-          <div className="mb-3 grid grid-cols-2 gap-2" role="group" aria-label="Review detail type">
-            <Button type="button" variant={selectedDetailSection === "results" ? "secondary" : "outline"} aria-pressed={selectedDetailSection === "results"} onClick={() => onSelectDetailSection("results")}>AI results</Button>
-            <Button type="button" variant={selectedDetailSection === "citations" ? "secondary" : "outline"} aria-pressed={selectedDetailSection === "citations"} onClick={() => onSelectDetailSection("citations")}>Citations & bibliography</Button>
-          </div>
-          <div className="min-h-96 space-y-3 md:max-h-[calc(100vh-16rem)] md:overflow-y-auto md:pr-1">
-            {selectedDetailSection === "results" ? (
-              <ResultsDetails
-                run={run}
-                groups={outcomeGroups}
-                allOutcomes={allOutcomes}
-                selectedPair={selectedPair}
-                selectedOutcomeId={selectedOutcomeId}
-                parsedLoading={parsedLoading}
-                reportLoading={reportLoading}
-                parsedError={parsedError}
-                reportError={reportError}
-                onSelectOutcome={chooseOutcome}
-                onSelectReference={chooseReference}
-              />
-            ) : (
-              <CitationDetails
-                references={references}
-                parsedDocument={parsedDocument}
-                parsedLoading={parsedLoading}
-                parsedError={parsedError}
-                selectedReference={selectedReference}
-                citationContexts={citationContexts}
-                report={report}
-                onSelectReference={chooseReference}
-                onSelectOutcome={chooseOutcome}
-                onHighlightInPdf={highlightInPdf}
-              />
-            )}
-          </div>
-        </aside>
+            <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.9fr)] md:items-start">
+              <div className={cn("min-w-0", mobilePane === "paper" ? "block" : "hidden", "md:block")}>
+                <SourceDocumentPdfViewer analysisRunId={run.id} filename={run.filename} highlightText={pdfHighlightText} />
+              </div>
+              <aside className={cn("min-w-0", mobilePane === "details" ? "block" : "hidden", "md:block")} aria-label="Paper Review details">
+                <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-muted/60 p-1" role="group" aria-label="Review detail type">
+                  <Button
+                    type="button"
+                    variant={selectedDetailSection === "results" ? "default" : "ghost"}
+                    aria-pressed={selectedDetailSection === "results"}
+                    onClick={() => onSelectDetailSection("results")}
+                    className={cn("h-auto min-h-9 min-w-0 whitespace-normal px-2 py-2 text-center text-xs leading-tight font-medium sm:text-sm", selectedDetailSection === "results" && "font-semibold shadow-sm")}
+                  >
+                    AI results
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={selectedDetailSection === "citations" ? "default" : "ghost"}
+                    aria-pressed={selectedDetailSection === "citations"}
+                    onClick={() => onSelectDetailSection("citations")}
+                    className={cn("h-auto min-h-9 min-w-0 whitespace-normal px-2 py-2 text-center text-xs leading-tight font-medium sm:text-sm", selectedDetailSection === "citations" && "font-semibold shadow-sm")}
+                  >
+                    Citations & bibliography
+                  </Button>
+                </div>
+                {selectedDetailSection === "results" && selectedPair && (
+                  <section aria-label="Selected pair quick access" className="mb-3 space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected pair · {selectedPair.entry.localReferenceKey}</p>
+                        <p className="m-0 break-words text-sm font-medium">{selectedPair.entry.title ?? selectedPair.entry.rawText}</p>
+                        <p className="m-0 text-xs text-muted-foreground">
+                          {selectedPair.entry.authors.join(", ") || "Authors not recorded"}{selectedPair.entry.year ? ` · ${selectedPair.entry.year}` : ""} · {statusLabel(selectedPair.entry.status)}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button type="button" variant="secondary" size="sm" onClick={() => highlightInPdf([selectedPair.outcome.citationContextText, selectedPair.outcome.claimText])}>
+                          <Search aria-hidden="true" />
+                          Show in PDF
+                        </Button>
+                        <Button type="button" variant="secondary" size="sm" onClick={() => chooseReference(selectedPair.entry.localReferenceKey, selectedPair.entry.title ?? selectedPair.entry.rawText)}>
+                          <ArrowRight aria-hidden="true" />
+                          View bibliography
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon" aria-label="Clear selected pair" title="Clear selected pair" onClick={onClearReviewPair}>
+                          <X aria-hidden="true" />
+                        </Button>
+                      </div>
+                    </div>
+                    <section aria-labelledby="selected-ai-result-heading" className="space-y-2 border-t border-primary/15 pt-3">
+                      <h3 id="selected-ai-result-heading" className="m-0 text-sm font-semibold">Evidence for selected pair</h3>
+                      {selectedPair.outcome.processingStatus === "PENDING" && <p className="m-0 text-xs text-muted-foreground">This pair is still waiting for a saved AI assessment.</p>}
+                      <ol className="m-0 list-none space-y-2 p-0">
+                        <ClaimEvidencePassages
+                          analysisRunId={run.id}
+                          outcome={selectedPair.outcome}
+                          indexingStatus={selectedPair.entry.citedPaperAccess?.evidenceIndexing?.status ?? null}
+                        />
+                      </ol>
+                    </section>
+                  </section>
+                )}
+                {selectedDetailSection === "citations" && selectedReference && (
+                  <section aria-label="Selected bibliography quick access" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected bibliography · {selectedReference.localReferenceKey}</p>
+                      <p className="m-0 break-words text-sm font-medium">{selectedReference.title ?? selectedReference.rawText}</p>
+                      <p className="m-0 text-xs text-muted-foreground">
+                        {selectedReference.authors.join(", ") || "Authors not recorded"}{selectedReference.year ? ` · ${selectedReference.year}` : ""}{selectedReference.doi ? ` · DOI ${selectedReference.doi}` : ""}
+                      </p>
+                      <ReferenceResolutionBadge status={selectedReferenceResult?.status ?? selectedReference.resolutionStatus} />
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <Button type="button" variant="secondary" size="sm" onClick={() => highlightInPdf([selectedReference.title ?? "", selectedReference.rawText, selectedReference.authors.join(" ")])}>
+                        <Search aria-hidden="true" />
+                        Show in PDF
+                      </Button>
+                      <Button type="button" variant="ghost" size="icon" aria-label="Clear selected bibliography" title="Clear selected bibliography" onClick={onClearSelectedReference}>
+                        <X aria-hidden="true" />
+                      </Button>
+                    </div>
+                    <SelectedCitationContexts
+                      referenceKey={selectedReference.localReferenceKey}
+                      contexts={citationContexts}
+                      referenceResult={selectedReferenceResult}
+                      onSelectOutcome={chooseOutcome}
+                      onHighlightInPdf={highlightInPdf}
+                    />
+                  </section>
+                )}
+                <div className="min-h-96 space-y-3 md:max-h-[calc(100vh-16rem)] md:overflow-y-auto md:p-2">
+                  {selectedDetailSection === "results" ? (
+                    <ResultsDetails
+                      run={run}
+                      groups={outcomeGroups}
+                      allOutcomes={allOutcomes}
+                      selectedOutcomeId={selectedOutcomeId}
+                      parsedLoading={parsedLoading}
+                      reportLoading={reportLoading}
+                      parsedError={parsedError}
+                      reportError={reportError}
+                      onSelectOutcome={chooseOutcome}
+                      onHighlightInPdf={highlightInPdf}
+                    />
+                  ) : (
+                    <CitationDetails
+                      references={references}
+                      parsedDocument={parsedDocument}
+                      parsedLoading={parsedLoading}
+                      parsedError={parsedError}
+                      selectedReference={selectedReference}
+                      onSelectReference={chooseReference}
+                    />
+                  )}
+                </div>
+              </aside>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </section>
   );
@@ -218,26 +314,24 @@ function ResultsDetails({
   run,
   groups,
   allOutcomes,
-  selectedPair,
   selectedOutcomeId,
   parsedLoading,
   reportLoading,
   parsedError,
   reportError,
   onSelectOutcome,
-  onSelectReference,
+  onHighlightInPdf,
 }: {
   run: AnalysisRun;
   groups: OutcomeGroup[];
   allOutcomes: Array<{ entry: ReferenceEntry; outcome: VerificationOutcome }>;
-  selectedPair: { entry: ReferenceEntry; outcome: VerificationOutcome } | null;
   selectedOutcomeId: string | null;
   parsedLoading: boolean;
   reportLoading: boolean;
   parsedError: string | null;
   reportError: string | null;
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
-  onSelectReference: (localReferenceKey: string, highlightText?: string) => void;
+  onHighlightInPdf: (text: string | string[]) => void;
 }) {
   const statuses = PAPER_REVIEW_FILTER_OPTIONS.map((option) => option.id);
   const { selectedValues, toggleValue, reset } = usePipelineResultFilter("verification", statuses, "reviewFilter");
@@ -282,72 +376,58 @@ function ResultsDetails({
             <p className="rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">No claim pairs match the selected statuses.</p>
           ) : (
             <div className="space-y-3">
-              {filteredGroups.map((group) => (
-                <Card key={group.claimId} size="sm">
-                  <CardHeader>
-                    <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Atomic Claim {group.claimId.slice(0, 8)}</p>
-                    <CardTitle className="text-sm leading-relaxed">{group.claimText}</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    {group.outcomes.map(({ entry, outcome }) => (
-                      <Button
-                        key={outcome.id}
-                        type="button"
-                        variant="outline"
-                        aria-pressed={selectedOutcomeId === outcome.id}
-                        aria-label={`Review claim against ${entry.localReferenceKey}: ${entry.title ?? entry.rawText}`}
-                        onClick={() => onSelectOutcome(outcome.id, entry.localReferenceKey)}
-                        className={cn(
-                          "h-auto min-h-12 w-full justify-between gap-2 whitespace-normal px-3 py-2 text-left",
-                          selectedOutcomeId === outcome.id && "border-primary/70 bg-primary/10 hover:bg-primary/15",
-                        )}
-                      >
-                        <span className="min-w-0">
-                          <span className="block text-xs font-medium">{entry.localReferenceKey} · {entry.title ?? "Untitled bibliography entry"}</span>
-                          <span className="block truncate text-xs text-muted-foreground">{outcome.citationMarkers.join(", ") || "No citation marker recorded"}</span>
-                        </span>
-                        <ReferenceResolutionBadge status={formatStatus(outcome)} />
-                      </Button>
-                    ))}
-                  </CardContent>
-                </Card>
-              ))}
+              {filteredGroups.map((group) => {
+                const sourceContextCandidates = uniqueSearchCandidates(...group.outcomes.map(({ outcome }) => outcome.citationContextText));
+                return (
+                  <Card key={group.claimId} size="sm">
+                    <CardHeader>
+                      <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Atomic Claim {group.claimId.slice(0, 8)}</p>
+                      <CardAction>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          aria-label={`Show atomic claim in PDF: ${group.claimText}`}
+                          title={sourceContextCandidates.length > 0 ? "Highlight source context in PDF" : "No source context available to find in the PDF"}
+                          disabled={sourceContextCandidates.length === 0}
+                          onClick={() => onHighlightInPdf(sourceContextCandidates)}
+                        >
+                          <Highlighter aria-hidden="true" />
+                          Show in PDF
+                        </Button>
+                      </CardAction>
+                      <CardTitle className="text-sm leading-relaxed">{group.claimText}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {group.outcomes.map(({ entry, outcome }) => (
+                        <Button
+                          key={outcome.id}
+                          type="button"
+                          variant="outline"
+                          aria-pressed={selectedOutcomeId === outcome.id}
+                          aria-label={`Review claim against ${entry.localReferenceKey}: ${entry.title ?? entry.rawText}`}
+                          onClick={() => onSelectOutcome(outcome.id, entry.localReferenceKey)}
+                          className={cn(
+                            "h-auto min-h-12 w-full justify-between gap-2 whitespace-normal px-3 py-2 text-left",
+                            selectedOutcomeId === outcome.id && "border-primary/70 bg-primary/10 hover:bg-primary/15",
+                          )}
+                        >
+                          <span className="min-w-0">
+                            <span className="block text-xs font-medium">{entry.localReferenceKey} · {entry.title ?? "Untitled bibliography entry"}</span>
+                            <span className="block truncate text-xs text-muted-foreground">{outcome.citationMarkers.join(", ") || "No citation marker recorded"}</span>
+                          </span>
+                          <ReferenceResolutionBadge status={formatStatus(outcome)} />
+                        </Button>
+                      ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </section>
       )}
 
-      {selectedPair && (
-        <section aria-labelledby="selected-ai-result-heading" className="space-y-2 border-t border-border pt-3">
-          <div className="flex items-center justify-between gap-2">
-            <h3 id="selected-ai-result-heading" className="m-0 text-sm font-semibold">Selected pair</h3>
-            <Button type="button" variant="link" size="sm" onClick={() => onSelectReference(selectedPair.entry.localReferenceKey, selectedPair.entry.title ?? selectedPair.entry.rawText)}>
-              <ArrowRight aria-hidden="true" />
-              View {selectedPair.entry.localReferenceKey} bibliography
-            </Button>
-          </div>
-          <Card size="sm">
-            <CardContent>
-              <div className="space-y-2 text-sm">
-                <p className="m-0 font-medium">{selectedPair.entry.title ?? selectedPair.entry.rawText}</p>
-                <p className="m-0 text-xs text-muted-foreground">
-                  {selectedPair.entry.authors.join(", ") || "Authors not recorded"}{selectedPair.entry.year ? ` · ${selectedPair.entry.year}` : ""}
-                </p>
-                <ReferenceResolutionBadge status={selectedPair.entry.status} />
-              </div>
-            </CardContent>
-          </Card>
-          {selectedPair.outcome.processingStatus === "PENDING" && <p className="m-0 text-xs text-muted-foreground">This pair is still waiting for a saved AI assessment.</p>}
-          <ol className="m-0 list-none space-y-2 p-0">
-            <ClaimEvidencePassages
-              analysisRunId={run.id}
-              outcome={selectedPair.outcome}
-              indexingStatus={selectedPair.entry.citedPaperAccess?.evidenceIndexing?.status ?? null}
-            />
-          </ol>
-        </section>
-      )}
-      {!selectedPair && <p className="m-0 text-xs text-muted-foreground">Select a claim–reference pair to inspect its AI result, evidence passages, and any separate human review.</p>}
     </div>
   );
 }
@@ -358,27 +438,15 @@ function CitationDetails({
   parsedLoading,
   parsedError,
   selectedReference,
-  citationContexts,
-  report,
   onSelectReference,
-  onSelectOutcome,
-  onHighlightInPdf,
 }: {
   references: ParsedDocument["bibliographyEntries"];
   parsedDocument: ParsedDocument | null;
   parsedLoading: boolean;
   parsedError: string | null;
   selectedReference: ParsedDocument["bibliographyEntries"][number] | null;
-  citationContexts: ParsedDocument["citationContexts"];
-  report: ReferenceResolutionReportResponse | null;
   onSelectReference: (localReferenceKey: string, highlightText?: string) => void;
-  onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
-  onHighlightInPdf: (text: string) => void;
 }) {
-  const entry = selectedReference
-    ? report?.referenceResolution.entries.find((candidate) => candidate.localReferenceKey === selectedReference.localReferenceKey) ?? null
-    : null;
-
   return (
     <div className="space-y-3">
       {parsedLoading && <ReviewLoadingState label="Loading citations and bibliography" />}
@@ -422,72 +490,65 @@ function CitationDetails({
           </ul>
         )}
       </section>
-
-      {selectedReference && (
-        <section aria-labelledby="selected-bibliography-heading" className="space-y-3 border-t border-border pt-3">
-          <Card size="sm">
-            <CardHeader>
-              <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">{selectedReference.localReferenceKey} · original parsed entry</p>
-              <CardTitle id="selected-bibliography-heading" className="text-sm leading-relaxed">Selected bibliography entry</CardTitle>
-              <p className="m-0 text-xs leading-relaxed">{selectedReference.title ?? selectedReference.rawText}</p>
-            </CardHeader>
-            <CardContent className="space-y-2 text-xs">
-              <p className="m-0">{selectedReference.rawText}</p>
-              <p className="m-0 text-muted-foreground">{selectedReference.authors.join(", ") || "Authors not recorded"}{selectedReference.year ? ` · ${selectedReference.year}` : ""}{selectedReference.doi ? ` · DOI ${selectedReference.doi}` : ""}</p>
-              {entry && <ReferenceResolutionBadge status={entry.status} />}
-              <Button type="button" variant="link" size="sm" className="h-auto whitespace-normal p-0 text-left" onClick={() => onHighlightInPdf(selectedReference.title ?? selectedReference.rawText)}>
-                <Search aria-hidden="true" />
-                Show bibliography entry in PDF
-              </Button>
-            </CardContent>
-          </Card>
-
-          <section aria-labelledby="citation-occurrences-heading" className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <h3 id="citation-occurrences-heading" className="m-0 text-sm font-semibold">Citing contexts</h3>
-              <Badge variant="outline">{citationContexts.length}</Badge>
-            </div>
-            {citationContexts.length === 0 ? (
-              <p className="rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">No parsed citation context currently points to this bibliography entry.</p>
-            ) : citationContexts.map((context) => (
-              <Card key={context.id} size="sm">
-                <CardContent className="space-y-2">
-                  <p className="m-0 text-xs leading-relaxed">{context.text}</p>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="m-0 font-mono text-[0.65rem] text-muted-foreground">Source offsets {context.startOffset}–{context.endOffset}</p>
-                    <Button type="button" variant="link" size="sm" className="h-auto whitespace-normal p-0 text-left" onClick={() => {
-                      const markerText = context.occurrences.find((occurrence) => occurrence.bibliographyReferenceKeys.includes(selectedReference.localReferenceKey))?.markerText
-                        ?? context.atomicClaims.flatMap((claim) => claim.citationTargets).find((target) => target.bibliographyReferenceKey === selectedReference.localReferenceKey)?.markerText;
-                      onHighlightInPdf(markerText ?? context.text);
-                    }}>
-                      <Search aria-hidden="true" />
-                      Find in PDF
-                    </Button>
-                  </div>
-                  {context.atomicClaims.flatMap((claim) => claim.citationTargets
-                    .filter((target) => target.bibliographyReferenceKey === selectedReference.localReferenceKey)
-                    .map((target) => {
-                      const relatedOutcomes = entry?.verificationOutcomes.filter((outcome) => outcome.atomicClaimId === claim.id) ?? [];
-                      return (
-                        <div key={target.id} className="rounded-md bg-muted/40 p-2">
-                          <p className="m-0 text-xs"><strong>Parsed Atomic Claim:</strong> {claim.text}</p>
-                          <p className="m-1 text-[0.65rem] text-muted-foreground">{target.markerText} · inferred provisional association</p>
-                          {relatedOutcomes.length > 0 ? relatedOutcomes.map((outcome) => (
-                            <Button key={outcome.id} type="button" variant="link" size="sm" className="h-auto whitespace-normal p-0 text-left" onClick={() => onSelectOutcome(outcome.id, selectedReference.localReferenceKey)}>
-                              <ArrowLeft aria-hidden="true" />
-                              Review AI result: {statusLabel(formatStatus(outcome))}
-                            </Button>
-                          )) : <p className="m-0 text-xs text-muted-foreground">No saved AI pair is linked to this parsed claim and reference.</p>}
-                        </div>
-                      );
-                    }))}
-                </CardContent>
-              </Card>
-            ))}
-          </section>
-        </section>
-      )}
     </div>
+  );
+}
+
+function SelectedCitationContexts({
+  referenceKey,
+  contexts,
+  referenceResult,
+  onSelectOutcome,
+  onHighlightInPdf,
+}: {
+  referenceKey: string;
+  contexts: ParsedDocument["citationContexts"];
+  referenceResult: ReferenceEntry | null;
+  onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
+  onHighlightInPdf: (text: string | string[]) => void;
+}) {
+  return (
+    <section aria-labelledby="selected-citation-contexts-heading" className="w-full border-t border-primary/15 pt-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h3 id="selected-citation-contexts-heading" className="m-0 text-sm font-semibold">Citing contexts</h3>
+        <Badge variant="outline">{contexts.length}</Badge>
+      </div>
+      {contexts.length === 0 ? (
+        <p className="m-0 rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">No parsed citation context currently points to this bibliography entry.</p>
+      ) : (
+        <div className="space-y-2 md:max-h-64 md:overflow-y-auto md:overscroll-contain md:pr-1">
+          {contexts.map((context) => (
+            <article key={context.id} className="space-y-2 rounded-lg border border-border bg-card p-3">
+              <p className="m-0 text-xs leading-relaxed">{context.text}</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="m-0 font-mono text-[0.65rem] text-muted-foreground">Source offsets {context.startOffset}–{context.endOffset}</p>
+                <Button type="button" variant="link" size="sm" className="h-auto whitespace-normal p-0 text-left" onClick={() => onHighlightInPdf(context.text)}>
+                  <Search aria-hidden="true" />
+                  Find in PDF
+                </Button>
+              </div>
+              {context.atomicClaims.flatMap((claim) => claim.citationTargets
+                .filter((target) => target.bibliographyReferenceKey === referenceKey)
+                .map((target) => {
+                  const relatedOutcomes = referenceResult?.verificationOutcomes.filter((outcome) => outcome.atomicClaimId === claim.id) ?? [];
+                  return (
+                    <div key={target.id} className="rounded-md bg-muted/40 p-2">
+                      <p className="m-0 text-xs"><strong>Parsed Atomic Claim:</strong> {claim.text}</p>
+                      <p className="m-1 text-[0.65rem] text-muted-foreground">{target.markerText} · inferred provisional association</p>
+                      {relatedOutcomes.length > 0 ? relatedOutcomes.map((outcome) => (
+                        <Button key={outcome.id} type="button" variant="link" size="sm" className="h-auto whitespace-normal p-0 text-left" onClick={() => onSelectOutcome(outcome.id, referenceKey)}>
+                          <ArrowLeft aria-hidden="true" />
+                          Review AI result: {statusLabel(formatStatus(outcome))}
+                        </Button>
+                      )) : <p className="m-0 text-xs text-muted-foreground">No saved AI pair is linked to this parsed claim and reference.</p>}
+                    </div>
+                  );
+                }))}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -503,4 +564,8 @@ function ReviewLoadingState({ label }: { label: string }) {
 
 function ReviewError({ title, message }: { title: string; message: string }) {
   return <Alert variant="destructive"><AlertTitle>{title}</AlertTitle><AlertDescription>{message}</AlertDescription></Alert>;
+}
+
+function uniqueSearchCandidates(...candidates: Array<string | null | undefined>) {
+  return [...new Set(candidates.map((candidate) => candidate?.trim()).filter((candidate): candidate is string => Boolean(candidate)))];
 }
