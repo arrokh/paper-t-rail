@@ -151,8 +151,40 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
     if (selectedView !== "review" || !shouldScrollToPaperReview.current) return;
     shouldScrollToPaperReview.current = false;
 
-    const frame = window.requestAnimationFrame(scrollToPaperReviewCard);
-    return () => window.cancelAnimationFrame(frame);
+    const paperReviewPanel = document
+      .getElementById("paper-review-card")
+      ?.closest<HTMLElement>(".analysis-run-view-panel");
+    if (!paperReviewPanel) return;
+
+    let frame = 0;
+    const scrollAfterPanelTransition = () => {
+      frame = window.requestAnimationFrame(scrollToPaperReviewCard);
+    };
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      scrollAfterPanelTransition();
+      return () => window.cancelAnimationFrame(frame);
+    }
+
+    let fallbackTimer = 0;
+    const onPanelAnimationEnd = (event: AnimationEvent) => {
+      if (event.target !== paperReviewPanel || event.animationName !== "analysis-run-view-enter") return;
+      window.clearTimeout(fallbackTimer);
+      scrollAfterPanelTransition();
+    };
+    paperReviewPanel.addEventListener("animationend", onPanelAnimationEnd);
+
+    // Keep the scroll reliable if the panel is rendered without its CSS entry animation.
+    fallbackTimer = window.setTimeout(() => {
+      paperReviewPanel.removeEventListener("animationend", onPanelAnimationEnd);
+      scrollAfterPanelTransition();
+    }, 500);
+
+    return () => {
+      window.clearTimeout(fallbackTimer);
+      paperReviewPanel.removeEventListener("animationend", onPanelAnimationEnd);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [selectedView]);
 
   if (runQuery.isPending) {
