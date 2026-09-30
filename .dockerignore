@@ -1,4 +1,6 @@
-# Keep local secrets and generated/dependency trees out of the root API build context.
+# Keep local secrets, human calibration data, and generated/dependency trees out of build contexts.
+.laya-evaluation/
+**/.laya-evaluation/
 .env
 .env.*
 **/.env

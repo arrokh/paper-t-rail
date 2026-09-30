@@ -25,7 +25,7 @@ data class CalibrationFixture(
         require(schemaVersion == CURRENT_SCHEMA_VERSION) { "Unsupported calibration fixture schemaVersion '$schemaVersion'." }
         require(fixtureId.isNotBlank()) { "Calibration fixture fixtureId must not be blank." }
         require(releaseCalibrationStatus == NOT_APPROVED) {
-            "A benchmark fixture cannot approve release calibration; human review is a separate release gate."
+            "A benchmark fixture cannot approve calibration; its status is independent of exploratory benchmark metrics."
         }
         provenance.validate("fixture")
         require(referenceCases.isNotEmpty()) { "Calibration fixture must contain reference cases." }

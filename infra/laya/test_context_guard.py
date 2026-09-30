@@ -67,9 +67,11 @@ class LayaContextGuardTest(unittest.TestCase):
         base_tokens = measure_request_tokens(self.router.agent, "", self.questions)[0]
         state = "word " * (1025 - base_tokens)
 
-        with self.assertRaisesRegex(ValueError, "1024-token context limit"):
+        with self.assertRaisesRegex(ValueError, "1024-token context limit") as failure:
             self.router.predict(state, self.questions, model="typed-decisions")
 
+        self.assertIn("Measured complete-sequence token counts:", str(failure.exception))
+        self.assertIn("1025", str(failure.exception))
         self.assertEqual([], self.router.calls)
 
     def test_every_question_is_measured_against_the_complete_state(self):

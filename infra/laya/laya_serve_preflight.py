@@ -28,7 +28,11 @@ def install_context_guard(router: Any) -> Any:
             raise ValueError("System One requests require the explicit typed-decisions checkpoint.")
         token_counts = measure_request_tokens(agent, state, questions)
         if any(count > context_limit for count in token_counts):
-            raise ValueError("Complete state and questions exceed the 1024-token context limit.")
+            measured_counts = ", ".join(str(count) for count in token_counts)
+            raise ValueError(
+                "Complete state and questions exceed the 1024-token context limit. "
+                f"Measured complete-sequence token counts: {measured_counts}."
+            )
         return original_predict(state, questions, model=model)
 
     router.predict = guarded_predict

@@ -133,3 +133,21 @@ logging:
   structured:
     format:
       console: ecs
+
+---
+spring:
+  config:
+    activate:
+      on-profile: production
+
+# Production defaults select Laya and enable experimental aggregation per the owner decision.
+# Outputs remain uncalibrated; this configuration default does not establish accuracy or approval.
+paper-trail:
+  analysis:
+    local-laya-aggregation:
+      enabled: ${LOCAL_LAYA_AGGREGATION_ENABLED:true}
+  providers:
+    system-one:
+      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:laya}
+    laya:
+      enabled: ${LAYA_ENABLED:true}

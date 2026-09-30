@@ -2,6 +2,7 @@
 .pi/
 
 # Local environment and generated artifacts
+.laya-evaluation/
 .env
 .env.local
 node_modules/

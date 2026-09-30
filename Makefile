@@ -1,9 +1,11 @@
 COMPOSE = docker compose --env-file "$$(if [ -f .env ]; then printf .env; else printf .env.example; fi)" -f infra/docker-compose.yml
 MISE = mise exec --
+LAYA_EVALUATION_SOURCE_PATHS = api infra/laya infra/docker-compose.yml Makefile .dockerignore .gitignore \
+	docs/benchmarks/laya-human-calibration-protocol-v1.md docs/laya-evaluation.md docs/agents/provider-matrix.md
 # Keep command-line CHANGE data out of shell source text in the revert target.
 export CHANGE
 
-.PHONY: dev dev-laya dev-app infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya validate
+.PHONY: dev dev-laya dev-app infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
 
 DEV_SELECTABLE_SERVICES := api worker web laya
 DEV_APP_SERVICES := api worker web
@@ -100,7 +102,7 @@ infra-down:
 clean:
 	$(COMPOSE) --profile laya-evaluation down --volumes --remove-orphans
 
-test: test-api test-laya test-web lint-web typecheck-web build-web calibrate
+test: test-api test-laya test-web lint-web typecheck-web build-web
 
 test-api:
 	cd api && $(MISE) ./gradlew test
@@ -119,6 +121,48 @@ laya-up: dev-laya
 laya-model-download:
 	$(COMPOSE) --profile laya-evaluation run --rm laya-model-download
 
+# Compute dataset and held-out hashes locally before a human freezes the plan. No inference occurs.
+laya-evaluation-fingerprint:
+	@set -eu; \
+	if [ -z "$${DATA_DIR:-}" ]; then echo 'Usage: make laya-evaluation-fingerprint DATA_DIR=<private-dir>'; exit 2; fi; \
+	evaluation_dir=$$(cd "$$DATA_DIR" && pwd -P); \
+	repo_root=$$(pwd -P); \
+	case "$$evaluation_dir/" in "$$repo_root"/.laya-evaluation/*) ;; "$$repo_root"/*) echo 'Keep human data outside the checkout or under .laya-evaluation/.' >&2; exit 2 ;; esac; \
+	test -f "$$evaluation_dir/dataset.json" || { echo 'DATA_DIR must contain dataset.json.' >&2; exit 2; }; \
+	if ! git diff --quiet -- $(LAYA_EVALUATION_SOURCE_PATHS) || [ -n "$$(git status --porcelain -- $(LAYA_EVALUATION_SOURCE_PATHS))" ]; then \
+		echo 'Commit the evaluation code, boundary configuration, and protocol before freezing a dataset fingerprint.' >&2; exit 2; fi; \
+	application_revision=$$(git rev-parse --verify HEAD); \
+	export PAPER_TRAIL_APPLICATION_REVISION="$$application_revision" LAYA_EVALUATION_DIR="$$evaluation_dir" \
+		PAPER_TRAIL_EVALUATOR_UID="$$(id -u)" PAPER_TRAIL_EVALUATOR_GID="$$(id -g)"; \
+	$(COMPOSE) --profile laya-evaluation build laya-evaluator; \
+	$(COMPOSE) --profile laya-evaluation run --rm --no-deps --entrypoint ./gradlew laya-evaluator \
+		--offline fingerprintLaya -PlayaDataset=/evaluation/dataset.json
+
+# Evaluator input/output stays in a caller-supplied local directory ignored by Git.
+# The Laya sidecar must already be running; the one-shot evaluator publishes no host port.
+laya-evaluate:
+	@set -eu; \
+	if [ -z "$${DATA_DIR:-}" ]; then echo 'Usage: make laya-evaluate DATA_DIR=<private-dir> SPLIT=calibration|held-out'; exit 2; fi; \
+	case "$${SPLIT:-}" in calibration|held-out) split="$$SPLIT" ;; *) echo 'SPLIT must be calibration or held-out.' >&2; exit 2 ;; esac; \
+	evaluation_dir=$$(cd "$$DATA_DIR" && pwd -P); \
+	repo_root=$$(pwd -P); \
+	case "$$evaluation_dir/" in "$$repo_root"/.laya-evaluation/*) ;; "$$repo_root"/*) echo 'Keep human data outside the checkout or under .laya-evaluation/.' >&2; exit 2 ;; esac; \
+	test -f "$$evaluation_dir/dataset.json" || { echo 'DATA_DIR must contain dataset.json.' >&2; exit 2; }; \
+	if [ "$$split" = held-out ] && [ ! -f "$$evaluation_dir/plan.json" ]; then echo 'Held-out evaluation requires DATA_DIR/plan.json.' >&2; exit 2; fi; \
+	if ! git diff --quiet -- $(LAYA_EVALUATION_SOURCE_PATHS) || [ -n "$$(git status --porcelain -- $(LAYA_EVALUATION_SOURCE_PATHS))" ]; then \
+		echo 'Commit the evaluation code, boundary configuration, and protocol before running a pre-registered evaluation.' >&2; exit 2; fi; \
+	application_revision=$$(git rev-parse --verify HEAD); \
+	export PAPER_TRAIL_APPLICATION_REVISION="$$application_revision" LAYA_EVALUATION_DIR="$$evaluation_dir" \
+		PAPER_TRAIL_EVALUATOR_UID="$$(id -u)" PAPER_TRAIL_EVALUATOR_GID="$$(id -g)"; \
+	$(COMPOSE) --profile laya-evaluation build laya-evaluator; \
+	plan_arg=''; if [ -f "$$evaluation_dir/plan.json" ]; then plan_arg='-PlayaPlan=/evaluation/plan.json'; fi; \
+	$(COMPOSE) --profile laya-evaluation run --rm --no-deps laya-evaluator \
+		-PlayaDataset=/evaluation/dataset.json \
+		-PlayaSplit="$$split" \
+		-PlayaResults="/evaluation/$$split-results.json" \
+		-PlayaReport="/evaluation/$$split-report.md" \
+		$$plan_arg
+
 benchmark-laya:
 	$(COMPOSE) --profile laya-evaluation exec -T laya python /app/benchmark_runtime.py
 
@@ -134,6 +178,7 @@ typecheck-web:
 build-web:
 	cd web && $(MISE) pnpm run build
 
+# Optional diagnostic calibration harness; not required by the standard test/validate targets.
 calibrate:
 	cd api && $(MISE) ./gradlew calibrate
 

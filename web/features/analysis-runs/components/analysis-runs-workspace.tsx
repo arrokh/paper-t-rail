@@ -795,11 +795,11 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                         </Alert>
                         {selectedRun.configuration.systemOne.provider === "laya" && (
                           <Alert>
-                            <AlertTitle>Local Laya evaluation only</AlertTitle>
+                            <AlertTitle>Uncalibrated Laya output</AlertTitle>
                             <AlertDescription>
                               {coverage.executionStatus === "NOT_RUN"
                                 ? "Laya judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
-                                : "This run uses experimental local aggregation with uncalibrated Laya judgements and thresholds. Final statuses are not human-reviewed or production-approved."}
+                                : "This run uses experimental aggregation with uncalibrated Laya judgements and thresholds. Final statuses are not human-reviewed or approved for this target."}
                             </AlertDescription>
                           </Alert>
                         )}
