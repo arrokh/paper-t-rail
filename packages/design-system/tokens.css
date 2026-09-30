@@ -1,0 +1,39 @@
+:root {
+  color-scheme: light;
+
+  /* Paper, ink, and the night route */
+  --ptr-paper: #f7f0de;
+  --ptr-paper-bright: #fffaf0;
+  --ptr-paper-soft: #eee3cc;
+  --ptr-paper-muted: #f1e9d8;
+  --ptr-paper-gold: #f3e5bd;
+  --ptr-paper-blue: #e4edf0;
+  --ptr-paper-teal: #dce5db;
+  --ptr-ink: #08283b;
+  --ptr-night: #06283b;
+  --ptr-hero-sky: #153b62;
+  --ptr-hero-ground: #13203d;
+  --ptr-muted: #52616a;
+
+  /* Route and interaction colors */
+  --ptr-red: #c23b2b;
+  --ptr-red-hover: #ab3224;
+  --ptr-gold: #eaaa38;
+  --ptr-gold-bright: #f0c578;
+  --ptr-gold-ink: #8e5d0e;
+  --ptr-gold-shadow: #c67b27;
+  --ptr-teal: #12666b;
+  --ptr-teal-deep: #173c3f;
+  --ptr-blue: #2b6a91;
+  --ptr-sage: #87977e;
+  --ptr-border: #d2c7ae;
+
+  /* Shared typography, spacing, and shape */
+  --ptr-font-display: "Fraunces Variable", "Iowan Old Style", Georgia, serif;
+  --ptr-font-body: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, sans-serif;
+  --ptr-font-pixel: "Press Start 2P", ui-monospace, monospace;
+  --ptr-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --ptr-space-unit: 4px;
+  --ptr-radius-control: 4px;
+  --ptr-focus: var(--ptr-blue);
+}

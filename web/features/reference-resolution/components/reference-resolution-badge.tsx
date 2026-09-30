@@ -3,10 +3,10 @@ import { Badge } from "@/components/ui/badge";
 
 export function ReferenceResolutionBadge({ status }: { status: string }) {
   const className = status === "RESOLVED"
-    ? "border-primary/20 bg-primary/5 text-primary"
+    ? "border-success-foreground/20 bg-success text-success-foreground"
     : status === "UNSUPPORTED_REFERENCE_TYPE" || status === "RESOLUTION_FAILED"
       ? "border-destructive/25 bg-destructive/10 text-destructive"
-      : "border-warning/40 bg-warning/10 text-warning-foreground";
+      : "border-warning-foreground/20 bg-warning text-warning-foreground";
 
   return (
     <Badge variant="outline" className={cn("shrink-0 capitalize", className)}>

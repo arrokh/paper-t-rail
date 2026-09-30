@@ -1,14 +1,17 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/fraunces/index.css";
+@import "@fontsource-variable/ibm-plex-sans/index.css";
+@import "@paper-t-rail/design-system/tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --font-heading: var(--font-sans);
+  --font-sans: var(--ptr-font-body);
+  --font-serif: var(--ptr-font-display);
+  --font-mono: var(--ptr-font-mono);
+  --font-heading: var(--ptr-font-display);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -24,6 +27,10 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-warning: var(--warning);
@@ -56,41 +63,45 @@
 
 :root {
   color-scheme: light;
-  --radius: 0.625rem;
-  --background: #f5f6f1;
-  --foreground: #202822;
-  --card: #ffffff;
-  --card-foreground: #202822;
-  --popover: #ffffff;
-  --popover-foreground: #202822;
-  --primary: #315b46;
-  --primary-foreground: #ffffff;
-  --secondary: #edf1eb;
-  --secondary-foreground: #34483a;
-  --muted: #eef1eb;
-  --muted-foreground: #59685e;
-  --accent: #e6eee5;
-  --accent-foreground: #244633;
-  --destructive: #a94338;
-  --destructive-foreground: #ffffff;
-  --warning: #f4e3b9;
-  --warning-foreground: #654817;
-  --border: #dfe4dc;
-  --input: #cbd6cd;
-  --ring: #477057;
-  --chart-1: #315b46;
-  --chart-2: #63836a;
-  --chart-3: #c38b3b;
-  --chart-4: #a94338;
-  --chart-5: #718078;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #202822;
-  --sidebar-primary: #315b46;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e6eee5;
-  --sidebar-accent-foreground: #244633;
-  --sidebar-border: #dfe4dc;
-  --sidebar-ring: #477057;
+  --radius: var(--ptr-radius-control);
+  --background: var(--ptr-paper);
+  --foreground: var(--ptr-ink);
+  --card: var(--ptr-paper-bright);
+  --card-foreground: var(--ptr-ink);
+  --popover: var(--ptr-paper-bright);
+  --popover-foreground: var(--ptr-ink);
+  --primary: var(--ptr-red);
+  --primary-foreground: var(--ptr-paper-bright);
+  --secondary: var(--ptr-paper-soft);
+  --secondary-foreground: var(--ptr-ink);
+  --muted: var(--ptr-paper-muted);
+  --muted-foreground: var(--ptr-muted);
+  --accent: var(--ptr-paper-gold);
+  --accent-foreground: var(--ptr-ink);
+  --info: var(--ptr-paper-blue);
+  --info-foreground: var(--ptr-blue);
+  --success: var(--ptr-paper-teal);
+  --success-foreground: var(--ptr-teal-deep);
+  --destructive: var(--ptr-red-hover);
+  --destructive-foreground: var(--ptr-paper-bright);
+  --warning: var(--ptr-paper-gold);
+  --warning-foreground: var(--ptr-ink);
+  --border: var(--ptr-border);
+  --input: var(--ptr-border);
+  --ring: var(--ptr-focus);
+  --chart-1: var(--ptr-red);
+  --chart-2: var(--ptr-teal);
+  --chart-3: var(--ptr-gold);
+  --chart-4: var(--ptr-blue);
+  --chart-5: var(--ptr-ink);
+  --sidebar: var(--ptr-paper-bright);
+  --sidebar-foreground: var(--ptr-ink);
+  --sidebar-primary: var(--ptr-red);
+  --sidebar-primary-foreground: var(--ptr-paper-bright);
+  --sidebar-accent: var(--ptr-paper-gold);
+  --sidebar-accent-foreground: var(--ptr-ink);
+  --sidebar-border: var(--ptr-border);
+  --sidebar-ring: var(--ptr-focus);
 }
 
 @layer base {

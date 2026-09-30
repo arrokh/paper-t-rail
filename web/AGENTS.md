@@ -2,7 +2,9 @@
 
 For code-structure, SOLID, guard-clause, and type/file conventions shared with the API, follow [Shared Coding Principles](../docs/agents/coding-principles.md).
 
-For every change under `web/`, use the [Paper T-Rail Web UI Design System](../docs/ui-design-system.md) as the source of truth and preserve the accepted choice in [ADR 0005](../docs/adr/0005-shadcn-web-ui-system.md).
+For every change under `web/`, use the [Paper T-Rail UI Design System](../docs/ui-design-system.md) as the source of truth and preserve the accepted shadcn/ui component choice in [ADR 0005](../docs/adr/0005-shadcn-web-ui-system.md). Import shared visual tokens from `@paper-t-rail/design-system/tokens.css`.
+
+Match the homepage's wordmark, shared palette, Fraunces headings, IBM Plex Sans interface text, and compact paper-surface treatment. Keep the workspace calm and reading-first: the homepage's 8-bit hero scenery and pixel font do not carry into document, claim, or evidence views. Use the documented token-to-shadcn mapping in `web/app/styles.css`; do not add a parallel color palette.
 
 ## Feature and remote-state architecture
 
@@ -15,7 +17,7 @@ For every change under `web/`, use the [Paper T-Rail Web UI Design System](../do
 - Build interface primitives from the project-owned shadcn components in `@/components/ui/*`. Use shadcn `Button`, `Card`, `Badge`, `Field`, `Input`, `NativeSelect`, `Checkbox`, `Tabs`, `Collapsible`, `Alert`, `Separator`, `Skeleton`, and `Spinner` for their established patterns.
 - When a needed primitive is missing, add it from `web/` with `npx shadcn@latest add <name>`, then review and commit its generated source. Keep `components.json`, aliases, generated component paths, and global CSS configuration aligned.
 - Compose feature-specific product modules under `web/features/<feature>/` from those primitives. Keep shared variants and semantic theme tokens for recurring visual states; use `cn()` from `@/lib/utils` to compose Tailwind classes.
-- Use Tailwind CSS v4 utilities for layout and spacing and CSS variables for theme colors. Preserve the Paper T-Rail paper/forest palette. Avoid introducing a parallel primitive library, handwritten buttons/fields/tabs, or one-off palette values.
+- Use Tailwind CSS v4 utilities for layout and spacing and shared CSS variables from `@paper-t-rail/design-system/tokens.css` for theme colors and typography. Avoid introducing a parallel primitive library, handwritten buttons/fields/tabs, or one-off palette values.
 - Keep semantic HTML for page structure and native browser behavior that shadcn does not replace, such as a real file input. Style those elements with the system tokens and pair them with shadcn controls where appropriate.
 - Keep Next.js modules server-rendered by default. Add client state only to the smallest module that needs browser interaction.
 

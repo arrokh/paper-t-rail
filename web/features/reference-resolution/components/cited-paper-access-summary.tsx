@@ -20,9 +20,9 @@ const ACCESS_REASON_LABELS: Record<NonNullable<CitedPaperAccess["accessReason"]>
 };
 
 const ACCESS_STYLES: Record<CitedPaperAccess["accessStatus"], string> = {
-  FULL_TEXT_AVAILABLE: "border-primary/20 bg-primary/5 text-primary",
-  ABSTRACT_ONLY: "border-warning/40 bg-warning/10 text-warning-foreground",
-  METADATA_ONLY: "border-warning/40 bg-warning/10 text-warning-foreground",
+  FULL_TEXT_AVAILABLE: "border-success-foreground/20 bg-success text-success-foreground",
+  ABSTRACT_ONLY: "border-warning-foreground/20 bg-warning text-warning-foreground",
+  METADATA_ONLY: "border-warning-foreground/20 bg-warning text-warning-foreground",
   UNAVAILABLE: "border-destructive/25 bg-destructive/10 text-destructive",
 };
 

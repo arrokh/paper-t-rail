@@ -1,0 +1,41 @@
+---
+interface TrainSegment {
+  width: string;
+  sourceStart: string;
+}
+
+interface Props {
+  className?: string;
+  loading?: "eager" | "lazy";
+}
+
+const { className = "", loading = "lazy" } = Astro.props;
+
+const segments: TrainSegment[] = [
+  { width: "0.244", sourceStart: "0" },
+  { width: "0.2", sourceStart: "0.244" },
+  { width: "0.2", sourceStart: "0.444" },
+  { width: "0.204", sourceStart: "0.644" },
+];
+---
+
+<div class:list={["train-consist", "train-consist--round-headlamp", className]} aria-hidden="true">
+  {
+    segments.map((segment, index) => (
+      <span
+        class="train-consist__car"
+        style={`--segment-width: ${segment.width}; --sprite-start: ${segment.sourceStart}; --car-delay: ${index * 240}ms`}
+      >
+        <img
+          src="/images/hero/train.png"
+          alt=""
+          width="2048"
+          height="300"
+          loading={loading}
+          decoding="async"
+          draggable="false"
+        />
+      </span>
+    ))
+  }
+</div>

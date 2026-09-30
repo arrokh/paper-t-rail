@@ -1,33 +1,31 @@
 # Paper T-Rail
 ## Academic Evidence Engine — Technical Design & Coding-Agent Handoff
 
-> **Paper T-Rail — Keeping research on a traceable evidence track.**
+> **Paper T-Rail — A traceable paper trail from claim to cited evidence.**
 
 ### Project philosophy
 
-Research moves forward like a train: each paper carries ideas toward the next station. **Paper T-Rail** helps ensure that journey runs on solid tracks by tracing claims through citations to the source evidence they rely on.
+Research leaves a paper trail: a claim in a draft points through its citation to a cited paper and candidate evidence passages worth inspecting. **Paper T-Rail** makes that trail traceable so researchers can follow each source connection and decide what the evidence supports. “T-Rail” means Traceable Rail; the train and rails represent the route through those sources.
 
 The name intentionally combines two meanings:
 
-- **Paper trail** — the traceable chain from a claim to its citation, source, and evidence.
-- **T-Rail / Traceable Rail** — a reliable track that keeps research moving forward on a solid evidence foundation.
+- **Paper trail** — the source path from a research claim through its citation and cited paper to candidate evidence.
+- **T-Rail / Traceable Rail** — the railway metaphor for following that source path, with each connection visible for inspection.
 
 ```text
 Claim
-  ═══════════════════════════════════╗
-                                     ║
-Citation ━━━━━ Source ━━━━━ Evidence ╬━━━► Next Station
-                                     ║
-  ═══════════════════════════════════╝
+  ━━━━━► Citation ━━━━━► Cited paper ━━━━━► Candidate evidence
+                                                    ━━━━━► Researcher review
 ```
 
 The system is described technically as an **Academic Evidence Engine**; **Paper T-Rail** is the project/product name.
 
 **Status:** V1 design baseline  
 **Primary goal:** Build an asynchronous, traceable academic citation-evidence verification system that audits citation-backed claims in an uploaded English, text-based academic PDF.  
-**Architecture style:** Modular monolith backend + separate web app, event-driven async workers, pluggable AI/provider ports.  
+**Architecture style:** Modular monolith backend + separate Astro homepage and Next.js research workspace, event-driven async workers, pluggable AI/provider ports.<br>
 **Primary backend stack:** Spring Boot + Kotlin  
-**Web stack:** Next.js  
+**Public homepage:** Astro<br>
+**Research workspace:** Next.js<br>
 **Async backbone:** Redis Streams  
 **Primary data store:** PostgreSQL + pgvector  
 **Database migrations:** Sqitch  
@@ -406,7 +404,9 @@ The Evidence Coverage Report may later show a claim-level rollup, but the underl
 
 ```mermaid
 flowchart TB
-    WEB["Web App<br/>Next.js"]
+    RESEARCHER["Researcher"]
+    HOME["Public Homepage<br/>Astro"]
+    WEB["Research Workspace<br/>Next.js"]
 
     API["API Runtime<br/>Spring Boot + Kotlin"]
 
@@ -427,6 +427,8 @@ flowchart TB
     SYS1["SystemOneProvider"]
     RET["EvidenceRetriever"]
 
+    RESEARCHER --> HOME
+    HOME --> WEB
     WEB --> API
     API --> PG
     API --> OBJ
@@ -2828,9 +2830,13 @@ The Spring API publishes an OpenAPI 3 contract at `/v3/api-docs` (YAML at `/v3/a
 
 ---
 
-# 41. Web UI V1
+# 41. Homepage and Web UI V1
 
-**UI foundation:** Next.js App Router, React, strict TypeScript, Tailwind CSS v4, and project-owned shadcn/ui components using Base UI primitives. Theme values are semantic CSS tokens; product-specific layouts compose the local primitives. The accepted decision is recorded in [ADR 0005](adr/0005-shadcn-web-ui-system.md), with visual tokens, interaction rules, accessibility expectations, and contribution guidance in the [Web UI Design System](ui-design-system.md).
+**Public homepage:** Astro static site in `homepage/`, responsible for explaining the Paper T-Rail product, its evidence route, and its system architecture. Setup calls to action link to the GitHub project in a new tab; direct application links use `PUBLIC_WORKSPACE_URL`.
+
+**Research workspace foundation:** Next.js App Router, React, strict TypeScript, Tailwind CSS v4, and project-owned shadcn/ui components using Base UI primitives. Theme values come from the shared CSS token package at `packages/design-system/`; product-specific layouts compose the local primitives. The accepted component-system decision is recorded in [ADR 0005](adr/0005-shadcn-web-ui-system.md), with visual tokens, interaction rules, accessibility expectations, and contribution guidance in the [Paper T-Rail UI Design System](ui-design-system.md).
+
+The homepage uses the same palette, typography, and accessibility foundations while applying the modern 8-bit railway-poster treatment. Its central double-rail journey follows Claim → Citation → Cited paper → Evidence passage → Your next step. Keep the journey interactive through scroll-aware station state and direct station links; do not force scrolling or make motion necessary to understand the content.
 
 Minimum screens:
 
@@ -3886,7 +3892,7 @@ Do not implement now, but preserve extensibility for:
 
 **Project name:** Paper T-Rail  
 **Technical category:** Academic Evidence Engine  
-**Tagline:** *Keeping research on a traceable evidence track.*
+**Tagline:** *A traceable paper trail from claim to cited evidence.*
 
 The railway metaphor belongs to product storytelling and UI/README copy, not to software-domain abstractions.
 
