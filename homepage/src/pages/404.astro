@@ -1,0 +1,57 @@
+---
+import "../styles/global.css";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f0de" />
+    <meta name="description" content="This page is not on the Paper T-Rail route." />
+    <title>Page not found — Paper T-Rail</title>
+  </head>
+  <body class="landing-page">
+    <main class="not-found" id="main-content">
+      <p class="not-found__eyebrow">ROUTE NOT FOUND</p>
+      <h1>That stop isn’t on the route.</h1>
+      <p>Head back to Paper T-Rail and follow the evidence route from there.</p>
+      <a class="landing-button" href="/">Return to Paper T-Rail</a>
+    </main>
+  </body>
+</html>
+
+<style>
+  .not-found {
+    display: flex;
+    min-height: 100vh;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 32px 24px;
+    text-align: center;
+  }
+
+  .not-found__eyebrow {
+    color: var(--rail-red);
+    font-family: var(--ptr-font-pixel);
+    font-size: 12px;
+  }
+
+  .not-found h1 {
+    max-width: 16ch;
+    font-family: "Fraunces Variable", Georgia, serif;
+    font-size: clamp(36px, 8vw, 64px);
+    line-height: 1.05;
+  }
+
+  .not-found p:not(.not-found__eyebrow) {
+    max-width: 46ch;
+    line-height: 1.6;
+  }
+
+  .not-found .landing-button:focus-visible {
+    outline: 3px solid var(--ptr-focus);
+    outline-offset: 4px;
+  }
+</style>
