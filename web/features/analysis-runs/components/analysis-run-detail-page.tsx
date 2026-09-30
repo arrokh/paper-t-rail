@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,6 +14,7 @@ import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/componen
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
 import { normalizePipelineStageId, type PipelineStageId } from "@/features/analysis-runs/pipeline";
+import { scrollToPaperReviewCard } from "@/features/analysis-runs/scroll-to-paper-review-card";
 import { ANALYSIS_RUN_STATUS_CLASS_NAMES, analysisRunStatusLabel } from "@/features/analysis-runs/run-status";
 import {
   useAnalysisRun,
@@ -146,17 +147,12 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const reportError = reportQuery.error instanceof Error ? reportQuery.error.message : reportQuery.isError ? "Could not load the Evidence Coverage Report." : null;
   const homeHref = homeHrefFor(searchParams);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (selectedView !== "review" || !shouldScrollToPaperReview.current) return;
     shouldScrollToPaperReview.current = false;
 
-    const paperReviewCard = document.getElementById("paper-review-card");
-    if (!paperReviewCard) return;
-
-    paperReviewCard.scrollIntoView({
-      behavior: "instant",
-      block: "start",
-    });
+    const frame = window.requestAnimationFrame(scrollToPaperReviewCard);
+    return () => window.cancelAnimationFrame(frame);
   }, [selectedView]);
 
   if (runQuery.isPending) {

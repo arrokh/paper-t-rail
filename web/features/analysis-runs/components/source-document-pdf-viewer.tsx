@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { sourceDocumentPdfAccessQueryOptions } from "@/features/analysis-runs/queries/analysis-run-queries";
+import { scrollToPaperReviewCard } from "@/features/analysis-runs/scroll-to-paper-review-card";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { findPdfTextMatch, type PdfTextMatch } from "@/features/analysis-runs/components/pdf-text-search";
@@ -128,10 +129,7 @@ export function SourceDocumentPdfViewer({ analysisRunId, filename, highlightText
             size="icon-sm"
             aria-label="Focus Paper Review"
             title="Focus Paper Review"
-            onClick={() => document.getElementById("paper-review-card")?.scrollIntoView({
-              behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
-              block: "start",
-            })}
+            onClick={scrollToPaperReviewCard}
           >
             <Focus aria-hidden="true" />
           </Button>

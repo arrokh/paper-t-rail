@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisRunPaperReviewFilters, PAPER_REVIEW_FILTER_OPTIONS } from "@/features/analysis-runs/components/analysis-run-paper-review-filters";
 import { SourceDocumentPdfViewer } from "@/features/analysis-runs/components/source-document-pdf-viewer";
 import { usePipelineResultFilter } from "@/features/analysis-runs/hooks/use-pipeline-result-filter";
+import { scrollToPaperReviewCard } from "@/features/analysis-runs/scroll-to-paper-review-card";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
 import type {
@@ -161,10 +162,7 @@ export function AnalysisRunPaperReview({
   function highlightInPdf(text: string | string[]) {
     setPdfHighlightOverride({ selectionKey, text: uniqueSearchCandidates(...(Array.isArray(text) ? text : [text])) });
     setMobilePane("paper");
-    document.getElementById("paper-review-card")?.scrollIntoView({
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
-      block: "start",
-    });
+    scrollToPaperReviewCard();
   }
 
   return (
