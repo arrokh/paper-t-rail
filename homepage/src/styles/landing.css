@@ -2205,9 +2205,10 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 }
 
 .site-footer__identity {
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  white-space: nowrap;
 }
 
 /* The hero keeps its clouds above the wordmark and lets the fog move independently. */
