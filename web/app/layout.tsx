@@ -6,6 +6,7 @@ import { PageTransitionProvider } from "@/features/workspace/components/page-tra
 export const metadata: Metadata = {
   title: "Paper T-Rail — Analysis Runs",
   description: "Review traceable Analysis Runs for academic documents.",
+  icons: { icon: "/rail.svg" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

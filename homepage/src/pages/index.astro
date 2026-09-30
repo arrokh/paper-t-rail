@@ -1,0 +1,404 @@
+---
+import "../styles/global.css";
+import HeroScene from "../components/hero/HeroScene.astro";
+
+const workspaceUrl = import.meta.env.PUBLIC_WORKSPACE_URL || "http://127.0.0.1:3000";
+const setupUrl = "https://github.com/arrokh/paper-t-rail";
+
+const architecture = [
+  {
+    name: "Public homepage",
+    system: "Astro",
+    detail: "Introduces the product and leads researchers into the workspace.",
+  },
+  {
+    name: "Research workspace",
+    system: "Next.js",
+    detail: "Receives an English, text-based academic PDF and shows persisted runs.",
+  },
+  {
+    name: "Analysis API",
+    system: "Spring Boot + Kotlin",
+    detail: "Creates an immutable Analysis Run with its provenance.",
+  },
+  {
+    name: "Async queue",
+    system: "Redis Streams",
+    detail: "Hands longer-running analysis work to the worker.",
+  },
+  {
+    name: "Worker + providers",
+    system: "Parsing · retrieval · judgement",
+    detail: "GROBID and provider adapters process the source and cited papers.",
+  },
+  {
+    name: "Evidence record",
+    system: "PostgreSQL + pgvector · object storage",
+    detail: "Stores run metadata, search vectors, and source artifacts.",
+  },
+  {
+    name: "Coverage report",
+    system: "Evidence Coverage Report",
+    detail: "Returns traced findings to the workspace for human review.",
+  },
+  {
+    name: "Researcher review",
+    system: "Human decision",
+    detail: "Inspects the traceable findings and decides what to review next.",
+  },
+];
+
+const architecturePackets = Array.from({ length: architecture.length - 1 }, (_, index) => ({
+  position: `${11.6 + index * 12.45}%`,
+  delay: `${index * 220}ms`,
+}));
+
+const questions = [
+  {
+    question: "Does Paper T-Rail decide whether a claim is true?",
+    answer:
+      "No. The Evidence Coverage Report is a triage aid for human review, not a truth certification or academic grade.",
+  },
+  {
+    question: "What can I analyze in V1?",
+    answer:
+      "V1 supports English, text-based academic PDFs. Scanned PDFs and other document types are outside this initial scope.",
+  },
+  {
+    question: "Will my document be sent to an external provider?",
+    answer:
+      "Provider use is disclosed and consented to per analysis run. External or unclassified providers remain disabled until their data boundaries have been reviewed.",
+  },
+  {
+    question: "Can I see what a report is based on?",
+    answer:
+      "The trace keeps claims, citation references, source locations, candidate passages, and run provenance connected for inspection.",
+  },
+];
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f0de" />
+    <meta
+      name="description"
+      content="Follow citation-backed claims from your research draft to candidate evidence in cited papers, then make the review decision yourself."
+    />
+    <title>Paper T-Rail — A traceable paper trail from claim to cited evidence</title>
+    <script is:inline>
+      document.documentElement.classList.add("has-page-load-cover");
+
+      if ("IntersectionObserver" in window) {
+        document.documentElement.classList.add("has-scroll-nav");
+      }
+
+      const startPageLoadCoverExit = async () => {
+        const pageLoadCover = document.querySelector(".page-load-cover");
+        if (!pageLoadCover) return;
+
+        const finishPageLoadCoverExit = () => {
+          document.querySelector("main.landing-page")?.removeAttribute("inert");
+          document.documentElement.classList.remove("has-page-load-cover");
+          pageLoadCover.remove();
+        };
+
+        const pageImages = Array.from(document.images);
+        pageImages.forEach((image) => {
+          image.loading = "eager";
+        });
+
+        await Promise.all([
+          document.fonts?.ready ?? Promise.resolve(),
+          ...pageImages.map((image) => image.decode().catch(() => undefined)),
+        ]);
+
+        window.setTimeout(() => {
+          if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            finishPageLoadCoverExit();
+            return;
+          }
+
+          pageLoadCover.addEventListener("transitionend", (event) => {
+            if (event.target === pageLoadCover) finishPageLoadCoverExit();
+          }, { once: true });
+          pageLoadCover.classList.add("is-exiting");
+          window.setTimeout(finishPageLoadCoverExit, 1000);
+        }, 2000);
+      };
+
+      if (document.readyState === "complete") {
+        startPageLoadCoverExit();
+      } else {
+        window.addEventListener("load", startPageLoadCoverExit, { once: true });
+      }
+    </script>
+  </head>
+  <body>
+    <div class="page-load-cover" role="status" aria-label="Loading Paper T-Rail">
+      <div class="page-load-cover__identity">
+        <span class="page-load-cover__brand">Paper T-Rail</span>
+        <span class="page-load-cover__byline">by nooroctavian.id</span>
+      </div>
+      <span class="page-load-cover__track" aria-hidden="true"><span></span></span>
+    </div>
+    <main class="landing-page">
+      <script is:inline>
+        document.querySelector("main.landing-page")?.setAttribute("inert", "");
+      </script>
+  <header class="site-header">
+    <a href="#top" class="site-brand" aria-label="Paper T-Rail home">
+      <span>Paper T-Rail</span>
+    </a>
+    <nav class="site-nav" aria-label="Main navigation">
+      <a href="#about">About</a>
+      <a href="#example">Example</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a
+      href={setupUrl}
+      class="landing-button landing-button--primary site-header__cta"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Set up the workspace (opens in a new tab)"
+    >
+      Set up the workspace <span class="pixel-icon icon-arrow-right" aria-hidden="true"></span>
+    </a>
+  </header>
+
+  <section id="top" class="hero" aria-labelledby="hero-heading">
+    <HeroScene />
+    <div class="hero__content">
+      <h1 id="hero-heading">Paper T-Rail</h1>
+      <p class="hero__tagline">A traceable paper trail from claim to cited evidence</p>
+      <div class="hero__actions">
+        <a
+          href={setupUrl}
+          class="landing-button landing-button--primary"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Set up the workspace (opens in a new tab)"
+        >
+          Set up the workspace <span class="pixel-icon icon-arrow-right" aria-hidden="true"></span>
+        </a>
+        <a href="#about" class="hero__text-link">
+          Learn more <span class="pixel-icon icon-arrow-down" aria-hidden="true"></span>
+        </a>
+      </div>
+      <p class="hero__scope">* V0.1 · English, text-based academic PDFs</p>
+    </div>
+  </section>
+
+  <section id="about" class="landing-section intro-section" aria-labelledby="intro-heading">
+    <div class="landing-container">
+      <div class="section-heading section-heading--center">
+        <p class="pixel-label">Why Paper T-Rail</p>
+        <h2 id="intro-heading">Research leaves a paper trail.</h2>
+        <p>
+          Paper T-Rail makes that trail traceable: follow a claim in your draft through its citation
+          and cited paper to candidate evidence passages. “T-Rail” stands for Traceable Rail; the
+          train and rails represent the path through those sources. Researchers inspect each link
+          and decide what the evidence supports.
+        </p>
+      </div>
+      <div id="researchers" class="principle-grid">
+        <article class="principle-card principle-card--red">
+          <h3>Follow the reference.</h3>
+          <p>Keep a claim connected to the citation and cited paper that it relies on.</p>
+        </article>
+        <article class="principle-card principle-card--gold">
+          <h3>Bring the source closer.</h3>
+          <p>Surface candidate passages and source locations for a researcher to inspect.</p>
+        </article>
+        <article class="principle-card principle-card--teal">
+          <h3>Leave the decision with you.</h3>
+          <p>The report helps with triage. It does not certify truth or grade a paper.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="example" class="landing-section example-section" aria-labelledby="example-heading">
+    <div class="landing-container">
+      <div class="section-heading section-heading--split">
+        <div>
+          <p class="pixel-label">A sample journey</p>
+          <h2 id="example-heading">See what the trail keeps connected.</h2>
+        </div>
+        <p class="example-disclaimer">Illustrative wording only — this is not a real paper or research result.</p>
+      </div>
+      <div class="example-board">
+        <article class="example-card example-card--claim">
+          <p class="example-card__eyebrow">Claim in your draft</p>
+          <p class="example-claim-text">
+            “Regular aerobic exercise is associated with improved working memory in older adults.”
+          </p>
+          <div class="example-connection">
+            <span class="example-connection__marker">[1]</span>
+            <span>Citation occurrence in the claim&apos;s context</span>
+          </div>
+          <div class="example-reference">
+            <span class="pixel-icon icon-file" aria-hidden="true"></span>
+            <div>
+              <strong>Bibliography reference</strong>
+              <span>Linked to a candidate cited paper for review</span>
+            </div>
+          </div>
+        </article>
+        <article class="example-card example-card--evidence">
+          <p class="example-card__eyebrow">Candidate evidence passage</p>
+          <div class="evidence-preview">
+            <span class="evidence-preview__label">From the cited paper</span>
+            <p>
+              Candidate passages are shown with their source location so you can inspect the
+              surrounding context and decide what they support.
+            </p>
+            <span class="evidence-preview__location">Page and section location stay attached</span>
+          </div>
+          <p class="example-card__footnote">A candidate to inspect — not an automatic match or verdict.</p>
+          <a href={workspaceUrl} class="example-source-link">
+            Explore the review workspace <span class="pixel-icon icon-arrow-right" aria-hidden="true"></span>
+          </a>
+        </article>
+      </div>
+      <p class="example-note">
+        The Evidence Coverage Report is a human-review aid, not certification or grading.
+      </p>
+    </div>
+  </section>
+
+  <section id="architecture" class="landing-section architecture-section" aria-labelledby="architecture-heading">
+    <div class="landing-container">
+      <div class="section-heading section-heading--split">
+        <div>
+          <p class="pixel-label">Under the hood</p>
+          <h2 id="architecture-heading">A pipeline built for traceability.</h2>
+        </div>
+        <p>
+          Each stage contributes to a recorded Analysis Run. The asynchronous design keeps document
+          processing separate from the research workspace.
+        </p>
+      </div>
+      <figure class="architecture-diagram" aria-labelledby="architecture-heading" aria-describedby="architecture-flow">
+        <img
+          src="/images/architecture/paper-trail-night-bridge.png"
+          alt="Eight connected service landmarks in 8-bit pixel art along a blue stone railway bridge, with a gold data path and dashed worker and provider zone."
+          width="2167"
+          height="726"
+          loading="lazy"
+          decoding="async"
+        />
+        <span class="architecture-diagram__packets" aria-hidden="true">
+          {architecturePackets.map(({ position, delay }) => (
+            <span class="architecture-diagram__packet" style={`--packet-position: ${position}; --flow-delay: ${delay}`}></span>
+          ))}
+        </span>
+      </figure>
+      <div class="architecture-route">
+        <ol id="architecture-flow" class="architecture-flow" aria-label="Paper T-Rail system architecture, from public homepage through analysis to human review">
+          {architecture.map((step, index) => (
+            <li class="architecture-node" style={`--flow-delay: ${index * 220}ms`}>
+              <span class="architecture-node__step">{String(index + 1).padStart(2, "0")}</span>
+              <div class="architecture-node__copy">
+                <h3>{step.name}</h3>
+                <p class="architecture-node__system">{step.system}</p>
+                <p class="architecture-node__detail">{step.detail}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+      <div class="architecture-notes">
+        <article class="architecture-note architecture-note--consent">
+          <p class="pixel-label">Consent stays with the run</p>
+          <p>
+            External providers receive data only when that provider is enabled and the required
+            per-run consent is in place.
+          </p>
+        </article>
+        <article class="architecture-note architecture-note--review">
+          <p class="pixel-label">Human review stays distinct</p>
+          <p>
+            Machine results and human feedback are kept separate. Researchers inspect the report and
+            decide what to do next.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq" class="landing-section faq-section" aria-labelledby="faq-heading">
+    <div class="landing-container faq-layout">
+      <div class="section-heading">
+        <p class="pixel-label">Common questions</p>
+        <h2 id="faq-heading">Questions researchers ask.</h2>
+        <p>Clear boundaries make the evidence easier to trust and inspect.</p>
+      </div>
+      <div class="faq-list">
+        {questions.map(({ question, answer }) => (
+          <details>
+            <summary>{question}</summary>
+            <p>{answer}</p>
+          </details>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="final-station" aria-labelledby="final-heading">
+    <div class="final-station__content">
+      <p class="pixel-label">Your research, on track</p>
+      <h2 id="final-heading">Follow the evidence. Choose your next step.</h2>
+      <a
+        href={setupUrl}
+        class="landing-button"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Set up the workspace (opens in a new tab)"
+      >
+        Set up the workspace <span class="pixel-icon icon-arrow-right" aria-hidden="true"></span>
+      </a>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="site-footer__identity">
+      <a href="#top" class="site-brand site-brand--footer" aria-label="Paper T-Rail home">
+        <span>Paper T-Rail</span>
+      </a>
+      <a
+        class="site-footer__byline"
+        href="https://nooroctavian.id/"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="by nooroctavian.id (opens in a new tab)"
+      >by nooroctavian.id</a>
+    </div>
+    <nav aria-label="Footer navigation">
+      <a href="#about">About</a>
+      <a href="#example">Example</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+  </footer>
+    </main>
+
+<script>
+  const hero = document.querySelector<HTMLElement>("#top");
+  const header = document.querySelector<HTMLElement>(".site-header");
+  const documentElement = document.documentElement;
+
+  if (hero && header && documentElement.classList.contains("has-scroll-nav")) {
+    const headerObserver = new IntersectionObserver(([entry]) => {
+      documentElement.classList.toggle("has-scroll-nav-visible", !entry.isIntersecting);
+    }, { rootMargin: `-${header.offsetHeight}px 0px 0px 0px` });
+
+    headerObserver.observe(hero);
+  }
+
+</script>
+
+  </body>
+</html>

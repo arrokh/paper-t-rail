@@ -118,8 +118,8 @@ export function ReferenceResolutionEntryCard({
         </section>
 
         {entry.canonicalPaper && (
-          <section className="space-y-2 border-t border-border bg-primary/5 p-4" aria-label={`Matched Canonical Paper for ${entry.localReferenceKey}`}>
-            <p className="font-mono text-[0.65rem] tracking-wide text-primary uppercase">Matched Canonical Paper</p>
+          <section className="space-y-2 border-t border-border bg-success p-4" aria-label={`Matched Canonical Paper for ${entry.localReferenceKey}`}>
+            <p className="font-mono text-[0.65rem] tracking-wide text-success-foreground uppercase">Matched Canonical Paper</p>
             <h5 className="break-words font-medium leading-relaxed text-foreground">{entry.canonicalPaper.title}</h5>
             {entry.canonicalPaper.authors.length > 0 && (
               <p className="break-words text-sm text-muted-foreground">{entry.canonicalPaper.authors.join(", ")}</p>

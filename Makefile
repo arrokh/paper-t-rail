@@ -5,10 +5,10 @@ LAYA_EVALUATION_SOURCE_PATHS = api infra/laya infra/docker-compose.yml Makefile 
 # Keep command-line CHANGE data out of shell source text in the revert target.
 export CHANGE
 
-.PHONY: dev dev-laya dev-app infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
+.PHONY: dev dev-laya dev-app homepage-dev homepage-build infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
 
-DEV_SELECTABLE_SERVICES := api worker web laya
-DEV_APP_SERVICES := api worker web
+DEV_SELECTABLE_SERVICES := api worker web homepage laya
+DEV_APP_SERVICES := api worker web homepage
 # Treat service names after `dev` as selectors and reject unknown names before prerequisites run.
 DEV_REQUESTED_SERVICES := $(if $(filter dev,$(MAKECMDGOALS)),$(filter-out dev,$(MAKECMDGOALS)))
 DEV_INVALID_SERVICES := $(filter-out $(DEV_SELECTABLE_SERVICES),$(DEV_REQUESTED_SERVICES))
@@ -36,8 +36,8 @@ $(DEV_REQUESTED_SERVICES):
 	@:
 else
 DEV_BUILD_LAYA := true
-.PHONY: api worker web laya
-api worker web laya:
+.PHONY: api worker web homepage laya
+api worker web homepage laya:
 	@echo 'Use `make dev $@` to start or rebuild this service.' >&2
 	@exit 2
 endif
@@ -49,8 +49,14 @@ ifneq ($(strip $(DEV_BUILD_SERVICES)),)
 endif
 
 dev-app: dev-laya
-	$(COMPOSE) build api worker web
-	$(COMPOSE) up -d api worker web
+	$(COMPOSE) build api worker web homepage
+	$(COMPOSE) up -d api worker web homepage
+
+homepage-dev:
+	cd homepage && $(MISE) pnpm dev
+
+homepage-build:
+	cd homepage && $(MISE) pnpm build
 
 dev-laya: migrate
 	@set -eu; \

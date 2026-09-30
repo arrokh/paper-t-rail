@@ -271,8 +271,8 @@ services:
 
   web:
     build:
-      context: ../web
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: web/Dockerfile
     environment:
       PAPER_T_RAIL_API_ORIGIN: http://api:8080
       HOSTNAME: 0.0.0.0
@@ -284,6 +284,17 @@ services:
     networks:
       paper-trail:
         ipv4_address: 172.30.0.20
+
+  homepage:
+    build:
+      context: ..
+      dockerfile: homepage/Dockerfile
+      args:
+        PUBLIC_WORKSPACE_URL: ${PUBLIC_WORKSPACE_URL:-http://127.0.0.1:3000}
+    ports:
+      - "127.0.0.1:4321:80"
+    networks:
+      - paper-trail
 
 volumes:
   postgres_data:

@@ -20,9 +20,9 @@ export type WorkflowStep = {
 };
 
 const STEP_STATE_CLASS_NAMES: Record<WorkflowStepState, string> = {
-  "in-progress": "text-primary",
-  complete: "text-primary",
-  ready: "text-primary",
+  "in-progress": "text-info-foreground",
+  complete: "text-success-foreground",
+  ready: "text-success-foreground",
   loading: "text-muted-foreground",
   waiting: "text-muted-foreground",
   failed: "text-destructive",

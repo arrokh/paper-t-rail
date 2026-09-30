@@ -51,10 +51,10 @@ const EMPTY_ANALYSIS_RUN_PAGE: AnalysisRunPage = { items: [], nextCursor: null, 
 
 const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
   QUEUED: "border-border bg-muted text-muted-foreground",
-  PROCESSING: "border-primary/25 bg-primary/10 text-primary",
-  PARSED: "border-primary/20 bg-primary/5 text-primary",
-  COMPLETED: "border-primary/20 bg-primary/5 text-primary",
-  COMPLETED_WITH_WARNINGS: "border-warning/40 bg-warning/10 text-warning-foreground",
+  PROCESSING: "border-info-foreground/20 bg-info text-info-foreground",
+  PARSED: "border-success-foreground/20 bg-success text-success-foreground",
+  COMPLETED: "border-success-foreground/20 bg-success text-success-foreground",
+  COMPLETED_WITH_WARNINGS: "border-warning-foreground/20 bg-warning text-warning-foreground",
   FAILED: "border-destructive/25 bg-destructive/10 text-destructive",
 };
 
@@ -669,7 +669,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                                   <ul className="space-y-2 border-l-2 border-primary/20 pl-4">
                                     {context.occurrences.map((occurrence) => (
                                       <li key={occurrence.id} className="break-words text-sm">
-                                        <code className="rounded bg-background px-1.5 py-0.5 font-mono text-xs text-primary">{occurrence.markerText}</code>
+                                        <code className="rounded bg-warning px-1.5 py-0.5 font-mono text-xs text-warning-foreground">{occurrence.markerText}</code>
                                         <span className="ml-2 font-mono text-xs text-muted-foreground">
                                           {occurrence.startOffset}–{occurrence.endOffset}
                                         </span>

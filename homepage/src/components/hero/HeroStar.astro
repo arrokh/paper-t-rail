@@ -1,0 +1,22 @@
+---
+interface Props {
+  left: string;
+  top: string;
+  size: string;
+  delay?: string;
+}
+
+const { left, top, size, delay = "0s" } = Astro.props;
+---
+
+<img
+  class="hero-scene__star"
+  src="/images/hero/star.png"
+  alt=""
+  width="1254"
+  height="1254"
+  loading="eager"
+  decoding="async"
+  aria-hidden="true"
+  style={`--star-left: ${left}; --star-top: ${top}; --star-size: ${size}; --star-delay: ${delay};`}
+/>

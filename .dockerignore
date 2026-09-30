@@ -10,6 +10,8 @@
 .piwt
 **/node_modules
 **/.next
+**/.astro
+**/dist
 **/.gradle
 **/build
 **/tsconfig.tsbuildinfo
