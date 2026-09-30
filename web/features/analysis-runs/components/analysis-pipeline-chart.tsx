@@ -9,14 +9,14 @@ import { PIPELINE_STAGES, PIPELINE_STAGE_STATE_LABELS, pipelineStageState, type 
 import type { AnalysisRun } from "@/features/analysis-runs/types";
 
 const STATE_CLASSES = {
-  waiting: "border-border bg-card text-muted-foreground",
+  waiting: "border-border bg-card text-foreground",
   active: "border-info-foreground/35 bg-info text-info-foreground shadow-sm",
-  pending: "border-border bg-muted/50 text-muted-foreground",
-  complete: "border-success-foreground/25 bg-success text-success-foreground",
+  pending: "border-border bg-muted/60 text-muted-foreground",
+  complete: "border-success-foreground/35 bg-success text-success-foreground",
   ready: "border-info-foreground/25 bg-info/55 text-info-foreground",
-  unavailable: "border-border bg-muted/50 text-muted-foreground",
+  unavailable: "border-border bg-muted text-muted-foreground",
   failed: "border-destructive/35 bg-destructive/5 text-destructive",
-  warning: "border-warning/50 bg-warning/10 text-warning-foreground",
+  warning: "border-warning/55 bg-warning/30 text-warning-foreground",
 } as const;
 
 function StepStateIcon({ state }: { state: keyof typeof STATE_CLASSES }) {
@@ -106,9 +106,9 @@ export function AnalysisPipelineChart({
                   aria-current={selected ? "step" : undefined}
                   aria-label={`${stage.number} ${stage.label}: ${PIPELINE_STAGE_STATE_LABELS[state]}${selected ? ", selected stage" : ""}`}
                   className={cn(
-                    "group flex h-full min-h-[11rem] min-w-0 flex-1 flex-col items-start justify-start gap-2 rounded-xl border px-3 py-3 text-left whitespace-normal transition-colors",
+                    "group flex h-full min-h-[11rem] min-w-0 flex-1 flex-col items-start justify-start gap-2 rounded-xl border px-3 py-3 text-left whitespace-normal transition-all hover:-translate-y-0.5 hover:border-info-foreground hover:shadow-md motion-reduce:transition-none motion-reduce:hover:translate-y-0",
                     STATE_CLASSES[state],
-                    selected && "border-ring shadow-md ring-2 ring-ring ring-offset-2 ring-offset-background",
+                    selected && "border-2 border-info-foreground bg-info/70 text-info-foreground shadow-lg ring-2 ring-info-foreground ring-offset-2 ring-offset-background hover:border-info-foreground hover:bg-info/70 hover:text-info-foreground",
                   )}
                   onClick={() => onSelectStage(stage.id)}
                 >
