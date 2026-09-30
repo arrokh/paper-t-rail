@@ -1,0 +1,8 @@
+{
+  "name": "paper-t-rail-homepage",
+  "compatibility_date": "2026-07-28",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  }
+}
