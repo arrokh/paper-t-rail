@@ -68,7 +68,7 @@ export function AnalysisPipelineChart({
   onSelectStage,
 }: {
   run: AnalysisRun | null;
-  selectedStage: PipelineStageId;
+  selectedStage: PipelineStageId | null;
   onSelectStage: (stage: PipelineStageId) => void;
 }) {
   return (
@@ -88,7 +88,7 @@ export function AnalysisPipelineChart({
         </div>
       </div>
 
-      <nav id="analysis-pipeline-stages" className="scroll-mt-4 overflow-x-auto p-2" aria-label="Analysis pipeline stages">
+      <nav id="analysis-pipeline-stages" className="scroll-mt-4 overflow-x-auto overflow-y-hidden p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Analysis pipeline stages">
         <ol className="flex min-w-[920px] items-stretch gap-2 lg:min-w-0">
           {PIPELINE_STAGES.map((stage, index) => {
             const state = pipelineStageState(run, stage.id);
@@ -108,7 +108,7 @@ export function AnalysisPipelineChart({
                   onClick={() => onSelectStage(stage.id)}
                 >
                   <span className="flex min-h-5 w-full items-center">
-                    <span className="font-mono text-xs opacity-75">{stage.number}</span>
+                    <span className="font-mono text-xs">{stage.number}</span>
                   </span>
                   <span className="block min-h-10 break-words text-sm font-semibold leading-tight">{stage.label}</span>
                   <span className="block min-w-0 flex-1 text-xs font-normal leading-relaxed text-muted-foreground">{stage.description}</span>
@@ -120,7 +120,7 @@ export function AnalysisPipelineChart({
                   </span>
                 </Button>
                 {index < PIPELINE_STAGES.length - 1 && (
-                  <ArrowRight className="hidden size-4 shrink-0 self-center text-muted-foreground 2xl:block" aria-hidden="true" />
+                  <ArrowRight className="size-4 shrink-0 self-center text-muted-foreground" aria-hidden="true" />
                 )}
               </li>
             );

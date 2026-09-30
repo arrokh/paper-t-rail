@@ -1338,6 +1338,44 @@ class AnalysisRunQueueIntegrationTest {
         )
     }
 
+    @Test
+    fun `completed run with no eligible full text does not claim Laya aggregation ran`() {
+        val (analysisRunId, layaCallCount) = runLayaPipeline(
+            localLayaAggregationEnabled = true,
+            metadataOnly = true,
+        )
+        val report = referenceResolutionService().report(analysisRunId)!!
+        val outcomes = report.referenceResolution.entries.flatMap { it.verificationOutcomes }
+        val accessOutcomes = report.referenceResolution.entries.mapNotNull { it.citedPaperAccess }
+        val progressMessage = jdbc.queryForObject(
+            "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            analysisRunId,
+        )!!
+        val allEvidenceItemsSkipped = jdbc.queryForObject(
+            "SELECT bool_and(status = 'SKIPPED') FROM analysis_run_pipeline_items WHERE analysis_run_id = ? AND stage_id = 'evidence'",
+            Boolean::class.java,
+            analysisRunId,
+        )
+        val allVerificationItemsSkipped = jdbc.queryForObject(
+            "SELECT bool_and(status = 'SKIPPED') FROM analysis_run_pipeline_items WHERE analysis_run_id = ? AND stage_id = 'verification'",
+            Boolean::class.java,
+            analysisRunId,
+        )
+
+        assertEquals(0, layaCallCount)
+        assertEquals("COMPLETED", report.runStatus)
+        assertEquals("COMPLETED", report.evidenceCoverage.executionStatus)
+        assertTrue(outcomes.isNotEmpty())
+        assertTrue(outcomes.all { it.finalStatus != null })
+        assertTrue(outcomes.all { it.evidencePassages.isEmpty() })
+        assertTrue(accessOutcomes.any { it.accessStatus == "METADATA_ONLY" && it.accessReason == "NO_LEGAL_FULL_TEXT_LOCATION" })
+        assertEquals(true, allEvidenceItemsSkipped)
+        assertEquals(true, allVerificationItemsSkipped)
+        assertTrue(progressMessage.contains("No eligible full-text evidence was available"))
+        assertFalse(progressMessage.contains("Laya aggregation completed"))
+    }
+
     private fun runLayaPipeline(
         localLayaAggregationEnabled: Boolean,
         providerFailureReasonCode: String? = null,
@@ -1347,6 +1385,7 @@ class AnalysisRunQueueIntegrationTest {
         failOnceReasonCode: String? = null,
         retryIndexingOnce: Boolean = false,
         paperText: String? = null,
+        metadataOnly: Boolean = false,
     ): Pair<UUID, Int> {
         val layaSettings = LayaSystemOneSettings(
             enabled = true,
@@ -1412,10 +1451,16 @@ class AnalysisRunQueueIntegrationTest {
         )!!
         eventHandler(resolutionService = resolutionService).handle(documentEvent)
 
-        val providerFactories = if (paperText == null) {
-            listOf(RecordedFixtureOpenAccessProviderFactory(objectMapper, ProviderCallGate(layaCatalog)))
-        } else {
-            listOf(
+        val providerFactories = when {
+            metadataOnly -> listOf(
+                controlledOpenAccessFactory(
+                    OpenAccessDiscovery(true, false, emptyList(), "recorded-fixtures", Instant.now()),
+                    fullText = null,
+                    fetchCalls = AtomicInteger(),
+                ),
+            )
+            paperText == null -> listOf(RecordedFixtureOpenAccessProviderFactory(objectMapper, ProviderCallGate(layaCatalog)))
+            else -> listOf(
                 controlledOpenAccessFactory(
                     OpenAccessDiscovery(
                         metadataAvailable = true,
@@ -3171,6 +3216,14 @@ class AnalysisRunQueueIntegrationTest {
             val layaEvidencePassageSpansMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("laya_evidence_passage_spans.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(layaEvidencePassageSpansMigrationVerification)) }
+            }
+            val pipelineProgressMigration = migrationDirectory.resolve("persisted_analysis_run_pipeline.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(pipelineProgressMigration)) }
+            }
+            val pipelineProgressMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("persisted_analysis_run_pipeline.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(pipelineProgressMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

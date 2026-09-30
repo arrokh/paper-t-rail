@@ -110,12 +110,12 @@ class AnalysisRunController(
 
     @Operation(
         summary = "List recent Analysis Runs",
-        description = "Returns a cursor-paginated page in createdAt descending, then ID descending order. Pass nextCursor as cursor to fetch the next older page.",
+        description = "Returns a cursor-paginated page in createdAt descending, then ID descending order. Pass nextCursor or previousCursor as cursor to move through the list. Filename and status filters are applied before pagination.",
     )
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "200", description = "Cursor-paginated Analysis Runs", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = AnalysisRunPage::class))]),
-            ApiResponse(responseCode = "400", description = "The pagination cursor is invalid", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "400", description = "The pagination cursor, filename query, or status filter is invalid", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @GetMapping("/analysis-runs", produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -124,7 +124,11 @@ class AnalysisRunController(
         @RequestParam(defaultValue = "25") limit: Int,
         @Parameter(description = "Opaque cursor from the previous page; omit to list the newest runs.")
         @RequestParam(required = false) cursor: String?,
-    ): AnalysisRunPage = analysisRunService.list(limit, cursor)
+        @Parameter(description = "Optional case-insensitive filename search, up to 200 characters.")
+        @RequestParam(required = false) q: String? = null,
+        @Parameter(description = "Optional exact Analysis Run status filter.")
+        @RequestParam(required = false) status: String? = null,
+    ): AnalysisRunPage = analysisRunService.list(limit, cursor, q, status)
 
     @Operation(summary = "Get an Analysis Run and its persisted progress")
     @ApiResponses(

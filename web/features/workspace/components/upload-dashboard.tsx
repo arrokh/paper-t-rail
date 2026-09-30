@@ -46,7 +46,7 @@ function UploadDashboardContent() {
         onOpenChange={closeDialog}
         onOpenChangeComplete={handleDialogOpenChangeComplete}
       >
-        <DialogContent className="analysis-upload-dialog min-w-0 max-h-[92dvh] max-w-[calc(100%-2rem)] grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-5 sm:max-w-[calc(100%-2rem)] lg:max-w-3xl sm:p-7" showCloseButton>
+        <DialogContent className="analysis-upload-dialog min-w-0 max-w-[calc(100%-2rem)] grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden p-5 sm:max-w-[calc(100%-2rem)] lg:max-w-3xl sm:p-7" showCloseButton>
           <DialogHeader className="min-w-0 pr-10">
             <DialogTitle className="font-serif text-2xl font-semibold tracking-tight sm:text-3xl">Start with your PDF</DialogTitle>
             <DialogDescription className="max-w-2xl leading-relaxed">

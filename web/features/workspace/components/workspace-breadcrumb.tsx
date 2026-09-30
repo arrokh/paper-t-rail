@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment } from "react";
-import { ArrowLeft } from "lucide-react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -9,7 +8,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { buttonVariants } from "@/components/ui/button";
+import { BackLink } from "@/features/workspace/components/back-link";
 import { PageTransitionLink } from "@/features/workspace/components/page-transition";
 import { cn } from "@/lib/utils";
 
@@ -36,19 +35,21 @@ export function WorkspaceBreadcrumb({ items }: { items: readonly WorkspaceBreadc
             {index > 0 && <BreadcrumbSeparator />}
             <BreadcrumbItem className={cn("min-w-0", index === items.length - 1 && "flex-1")}>
               {item.href ? (
-                <PageTransitionLink
-                  direction="back"
-                  href={item.href}
-                  aria-label={item.backButton ? item.label : undefined}
-                  className={cn(
-                    item.backButton
-                      ? buttonVariants({ variant: "ghost", size: "icon" })
-                      : "rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                    item.backButton && "size-11 text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {item.backButton ? <ArrowLeft aria-hidden="true" /> : truncateBreadcrumbLabel(item.label)}
-                </PageTransitionLink>
+                item.backButton ? (
+                  <BackLink
+                    href={item.href}
+                    label={item.label}
+                    className="size-11"
+                  />
+                ) : (
+                  <PageTransitionLink
+                    direction="back"
+                    href={item.href}
+                    className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  >
+                    {truncateBreadcrumbLabel(item.label)}
+                  </PageTransitionLink>
+                )
               ) : (
                 <BreadcrumbPage aria-label={item.label} title={item.label} className="block max-w-full truncate">
                   {truncateBreadcrumbLabel(item.label)}

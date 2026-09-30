@@ -11,6 +11,7 @@ import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
 import com.papertrail.api.citation.parsing.ParsedDocumentView
 import com.papertrail.api.analysis.pagination.AnalysisRunCursorCodec
+import com.papertrail.api.analysis.pagination.Direction
 import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
@@ -42,6 +43,7 @@ class AnalysisRunService(
     private val objectMapper: ObjectMapper,
     @Value("\${paper-trail.analysis.parser-id}") private val parserId: String,
     @Value("\${paper-trail.analysis.parser-version}") private val parserVersion: String,
+    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
 ) {
     fun maxUploadBytes(): Long = validator.limits.maxBytes
 
@@ -191,63 +193,87 @@ class AnalysisRunService(
         """.trimIndent(),
         { resultSet, _ -> resultSet.toRunSummary() },
         runId,
-    ).firstOrNull()
+    ).firstOrNull()?.let { it.copy(pipeline = pipelineProgressRepository.find(runId)) }
 
     fun getParsedDocument(runId: UUID): ParsedDocumentView {
-        val run = get(runId) ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
-        if (run.status !in setOf("PARSED", "COMPLETED", "COMPLETED_WITH_WARNINGS")) {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "Parsed document structure is not ready for this Analysis Run.")
-        }
+        if (get(runId) == null) throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
         return parsedDocumentRepository.find(runId)
             ?: throw ResponseStatusException(HttpStatus.CONFLICT, "Parsed document structure is not available until parsing completes.")
     }
 
-    fun list(limit: Int = 25, cursorToken: String? = null): AnalysisRunPage {
+    fun list(limit: Int = 25, cursorToken: String? = null, query: String? = null, status: String? = null): AnalysisRunPage {
         val pageSize = limit.coerceIn(1, 100)
         val cursor = cursorToken?.let(AnalysisRunCursorCodec::decode)
-        val queryLimit = pageSize + 1
+        val filenameQuery = query?.trim()?.takeIf(String::isNotEmpty)
+        if (filenameQuery != null && filenameQuery.length > MAX_FILENAME_QUERY_LENGTH) {
+            throw IllegalArgumentException("Analysis Run filename search must be at most $MAX_FILENAME_QUERY_LENGTH characters.")
+        }
+        if (status != null && status !in RUN_STATUSES) {
+            throw IllegalArgumentException("Analysis Run status filter is invalid.")
+        }
+        val where = mutableListOf(
+            "NOT EXISTS (SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = d.id)",
+        )
+        val parameters = mutableListOf<Any>()
+        status?.let {
+            where += "r.status = ?"
+            parameters += it
+        }
+        filenameQuery?.let {
+            where += "d.filename ILIKE ? ESCAPE '!'"
+            parameters += "%${it.replace("!", "!!").replace("%", "!%").replace("_", "!_")}%"
+        }
+        val baseQuery = """
+            FROM analysis_runs r
+            JOIN source_documents d ON d.id = r.document_id
+            WHERE ${where.joinToString(" AND ")}
+        """.trimIndent()
         val mapper = { resultSet: ResultSet, _: Int -> resultSet.toRunSummary() }
-        val rows = if (cursor == null) {
-            jdbc.query(
-                """
-                SELECT r.id, r.document_id, d.filename, r.source_content_sha256, r.status,
-                       r.progress::text AS progress, r.configuration_snapshot::text AS configuration,
-                       r.created_at, r.started_at, r.failure_reason
-                  FROM analysis_runs r
-                  JOIN source_documents d ON d.id = r.document_id
-                 WHERE NOT EXISTS (SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = d.id)
-                 ORDER BY r.created_at DESC, r.id DESC
-                 LIMIT ?
-                """.trimIndent(),
-                mapper,
-                queryLimit,
-            )
-        } else {
-            jdbc.query(
-                """
-                SELECT r.id, r.document_id, d.filename, r.source_content_sha256, r.status,
-                       r.progress::text AS progress, r.configuration_snapshot::text AS configuration,
-                       r.created_at, r.started_at, r.failure_reason
-                  FROM analysis_runs r
-                  JOIN source_documents d ON d.id = r.document_id
-                 WHERE NOT EXISTS (SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = d.id)
-                   AND (r.created_at, r.id) < (?, ?)
-                 ORDER BY r.created_at DESC, r.id DESC
-                 LIMIT ?
-                """.trimIndent(),
-                mapper,
-                Timestamp.from(cursor.createdAt),
-                cursor.id,
-                queryLimit,
-            )
+        val cursorClause = when (cursor?.direction) {
+            Direction.NEXT -> "AND (r.created_at, r.id) < (?, ?)"
+            Direction.PREVIOUS -> "AND (r.created_at, r.id) > (?, ?)"
+            null -> ""
         }
-        val items = rows.take(pageSize)
-        val nextCursor = if (rows.size > pageSize) {
-            items.lastOrNull()?.let { AnalysisRunCursorCodec.encode(it.createdAt, it.id) }
-        } else {
-            null
+        val queryParameters = parameters.toMutableList()
+        if (cursor != null) {
+            queryParameters += Timestamp.from(cursor.createdAt)
+            queryParameters += cursor.id
         }
-        return AnalysisRunPage(items, nextCursor)
+        queryParameters += pageSize
+        val order = if (cursor?.direction == Direction.PREVIOUS) "ASC" else "DESC"
+        val queriedRows = jdbc.query(
+            """
+            SELECT r.id, r.document_id, d.filename, r.source_content_sha256, r.status,
+                   r.progress::text AS progress, r.configuration_snapshot::text AS configuration,
+                   r.created_at, r.started_at, r.failure_reason
+              $baseQuery
+              $cursorClause
+             ORDER BY r.created_at $order, r.id $order
+             LIMIT ?
+            """.trimIndent(),
+            mapper,
+            *queryParameters.toTypedArray(),
+        )
+        val items = if (cursor?.direction == Direction.PREVIOUS) queriedRows.asReversed() else queriedRows
+        val first = items.firstOrNull()
+        val last = items.lastOrNull()
+        val hasPrevious = first != null && cursor != null && existsAtBoundary(baseQuery, parameters, first, ">")
+        val hasNext = last != null && existsAtBoundary(baseQuery, parameters, last, "<")
+        return AnalysisRunPage(
+            items = items,
+            nextCursor = last?.takeIf { hasNext }?.let { AnalysisRunCursorCodec.encode(it.createdAt, it.id, Direction.NEXT) },
+            previousCursor = first?.takeIf { hasPrevious }?.let { AnalysisRunCursorCodec.encode(it.createdAt, it.id, Direction.PREVIOUS) },
+        )
+    }
+
+    private fun existsAtBoundary(baseQuery: String, parameters: List<Any>, run: AnalysisRunSummary, comparison: String): Boolean {
+        require(comparison == "<" || comparison == ">")
+        val existsParameters = parameters + listOf(Timestamp.from(run.createdAt), run.id)
+        return jdbc.queryForObject(
+            "SELECT EXISTS (SELECT 1 $baseQuery AND (r.created_at, r.id) $comparison (?, ?))",
+            Boolean::class.java,
+            *existsParameters.toTypedArray(),
+        ) == true
     }
 
     private fun insertRunAndOutbox(
@@ -280,6 +306,7 @@ class AnalysisRunService(
             """{"stage":"QUEUED","percent":0,"message":"Waiting for worker."}""",
             Timestamp.from(createdAt),
         )
+        pipelineProgressRepository.initializeRun(runId)
         val event = PipelineEvent(
             eventId = eventId,
             eventType = DOCUMENT_ANALYSIS_REQUESTED,
@@ -338,6 +365,8 @@ class AnalysisRunService(
     private data class StoredDocument(val id: UUID, val filename: String, val objectKey: String, val sha256: String)
 
     companion object {
+        private const val MAX_FILENAME_QUERY_LENGTH = 200
+        private val RUN_STATUSES = setOf("QUEUED", "PROCESSING", "PARSED", "COMPLETED", "COMPLETED_WITH_WARNINGS", "FAILED")
         private val logger = LoggerFactory.getLogger(AnalysisRunService::class.java)
     }
 }

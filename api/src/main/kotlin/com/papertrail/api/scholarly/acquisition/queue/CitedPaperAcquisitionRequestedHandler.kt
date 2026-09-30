@@ -2,9 +2,12 @@ package com.papertrail.api.scholarly.acquisition.queue
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.papertrail.api.analysis.service.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.document.service.isSourceDocumentDeleted
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
+import com.papertrail.api.evidence.queue.EvidenceIndexingEnqueueResult
+import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
 import org.springframework.jdbc.core.JdbcTemplate
@@ -22,6 +25,8 @@ class CitedPaperAcquisitionRequestedHandler(
     private val citedPaperAccessService: CitedPaperAccessService,
     private val citedPaperIndexingQueue: CitedPaperIndexingQueue,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
+    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
+    private val evidenceVerificationService: EvidenceVerificationService? = null,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
@@ -52,6 +57,7 @@ class CitedPaperAcquisitionRequestedHandler(
         }
         if (run.status != "PROCESSING") throw IllegalStateException("Analysis Run is not accepting cited-paper access work.")
 
+        pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId, "IN_PROGRESS")
         citedPaperAccessService.acquire(event.analysisRunId, event.payload.bibliographyEntryId)
         recordProcessed(event)
         return event.eventId
@@ -87,8 +93,14 @@ class CitedPaperAcquisitionRequestedHandler(
                     failureReason,
                     event.analysisRunId,
                 )
+                pipelineProgressRepository.markBibliographyItem(
+                    event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId,
+                    "FAILED", CITED_PAPER_ACCESS_RETRIES_EXHAUSTED,
+                )
+                skipEvidence(event, CITED_PAPER_ACCESS_RETRIES_EXHAUSTED)
             } else {
-                citedPaperIndexingQueue.enqueueIfEligible(
+                pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId, "COMPLETED")
+                val enqueueResult = citedPaperIndexingQueue.enqueueIfEligible(
                     analysisRunId = event.analysisRunId,
                     bibliographyEntryId = event.payload.bibliographyEntryId,
                     documentId = event.payload.documentId,
@@ -96,9 +108,33 @@ class CitedPaperAcquisitionRequestedHandler(
                     correlationId = event.correlationId,
                     causationId = event.eventId,
                 )
+                when (enqueueResult) {
+                    EvidenceIndexingEnqueueResult.QUEUED -> Unit
+                    EvidenceIndexingEnqueueResult.NOT_ELIGIBLE -> skipEvidence(event, "NO_ELIGIBLE_FULL_TEXT_ASSET")
+                    EvidenceIndexingEnqueueResult.FAILED -> {
+                        evidenceVerificationService?.failFullText(
+                            event.analysisRunId,
+                            event.payload.bibliographyEntryId,
+                            "EMBEDDING_PROFILE_UNAVAILABLE",
+                        )
+                        pipelineProgressRepository.markBibliographyItem(
+                            event.analysisRunId, "evidence", "prepare-evidence", event.payload.bibliographyEntryId,
+                            "FAILED", "EMBEDDING_PROFILE_UNAVAILABLE",
+                        )
+                        pipelineProgressRepository.markBibliographyItem(
+                            event.analysisRunId, "verification", "assess-and-aggregate", event.payload.bibliographyEntryId,
+                            "SKIPPED", "EVIDENCE_PREPARATION_FAILED",
+                        )
+                    }
+                }
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
+    }
+
+    private fun skipEvidence(event: PipelineEvent<CitedPaperAcquisitionRequestedPayload>, reason: String) {
+        pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "evidence", "prepare-evidence", event.payload.bibliographyEntryId, "SKIPPED", reason)
+        pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "verification", "assess-and-aggregate", event.payload.bibliographyEntryId, "SKIPPED", reason)
     }
 
     companion object {

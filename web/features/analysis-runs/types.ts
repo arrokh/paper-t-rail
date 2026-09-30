@@ -112,7 +112,29 @@ export type AnalysisRun = {
   filename: string;
   sourceContentSha256: string;
   status: "QUEUED" | "PROCESSING" | "PARSED" | "COMPLETED" | "COMPLETED_WITH_WARNINGS" | "FAILED";
-  progress: { stage?: string; message?: string };
+  progress: {
+    stage?: string;
+    message?: string;
+    failedReferenceResolutionCount?: number;
+    failedCitedPaperAcquisitionCount?: number;
+    failedEvidenceIndexingCount?: number;
+    totalVerifications?: number;
+    completedVerifications?: number;
+    incompleteVerifications?: number;
+  };
+  pipeline?: {
+    stages: Array<{
+      id: string;
+      status: "WAITING" | "IN_PROGRESS" | "COMPLETED" | "COMPLETED_WITH_WARNINGS" | "SKIPPED" | "FAILED";
+      counts: { total: number; waiting: number; inProgress: number; completed: number; skipped: number; failed: number };
+      steps: Array<{
+        id: string;
+        status: "WAITING" | "IN_PROGRESS" | "COMPLETED" | "COMPLETED_WITH_WARNINGS" | "SKIPPED" | "FAILED";
+        counts: { total: number; waiting: number; inProgress: number; completed: number; skipped: number; failed: number };
+        items: Array<{ id: string; label: string; status: string; reasonCode: string | null }>;
+      }>;
+    }>;
+  } | null;
   configuration: {
     claimExtractor: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     embedding: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
@@ -133,6 +155,13 @@ export type AnalysisRun = {
       scorePolicyVersion: string | null;
       confidenceThreshold: number | null;
     };
+    validationLimits?: { minimumLanguageConfidence?: number; maxClaimCitationPairs?: number };
+    aggregation?: {
+      executionStatus: string;
+      verificationPolicyVersion: string | null;
+      aggregationPolicyVersion: string | null;
+      thresholds: Record<string, number> | null;
+    };
     languageDetector: { provider: string; version: string };
     externalProviderConsents?: { providerId: string; dataCategories: string[] }[];
   };
@@ -144,6 +173,7 @@ export type AnalysisRun = {
 export type AnalysisRunPage = {
   items: AnalysisRun[];
   nextCursor: string | null;
+  previousCursor?: string | null;
 };
 
 export type ParsedDocument = {

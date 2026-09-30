@@ -8,16 +8,21 @@ import java.util.UUID
 internal data class AnalysisRunCursor(
     val createdAt: Instant,
     val id: UUID,
+    val direction: Direction = Direction.NEXT,
 )
+
+internal enum class Direction { NEXT, PREVIOUS }
 
 internal object AnalysisRunCursorCodec {
     private const val MAX_CURSOR_LENGTH = 256
     private const val SEPARATOR = '|'
 
-    fun encode(createdAt: Instant, id: UUID): String {
-        val payload = "$createdAt$SEPARATOR$id".toByteArray(StandardCharsets.UTF_8)
+    fun encode(createdAt: Instant, id: UUID, direction: Direction): String {
+        val payload = "$direction$SEPARATOR$createdAt$SEPARATOR$id".toByteArray(StandardCharsets.UTF_8)
         return Base64.getUrlEncoder().withoutPadding().encodeToString(payload)
     }
+
+    fun encode(createdAt: Instant, id: UUID): String = encode(createdAt, id, Direction.NEXT)
 
     fun decode(value: String): AnalysisRunCursor {
         if (value.isBlank() || value.length > MAX_CURSOR_LENGTH) invalidCursor()
@@ -27,15 +32,22 @@ internal object AnalysisRunCursorCodec {
         } catch (_: IllegalArgumentException) {
             invalidCursor()
         }
-        val separatorIndex = payload.indexOf(SEPARATOR)
-        if (separatorIndex <= 0 || payload.indexOf(SEPARATOR, separatorIndex + 1) >= 0) invalidCursor()
-
+        val fields = payload.split(SEPARATOR)
+        val (direction, timestampText, idText) = when (fields.size) {
+            // Keep cursors issued by the older one-way API usable as next-page cursors.
+            2 -> Triple(Direction.NEXT, fields[0], fields[1])
+            3 -> Triple(
+                runCatching { Direction.valueOf(fields[0]) }.getOrElse { invalidCursor() },
+                fields[1],
+                fields[2],
+            )
+            else -> invalidCursor()
+        }
         val createdAt = try {
-            Instant.parse(payload.substring(0, separatorIndex))
+            Instant.parse(timestampText)
         } catch (_: RuntimeException) {
             invalidCursor()
         }
-        val idText = payload.substring(separatorIndex + 1)
         val id = try {
             UUID.fromString(idText)
         } catch (_: IllegalArgumentException) {
@@ -43,7 +55,7 @@ internal object AnalysisRunCursorCodec {
         }
         if (id.toString() != idText) invalidCursor()
 
-        return AnalysisRunCursor(createdAt, id)
+        return AnalysisRunCursor(createdAt, id, direction)
     }
 
     private fun invalidCursor(): Nothing = throw IllegalArgumentException("Analysis Run cursor is invalid.")

@@ -27,14 +27,15 @@ export function PageTransitionProvider({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   const navigate = useCallback<PageNavigation>((href, direction) => {
+    const push = () => router.push(href, { scroll: direction !== "back" });
     const target = new URL(href, window.location.href);
     if (target.origin !== window.location.origin || target.pathname === pathname) {
-      router.push(href);
+      push();
       return;
     }
 
     if (typeof document.startViewTransition !== "function") {
-      router.push(href);
+      push();
       return;
     }
 
@@ -68,13 +69,13 @@ export function PageTransitionProvider({ children }: { children: ReactNode }) {
 
     try {
       const transition = document.startViewTransition(() => {
-        router.push(href);
+        push();
         return routeCommitted;
       });
       void transition.finished.then(cleanup, cleanup);
     } catch {
       cleanup();
-      router.push(href);
+      push();
     }
   }, [pathname, router]);
 

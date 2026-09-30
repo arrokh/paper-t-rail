@@ -1866,6 +1866,18 @@ Do not derive completion only from Redis.
 
 Persist progress in PostgreSQL, including incomplete/failed claim-paper pairs separately from domain verification statuses.
 
+The detail view groups the worker flow into the following persisted pipeline stages; this grouping describes actual worker operations rather than report sections:
+
+| Stage | Worker operation persisted in V1 | Work item represented by progress |
+|---|---|---|
+| 01 Read the PDF | Verify the stored source, parse its structure, extract claims, and persist the parsed result | One Source Document per Analysis Run |
+| 02 Resolve references | Resolve supported Bibliography Entries to Canonical Papers under the pinned policy | One Bibliography Entry per queued resolution event |
+| 03 Acquire cited sources | Discover legal locations, acquire eligible full text, and persist access/language outcomes | One Bibliography Entry per queued acquisition event |
+| 04 Prepare evidence | Parse eligible Cited Paper Assets, chunk, embed, and retrieve ranked Evidence Passages | One Bibliography Entry per queued indexing event |
+| 05 Assess evidence | Persist System One Evidence Judgements and, when configured, aggregate final Claim–Paper outcomes in the same worker operation | One Bibliography Entry per indexing event; the report separately exposes each Claim–Paper Verification |
+
+The Evidence Coverage Report is a read projection, not a sixth worker stage. A persisted work-item status is operational state, not its domain outcome: for example, reference resolution can be `COMPLETED` while its outcome is unresolved, and conditional downstream work can be `SKIPPED` with a stable reason code. Stage summaries derive from their item statuses. Persisted item states are `WAITING`, `IN_PROGRESS`, `COMPLETED`, `SKIPPED`, and `FAILED`; expose counts and short labels/reason codes without source claim or evidence text. Add a further stage or step only when the worker can persist its execution state at that boundary.
+
 ---
 
 # 31. Human Review
@@ -2723,10 +2735,10 @@ Deletion first tombstones the document and invalidates pending work, then remove
 ### List runs
 
 ```http
-GET /api/v1/analysis-runs?limit=25&cursor={nextCursor}
+GET /api/v1/analysis-runs?limit=20&cursor={opaqueCursor}&q={filename}&status={status}
 ```
 
-Returns an `items` array and an opaque `nextCursor`; omit `cursor` for the newest page, then pass the returned cursor to retrieve the next older page. `limit` defaults to 25 and is clamped to 1–100. Pages use keyset pagination ordered by `created_at DESC, id DESC`; do not replace this with offset pagination. A matching composite PostgreSQL index backs the range query. The composite ordering and cursor avoid page shifts when newer runs are inserted.
+Returns one filtered `items` page plus opaque `nextCursor` and `previousCursor` values. Omit `cursor` for the newest page; use the returned cursor to navigate in either direction. `q` is a case-insensitive filename search and `status` is an exact run-status filter; filters are applied before cursor pagination. `limit` defaults to 25 and is clamped to 1–100. Pages use keyset pagination ordered by `created_at DESC, id DESC`; do not use page numbers or offset pagination. The composite ordering and cursor avoid page shifts when newer runs are inserted.
 
 ### Create run
 
@@ -2763,6 +2775,8 @@ Returns:
 ```http
 GET /api/v1/analysis-runs/{id}
 ```
+
+The detail response includes persisted stage and work-item execution progress. The list response omits the per-item progress collection. Per-item states describe worker execution, not the matching, access, or verification outcome. New progress is persisted for new Analysis Runs; historical runs without progress records remain readable and use their run status and final counters as a limited fallback.
 
 ### Parsed document structure
 
@@ -2847,18 +2861,9 @@ The provider feature keeps the enabled, classified provider directory as TanStac
 
 ## 41.2 Analysis Progress
 
-The current workspace uses three cards: **01 Source Document** on the left and **02 Persisted Progress** on the right, with **03 Parsed Document** full-width below them; narrow screens stack the cards. The run list uses cursor pagination with 25 runs per page in `created_at DESC, id DESC` order. Selecting a run scrolls to its details. The details card has tabs for Run Progress and Parsed Document plus a next/previous arrow control; the Parsed Document tab and forward arrow are unavailable until the run is parsed.
+The Analysis Run detail view shows five selectable pipeline stages from the worker-progress contract in §30. Stage cards show number, title, description, and status. Each selected stage has its own result section, run-pinned provider/policy configuration, persisted work-item status/counts, and corresponding domain results. Its worker operation label stays visible while scrolling; sticky navigation exposes all five stage titles and the selected operation. The Evidence Coverage Report remains the final read projection inside stage 05 rather than a separate worker stage. Historical runs without item records use only the limited status/counter fallback and must not imply item-level progress that was never persisted.
 
-Render only the Analysis Run's actual persisted status and current progress snapshot. The current schema stores one progress snapshot, not a history of stage events, so do not synthesize past progress or present future stages as completed. The current slice performs source parsing, heuristic claim extraction, and context-scoped inferred target linking; the sequence below describes the intended later evidence pipeline, not work performed by this slice:
-
-```text
-Parsing document
-Resolving references
-Acquiring sources
-Indexing evidence
-Verifying claims
-Aggregating report
-```
+The Analysis Runs list requests one server page at a time using cursor pagination, supports filename/status filters before pagination, and carries the opaque cursor when navigating to a run and back. It does not request every run and paginate on the client. The API does not accept or emit page-number navigation.
 
 TanStack Query owns browser-fetched provider-directory, recent Analysis Run, parsed-document, and Reference Resolution Report state. The recent-run query fetches the cursor-paginated list through the same-origin Next.js proxy and polls every 2.5 seconds only while at least one run is queued or processing. It pauses interval polling in background tabs and refreshes when the tab regains focus; parsed runs do not keep the list polling because they are stable between worker-owned processing. The list also offers an explicit refresh action. Upload and re-analysis are mutations; after either succeeds, refresh the recent-run list and select the created Analysis Run. Query and mutation loading/error states are the UI's source of truth; do not mirror remote state in component state.
 

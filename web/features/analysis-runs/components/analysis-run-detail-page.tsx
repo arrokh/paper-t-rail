@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisPipelineChart } from "@/features/analysis-runs/components/analysis-pipeline-chart";
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
-import { defaultPipelineStage, defaultPipelineSubprocess, PIPELINE_STAGES, type PipelineStageId } from "@/features/analysis-runs/pipeline";
+import { normalizePipelineStageId, type PipelineStageId } from "@/features/analysis-runs/pipeline";
 import {
   useAnalysisRun,
   useParsedDocument,
@@ -31,10 +31,6 @@ function statusLabel(status: AnalysisRun["status"]): string {
   return status.replaceAll("_", " ").toLowerCase();
 }
 
-function isPipelineStageId(value: string | null): value is PipelineStageId {
-  return PIPELINE_STAGES.some((stage) => stage.id === value);
-}
-
 function isParsedDocumentReady(status: AnalysisRun["status"]): boolean {
   return status === "PARSED" || status === "COMPLETED" || status === "COMPLETED_WITH_WARNINGS";
 }
@@ -52,10 +48,10 @@ function homeHrefFor(searchParams: ReturnType<typeof useSearchParams>, focusRunI
   const params = new URLSearchParams();
   const query = searchParams.get("q");
   const status = searchParams.get("status");
-  const page = searchParams.get("page");
+  const cursor = searchParams.get("cursor");
   if (query) params.set("q", query);
   if (status) params.set("status", status);
-  if (page && page !== "1") params.set("page", page);
+  if (cursor) params.set("cursor", cursor);
   if (focusRunId) params.set("focus", focusRunId);
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
   return `/${suffix}`;
@@ -72,11 +68,10 @@ function analysisRunBreadcrumbItems(currentLabel: string, listHref: string, back
 
 function updatePipelineQuery(
   step: PipelineStageId,
-  subprocess: string,
 ) {
   const params = new URLSearchParams(window.location.search);
   params.set("step", step);
-  params.set("substep", subprocess);
+  params.delete("substep");
   const query = params.toString();
   const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
   window.history.replaceState(null, "", nextUrl);
@@ -129,15 +124,10 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const searchParams = useSearchParams();
   const runQuery = useAnalysisRun(analysisRunId);
   const run = runQuery.data ?? null;
-  const defaultStep = defaultPipelineStage(run);
   const stageParam = searchParams.get("step");
-  const selectedStage = isPipelineStageId(stageParam) ? stageParam : defaultStep;
-  const stageDefinition = PIPELINE_STAGES.find((stage) => stage.id === selectedStage) ?? PIPELINE_STAGES[0];
-  const substepParam = searchParams.get("substep");
-  const selectedSubprocess = stageDefinition.subprocesses.some((subprocess) => subprocess.id === substepParam)
-    ? substepParam!
-    : defaultPipelineSubprocess(run, selectedStage);
-  const parsedReady = Boolean(run && isParsedDocumentReady(run.status));
+  const selectedStage = normalizePipelineStageId(stageParam);
+  const sourceStep = run?.pipeline?.stages.find((stage) => stage.id === "source")?.steps.find((step) => step.id === "parse-document");
+  const parsedReady = Boolean(run && (sourceStep?.status === "COMPLETED" || isParsedDocumentReady(run.status)));
   const parsedQuery = useParsedDocument(analysisRunId, parsedReady);
   const reportQuery = useReferenceResolutionReport(analysisRunId, parsedReady);
   const parsedDocument = parsedQuery.data ?? null;
@@ -175,11 +165,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const backHref = homeHrefFor(searchParams, run.id);
 
   function selectStage(stage: PipelineStageId) {
-    updatePipelineQuery(stage, defaultPipelineSubprocess(run, stage));
-  }
-
-  function selectSubprocess(subprocess: string) {
-    updatePipelineQuery(selectedStage, subprocess);
+    updatePipelineQuery(stage);
   }
 
   return (
@@ -209,19 +195,20 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
 
       <AnalysisPipelineChart run={run} selectedStage={selectedStage} onSelectStage={selectStage} />
 
-      <AnalysisRunStageResults
-        run={run}
-        selectedStage={selectedStage}
-        selectedSubprocess={selectedSubprocess}
-        parsedDocument={parsedDocument}
-        report={report}
-        parsedLoading={parsedReady && parsedQuery.isPending}
-        reportLoading={parsedReady && reportQuery.isPending}
-        parsedError={parsedError}
-        reportError={reportError}
-        onSelectStage={selectStage}
-        onSelectSubprocess={selectSubprocess}
-      />
+      {selectedStage && (
+        <AnalysisRunStageResults
+          run={run}
+          selectedStage={selectedStage}
+          backHref={backHref}
+          parsedDocument={parsedDocument}
+          report={report}
+          parsedLoading={parsedReady && parsedQuery.isPending}
+          reportLoading={parsedReady && reportQuery.isPending}
+          parsedError={parsedError}
+          reportError={reportError}
+          onSelectStage={selectStage}
+        />
+      )}
     </article>
   );
 }

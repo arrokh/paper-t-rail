@@ -11,7 +11,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
-import { PIPELINE_STAGES, PIPELINE_STAGE_STATE_LABELS, pipelineStageState, type PipelineStageId } from "@/features/analysis-runs/pipeline";
+import { BackLink } from "@/features/workspace/components/back-link";
+import { PIPELINE_STAGES, PIPELINE_STAGE_STATE_LABELS, pipelineStage, pipelineStageState, type PipelineStageId } from "@/features/analysis-runs/pipeline";
 import type { AnalysisRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 import { cn } from "@/lib/utils";
 
@@ -81,47 +82,13 @@ function RunResultsUnavailable({ stage, run }: { stage: PipelineStageId; run: An
       <p className="font-medium">Results are not available for this stage yet.</p>
       <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
         {stage === "source"
-          ? "The parsed sections and annotations appear when this run reaches PARSED."
+          ? "The parsed sections and annotations appear after the source structure has been persisted."
           : run.status === "PARSED"
             ? "PARSED means parsing, reference resolution and eligible evidence retrieval are ready. Claim–Paper Verification has not completed."
             : "The worker has not persisted output for this stage yet. The pipeline shows only progress reported by the system."}
       </p>
       {run.progress.message && <p className="mt-3 text-sm text-muted-foreground" aria-live="polite">{run.progress.message}</p>}
     </div>
-  );
-}
-
-function SubprocessNavigation({
-  stage,
-  value,
-  onChange,
-}: {
-  stage: (typeof PIPELINE_STAGES)[number];
-  value: string;
-  onChange: (id: string) => void;
-}) {
-  return (
-    <nav className="mx-auto flex w-fit max-w-full justify-center gap-2 overflow-x-auto overflow-y-hidden p-2" aria-label={`${stage.label} subprocesses`}>
-      {stage.subprocesses.map((subprocess, index) => {
-        const selected = value === subprocess.id;
-        return (
-          <Button
-            key={subprocess.id}
-            type="button"
-            variant={selected ? "default" : "outline"}
-            aria-pressed={selected}
-            className={cn(
-              "min-h-10 shrink-0 justify-start gap-2",
-              selected && "shadow-sm ring-2 ring-primary ring-offset-2 ring-offset-background",
-            )}
-            onClick={() => onChange(subprocess.id)}
-          >
-            <span className={cn("font-mono text-[0.65rem]", selected ? "text-primary-foreground/75" : "text-muted-foreground")}>{index + 1}</span>
-            {subprocess.label}
-          </Button>
-        );
-      })}
-    </nav>
   );
 }
 
@@ -133,8 +100,8 @@ function PipelineStageQuickNavigation({
   onSelectStage: (stage: PipelineStageId) => void;
 }) {
   return (
-    <nav className="mx-auto w-fit max-w-full overflow-x-auto overflow-y-hidden px-2 py-2" aria-label="Analysis pipeline stages">
-      <ol className="flex min-w-max items-center justify-center gap-1">
+    <nav className="mx-auto w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden px-1 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Analysis pipeline stages">
+      <ol className="mx-auto flex w-fit min-w-max items-center justify-center gap-1">
         {PIPELINE_STAGES.map((pipelineStage) => {
           const selected = pipelineStage.id === selectedStage;
           return (
@@ -147,7 +114,7 @@ function PipelineStageQuickNavigation({
                 className="h-8 shrink-0 gap-1.5 px-2 text-xs"
                 onClick={() => onSelectStage(pipelineStage.id)}
               >
-                <span className="font-mono text-[0.65rem] opacity-75">{pipelineStage.number}</span>
+                <span className="font-mono text-[0.65rem]">{pipelineStage.number}</span>
                 <span className="whitespace-nowrap">{pipelineStage.label}</span>
               </Button>
             </li>
@@ -155,6 +122,115 @@ function PipelineStageQuickNavigation({
         })}
       </ol>
     </nav>
+  );
+}
+
+function providerLabel(provider: { provider: string; model?: string | null; version: string } | null | undefined): string {
+  if (!provider) return "Not configured";
+  return [provider.provider, provider.model, provider.version].filter(Boolean).join(" · ");
+}
+
+function PipelineConfiguration({ run, stageId }: { run: AnalysisRun; stageId: PipelineStageId }) {
+  const configuration = run.configuration;
+  const thresholdLabel = (configuration.aggregation?.thresholds
+    ? Object.entries(configuration.aggregation.thresholds).map(([key, value]) => `${key}: ${value}`).join(" · ")
+    : null) ?? "Not configured";
+  const rows: Array<[string, string]> = stageId === "source"
+    ? [
+        ["Source parser", providerLabel(configuration.sourceParser)],
+        ["Claim extraction", providerLabel(configuration.claimExtractor)],
+        ["Maximum claim–reference pairs", String(configuration.validationLimits?.maxClaimCitationPairs ?? "Not recorded")],
+      ]
+    : stageId === "references"
+      ? [
+          ["Resolver", providerLabel(configuration.referenceResolution?.provider)],
+          ["Execution", configuration.referenceResolution?.executionStatus ?? "Not configured"],
+          ["Score policy", configuration.referenceResolution?.scorePolicyVersion ?? "Not configured"],
+          ["Match threshold", configuration.referenceResolution?.confidenceThreshold?.toFixed(3) ?? "Not configured"],
+        ]
+      : stageId === "access"
+        ? [
+            ["Cited-source provider", providerLabel(configuration.openAccess)],
+            ["Language detector", providerLabel(configuration.languageDetector)],
+            ["Minimum language confidence", String(configuration.validationLimits?.minimumLanguageConfidence ?? "Not recorded")],
+          ]
+        : stageId === "evidence"
+          ? [
+              ["Embedding provider", providerLabel(configuration.embedding)],
+              ["Retrieval profile", configuration.retrieval.profileId],
+              ["Candidate limits", `vector ${configuration.retrieval.vectorCandidateLimit} · lexical ${configuration.retrieval.lexicalCandidateLimit} · final ${configuration.retrieval.finalCandidateLimit}`],
+              ["Rank fusion constant", String(configuration.retrieval.reciprocalRankFusionConstant)],
+            ]
+          : [
+              ["System One", providerLabel(configuration.systemOne)],
+              ["Aggregation status", configuration.aggregation?.executionStatus ?? "Not configured"],
+              ["Verification policy", configuration.aggregation?.verificationPolicyVersion ?? "Not configured"],
+              ["Aggregation policy", configuration.aggregation?.aggregationPolicyVersion ?? "Not configured"],
+              ["Pinned thresholds", thresholdLabel],
+            ];
+
+  return (
+    <section className="space-y-3 rounded-lg border border-border bg-muted/20 p-4" aria-label={`${pipelineStage(stageId).label} configuration`}>
+      <div>
+        <h4 className="font-medium">Run-pinned configuration</h4>
+        <p className="mt-1 text-xs text-muted-foreground">Provider and policy selections saved with this immutable Analysis Run.</p>
+      </div>
+      <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+        {rows.map(([label, value]) => (
+          <div key={label} className="min-w-0 space-y-1">
+            <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">{label}</dt>
+            <dd className="m-0 break-words">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function PipelineWorkProgress({ run, stageId }: { run: AnalysisRun; stageId: PipelineStageId }) {
+  const stage = run.pipeline?.stages.find((candidate) => candidate.id === stageId);
+  if (!stage) return null;
+  const items = stage.steps.flatMap((step) => step.items);
+  const visibleItems = items.slice(0, 6);
+  const statusLabel = (status: string) => status.replaceAll("_", " ").toLowerCase();
+
+  return (
+    <section className="space-y-3 rounded-lg border border-border p-4" aria-label={`${pipelineStage(stageId).label} persisted work status`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="font-medium">Persisted worker progress</h4>
+        <Badge variant="outline" className="capitalize">{statusLabel(stage.status)}</Badge>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {stage.counts.total} items · {stage.counts.completed} complete · {stage.counts.inProgress} in progress · {stage.counts.waiting} waiting · {stage.counts.skipped} skipped · {stage.counts.failed} failed
+      </p>
+      {visibleItems.length > 0 && (
+        <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {visibleItems.map((item) => (
+            <li key={item.id} className="flex min-w-0 items-start justify-between gap-3 rounded-md bg-muted/30 px-3 py-2 text-xs">
+              <span className="min-w-0 break-words font-mono">{item.label}</span>
+              <span className="shrink-0 text-right capitalize text-muted-foreground">
+                {statusLabel(item.status)}{item.reasonCode ? ` · ${statusLabel(item.reasonCode)}` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {items.length > visibleItems.length && (
+        <details className="group/all-items rounded-md border border-border/70 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">Show all {items.length} work items</summary>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {items.slice(visibleItems.length).map((item) => (
+              <li key={item.id} className="flex min-w-0 items-start justify-between gap-3 rounded-md bg-muted/30 px-3 py-2 text-xs">
+                <span className="min-w-0 break-words font-mono">{item.label}</span>
+                <span className="shrink-0 text-right capitalize text-muted-foreground">
+                  {statusLabel(item.status)}{item.reasonCode ? ` · ${statusLabel(item.reasonCode)}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
   );
 }
 
@@ -299,6 +375,12 @@ function ReferenceMatchCard({ entry, view }: { entry: ReportEntry; view: string 
           <div><dt className="font-mono uppercase text-muted-foreground">Candidate</dt><dd className="mt-1 break-words">{entry.canonicalPaper?.title ?? "No match retained"}</dd></div>
         </dl>
       )}
+      {view === "all" && (
+        <details className="mt-3 border-t border-border pt-3">
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">Original bibliography entry</summary>
+          <p className="mt-2 break-words text-sm leading-relaxed text-muted-foreground">{entry.rawText}</p>
+        </details>
+      )}
     </li>
   );
 }
@@ -332,7 +414,7 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
     const discovered = entries.filter((entry) => entry.citedPaperAccess);
     return (
       <div className="space-y-4">
-        <p className="text-sm leading-relaxed text-muted-foreground">These are the persisted legal access discovery outcomes. Entries without a resolved Canonical Paper can skip this subprocess.</p>
+        <p className="text-sm leading-relaxed text-muted-foreground">These are the persisted legal access discovery outcomes. Entries without a resolved Canonical Paper can skip this worker operation.</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <ResultMetric label="Access outcomes" value={discovered.length} />
           <ResultMetric label="Full text located" value={discovered.filter((entry) => entry.citedPaperAccess?.accessStatus === "FULL_TEXT_AVAILABLE").length} />
@@ -520,10 +602,43 @@ function ReportResults({ report, view }: { report: ReferenceResolutionReportResp
   );
 }
 
+function VerificationStageResults({ run, report }: { run: AnalysisRun; report: ReferenceResolutionReportResponse }) {
+  const executionStatus = report.evidenceCoverage.executionStatus;
+  if (executionStatus === "PENDING") {
+    return (
+      <Alert>
+        <AlertTitle>Evidence assessment in progress</AlertTitle>
+        <AlertDescription>The worker is recording Evidence Judgements and applying the run-pinned aggregation policy where configured. Per-reference work status is shown above.</AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (executionStatus === "NOT_RUN") {
+    const evaluationOnly = run.configuration.systemOne.provider === "laya";
+    return (
+      <div className="space-y-4">
+        <Alert>
+          <AlertTitle>{evaluationOnly ? "Local Laya evaluation only" : "Claim–Paper Verification not configured"}</AlertTitle>
+          <AlertDescription>
+            {evaluationOnly
+              ? "Laya judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
+              : "This Analysis Run did not configure a final Claim–Paper Verification policy, so no Evidence Coverage Report outcomes were produced."}
+          </AlertDescription>
+        </Alert>
+        {evaluationOnly && report.referenceResolution.entries.length > 0 && (
+          <VerificationResults runId={report.analysisRunId} report={report} view="judge" />
+        )}
+      </div>
+    );
+  }
+
+  return <ReportResults report={report} view="summary" />;
+}
+
 export function AnalysisRunStageResults({
   run,
   selectedStage,
-  selectedSubprocess,
+  backHref,
   parsedDocument,
   report,
   parsedLoading,
@@ -531,11 +646,10 @@ export function AnalysisRunStageResults({
   parsedError,
   reportError,
   onSelectStage,
-  onSelectSubprocess,
 }: {
   run: AnalysisRun;
   selectedStage: PipelineStageId;
-  selectedSubprocess: string;
+  backHref: string;
   parsedDocument: ParsedDocument | null;
   report: ReferenceResolutionReportResponse | null;
   parsedLoading: boolean;
@@ -543,18 +657,16 @@ export function AnalysisRunStageResults({
   parsedError: string | null;
   reportError: string | null;
   onSelectStage: (stage: PipelineStageId) => void;
-  onSelectSubprocess: (id: string) => void;
 }) {
   const resultsScopeRef = useRef<HTMLElement>(null);
-  const subprocessNavigationRef = useRef<HTMLDivElement>(null);
+  const stageDetailsHeaderRef = useRef<HTMLElement>(null);
   const stickyNavigationRef = useRef<HTMLDivElement>(null);
   const stageSelectionRequestRef = useRef(0);
   const [showStickyNavigation, setShowStickyNavigation] = useState(false);
   const stage = PIPELINE_STAGES.find((candidate) => candidate.id === selectedStage) ?? PIPELINE_STAGES[0];
-  const subprocess = stage.subprocesses.find((candidate) => candidate.id === selectedSubprocess) ?? stage.subprocesses[0];
   const stageState = pipelineStageState(run, stage.id);
   const needsParsedDocument = stage.id === "source";
-  const needsReport = ["references", "access", "indexing", "verification", "report"].includes(stage.id);
+  const needsReport = ["references", "access", "evidence", "verification"].includes(stage.id);
   const loading = needsParsedDocument ? parsedLoading : needsReport && reportLoading;
   const error = needsParsedDocument ? parsedError : needsReport ? reportError : null;
 
@@ -575,16 +687,16 @@ export function AnalysisRunStageResults({
 
     const updateStickyNavigation = () => {
       const resultsScope = resultsScopeRef.current;
-      const subprocessNavigation = subprocessNavigationRef.current;
-      if (!resultsScope || !subprocessNavigation) {
+      const stageDetailsHeader = stageDetailsHeaderRef.current;
+      if (!resultsScope || !stageDetailsHeader) {
         setShowStickyNavigation(false);
         return;
       }
 
       const resultsBounds = resultsScope.getBoundingClientRect();
-      const navigationBounds = subprocessNavigation.getBoundingClientRect();
+      const detailsHeaderBounds = stageDetailsHeader.getBoundingClientRect();
       const stickyHeight = stickyNavigationRef.current?.getBoundingClientRect().height ?? 0;
-      const shouldShow = navigationBounds.bottom <= 0
+      const shouldShow = detailsHeaderBounds.bottom <= 0
         && resultsBounds.top < 0
         && resultsBounds.bottom > stickyHeight + 1;
 
@@ -601,7 +713,7 @@ export function AnalysisRunStageResults({
 
     const resizeObserver = new ResizeObserver(scheduleUpdate);
     if (resultsScopeRef.current) resizeObserver.observe(resultsScopeRef.current);
-    if (subprocessNavigationRef.current) resizeObserver.observe(subprocessNavigationRef.current);
+    if (stageDetailsHeaderRef.current) resizeObserver.observe(stageDetailsHeaderRef.current);
     if (stickyNavigationRef.current) resizeObserver.observe(stickyNavigationRef.current);
 
     window.addEventListener("scroll", scheduleUpdate, { passive: true });
@@ -614,17 +726,10 @@ export function AnalysisRunStageResults({
       resizeObserver.disconnect();
       if (frame !== 0) window.cancelAnimationFrame(frame);
     };
-  }, [selectedStage, selectedSubprocess, showStickyNavigation]);
+  }, [selectedStage, showStickyNavigation]);
 
   return (
-    <section ref={resultsScopeRef} id="pipeline-results" className="pipeline-results space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6" aria-labelledby="pipeline-result-heading" key={`${stage.id}-${subprocess.id}`}>
-      <div
-        ref={subprocessNavigationRef}
-        className="-mx-4 -mt-4 rounded-t-xl border-b border-border/70 bg-card py-2 sm:-mx-6 sm:-mt-6"
-      >
-        <SubprocessNavigation stage={stage} value={subprocess.id} onChange={onSelectSubprocess} />
-      </div>
-
+    <section ref={resultsScopeRef} id="pipeline-results" className="pipeline-results space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6" aria-labelledby="pipeline-result-heading" key={stage.id}>
       <div
         ref={stickyNavigationRef}
         data-sticky-step-navigation
@@ -635,24 +740,31 @@ export function AnalysisRunStageResults({
           showStickyNavigation ? "translate-y-0 opacity-100" : "-translate-y-full pointer-events-none opacity-0",
         )}
       >
-        <div className="mx-auto max-w-6xl py-2">
+        <div className="mx-auto grid max-w-6xl grid-cols-[2rem_minmax(0,1fr)_2rem] items-center gap-1 py-1">
+          <BackLink
+            href={backHref}
+            label="Back to Analysis Runs"
+          />
           <PipelineStageQuickNavigation selectedStage={stage.id} onSelectStage={selectStageFromStickyNavigation} />
-          <SubprocessNavigation stage={stage} value={subprocess.id} onChange={onSelectSubprocess} />
+          <span aria-hidden="true" className="size-8" />
         </div>
       </div>
 
-      <header className="space-y-2">
-        <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Stage {stage.number} · subprocess result</p>
+      <header ref={stageDetailsHeaderRef} className="space-y-2">
+        <p className="font-mono text-xs tracking-[0.12em] text-muted-foreground uppercase">Pipeline stage {stage.number}</p>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
-            <h3 id="pipeline-result-heading" className="font-heading text-xl font-semibold tracking-tight">{subprocess.label}</h3>
-            <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">{subprocess.description}</p>
+            <h3 id="pipeline-result-heading" className="font-heading text-xl font-semibold tracking-tight">{stage.label}</h3>
+            <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">{stage.description}</p>
           </div>
           <Badge variant="outline" className={cn(stageState === "failed" ? "border-destructive/30 bg-destructive/5 text-destructive" : stageState === "active" ? "border-primary/25 bg-primary/10 text-primary" : "")}>{PIPELINE_STAGE_STATE_LABELS[stageState]}</Badge>
         </div>
       </header>
 
       <Separator />
+
+      <PipelineConfiguration run={run} stageId={stage.id} />
+      <PipelineWorkProgress run={run} stageId={stage.id} />
 
       {loading && <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status"><Spinner aria-hidden="true" /> Loading persisted results…</p>}
       {error && <Alert variant="destructive"><AlertTitle>Results unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
@@ -670,18 +782,19 @@ export function AnalysisRunStageResults({
           <p className="rounded-md bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
             Parser {parsedDocument.parser.provider} {parsedDocument.parser.version}. Source offsets are zero-based, end-exclusive UTF-16 indexes in the normalized Source Document text.
           </p>
-          <AnnotationResults parsedDocument={parsedDocument} view={subprocess.id} />
+          <div className="space-y-8">
+            <AnnotationResults parsedDocument={parsedDocument} view="sections" />
+            <AnnotationResults parsedDocument={parsedDocument} view="annotations" />
+            <AnnotationResults parsedDocument={parsedDocument} view="claims" />
+          </div>
         </div>
       )}
 
-      {!loading && !error && report && stage.id === "references" && <ReferenceMatchResults report={report} view={subprocess.id} />}
-      {!loading && !error && report && stage.id === "access" && <AccessResults report={report} view={subprocess.id} />}
-      {!loading && !error && report && stage.id === "indexing" && <IndexingResults report={report} view={subprocess.id} />}
-      {!loading && !error && report && stage.id === "verification" && <VerificationResults runId={run.id} report={report} view={subprocess.id} />}
-      {!loading && !error && report && stage.id === "report" && (
-        report.evidenceCoverage.executionStatus === "NOT_RUN"
-          ? <RunResultsUnavailable stage={stage.id} run={run} />
-          : <ReportResults report={report} view={subprocess.id} />
+      {!loading && !error && report && stage.id === "references" && <ReferenceMatchResults report={report} view="all" />}
+      {!loading && !error && report && stage.id === "access" && <AccessResults report={report} view="all" />}
+      {!loading && !error && report && stage.id === "evidence" && <IndexingResults report={report} view="all" />}
+      {!loading && !error && report && stage.id === "verification" && (
+        <VerificationStageResults run={run} report={report} />
       )}
     </section>
   );

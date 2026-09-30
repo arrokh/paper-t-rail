@@ -517,7 +517,7 @@ describe("interactive workspace remote state", () => {
     expect(screen.getByRole("button", { name: "Permanently delete" })).toBeTruthy();
   });
 
-  it("does not poll the run list while a displayed run is active", async () => {
+  it("polls the run list while any displayed run is active", async () => {
     let listRequests = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (!url.startsWith("/api/v1/analysis-runs?")) throw new Error(`Unexpected browser request: ${url}`);
@@ -536,8 +536,8 @@ describe("interactive workspace remote state", () => {
       </QueryProvider>,
     );
     expect(await screen.findByText("PROCESSING,FAILED")).toBeTruthy();
-    await new Promise((resolve) => setTimeout(resolve, 2800));
-    expect(listRequests).toBe(1);
+    await waitFor(() => expect(listRequests).toBe(2), { timeout: 5000 });
+    expect(await screen.findByText("COMPLETED,FAILED")).toBeTruthy();
   }, 9000);
 
   it("keeps safe upload API errors visible in the final setup step", async () => {

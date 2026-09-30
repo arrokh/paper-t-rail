@@ -19,7 +19,7 @@ import type {
   HumanReviewStatus,
 } from "../types.ts";
 
-const RUN_PAGE_SIZE = 100;
+const RUN_PAGE_SIZE = 20;
 const RUN_POLL_INTERVAL_MS = 2500;
 
 export const RECENT_ANALYSIS_RUNS_QUERY_KEY = ["analysis-runs", "recent"] as const;
@@ -28,50 +28,50 @@ export const REANALYZE_ANALYSIS_RUN_MUTATION_KEY = ["analysis-runs", "reanalyze"
 export const DELETE_SOURCE_DOCUMENT_MUTATION_KEY = ["analysis-runs", "delete-document"] as const;
 export const HUMAN_REVIEW_MUTATION_KEY = ["analysis-runs", "human-review"] as const;
 
+function isTerminalRunStatus(status: string): boolean {
+  return status === "PARSED"
+    || status === "COMPLETED"
+    || status === "COMPLETED_WITH_WARNINGS"
+    || status === "FAILED";
+}
+
 export function isTerminalAnalysisRun(run: Pick<AnalysisRun, "status">): boolean {
-  return run.status === "COMPLETED"
-    || run.status === "COMPLETED_WITH_WARNINGS"
-    || run.status === "FAILED";
+  return isTerminalRunStatus(run.status);
 }
 
-async function fetchRecentAnalysisRuns(signal: AbortSignal): Promise<AnalysisRunPage> {
-  const items: AnalysisRun[] = [];
-  const visitedCursors = new Set<string>();
-  let cursor: string | null = null;
+type RecentAnalysisRunsOptions = { cursor?: string | null; query?: string; status?: string };
 
-  do {
-    const query = new URLSearchParams({ limit: String(RUN_PAGE_SIZE) });
-    if (cursor) query.set("cursor", cursor);
+async function fetchRecentAnalysisRuns(signal: AbortSignal, options: RecentAnalysisRunsOptions): Promise<AnalysisRunPage> {
+  const params = new URLSearchParams({ limit: String(RUN_PAGE_SIZE) });
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.query) params.set("q", options.query);
+  if (options.status) params.set("status", options.status);
 
-    const response = await fetch(`/api/v1/analysis-runs?${query.toString()}`, {
-      cache: "no-store",
-      signal,
-    });
-    if (!response.ok) throw new Error(await readApiError(response));
-
-    const page = (await response.json()) as AnalysisRunPage;
-    items.push(...page.items);
-    cursor = page.nextCursor;
-    if (cursor && visitedCursors.has(cursor)) {
-      throw new Error("The Analysis Run list returned a repeated pagination cursor.");
-    }
-    if (cursor) visitedCursors.add(cursor);
-  } while (cursor);
-
-  return { items, nextCursor: null };
+  const response = await fetch(`/api/v1/analysis-runs?${params.toString()}`, { cache: "no-store", signal });
+  if (!response.ok) throw new Error(await readApiError(response));
+  return (await response.json()) as AnalysisRunPage;
 }
 
-export function recentAnalysisRunsQueryOptions(cursor?: string | null) {
+function normalizeRecentOptions(input?: string | null | RecentAnalysisRunsOptions): Required<RecentAnalysisRunsOptions> {
+  if (typeof input === "string" || input === null) return { cursor: input, query: "", status: "" };
+  return { cursor: input?.cursor ?? null, query: input?.query?.trim() ?? "", status: input?.status ?? "" };
+}
+
+export function recentAnalysisRunsQueryOptions(input?: string | null | RecentAnalysisRunsOptions) {
+  const options = normalizeRecentOptions(input);
   return queryOptions({
-    queryKey: cursor === undefined ? RECENT_ANALYSIS_RUNS_QUERY_KEY : [...RECENT_ANALYSIS_RUNS_QUERY_KEY, cursor] as const,
-    queryFn: ({ signal }) => fetchRecentAnalysisRuns(signal),
+    queryKey: [...RECENT_ANALYSIS_RUNS_QUERY_KEY, options.cursor, options.query, options.status] as const,
+    queryFn: ({ signal }) => fetchRecentAnalysisRuns(signal, options),
+    refetchInterval: (query) => query.state.data?.items.some((run) => !isTerminalAnalysisRun(run))
+      ? RUN_POLL_INTERVAL_MS
+      : false,
     refetchOnWindowFocus: true,
     retry: false,
   });
 }
 
-export function useRecentAnalysisRuns(cursor?: string | null) {
-  return useQuery(recentAnalysisRunsQueryOptions(cursor));
+export function useRecentAnalysisRuns(input?: string | null | RecentAnalysisRunsOptions) {
+  return useQuery(recentAnalysisRunsQueryOptions(input));
 }
 
 export function analysisRunQueryKey(analysisRunId: string) {
@@ -92,7 +92,6 @@ export function analysisRunQueryOptions(analysisRunId: string) {
     refetchInterval: (query) => query.state.data && !isTerminalAnalysisRun(query.state.data)
       ? RUN_POLL_INTERVAL_MS
       : false,
-    refetchIntervalInBackground: true,
     refetchOnWindowFocus: false,
     retry: false,
   });
@@ -229,6 +228,9 @@ export function referenceResolutionReportQueryOptions(analysisRunId: string) {
       if (!response.ok) throw new Error(await readApiError(response));
       return (await response.json()) as ReferenceResolutionReportResponse;
     },
+    refetchInterval: (query) => query.state.data && !isTerminalRunStatus(query.state.data.runStatus)
+      ? RUN_POLL_INTERVAL_MS
+      : false,
     retry: false,
   });
 }

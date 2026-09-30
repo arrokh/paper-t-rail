@@ -2,6 +2,7 @@ package com.papertrail.api.scholarly.references.queue
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.papertrail.api.analysis.service.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.document.service.isSourceDocumentDeleted
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
@@ -22,6 +23,7 @@ class ReferenceResolutionRequestedHandler(
     private val objectMapper: ObjectMapper,
     private val referenceResolutionService: ReferenceResolutionService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
+    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
@@ -54,6 +56,7 @@ class ReferenceResolutionRequestedHandler(
             throw IllegalStateException("Analysis Run is not accepting reference-resolution work.")
         }
 
+        pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "references", "resolve-entry", event.payload.bibliographyEntryId, "IN_PROGRESS")
         referenceResolutionService.resolveEntry(event.analysisRunId, event.payload.bibliographyEntryId)
         recordProcessed(event)
         return event.eventId
@@ -89,27 +92,33 @@ class ReferenceResolutionRequestedHandler(
                     failureReason,
                     event.analysisRunId,
                 )
+                pipelineProgressRepository.markBibliographyItem(
+                    event.analysisRunId, "references", "resolve-entry", event.payload.bibliographyEntryId,
+                    "FAILED", REFERENCE_RESOLUTION_RETRIES_EXHAUSTED,
+                )
+                skipDownstream(event, REFERENCE_RESOLUTION_RETRIES_EXHAUSTED)
             } else {
-                enqueueAcquisitionIfResolved(event)
+                pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "references", "resolve-entry", event.payload.bibliographyEntryId, "COMPLETED")
+                if (!enqueueAcquisitionIfResolved(event)) skipDownstream(event, "REFERENCE_NOT_ELIGIBLE_FOR_ACCESS")
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
     }
 
-    private fun enqueueAcquisitionIfResolved(event: PipelineEvent<ReferenceResolutionRequestedPayload>) {
+    private fun enqueueAcquisitionIfResolved(event: PipelineEvent<ReferenceResolutionRequestedPayload>): Boolean {
         val accessConfigured = jdbc.queryForObject(
             "SELECT jsonb_typeof(configuration_snapshot -> 'openAccess') = 'object' FROM analysis_runs WHERE id = ?",
             Boolean::class.java,
             event.analysisRunId,
         ) == true
-        if (!accessConfigured) return
+        if (!accessConfigured) return false
         val resolved = jdbc.queryForObject(
             "SELECT EXISTS (SELECT 1 FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND status = 'RESOLVED')",
             Boolean::class.java,
             event.analysisRunId,
             event.payload.bibliographyEntryId,
         ) == true
-        if (!resolved) return
+        if (!resolved) return false
         val alreadyQueued = jdbc.queryForObject(
             "SELECT EXISTS (SELECT 1 FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? AND payload -> 'payload' ->> 'bibliographyEntryId' = ?)",
             Boolean::class.java,
@@ -117,7 +126,7 @@ class ReferenceResolutionRequestedHandler(
             CITED_PAPER_ACQUISITION_REQUESTED,
             event.payload.bibliographyEntryId.toString(),
         ) == true
-        if (alreadyQueued) return
+        if (alreadyQueued) return true
 
         val acquisitionEvent = PipelineEvent(
             eventId = UUID.randomUUID(),
@@ -151,6 +160,13 @@ class ReferenceResolutionRequestedHandler(
             objectMapper.writeValueAsString(acquisitionEvent),
             Timestamp.from(Instant.now()),
         )
+        return true
+    }
+
+    private fun skipDownstream(event: PipelineEvent<ReferenceResolutionRequestedPayload>, reason: String) {
+        pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId, "SKIPPED", reason)
+        pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "evidence", "prepare-evidence", event.payload.bibliographyEntryId, "SKIPPED", reason)
+        pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "verification", "assess-and-aggregate", event.payload.bibliographyEntryId, "SKIPPED", reason)
     }
 
     companion object {

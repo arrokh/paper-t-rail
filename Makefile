@@ -5,10 +5,50 @@ export CHANGE
 
 .PHONY: dev dev-laya dev-app infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya validate
 
-dev: dev-app
+DEV_SELECTABLE_SERVICES := api worker web laya
+DEV_APP_SERVICES := api worker web
+# Treat service names after `dev` as selectors and reject unknown names before prerequisites run.
+DEV_REQUESTED_SERVICES := $(if $(filter dev,$(MAKECMDGOALS)),$(filter-out dev,$(MAKECMDGOALS)))
+DEV_INVALID_SERVICES := $(filter-out $(DEV_SELECTABLE_SERVICES),$(DEV_REQUESTED_SERVICES))
+DEV_LAYA_SELECTED := $(if $(filter laya,$(DEV_REQUESTED_SERVICES)),true,false)
+
+ifneq ($(filter dev,$(MAKECMDGOALS)),)
+ifneq ($(strip $(DEV_INVALID_SERVICES)),)
+$(error Unsupported service(s) for `make dev`: $(DEV_INVALID_SERVICES). Choose from: $(DEV_SELECTABLE_SERVICES))
+endif
+
+ifeq ($(strip $(DEV_REQUESTED_SERVICES)),)
+DEV_BUILD_SERVICES := $(DEV_APP_SERVICES)
+DEV_BUILD_LAYA := true
+DEV_PREREQUISITES := dev-laya
+else
+DEV_BUILD_SERVICES := $(filter $(DEV_APP_SERVICES),$(DEV_REQUESTED_SERVICES))
+DEV_BUILD_LAYA := $(DEV_LAYA_SELECTED)
+ifneq ($(strip $(DEV_REQUESTED_SERVICES)),)
+DEV_PREREQUISITES := dev-laya
+endif
+endif
+
+.PHONY: $(DEV_REQUESTED_SERVICES)
+$(DEV_REQUESTED_SERVICES):
+	@:
+else
+DEV_BUILD_LAYA := true
+.PHONY: api worker web laya
+api worker web laya:
+	@echo 'Use `make dev $@` to start or rebuild this service.' >&2
+	@exit 2
+endif
+
+dev: $(DEV_PREREQUISITES)
+ifneq ($(strip $(DEV_BUILD_SERVICES)),)
+	$(COMPOSE) build $(DEV_BUILD_SERVICES)
+	$(COMPOSE) up -d $(DEV_BUILD_SERVICES)
+endif
 
 dev-app: dev-laya
-	$(COMPOSE) up -d --build api worker web
+	$(COMPOSE) build api worker web
+	$(COMPOSE) up -d api worker web
 
 dev-laya: migrate
 	@set -eu; \
@@ -16,7 +56,10 @@ dev-laya: migrate
 	if [ "$$laya_enabled" = true ]; then \
 		echo 'Preparing and starting the local Laya sidecar (first run downloads the pinned model).'; \
 		$(COMPOSE) --profile laya-evaluation run --rm laya-model-download; \
-		$(COMPOSE) --profile laya-evaluation up -d --build --wait laya; \
+		if [ "$(DEV_BUILD_LAYA)" = true ]; then $(COMPOSE) --profile laya-evaluation build laya; fi; \
+		$(COMPOSE) --profile laya-evaluation up -d --wait laya; \
+	elif [ "$(DEV_LAYA_SELECTED)" = true ]; then \
+		echo 'Cannot select laya because LAYA_ENABLED=false.' >&2; exit 2; \
 	else \
 		echo 'LAYA_ENABLED=false; skipping the optional Laya sidecar.'; \
 	fi

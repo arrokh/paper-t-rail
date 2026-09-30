@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, ArrowUpRight, FileText, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +24,6 @@ import { PageTransitionLink } from "@/features/workspace/components/page-transit
 import type { AnalysisRun } from "@/features/analysis-runs/types";
 import { cn } from "@/lib/utils";
 
-const PAGE_SIZE = 20;
 const STATUS_FILTERS = [
   ["QUEUED", "Queued"],
   ["PROCESSING", "Processing"],
@@ -61,11 +60,11 @@ function formatCreatedAt(value: string): string {
   }).format(new Date(value));
 }
 
-function getListHref(runId: string, query: string, status: string, page: number): string {
+function getListHref(runId: string, query: string, status: string, cursor: string | null): string {
   const params = new URLSearchParams();
   if (query) params.set("q", query);
   if (status !== "ALL") params.set("status", status);
-  if (page > 1) params.set("page", String(page));
+  if (cursor) params.set("cursor", cursor);
   const suffix = params.size > 0 ? `?${params.toString()}` : "";
   return `/analysis-runs/${encodeURIComponent(runId)}${suffix}`;
 }
@@ -85,6 +84,51 @@ function updateSearchParams(
   router.replace(`${pathname}${suffix}`, { scroll: false });
 }
 
+const ANALYSIS_RUN_FOCUS_DURATION_MS = 1800;
+const ANALYSIS_RUN_FOCUS_SCROLL_DURATION_MS = 1800;
+
+function scrollToFocusedRun(row: HTMLElement): () => void {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    row.scrollIntoView({ behavior: "auto", block: "center" });
+    return () => {};
+  }
+
+  const rowBounds = row.getBoundingClientRect();
+  const startScrollY = window.scrollY;
+  const targetScrollY = Math.max(0, startScrollY + rowBounds.top - (window.innerHeight - rowBounds.height) / 2);
+  const scrollDistance = targetScrollY - startScrollY;
+  if (Math.abs(scrollDistance) < 1) return () => {};
+
+  const startTime = performance.now();
+  let animationFrame = 0;
+  let cancelled = false;
+
+  const cancel = () => {
+    cancelled = true;
+    window.cancelAnimationFrame(animationFrame);
+    window.removeEventListener("wheel", cancel);
+    window.removeEventListener("touchstart", cancel);
+  };
+
+  const animate = (now: number) => {
+    if (cancelled) return;
+
+    const progress = Math.min((now - startTime) / ANALYSIS_RUN_FOCUS_SCROLL_DURATION_MS, 1);
+    const easedProgress = progress < 0.5
+      ? 4 * progress ** 3
+      : 1 - ((-2 * progress + 2) ** 3) / 2;
+    window.scrollTo({ top: startScrollY + scrollDistance * easedProgress, behavior: "instant" });
+
+    if (progress < 1) animationFrame = window.requestAnimationFrame(animate);
+    else cancel();
+  };
+
+  window.addEventListener("wheel", cancel, { passive: true, once: true });
+  window.addEventListener("touchstart", cancel, { passive: true, once: true });
+  animationFrame = window.requestAnimationFrame(animate);
+  return cancel;
+}
+
 export function AnalysisRunsTable({
   newestCreatedRunId,
   onAddRun,
@@ -97,25 +141,18 @@ export function AnalysisRunsTable({
   const searchParams = useSearchParams();
   const query = searchParams.get("q")?.trim() ?? "";
   const focusRunId = searchParams.get("focus");
+  const cursor = searchParams.get("cursor");
   const requestedStatus = searchParams.get("status");
   const status = isRunStatus(requestedStatus) ? requestedStatus : "ALL";
-  const parsedPage = Number.parseInt(searchParams.get("page") ?? "1", 10);
-  const requestedPage = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const [runToDelete, setRunToDelete] = useState<AnalysisRun | null>(null);
   const [searchDraft, setSearchDraft] = useState({ query, value: query });
-  const [focusAnimationRunId, setFocusAnimationRunId] = useState<string | null>(null);
   if (searchDraft.query !== query) setSearchDraft({ query, value: query });
   const searchText = searchDraft.value;
-  const runsQuery = useRecentAnalysisRuns();
+  const runsQuery = useRecentAnalysisRuns({ cursor, query, status: status === "ALL" ? undefined : status });
   const deleteMutation = useDeleteSourceDocument();
   const runs = runsQuery.data?.items ?? EMPTY_RUNS;
-  const filteredRuns = useMemo(() => runs.filter((run) => {
-    const matchesName = !query || run.filename.toLocaleLowerCase().includes(query.toLocaleLowerCase());
-    return matchesName && (status === "ALL" || run.status === status);
-  }), [runs, query, status]);
-  const pageCount = Math.max(1, Math.ceil(filteredRuns.length / PAGE_SIZE));
-  const currentPage = Math.min(requestedPage, pageCount);
-  const pageRuns = filteredRuns.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const page = runsQuery.data;
+  const pageRuns = runs;
   const listError = runsQuery.error instanceof Error
     ? runsQuery.error.message
     : runsQuery.error
@@ -123,10 +160,8 @@ export function AnalysisRunsTable({
       : null;
 
   useEffect(() => {
-    if (!runsQuery.isPending && requestedPage !== currentPage) {
-      updateSearchParams(searchParams, router, pathname, { page: currentPage > 1 ? String(currentPage) : null });
-    }
-  }, [currentPage, pathname, requestedPage, router, runsQuery.isPending, searchParams]);
+    if (searchParams.has("page")) updateSearchParams(searchParams, router, pathname, { page: null });
+  }, [pathname, router, searchParams]);
 
   useEffect(() => {
     if (!focusRunId || runsQuery.isPending) return;
@@ -134,19 +169,17 @@ export function AnalysisRunsTable({
     const focusedRow = document.getElementById(`analysis-run-${focusRunId}`);
     if (!focusedRow) return;
 
-    setFocusAnimationRunId(focusRunId);
-    focusedRow.scrollIntoView({
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-      block: "center",
-    });
+    focusedRow.classList.add("analysis-run-return-focus");
+    const cancelScroll = scrollToFocusedRun(focusedRow);
+    const timeoutId = window.setTimeout(() => {
+      focusedRow.classList.remove("analysis-run-return-focus");
+    }, ANALYSIS_RUN_FOCUS_DURATION_MS);
+    return () => {
+      window.clearTimeout(timeoutId);
+      cancelScroll();
+      focusedRow.classList.remove("analysis-run-return-focus");
+    };
   }, [focusRunId, runsQuery.isPending]);
-
-  useEffect(() => {
-    if (!focusAnimationRunId) return;
-
-    const timeoutId = window.setTimeout(() => setFocusAnimationRunId(null), 1400);
-    return () => window.clearTimeout(timeoutId);
-  }, [focusAnimationRunId]);
 
   useEffect(() => {
     const nextQuery = searchText.trim();
@@ -155,7 +188,7 @@ export function AnalysisRunsTable({
     const timeoutId = window.setTimeout(() => {
       updateSearchParams(searchParams, router, pathname, {
         q: nextQuery || null,
-        page: null,
+        cursor: null,
       });
     }, 300);
 
@@ -165,7 +198,7 @@ export function AnalysisRunsTable({
   function changeStatus(nextStatus: string) {
     updateSearchParams(searchParams, router, pathname, {
       status: nextStatus === "ALL" ? null : nextStatus,
-      page: null,
+      cursor: null,
     });
   }
 
@@ -175,15 +208,13 @@ export function AnalysisRunsTable({
     if (!value.trim()) {
       updateSearchParams(searchParams, router, pathname, {
         q: null,
-        page: null,
+        cursor: null,
       });
     }
   }
 
-  function changePage(page: number) {
-    updateSearchParams(searchParams, router, pathname, {
-      page: page > 1 ? String(page) : null,
-    });
+  function changeCursor(nextCursor: string | null) {
+    updateSearchParams(searchParams, router, pathname, { cursor: nextCursor });
   }
 
   function confirmDeletion() {
@@ -224,6 +255,7 @@ export function AnalysisRunsTable({
               <Input
                 id="analysis-run-filename-search"
                 type="search"
+                maxLength={200}
                 value={searchText}
                 onChange={(event) => changeSearchText(event.currentTarget.value)}
                 placeholder="Search filenames"
@@ -303,7 +335,6 @@ export function AnalysisRunsTable({
                   className={cn(
                     "analysis-run-table-row transition-colors hover:bg-muted/20",
                     run.id === newestCreatedRunId && "analysis-run-arrival",
-                    run.id === focusAnimationRunId && "analysis-run-return-focus",
                   )}
                 >
                   <th scope="row" className="max-w-[28rem] px-4 py-4 font-medium">
@@ -321,7 +352,7 @@ export function AnalysisRunsTable({
                     <div className="flex justify-end gap-1">
                       <PageTransitionLink
                         direction="forward"
-                        href={getListHref(run.id, query, status, currentPage)}
+                        href={getListHref(run.id, query, status, cursor)}
                         aria-label={`Open Analysis Run for ${run.filename}`}
                         title="Open Analysis Run"
                         className={buttonVariants({ variant: "ghost", size: "icon-lg" })}
@@ -349,13 +380,15 @@ export function AnalysisRunsTable({
           </table>
         </div>
 
-        <nav className="flex items-center justify-between gap-3" aria-label="Analysis Run pages">
-          <span className="font-mono text-xs text-muted-foreground" aria-live="polite">Page {currentPage} of {pageCount}</span>
+        <nav className="flex items-center justify-between gap-3" aria-label="Analysis Run cursor pagination">
+          <span className="font-mono text-xs text-muted-foreground" aria-live="polite">{pageRuns.length} runs in this view</span>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" className="min-h-11" disabled={currentPage <= 1} onClick={() => changePage(currentPage - 1)}>
-              <ArrowLeft aria-hidden="true" /> Previous
-            </Button>
-            <Button type="button" variant="outline" className="min-h-11" disabled={currentPage >= pageCount} onClick={() => changePage(currentPage + 1)}>
+            {page?.previousCursor && (
+              <Button type="button" variant="outline" className="min-h-11" disabled={runsQuery.isFetching} onClick={() => changeCursor(page.previousCursor ?? null)}>
+                <ArrowLeft aria-hidden="true" /> Previous
+              </Button>
+            )}
+            <Button type="button" variant="outline" className="min-h-11" disabled={!page?.nextCursor || runsQuery.isFetching} onClick={() => changeCursor(page?.nextCursor ?? null)}>
               Next <ArrowRight aria-hidden="true" />
             </Button>
           </div>
@@ -373,7 +406,7 @@ export function AnalysisRunsTable({
           <div className="space-y-3 text-sm leading-relaxed text-muted-foreground">
             <p>
               This also removes parsed sections, Citation Contexts, Atomic Claims, bibliography and resolution results, acquired and indexed Cited Paper data, Evidence Coverage Reports, Human Reviews, and provider consent/configuration snapshots.
-              {siblingCount > 1 ? ` ${siblingCount} runs for this Source Document are currently listed.` : ""}
+              {siblingCount > 1 ? ` ${siblingCount} runs for this Source Document appear on this cursor page.` : ""}
             </p>
             <p>Content already sent to external providers cannot be retracted by Paper T-Rail.</p>
             {deleteMutation.error && (

@@ -47,7 +47,7 @@ import { scrollToAnchorTarget } from "@/lib/scroll-to-anchor";
 
 type AnalysisRunDetailTab = "progress" | "parsed" | "report";
 
-const EMPTY_ANALYSIS_RUN_PAGE: AnalysisRunPage = { items: [], nextCursor: null };
+const EMPTY_ANALYSIS_RUN_PAGE: AnalysisRunPage = { items: [], nextCursor: null, previousCursor: null };
 
 const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
   QUEUED: "border-border bg-muted text-muted-foreground",

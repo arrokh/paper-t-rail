@@ -187,15 +187,19 @@
 }
 
 .analysis-upload-dialog {
+  --analysis-upload-dialog-top-offset: max(3rem, env(safe-area-inset-top));
+  top: var(--analysis-upload-dialog-top-offset);
+  max-height: calc(100dvh - var(--analysis-upload-dialog-top-offset) - max(1rem, env(safe-area-inset-bottom)));
+  translate: -50% 0;
   transform-origin: 95% 0;
 }
 
 .analysis-run-arrival {
-  animation: analysis-run-arrival 1.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: analysis-run-arrival 2.6s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .analysis-run-return-focus {
-  animation: analysis-run-return-focus 1.4s ease-out both;
+  animation: analysis-run-return-focus 1.8s ease-out both;
 }
 
 .api-fetch-progress {

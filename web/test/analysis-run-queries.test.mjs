@@ -141,7 +141,7 @@ test("upload mutation refreshes the active recent-run query without refetching i
   assert.equal(uploadRequest.body instanceof FormData, true);
   assert.equal(JSON.parse(uploadRequest.body.get("configuration")).claimExtractorProvider, "heuristic");
   assert.equal(listRequests, 3);
-  assert.equal(client.getQueryData([...RECENT_ANALYSIS_RUNS_QUERY_KEY, null]).items[0].id, "run-created");
+  assert.equal(client.getQueryData([...RECENT_ANALYSIS_RUNS_QUERY_KEY, null, "", ""]).items[0].id, "run-created");
 });
 
 test("Human Review mutation appends a separate result and refreshes the active run report", async (context) => {
@@ -202,9 +202,10 @@ test("Human Review mutation appends a separate result and refreshes the active r
   assert.deepEqual(client.getQueryData(referenceResolutionReportQueryKey("run-1")).humanReviews, [createdReview]);
 });
 
-test("recent-run list does not poll automatically and refreshes when the window regains focus", () => {
+test("recent-run list polls only while a run is active and refreshes when the window regains focus", () => {
   const options = recentAnalysisRunsQueryOptions(null);
 
-  assert.equal(options.refetchInterval, undefined);
+  assert.equal(options.refetchInterval({ state: { data: { items: [{ status: "PROCESSING" }] } } }), 2500);
+  assert.equal(options.refetchInterval({ state: { data: { items: [{ status: "COMPLETED" }] } } }), false);
   assert.equal(options.refetchOnWindowFocus, true);
 });
