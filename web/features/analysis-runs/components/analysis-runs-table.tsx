@@ -231,62 +231,60 @@ export function AnalysisRunsTable({
   return (
     <section className="analysis-runs-page space-y-6" aria-labelledby="runs-heading">
       <WorkspaceBreadcrumb items={[{ label: "Workspace", href: "/" }, { label: "Analysis Runs" }]} />
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-2">
-          <p className="font-mono text-xs tracking-[0.13em] text-muted-foreground uppercase">Your research workspace</p>
-          <h1 id="runs-heading" className="font-serif text-3xl font-semibold tracking-tight sm:text-4xl">Analysis Runs</h1>
-          <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
-            Trace each paper from citation parsing and reference matching through claim-level evidence review, with saved results and run provenance in one place.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" className="min-h-11" onClick={onAddRun}>
-            <Plus aria-hidden="true" /> New Analysis Run
-          </Button>
-        </div>
+      <div className="space-y-2">
+        <p className="font-mono text-xs tracking-[0.13em] text-muted-foreground uppercase">Your research workspace</p>
+        <h1 id="runs-heading" className="font-serif text-3xl font-semibold tracking-tight sm:text-4xl">Analysis Runs</h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+          Trace each paper from citation parsing and reference matching through claim-level evidence review, with saved results and run provenance in one place.
+        </p>
       </div>
 
       <div className="space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
-        <div className="grid gap-3 sm:mx-auto sm:w-full sm:max-w-[36rem] sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
-          <div className="grid min-w-0 gap-1.5">
-            <label htmlFor="analysis-run-filename-search" className="text-xs font-medium text-muted-foreground">Filename</label>
-            <div className="relative min-w-0" role="search" aria-label="Search Analysis Runs by filename">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input
-                id="analysis-run-filename-search"
-                type="search"
-                maxLength={200}
-                value={searchText}
-                onChange={(event) => changeSearchText(event.currentTarget.value)}
-                placeholder="Search filenames"
-                aria-describedby="filename-search-hint"
-                className="h-11 pl-9"
-              />
-              <span id="filename-search-hint" className="sr-only">Results update as you type.</span>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="grid gap-3 sm:w-full sm:max-w-[36rem] sm:grid-cols-[minmax(0,1fr)_12rem_auto]">
+            <div className="grid min-w-0 gap-1.5">
+              <label htmlFor="analysis-run-filename-search" className="text-xs font-medium text-muted-foreground">Filename</label>
+              <div className="relative min-w-0" role="search" aria-label="Search Analysis Runs by filename">
+                <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                <Input
+                  id="analysis-run-filename-search"
+                  type="search"
+                  maxLength={200}
+                  value={searchText}
+                  onChange={(event) => changeSearchText(event.currentTarget.value)}
+                  placeholder="Search filenames"
+                  aria-describedby="filename-search-hint"
+                  className="h-11 pl-9"
+                />
+                <span id="filename-search-hint" className="sr-only">Results update as you type.</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 sm:contents">
+              <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+                Status
+                <NativeSelect value={status} onChange={(event) => changeStatus(event.currentTarget.value)} className="w-full [&_select]:h-11">
+                  <NativeSelectOption value="ALL">All statuses</NativeSelectOption>
+                  {STATUS_FILTERS.map(([value, label]) => <NativeSelectOption key={value} value={value}>{label}</NativeSelectOption>)}
+                </NativeSelect>
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-lg"
+                aria-label="Refresh Analysis Runs"
+                title="Refresh Analysis Runs"
+                aria-busy={runsQuery.isFetching}
+                disabled={runsQuery.isFetching}
+                onClick={() => { void runsQuery.refetch(); }}
+                className="h-11 w-11 self-end"
+              >
+                <RefreshCw className={cn(runsQuery.isFetching && "animate-spin motion-reduce:animate-none")} aria-hidden="true" />
+              </Button>
             </div>
           </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 sm:contents">
-            <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-              Status
-              <NativeSelect value={status} onChange={(event) => changeStatus(event.currentTarget.value)} className="w-full [&_select]:h-11">
-                <NativeSelectOption value="ALL">All statuses</NativeSelectOption>
-                {STATUS_FILTERS.map(([value, label]) => <NativeSelectOption key={value} value={value}>{label}</NativeSelectOption>)}
-              </NativeSelect>
-            </label>
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-lg"
-              aria-label="Refresh Analysis Runs"
-              title="Refresh Analysis Runs"
-              aria-busy={runsQuery.isFetching}
-              disabled={runsQuery.isFetching}
-              onClick={() => { void runsQuery.refetch(); }}
-              className="h-11 w-11 self-end"
-            >
-              <RefreshCw className={cn(runsQuery.isFetching && "animate-spin motion-reduce:animate-none")} aria-hidden="true" />
-            </Button>
-          </div>
+          <Button type="button" className="min-h-11 w-full sm:w-auto sm:shrink-0" onClick={onAddRun}>
+            <Plus aria-hidden="true" /> New Analysis Run
+          </Button>
         </div>
 
         {listError && (
