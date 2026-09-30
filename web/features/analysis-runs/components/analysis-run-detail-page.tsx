@@ -5,8 +5,8 @@ import { ChevronDown } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisPipelineChart } from "@/features/analysis-runs/components/analysis-pipeline-chart";
+import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/components/analysis-run-loading";
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
 import { normalizePipelineStageId, type PipelineStageId } from "@/features/analysis-runs/pipeline";
@@ -137,17 +137,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const homeHref = homeHrefFor(searchParams);
 
   if (runQuery.isPending) {
-    return (
-      <div className="analysis-run-detail space-y-6">
-        <WorkspaceBreadcrumb items={analysisRunBreadcrumbItems("Analysis Run details", homeHref)} />
-        <div role="status" aria-label="Loading Analysis Run details">
-          <span className="sr-only">Loading Analysis Run details</span>
-          <Skeleton className="h-32 w-full" />
-        </div>
-        <Skeleton className="h-52 w-full" />
-        <Skeleton className="h-72 w-full" />
-      </div>
-    );
+    return <AnalysisRunDetailLoadingState backHref={homeHref} showStageResults={Boolean(selectedStage)} />;
   }
 
   if (!run) {

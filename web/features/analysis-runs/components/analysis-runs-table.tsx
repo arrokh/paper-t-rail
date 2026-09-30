@@ -16,8 +16,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { AnalysisRunTableRowsSkeleton } from "@/features/analysis-runs/components/analysis-run-loading";
 import { useDeleteSourceDocument, useRecentAnalysisRuns } from "@/features/analysis-runs/queries/analysis-run-queries";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
 import { PageTransitionLink } from "@/features/workspace/components/page-transition";
@@ -295,7 +295,7 @@ export function AnalysisRunsTable({
         )}
 
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[42rem] border-collapse text-left text-sm">
+          <table aria-busy={runsQuery.isFetching} className="w-full min-w-[42rem] border-collapse text-left text-sm">
             <caption className="sr-only">Analysis Runs, newest first</caption>
             <thead className="bg-muted/50 text-xs text-muted-foreground">
               <tr>
@@ -307,14 +307,13 @@ export function AnalysisRunsTable({
             </thead>
             <tbody className="divide-y divide-border">
               {runsQuery.isPending ? (
-                Array.from({ length: 5 }, (_, index) => (
-                  <tr key={index}>
-                    <td className="px-4 py-4"><Skeleton className="h-4 w-52" /></td>
-                    <td className="px-4 py-4"><Skeleton className="h-4 w-32" /></td>
-                    <td className="px-4 py-4"><Skeleton className="h-6 w-28 rounded-full" /></td>
-                    <td className="px-4 py-4" />
-                  </tr>
-                ))
+                <AnalysisRunTableRowsSkeleton />
+              ) : listError && pageRuns.length === 0 ? (
+                <tr>
+                  <td colSpan={4} className="px-4 py-14 text-center text-sm text-muted-foreground">
+                    The Analysis Run list is unavailable right now.
+                  </td>
+                </tr>
               ) : pageRuns.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-4 py-14 text-center">
