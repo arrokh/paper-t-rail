@@ -199,7 +199,7 @@
 }
 
 .analysis-run-return-focus {
-  animation: analysis-run-return-focus 1.8s ease-out both;
+  animation: analysis-run-return-focus 3.2s ease-out both;
 }
 
 .api-fetch-progress {

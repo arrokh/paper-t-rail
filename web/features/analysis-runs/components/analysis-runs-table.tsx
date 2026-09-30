@@ -84,7 +84,7 @@ function updateSearchParams(
   router.replace(`${pathname}${suffix}`, { scroll: false });
 }
 
-const ANALYSIS_RUN_FOCUS_DURATION_MS = 1800;
+const ANALYSIS_RUN_FOCUS_DURATION_MS = 3200;
 const ANALYSIS_RUN_FOCUS_SCROLL_DURATION_MS = 1800;
 
 function scrollToFocusedRun(row: HTMLElement): () => void {
@@ -269,7 +269,7 @@ export function AnalysisRunsTable({
               </label>
               <Button
                 type="button"
-                variant="outline"
+                variant="ghost"
                 size="icon-lg"
                 aria-label="Refresh Analysis Runs"
                 title="Refresh Analysis Runs"

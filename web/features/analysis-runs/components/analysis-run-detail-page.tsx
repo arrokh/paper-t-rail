@@ -29,6 +29,13 @@ const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
   FAILED: "border-destructive/25 bg-destructive/10 text-destructive",
 };
 
+const ANALYSIS_RUN_VIEW_TAB_CLASS_NAME = cn(
+  "h-full min-w-32 px-4 font-semibold text-foreground/75",
+  "hover:bg-accent hover:text-accent-foreground",
+  "data-active:bg-primary data-active:text-primary-foreground data-active:shadow-sm",
+  "data-active:hover:bg-primary data-active:hover:text-primary-foreground",
+);
+
 function statusLabel(status: AnalysisRun["status"]): string {
   return status.replaceAll("_", " ").toLowerCase();
 }
@@ -220,9 +227,16 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
         }}
         className="gap-5"
       >
-        <TabsList aria-label="Analysis Run views" className="h-10 w-full sm:w-fit">
-          <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
-          <TabsTrigger value="review">Paper Review</TabsTrigger>
+        <TabsList
+          aria-label="Analysis Run views"
+          className="mx-auto h-12 w-fit max-w-full rounded-lg border border-border bg-muted/70 p-1 shadow-sm"
+        >
+          <TabsTrigger value="pipeline" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
+            Pipeline
+          </TabsTrigger>
+          <TabsTrigger value="review" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
+            Paper Review
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="pipeline" className="space-y-6">
           <AnalysisPipelineChart run={run} selectedStage={selectedStage} onSelectStage={selectStage} />
