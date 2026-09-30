@@ -99,6 +99,7 @@ const questions = [
         if (!pageLoadCover) return;
 
         const finishPageLoadCoverExit = () => {
+          document.querySelector("main.landing-page")?.removeAttribute("inert");
           document.documentElement.classList.remove("has-page-load-cover");
           pageLoadCover.remove();
         };
@@ -143,6 +144,9 @@ const questions = [
       <span class="page-load-cover__track" aria-hidden="true"><span></span></span>
     </div>
     <main class="landing-page">
+      <script is:inline>
+        document.querySelector("main.landing-page")?.setAttribute("inert", "");
+      </script>
   <header class="site-header">
     <a href="#top" class="site-brand" aria-label="Paper T-Rail home">
       <span>Paper T-Rail</span>
