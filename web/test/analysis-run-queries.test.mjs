@@ -6,8 +6,8 @@ import {
   recentAnalysisRunsQueryOptions,
   referenceResolutionReportQueryKey,
   referenceResolutionReportQueryOptions,
-  sourceDocumentPdfQueryKey,
-  sourceDocumentPdfQueryOptions,
+  sourceDocumentPdfAccessQueryKey,
+  sourceDocumentPdfAccessQueryOptions,
   recordHumanReviewMutationOptions,
   uploadAnalysisRunMutationOptions,
 } from "../features/analysis-runs/queries/analysis-run-queries.ts";
@@ -212,35 +212,47 @@ test("recent-run list polls only while a run is active and refreshes when the wi
   assert.equal(options.refetchOnWindowFocus, true);
 });
 
-test("original source PDF query preserves the PDF bytes and reports API errors", async (context) => {
+test("source PDF access query loads short-lived view and download URLs and reports API errors", async (context) => {
   const client = new QueryClient();
   const originalFetch = globalThis.fetch;
-  const bytes = new TextEncoder().encode("%PDF-1.7 original upload");
+  const access = {
+    filename: "paper.pdf",
+    viewUrl: "http://127.0.0.1:9000/view-signed",
+    downloadUrl: "http://127.0.0.1:9000/download-signed",
+    expiresAt: "2026-10-01T00:00:00Z",
+  };
   let request;
   globalThis.fetch = async (url, options) => {
     request = { url, options };
-    return new Response(bytes, { status: 200, headers: { "content-type": "application/pdf" } });
+    return new Response(JSON.stringify(access), { status: 200, headers: { "content-type": "application/json" } });
   };
   context.after(() => {
     globalThis.fetch = originalFetch;
     client.clear();
   });
 
-  const query = sourceDocumentPdfQueryOptions("run-1");
-  const pdf = await client.fetchQuery(query);
+  const query = sourceDocumentPdfAccessQueryOptions("run-1");
+  const urls = await client.fetchQuery(query);
 
   assert.equal(request.url, "/api/v1/analysis-runs/run-1/source-document");
-  assert.equal(request.options.headers.accept, "application/pdf");
-  assert.equal(pdf.type, "application/pdf");
-  assert.deepEqual(new Uint8Array(await pdf.arrayBuffer()), bytes);
-  assert.deepEqual(client.getQueryData(sourceDocumentPdfQueryKey("run-1")), pdf);
+  assert.deepEqual(urls, access);
+  assert.deepEqual(client.getQueryData(sourceDocumentPdfAccessQueryKey("run-1")), access);
 
   globalThis.fetch = async () => new Response(
     JSON.stringify({ code: "SOURCE_UNAVAILABLE", message: "The stored Source Document is temporarily unavailable." }),
     { status: 503, headers: { "content-type": "application/json" } },
   );
   await assert.rejects(
-    client.fetchQuery({ ...sourceDocumentPdfQueryOptions("run-2"), retry: false }),
+    client.fetchQuery({ ...sourceDocumentPdfAccessQueryOptions("run-2"), retry: false }),
     { message: "The stored Source Document is temporarily unavailable." },
   );
+});
+
+test("source PDF access URLs stay stable until the user explicitly refreshes them", () => {
+  const options = sourceDocumentPdfAccessQueryOptions("run-1");
+
+  assert.equal(options.staleTime, Infinity);
+  assert.equal(options.refetchInterval, false);
+  assert.equal(options.refetchOnWindowFocus, false);
+  assert.equal(options.retry, false);
 });

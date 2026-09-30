@@ -6,27 +6,31 @@ import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.http.AnalysisRunPage
 import com.papertrail.api.analysis.http.AnalysisRunSummary
+import com.papertrail.api.analysis.http.AnalysisRunSourcePdfAccess
 import com.papertrail.api.analysis.http.CreatedAnalysisRunResponse
 import com.papertrail.api.analysis.http.RunConfigurationRequest
-import com.papertrail.api.citation.parsing.ParsedDocumentRepository
-import com.papertrail.api.citation.parsing.ParsedDocumentView
 import com.papertrail.api.analysis.pagination.AnalysisRunCursorCodec
 import com.papertrail.api.analysis.pagination.Direction
-import com.papertrail.api.document.validation.PdfDocumentValidator
-import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
-import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
-import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.citation.parsing.ParsedDocumentRepository
+import com.papertrail.api.citation.parsing.ParsedDocumentView
+import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.document.service.SourceDocumentDeletedException
 import com.papertrail.api.document.service.lockActiveSourceDocument
+import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.document.storage.SourceObjectMetadata
+import com.papertrail.api.infrastructure.crypto.sha256Hex
+import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.ContentDisposition
 import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.server.ResponseStatusException
+import java.nio.charset.StandardCharsets
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.Instant
@@ -201,10 +205,10 @@ class AnalysisRunService(
             ?: throw ResponseStatusException(HttpStatus.CONFLICT, "Parsed document structure is not available until parsing completes.")
     }
 
-    fun getSourcePdf(runId: UUID): AnalysisRunSourcePdf {
+    fun getSourcePdfAccess(runId: UUID): AnalysisRunSourcePdfAccess {
         val source = jdbc.query(
             """
-            SELECT document.filename, document.object_key, document.sha256 AS document_sha256,
+            SELECT document.id AS document_id, document.filename, document.object_key, document.sha256 AS document_sha256,
                    run.source_content_sha256
               FROM analysis_runs run
               JOIN source_documents document ON document.id = run.document_id
@@ -215,6 +219,7 @@ class AnalysisRunService(
             """.trimIndent(),
             { resultSet, _ ->
                 StoredRunSourceDocument(
+                    documentId = resultSet.getObject("document_id", UUID::class.java),
                     filename = resultSet.getString("filename"),
                     objectKey = resultSet.getString("object_key"),
                     documentSha256 = resultSet.getString("document_sha256"),
@@ -224,8 +229,12 @@ class AnalysisRunService(
             runId,
         ).firstOrNull() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
 
-        val content = try {
-            objectStore.get(source.objectKey)
+        if (source.documentSha256 != source.runSourceSha256 || source.objectKey != "source/${source.documentId}/${source.runSourceSha256}.pdf") {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "The stored Source Document does not match this Analysis Run.")
+        }
+
+        val metadata = try {
+            objectStore.stat(source.objectKey)
         } catch (exception: Exception) {
             logger.atWarn()
                 .addKeyValue("analysisRunId", runId)
@@ -234,12 +243,49 @@ class AnalysisRunService(
             throw ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "The stored Source Document is temporarily unavailable.")
         }
 
-        val actualHash = sha256Hex(content)
-        if (source.documentSha256 != source.runSourceSha256 || actualHash != source.runSourceSha256) {
+        if (metadata.sha256 != null && metadata.sha256 != source.runSourceSha256) {
             throw ResponseStatusException(HttpStatus.CONFLICT, "The stored Source Document does not match this Analysis Run.")
         }
 
-        return AnalysisRunSourcePdf(filename = source.filename, content = content)
+        if (metadata.sha256 == null) verifyLegacySourceObject(runId, source, metadata)
+
+        val viewDisposition = ContentDisposition.inline().filename(source.filename, StandardCharsets.UTF_8).build().toString()
+        val downloadDisposition = ContentDisposition.attachment().filename(source.filename, StandardCharsets.UTF_8).build().toString()
+        val viewUrl: String
+        val downloadUrl: String
+        try {
+            viewUrl = objectStore.presignGet(source.objectKey, viewDisposition, SOURCE_PDF_PRESIGNED_URL_EXPIRY_SECONDS)
+            downloadUrl = objectStore.presignGet(source.objectKey, downloadDisposition, SOURCE_PDF_PRESIGNED_URL_EXPIRY_SECONDS)
+        } catch (exception: Exception) {
+            logger.atWarn()
+                .addKeyValue("analysisRunId", runId)
+                .addKeyValue("errorType", exception.javaClass.simpleName)
+                .log("Could not create temporary Source Document links")
+            throw ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "The original Source Document is temporarily unavailable.")
+        }
+
+        return AnalysisRunSourcePdfAccess(
+            filename = source.filename,
+            viewUrl = viewUrl,
+            downloadUrl = downloadUrl,
+            expiresAt = Instant.now().plusSeconds(SOURCE_PDF_PRESIGNED_URL_EXPIRY_SECONDS.toLong()),
+        )
+    }
+
+    private fun verifyLegacySourceObject(runId: UUID, source: StoredRunSourceDocument, metadata: SourceObjectMetadata) {
+        val content = try {
+            objectStore.get(source.objectKey)
+        } catch (exception: Exception) {
+            logger.atWarn()
+                .addKeyValue("analysisRunId", runId)
+                .addKeyValue("errorType", exception.javaClass.simpleName)
+                .log("Legacy Source Document unavailable for integrity verification")
+            throw ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "The stored Source Document is temporarily unavailable.")
+        }
+
+        if (metadata.size != content.size.toLong() || sha256Hex(content) != source.runSourceSha256) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "The stored Source Document does not match this Analysis Run.")
+        }
     }
 
     fun list(limit: Int = 25, cursorToken: String? = null, query: String? = null, status: String? = null): AnalysisRunPage {
@@ -406,6 +452,7 @@ class AnalysisRunService(
     private data class StoredDocument(val id: UUID, val filename: String, val objectKey: String, val sha256: String)
 
     private data class StoredRunSourceDocument(
+        val documentId: UUID,
         val filename: String,
         val objectKey: String,
         val documentSha256: String,
@@ -414,6 +461,7 @@ class AnalysisRunService(
 
     companion object {
         private const val MAX_FILENAME_QUERY_LENGTH = 200
+        private const val SOURCE_PDF_PRESIGNED_URL_EXPIRY_SECONDS = 6 * 60 * 60
         private val RUN_STATUSES = setOf("QUEUED", "PROCESSING", "PARSED", "COMPLETED", "COMPLETED_WITH_WARNINGS", "FAILED")
         private val logger = LoggerFactory.getLogger(AnalysisRunService::class.java)
     }

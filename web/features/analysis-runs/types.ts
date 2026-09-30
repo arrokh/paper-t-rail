@@ -170,6 +170,13 @@ export type AnalysisRun = {
   failureReason: string | null;
 };
 
+export type SourceDocumentPdfAccess = {
+  filename: string;
+  viewUrl: string;
+  downloadUrl: string;
+  expiresAt: string;
+};
+
 export type AnalysisRunPage = {
   items: AnalysisRun[];
   nextCursor: string | null;

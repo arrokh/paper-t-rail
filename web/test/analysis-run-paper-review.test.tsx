@@ -143,24 +143,22 @@ const report: ReferenceResolutionReportResponse = {
   },
 };
 
-let originalCreateObjectUrl: PropertyDescriptor | undefined;
-let originalRevokeObjectUrl: PropertyDescriptor | undefined;
-
-function installObjectUrlStubs() {
-  originalCreateObjectUrl = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
-  originalRevokeObjectUrl = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
-  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:uploaded-source") });
-  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-}
-
 function installSourcePdfResponse() {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url === `/api/v1/analysis-runs/${run.id}/source-document`) {
-      return { ok: true, status: 200, blob: async () => new Blob(["%PDF original upload"], { type: "application/pdf" }) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          filename: run.filename,
+          viewUrl: "http://127.0.0.1:9000/source-documents/view-signed",
+          downloadUrl: "http://127.0.0.1:9000/source-documents/download-signed",
+          expiresAt: "2026-10-01T00:00:00Z",
+        }),
+      };
     }
     throw new Error(`Unexpected request: ${url}`);
   }));
-  installObjectUrlStubs();
 }
 
 type RenderReviewOptions = {
@@ -207,12 +205,6 @@ function renderDetailPage() {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  if (originalCreateObjectUrl) Object.defineProperty(URL, "createObjectURL", originalCreateObjectUrl);
-  else Reflect.deleteProperty(URL, "createObjectURL");
-  if (originalRevokeObjectUrl) Object.defineProperty(URL, "revokeObjectURL", originalRevokeObjectUrl);
-  else Reflect.deleteProperty(URL, "revokeObjectURL");
-  originalCreateObjectUrl = undefined;
-  originalRevokeObjectUrl = undefined;
   window.history.replaceState(null, "", "/");
   queryHookMocks.useAnalysisRun.mockReset();
   queryHookMocks.useParsedDocument.mockReset();
@@ -220,14 +212,39 @@ afterEach(() => {
 });
 
 describe("Analysis Run Paper Review", () => {
-  it("shows the uploaded Source Document PDF and links to its run-specific original download", async () => {
+  it("loads the uploaded Source Document directly from a short-lived MinIO URL", async () => {
     installSourcePdfResponse();
     renderReview();
 
     const pdf = await screen.findByTitle("Original uploaded PDF: uploaded-paper.pdf");
-    await waitFor(() => expect(pdf.getAttribute("src")).toBe("blob:uploaded-source"));
-    expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe(`/api/v1/analysis-runs/${run.id}/source-document`);
+    await waitFor(() => expect(pdf.getAttribute("src")).toBe("http://127.0.0.1:9000/source-documents/view-signed"));
+    expect(screen.getByRole("link", { name: "Download" }).getAttribute("href")).toBe("http://127.0.0.1:9000/source-documents/download-signed");
     expect(screen.getByText(/parser does not provide reliable PDF page coordinates/)).toBeTruthy();
+  });
+
+  it("renews MinIO URLs only when Refresh PDF is explicitly selected", async () => {
+    let issue = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url !== `/api/v1/analysis-runs/${run.id}/source-document`) throw new Error(`Unexpected request: ${url}`);
+      issue += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          filename: run.filename,
+          viewUrl: `http://127.0.0.1:9000/source-documents/view-${issue}`,
+          downloadUrl: `http://127.0.0.1:9000/source-documents/download-${issue}`,
+          expiresAt: "2026-10-01T00:00:00Z",
+        }),
+      };
+    }));
+    renderReview();
+
+    const pdf = await screen.findByTitle("Original uploaded PDF: uploaded-paper.pdf");
+    await waitFor(() => expect(pdf.getAttribute("src")).toBe("http://127.0.0.1:9000/source-documents/view-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh PDF" }));
+    await waitFor(() => expect(pdf.getAttribute("src")).toBe("http://127.0.0.1:9000/source-documents/view-2"));
+    expect(issue).toBe(2);
   });
 
   it("groups parsed claims with linked bibliography references and reports a selected AI pair", async () => {

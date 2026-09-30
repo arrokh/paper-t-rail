@@ -7,6 +7,7 @@ import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.document.storage.SourceObjectMetadata
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
 import com.papertrail.api.evidence.domain.EvidenceClaim
 import com.papertrail.api.evidence.domain.EvidenceIndexingContext
@@ -73,6 +74,8 @@ class EvidenceRetrievalServiceTest {
         val objectStore = object : SourceDocumentObjectStore {
             override fun put(objectKey: String, content: ByteArray, contentType: String) = Unit
             override fun get(objectKey: String): ByteArray = bytes
+            override fun stat(objectKey: String) = SourceObjectMetadata(bytes.size.toLong(), null)
+            override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int) = "http://minio.test/$objectKey"
             override fun delete(objectKey: String) = Unit
         }
         val parser = object : CitedPaperParser {

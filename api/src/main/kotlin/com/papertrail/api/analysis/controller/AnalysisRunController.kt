@@ -2,14 +2,15 @@ package com.papertrail.api.analysis.controller
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.http.AnalysisRunPage
+import com.papertrail.api.analysis.http.AnalysisRunSourcePdfAccess
 import com.papertrail.api.analysis.http.AnalysisRunSummary
 import com.papertrail.api.analysis.http.CreatedAnalysisRunResponse
 import com.papertrail.api.analysis.http.RunConfigurationRequest
-import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.analysis.http.UploadAnalysisRunRequest
+import com.papertrail.api.analysis.service.AnalysisRunService
+import com.papertrail.api.citation.parsing.ParsedDocumentView
 import com.papertrail.api.document.validation.DocumentValidationException
 import com.papertrail.api.http.ApiError
-import com.papertrail.api.citation.parsing.ParsedDocumentView
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
 import io.swagger.v3.oas.annotations.headers.Header
@@ -20,8 +21,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import io.swagger.v3.oas.annotations.parameters.RequestBody as OpenApiRequestBody
 import org.springframework.http.HttpStatus
-import org.springframework.http.ContentDisposition
-import org.springframework.http.HttpHeaders
+import org.springframework.http.CacheControl
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -34,7 +34,6 @@ import org.springframework.web.bind.annotation.RequestPart
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
 import org.springframework.web.server.ResponseStatusException
-import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 @RestController
@@ -146,42 +145,30 @@ class AnalysisRunController(
         ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
 
     @Operation(
-        summary = "View the original Source Document PDF for an Analysis Run",
-        description = "Returns the exact uploaded Source Document PDF pinned to this Analysis Run, including while its worker processing is still in progress.",
+        summary = "Get short-lived original Source Document PDF URLs for an Analysis Run",
+        description = "Returns short-lived, read-only MinIO URLs for viewing and downloading the exact uploaded PDF pinned to this Analysis Run, including while worker processing is in progress. The URL is valid for six hours and must be treated as a bearer credential.",
     )
     @ApiResponses(
         value = [
             ApiResponse(
                 responseCode = "200",
-                description = "Original Source Document PDF",
-                content = [Content(mediaType = MediaType.APPLICATION_PDF_VALUE, schema = Schema(type = "string", format = "binary"))],
-                headers = [
-                    Header(name = HttpHeaders.CONTENT_DISPOSITION, description = "Inline filename for the original uploaded PDF.", schema = Schema(type = "string")),
-                    Header(name = HttpHeaders.CACHE_CONTROL, description = "Always no-store; source documents are not cached.", schema = Schema(type = "string")),
-                    Header(name = "X-Content-Type-Options", description = "Always nosniff.", schema = Schema(type = "string")),
-                ],
+                description = "Short-lived view and download URLs",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = AnalysisRunSourcePdfAccess::class))],
+                headers = [Header(name = "Cache-Control", description = "Always no-store because the response contains bearer URLs.", schema = Schema(type = "string"))],
             ),
             ApiResponse(responseCode = "404", description = "Analysis Run not found or its Source Document was deleted", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "409", description = "Stored Source Document integrity check failed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "503", description = "Stored Source Document is temporarily unavailable", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
-    @GetMapping("/analysis-runs/{runId}/source-document", produces = [MediaType.APPLICATION_PDF_VALUE])
-    fun getSourceDocument(
+    @GetMapping("/analysis-runs/{runId}/source-document", produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun getSourceDocumentAccess(
         @Parameter(description = "Analysis Run identifier.", required = true, schema = Schema(type = "string", format = "uuid"))
         @PathVariable runId: UUID,
-    ): ResponseEntity<ByteArray> {
-        val sourcePdf = analysisRunService.getSourcePdf(runId)
-        val contentDisposition = ContentDisposition.inline()
-            .filename(sourcePdf.filename, StandardCharsets.UTF_8)
-            .build()
+    ): ResponseEntity<AnalysisRunSourcePdfAccess> {
         return ResponseEntity.ok()
-            .contentType(MediaType.APPLICATION_PDF)
-            .contentLength(sourcePdf.content.size.toLong())
-            .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition.toString())
-            .header(HttpHeaders.CACHE_CONTROL, "no-store")
-            .header("X-Content-Type-Options", "nosniff")
-            .body(sourcePdf.content)
+            .cacheControl(CacheControl.noStore())
+            .body(analysisRunService.getSourcePdfAccess(runId))
     }
 
     @Operation(

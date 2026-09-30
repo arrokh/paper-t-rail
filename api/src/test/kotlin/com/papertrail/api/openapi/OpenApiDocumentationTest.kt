@@ -32,15 +32,14 @@ import com.papertrail.api.scholarly.references.http.CrossrefCacheInvalidationReq
 import com.papertrail.api.scholarly.references.http.CrossrefCacheLookupType
 import com.papertrail.api.scholarly.references.service.CrossrefCacheInvalidationService
 import com.papertrail.api.analysis.http.AnalysisRunPage
+import com.papertrail.api.analysis.http.AnalysisRunSourcePdfAccess
 import com.papertrail.api.analysis.http.AnalysisRunSummary
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
 import com.papertrail.api.analysis.service.AnalysisRunService
-import com.papertrail.api.analysis.service.AnalysisRunSourcePdf
 import com.papertrail.api.document.service.SourceDocumentDeletionService
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -119,22 +118,24 @@ class OpenApiDocumentationTest {
     }
 
     @Test
-    fun `source PDF can be requested from its Analysis Run`() {
+    fun `source PDF access returns short-lived no-store links from its Analysis Run`() {
         val runId = UUID.randomUUID()
-        val pdfBytes = "%PDF-1.7\noriginal source".toByteArray()
-        Mockito.`when`(analysisRunService.getSourcePdf(runId))
-            .thenReturn(AnalysisRunSourcePdf(filename = "source paper.pdf", content = pdfBytes))
+        val expiresAt = Instant.parse("2026-10-01T00:00:00Z")
+        Mockito.`when`(analysisRunService.getSourcePdfAccess(runId))
+            .thenReturn(AnalysisRunSourcePdfAccess("source paper.pdf", "http://127.0.0.1:9000/view", "http://127.0.0.1:9000/download", expiresAt))
 
         val response = mockMvc.perform(get("/api/v1/analysis-runs/$runId/source-document"))
             .andExpect(status().isOk)
-            .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
             .andReturn()
             .response
 
-        assertArrayEquals(pdfBytes, response.contentAsByteArray)
-        assertTrue(response.getHeader("Content-Disposition")?.startsWith("inline;") == true)
+        val body = objectMapper.readTree(response.contentAsString)
+        assertEquals("source paper.pdf", body.path("filename").asText())
+        assertEquals("http://127.0.0.1:9000/view", body.path("viewUrl").asText())
+        assertEquals("http://127.0.0.1:9000/download", body.path("downloadUrl").asText())
+        assertEquals(expiresAt, Instant.parse(body.path("expiresAt").asText()))
         assertEquals("no-store", response.getHeader("Cache-Control"))
-        assertEquals("nosniff", response.getHeader("X-Content-Type-Options"))
     }
 
     @Test
@@ -207,11 +208,15 @@ class OpenApiDocumentationTest {
         assertTrue(parsedDocument.path("responses").has("409"))
         val sourceDocument = paths.path("/api/v1/analysis-runs/{runId}/source-document").path("get")
         assertTrue(sourceDocument.path("parameters").any { it.path("name").asText() == "runId" && it.path("description").asText().contains("Analysis Run") })
-        assertTrue(sourceDocument.path("responses").path("200").path("content").has("application/pdf"))
-        val sourcePdfHeaders = sourceDocument.path("responses").path("200").path("headers")
-        assertTrue(sourcePdfHeaders.path("Content-Disposition").path("description").asText().contains("Inline filename"))
-        assertTrue(sourcePdfHeaders.path("Cache-Control").path("description").asText().contains("no-store"))
-        assertTrue(sourcePdfHeaders.path("X-Content-Type-Options").path("description").asText().contains("nosniff"))
+        val sourcePdfResponse = sourceDocument.path("responses").path("200")
+        assertTrue(sourcePdfResponse.path("content").has("application/json"))
+        assertTrue(sourcePdfResponse.path("headers").path("Cache-Control").path("description").asText().contains("bearer URLs"))
+        val sourcePdfSchemaName = sourcePdfResponse.path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val sourcePdfProperties = document.path("components").path("schemas").path(sourcePdfSchemaName).path("properties")
+        assertTrue(sourcePdfProperties.has("filename"))
+        assertTrue(sourcePdfProperties.has("viewUrl"))
+        assertTrue(sourcePdfProperties.has("downloadUrl"))
+        assertTrue(sourcePdfProperties.has("expiresAt"))
         assertTrue(sourceDocument.path("responses").has("404"))
         assertTrue(sourceDocument.path("responses").has("409"))
         assertTrue(sourceDocument.path("responses").has("503"))

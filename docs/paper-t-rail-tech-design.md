@@ -2784,7 +2784,9 @@ The detail response includes persisted stage and work-item execution progress. T
 GET /api/v1/analysis-runs/{id}/source-document
 ```
 
-Returns the exact PDF uploaded for the Analysis Run, including before worker processing completes. The service verifies that the stored PDF content hash agrees with both the Analysis Run and Source Document records. A deleted or missing run/document returns `404`, an integrity mismatch returns `409`, and temporary object storage failures return `503`. The successful `application/pdf` response includes an inline `Content-Disposition` filename, `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`.
+Returns JSON with short-lived, read-only MinIO URLs for viewing and downloading the exact PDF uploaded for the Analysis Run, including before worker processing completes. Before signing, the service verifies that the Source Document and Analysis Run hashes agree, the object key matches the content-addressed document path, and the stored checksum metadata matches the run. Legacy objects without checksum metadata are fetched and hashed before signing. The response is `Cache-Control: no-store`; the PDF URLs expire after six hours and must be treated as bearer credentials. MinIO sets the PDF content type and inline/attachment disposition on the object response. A deleted or missing run/document returns `404`, an integrity mismatch returns `409`, and temporary object storage failures return `503`.
+
+Configure `S3_PUBLIC_ENDPOINT` to an address the user's browser can reach for signed PDF URLs. The API and worker continue to use the private `S3_ENDPOINT` for storage operations; in the local Compose setup, the public endpoint defaults to `http://127.0.0.1:9000`.
 
 ### Parsed document structure
 

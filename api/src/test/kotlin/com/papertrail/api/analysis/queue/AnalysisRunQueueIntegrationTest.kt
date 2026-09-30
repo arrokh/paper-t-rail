@@ -107,6 +107,7 @@ import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRep
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import com.papertrail.api.infrastructure.providers.reviewedExternalProviderCatalog
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.document.storage.SourceObjectMetadata
 import com.papertrail.api.document.service.SourceDocumentDeletionService
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
@@ -178,24 +179,26 @@ import java.util.concurrent.atomic.AtomicInteger
 @Testcontainers
 class AnalysisRunQueueIntegrationTest {
     @Test
-    fun `original source PDF is available for a queued run and rejects deleted or changed sources`() {
+    fun `original source PDF links are available for a queued run and reject deleted or changed sources`() {
         val created = createQueuedRun()
-        val source = analysisRunService().getSourcePdf(created.analysisRunId)
+        val source = analysisRunService().getSourcePdfAccess(created.analysisRunId)
 
         assertEquals("paper.pdf", source.filename)
-        assertArrayEquals("integration pdf bytes".toByteArray(), source.content)
+        assertTrue(source.viewUrl.contains("source/${created.documentId}/${created.hash}.pdf"))
+        assertTrue(source.downloadUrl.contains("source/${created.documentId}/${created.hash}.pdf"))
+        assertTrue(source.expiresAt.isAfter(Instant.now()))
 
         val objectKey = "source/${created.documentId}/${created.hash}.pdf"
         objectStore.put(objectKey, "changed PDF bytes".toByteArray())
         val changed = assertThrows(ResponseStatusException::class.java) {
-            analysisRunService().getSourcePdf(created.analysisRunId)
+            analysisRunService().getSourcePdfAccess(created.analysisRunId)
         }
         assertEquals(HttpStatus.CONFLICT, changed.statusCode)
         objectStore.put(objectKey, "integration pdf bytes".toByteArray())
 
         jdbc.update("INSERT INTO source_document_tombstones (document_id) VALUES (?)", created.documentId)
         val deleted = assertThrows(ResponseStatusException::class.java) {
-            analysisRunService().getSourcePdf(created.analysisRunId)
+            analysisRunService().getSourcePdfAccess(created.analysisRunId)
         }
         assertEquals(HttpStatus.NOT_FOUND, deleted.statusCode)
     }
@@ -422,6 +425,9 @@ class AnalysisRunQueueIntegrationTest {
         val flakyObjectStore = object : SourceDocumentObjectStore {
             override fun put(objectKey: String, content: ByteArray, contentType: String) = objectStore.put(objectKey, content, contentType)
             override fun get(objectKey: String): ByteArray = objectStore.get(objectKey)
+            override fun stat(objectKey: String): SourceObjectMetadata = objectStore.stat(objectKey)
+            override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int): String =
+                objectStore.presignGet(objectKey, responseContentDisposition, expirySeconds)
             override fun delete(objectKey: String) {
                 if (deleteAttempts.getAndIncrement() == 0) error("simulated object-store failure")
                 objectStore.delete(objectKey)
@@ -3139,15 +3145,25 @@ class AnalysisRunQueueIntegrationTest {
     private class MemoryObjectStore : SourceDocumentObjectStore {
         private val content = mutableMapOf<String, ByteArray>()
         private val contentTypes = mutableMapOf<String, String>()
+        private val checksums = mutableMapOf<String, String>()
         override fun put(objectKey: String, content: ByteArray, contentType: String) {
             this.content[objectKey] = content.copyOf()
             contentTypes[objectKey] = contentType
+            checksums[objectKey] = MessageDigest.getInstance("SHA-256")
+                .digest(content)
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }
         override fun get(objectKey: String): ByteArray = content[objectKey]?.copyOf() ?: error("Source object missing")
-        override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey) }
+        override fun stat(objectKey: String): SourceObjectMetadata {
+            val value = content[objectKey] ?: error("Source object missing")
+            return SourceObjectMetadata(size = value.size.toLong(), sha256 = checksums[objectKey])
+        }
+        override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int): String =
+            "http://minio.test/source-documents/$objectKey?disposition=$responseContentDisposition&expires=$expirySeconds"
+        override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey); checksums.remove(objectKey) }
         fun contentType(objectKey: String): String? = contentTypes[objectKey]
         fun contains(objectKey: String): Boolean = objectKey in content
-        fun clear() { content.clear(); contentTypes.clear() }
+        fun clear() { content.clear(); contentTypes.clear(); checksums.clear() }
     }
 
     @BeforeEach
