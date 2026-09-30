@@ -92,7 +92,7 @@ function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
 
 function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
   return (
-    <Collapsible className="group/provenance rounded-xl border border-border bg-card shadow-sm">
+    <Collapsible defaultOpen className="group/provenance rounded-xl border border-border bg-card shadow-sm">
       <CollapsibleTrigger className="group flex min-h-14 w-full items-center justify-between gap-4 rounded-xl px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-5">
         <span className="min-w-0">
           <span className="block font-medium">Run provenance</span>
