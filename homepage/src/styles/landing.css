@@ -1346,6 +1346,23 @@ html.has-scroll-nav .hero {
   user-select: none;
 }
 
+.train-consist__window {
+  position: absolute;
+  z-index: 1;
+  top: 39%;
+  left: var(--window-left);
+  width: var(--window-width);
+  height: 12%;
+  background: var(--ptr-hero-ground);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms steps(2, end);
+}
+
+.train-consist__window[data-carriage-light="off"] {
+  opacity: 0.98;
+}
+
 .hero-scene__train {
   animation: hero-train-lights 19s ease-in-out infinite;
   filter: brightness(1);
@@ -1812,7 +1829,7 @@ html.has-scroll-nav .hero {
 }
 
 .hero-scene__train {
-  transform: translateY(66%);
+  transform: none;
   animation: hero-train-lights 19s ease-in-out infinite;
 }
 
@@ -2008,10 +2025,6 @@ html.has-scroll-nav .hero {
   .hero-scene__train-wrap {
     bottom: 15svh;
     width: min(75vw, 360px);
-  }
-
-  .hero-scene__train {
-    transform: translateY(22%);
   }
 
   .architecture-diagram {
@@ -2259,7 +2272,8 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 }
 
 .hero-scene__train-wrap {
-  bottom: 4svh;
+  /* Match the wheels to the deck row in bridge.png at every viewport height. */
+  bottom: calc(25.1svh - 176px - clamp(14px, 1.12vw, 19px));
   transform: translateX(-50%);
 }
 
@@ -2301,7 +2315,7 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   animation: hero-title-fog-drift 61s ease-in-out -24s infinite alternate-reverse;
 }
 
-.hero-scene__train { animation: none; filter: none; }
+.hero-scene__train { transform: none; animation: none; filter: none; }
 
 .train-consist--round-headlamp::before,
 .train-consist--round-headlamp::after {
@@ -2438,7 +2452,9 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 
 @media (max-width: 760px) {
   .landing-section { min-height: 100svh; }
-  .hero-scene__train-wrap { bottom: 15svh; }
+  .hero-scene__train-wrap {
+    bottom: calc(31.6svh - 157px - clamp(10px, 2.56vw, 12px));
+  }
   .hero-scene__train-fog { bottom: 14svh; height: 16%; }
 
   .hero-scene__cloud--far-left { top: 10%; }

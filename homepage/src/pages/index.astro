@@ -374,9 +374,60 @@ const questions = [
 <script is:inline>
   const heroForMotion = document.querySelector(".hero");
   const trainForMotion = document.querySelector(".train-consist--round-headlamp");
+  const passengerCars = Array.from(document.querySelectorAll("[data-passenger-car]"));
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   let pointerFrame = 0;
   let headlampTimer = 0;
+  const carriageLightTimers = new Set();
+
+  const randomBetween = (minimum, maximum) =>
+    Math.floor(minimum + Math.random() * (maximum - minimum + 1));
+
+  const scheduleCarriageLightTimer = (callback, delay) => {
+    const timer = window.setTimeout(() => {
+      carriageLightTimers.delete(timer);
+      callback();
+    }, delay);
+    carriageLightTimers.add(timer);
+  };
+
+  const scheduleCarriageLightChange = (car, delay) => {
+    if (reducedMotion.matches || !car.isConnected) return;
+    scheduleCarriageLightTimer(() => {
+      if (reducedMotion.matches || !car.isConnected) return;
+
+      const litWindows = Array.from(car.querySelectorAll("[data-carriage-light]"))
+        .filter((lightWindow) => lightWindow.getAttribute("data-carriage-light") !== "off");
+      if (litWindows.length <= 2) {
+        scheduleCarriageLightChange(car, randomBetween(2500, 10000));
+        return;
+      }
+
+      for (let index = litWindows.length - 1; index > 0; index -= 1) {
+        const swapIndex = Math.floor(Math.random() * (index + 1));
+        [litWindows[index], litWindows[swapIndex]] = [litWindows[swapIndex], litWindows[index]];
+      }
+
+      const outageCount = randomBetween(1, Math.min(3, litWindows.length - 2));
+      const darkenedWindows = litWindows.slice(0, outageCount);
+      darkenedWindows.forEach((lightWindow) => lightWindow.setAttribute("data-carriage-light", "off"));
+
+      scheduleCarriageLightTimer(() => {
+        darkenedWindows.forEach((lightWindow) => lightWindow.setAttribute("data-carriage-light", "on"));
+        scheduleCarriageLightChange(car, randomBetween(2500, 10000));
+      }, randomBetween(4000, 30000));
+    }, delay);
+  };
+
+  const resetCarriageLights = () => {
+    carriageLightTimers.forEach((timer) => window.clearTimeout(timer));
+    carriageLightTimers.clear();
+    passengerCars.forEach((car) => {
+      car.querySelectorAll("[data-carriage-light]").forEach((lightWindow) => {
+        lightWindow.setAttribute("data-carriage-light", "on");
+      });
+    });
+  };
 
   const resetHeroFogParallax = () => {
     heroForMotion?.style.setProperty("--hero-title-fog-x", "0px");
@@ -413,8 +464,12 @@ const questions = [
     window.clearTimeout(headlampTimer);
     window.cancelAnimationFrame(pointerFrame);
     resetHeroFogParallax();
+    resetCarriageLights();
     setHeadlamp(true);
-    if (!reducedMotion.matches) scheduleHeadlampChange();
+    if (!reducedMotion.matches) {
+      scheduleHeadlampChange();
+      passengerCars.forEach((car) => scheduleCarriageLightChange(car, randomBetween(1200, 8000)));
+    }
   };
 
   heroForMotion?.addEventListener("pointermove", updateHeroFogParallax, { passive: true });

@@ -2,6 +2,8 @@
 interface TrainSegment {
   width: string;
   sourceStart: string;
+  windowLefts?: number[];
+  windowWidth?: string;
 }
 
 interface Props {
@@ -12,9 +14,9 @@ interface Props {
 const { className = "", loading = "lazy" } = Astro.props;
 
 const segments: TrainSegment[] = [
-  { width: "0.244", sourceStart: "0" },
-  { width: "0.2", sourceStart: "0.244" },
-  { width: "0.2", sourceStart: "0.444" },
+  { width: "0.244", sourceStart: "0", windowLefts: [24, 34, 46, 57, 68, 79], windowWidth: "6%" },
+  { width: "0.2", sourceStart: "0.244", windowLefts: [8, 23, 38, 52, 67, 81], windowWidth: "7.5%" },
+  { width: "0.2", sourceStart: "0.444", windowLefts: [10, 25, 40, 54, 69, 84], windowWidth: "7.5%" },
   { width: "0.204", sourceStart: "0.644" },
 ];
 ---
@@ -24,6 +26,7 @@ const segments: TrainSegment[] = [
     segments.map((segment, index) => (
       <span
         class="train-consist__car"
+        data-passenger-car={segment.windowLefts ? "true" : undefined}
         style={`--segment-width: ${segment.width}; --sprite-start: ${segment.sourceStart}; --car-delay: ${index * 240}ms`}
       >
         <img
@@ -35,6 +38,13 @@ const segments: TrainSegment[] = [
           decoding="async"
           draggable="false"
         />
+        {segment.windowLefts?.map((left) => (
+          <span
+            class="train-consist__window"
+            data-carriage-light="on"
+            style={`--window-left: ${left}%; --window-width: ${segment.windowWidth ?? "6%"}`}
+          ></span>
+        ))}
       </span>
     ))
   }
