@@ -24,8 +24,8 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
       <BackToTopFab />
 
-      <footer className="mt-auto w-full border-t border-border bg-card px-4 py-5 text-center sm:px-6">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-1">
+      <footer className="mt-auto flex min-h-[6.5rem] w-full items-center justify-center border-t border-border bg-card px-4 py-5 text-center sm:px-6">
+        <div className="mx-auto flex max-w-6xl flex-row items-center justify-center gap-2 whitespace-nowrap">
           <PageTransitionLink
             direction="back"
             href="/"
@@ -38,7 +38,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
             href="https://nooroctavian.id/"
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-sm text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="rounded-sm text-xs text-muted-foreground no-underline hover:text-primary hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             by nooroctavian.id
           </a>

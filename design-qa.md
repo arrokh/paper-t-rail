@@ -15,7 +15,7 @@
 - Desktop visual review: local Astro preview at `http://127.0.0.1:4322/#architecture`, 1280 × 720 CSS px. The 01→02 top row and 03→04 return row follow the right-angle track; stage 05 continues below the fold. The section remains readable as the user scrolls through its full content.
 - Mobile visual review: local Astro preview at `http://127.0.0.1:4322/#architecture`, 390 × 844 CSS px. The five cards stack on a centered gold route, and the document width is 375 px within the 390 px viewport.
 - Hero review at 1280 × 720 and 390 × 844 CSS px confirmed the clouds sit above the title, the title and train remain fixed while separate fog layers parallax around them, and the train meets the bridge deck. The headlamp was observed in its off state; its runtime switches randomly between on and off at intervals no longer than 15 seconds.
-- The workspace and homepage use the same Fraunces Paper T-Rail wordmark, red-and-paper favicon mark, centered two-line footer identity, shared paper palette, and shared font tokens. The homepage primary CTA uses gold with ink; the header CTA uses red with paper text.
+- The workspace and homepage use the same Fraunces Paper T-Rail wordmark, red-and-paper favicon mark, centered one-line footer identity, shared paper palette, and shared font tokens. The homepage primary CTA uses gold with ink; the header CTA uses red with paper text.
 - The mobile page and the Paper Review workspace have no horizontal overflow at 390 CSS px.
 - The inline desktop and mobile browser captures were reviewed in this session; the browser tool does not persist those captures as files.
 
