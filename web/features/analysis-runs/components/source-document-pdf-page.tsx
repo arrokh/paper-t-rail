@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import type { PdfTextRange } from "@/features/analysis-runs/components/pdf-text-search";
+import { pdfTextRangeClientRects } from "@/features/analysis-runs/components/pdf-text-highlight";
 
 type PdfJsLibrary = typeof import("pdfjs-dist");
 
@@ -28,6 +29,7 @@ export function SourceDocumentPdfPage({
   const viewerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textLayerRef = useRef<HTMLDivElement>(null);
+  const highlightLayerRef = useRef<HTMLDivElement>(null);
   const textDivsRef = useRef<HTMLElement[]>([]);
   const [viewerWidth, setViewerWidth] = useState(640);
   const [textLayerRevision, setTextLayerRevision] = useState(0);
@@ -115,13 +117,18 @@ export function SourceDocumentPdfPage({
     for (const textDiv of textDivsRef.current) {
       clearPdfSearchHighlights(textDiv);
     }
+    highlightLayerRef.current?.replaceChildren();
+    const highlightLayer = highlightLayerRef.current;
+    const highlightLayerRect = highlightLayer?.getBoundingClientRect();
 
     const rangesInReverseTextOrder = [...highlightedTextRanges].sort((first, second) =>
       second.itemIndex - first.itemIndex || second.startOffset - first.startOffset,
     );
     for (const range of rangesInReverseTextOrder) {
       const textDiv = textDivsRef.current[range.itemIndex];
-      if (textDiv) highlightPdfTextRange(textDiv, range.startOffset, range.endOffset);
+      if (textDiv && highlightLayer && highlightLayerRect) {
+        highlightPdfTextRange(textDiv, range, highlightLayer, highlightLayerRect);
+      }
     }
 
     const target = textDivsRef.current[highlightedTextRanges[0]?.itemIndex ?? highlightedItemIndexes[0] ?? -1];
@@ -150,6 +157,7 @@ export function SourceDocumentPdfPage({
       <div className="relative mx-auto w-fit bg-white shadow-sm">
         <canvas ref={canvasRef} aria-hidden="true" className="block" />
         <div ref={textLayerRef} className="source-document-pdf-text-layer textLayer" aria-hidden="true" />
+        <div ref={highlightLayerRef} className="pointer-events-none absolute inset-0 z-[2] overflow-hidden" aria-hidden="true" />
       </div>
       <p className="sr-only">Text of PDF page {pageNumber}: {accessiblePageText}</p>
     </div>
@@ -164,7 +172,13 @@ function clearPdfSearchHighlights(textDiv: HTMLElement) {
   textDiv.normalize();
 }
 
-function highlightPdfTextRange(textDiv: HTMLElement, startOffset: number, endOffset: number): boolean {
+function highlightPdfTextRange(
+  textDiv: HTMLElement,
+  range: PdfTextRange,
+  highlightLayer: HTMLElement,
+  layerRect: DOMRect,
+): boolean {
+  const { startOffset, endOffset } = range;
   if (startOffset < 0 || endOffset <= startOffset || endOffset > (textDiv.textContent?.length ?? 0)) return false;
   const textNodes: Array<{ node: Text; start: number; end: number }> = [];
   const walker = document.createTreeWalker(textDiv, NodeFilter.SHOW_TEXT);
@@ -182,6 +196,28 @@ function highlightPdfTextRange(textDiv: HTMLElement, startOffset: number, endOff
   const intersectingNodes = textNodes.filter(({ start, end }) => start < endOffset && end > startOffset);
   if (intersectingNodes.length === 0) return false;
 
+  const textRange = document.createRange();
+  const firstNode = intersectingNodes[0];
+  const lastNode = intersectingNodes.at(-1)!;
+  textRange.setStart(firstNode.node, Math.max(0, startOffset - firstNode.start));
+  textRange.setEnd(lastNode.node, Math.min(lastNode.end - lastNode.start, endOffset - lastNode.start));
+
+  const matchedText = textRange.toString();
+  for (const rect of pdfTextRangeClientRects(textRange, layerRect)) {
+    const highlight = document.createElement("span");
+    highlight.dataset.pdfSearchHighlight = "true";
+    highlight.dataset.pdfSearchMatchText = matchedText;
+    highlight.style.position = "absolute";
+    highlight.style.left = `${rect.left}px`;
+    highlight.style.top = `${rect.top}px`;
+    highlight.style.width = `${rect.width}px`;
+    highlight.style.height = `${rect.height}px`;
+    highlight.style.borderRadius = "2px";
+    highlight.style.backgroundColor = "color-mix(in srgb, var(--warning) 78%, transparent)";
+    highlight.style.boxShadow = "inset 0 0 0 1px color-mix(in srgb, var(--warning-foreground) 42%, transparent)";
+    highlightLayer.append(highlight);
+  }
+
   for (const { node: textNode, start, end } of intersectingNodes.reverse()) {
     const localStart = Math.max(0, startOffset - start);
     const localEnd = Math.min(end - start, endOffset - start);
@@ -190,6 +226,8 @@ function highlightPdfTextRange(textDiv: HTMLElement, startOffset: number, endOff
 
     const mark = document.createElement("mark");
     mark.dataset.pdfSearchMatch = "true";
+    mark.style.backgroundColor = "transparent";
+    mark.style.boxShadow = "none";
     selectedText.parentNode?.insertBefore(mark, selectedText);
     mark.append(selectedText);
   }

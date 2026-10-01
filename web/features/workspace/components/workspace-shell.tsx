@@ -5,16 +5,17 @@ import { PageTransitionLink } from "@/features/workspace/components/page-transit
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="w-full border-b border-border bg-card">
+      <header className="workspace-site-header w-full bg-background">
         <div className="mx-auto flex w-full max-w-6xl items-center px-4 py-3 sm:px-6">
-          <PageTransitionLink
-            direction="back"
-            href="/"
+          <a
+            href="https://paper-t-rail.nooroctavian.id/"
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex items-center rounded-md font-heading text-2xl font-[760] tracking-[-0.04em] text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-            aria-label="Paper T-Rail home"
+            aria-label="Paper T-Rail home (opens in a new tab)"
           >
             Paper T-Rail
-          </PageTransitionLink>
+          </a>
         </div>
       </header>
 

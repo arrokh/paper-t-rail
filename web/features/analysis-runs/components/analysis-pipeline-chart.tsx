@@ -77,7 +77,7 @@ export function AnalysisPipelineChart({
   afterIntro?: ReactNode;
 }) {
   return (
-    <section className="space-y-4" aria-labelledby="pipeline-heading">
+    <section id="analysis-pipeline-card" className="scroll-mt-2 space-y-4" aria-labelledby="pipeline-heading">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1">
           <h2 id="pipeline-heading" className="font-heading text-lg font-semibold tracking-tight">Analysis pipeline</h2>

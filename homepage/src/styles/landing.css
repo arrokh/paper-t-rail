@@ -500,6 +500,7 @@
 }
 
 .how-it-works-video {
+  position: relative;
   width: min(100%, 960px);
   aspect-ratio: 16 / 9;
   margin: 34px auto 0;
@@ -514,6 +515,38 @@
   width: 100%;
   height: 100%;
   border: 0;
+}
+
+.how-it-works-video__cover {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px;
+  background: linear-gradient(rgb(8 36 54 / 92%), rgb(18 43 65 / 94%)), var(--ptr-hero-sky);
+  color: var(--ptr-paper-bright);
+  text-align: center;
+}
+
+.how-it-works-video__cover .pixel-label {
+  margin: 0;
+  color: var(--ptr-gold);
+}
+
+.how-it-works-video__cover strong {
+  font-family: var(--ptr-font-display);
+  font-size: clamp(22px, 4vw, 38px);
+  line-height: 1.1;
+}
+
+.how-it-works-video__cover > span:last-child {
+  max-width: 36ch;
+  color: color-mix(in srgb, var(--ptr-paper-bright) 82%, transparent);
+  font-size: 15px;
+  line-height: 1.5;
 }
 
 .architecture-section {
@@ -1120,13 +1153,14 @@ html.has-scroll-nav .hero {
   z-index: 1;
   top: 43%;
   left: 82.5%;
-  width: min(14.5%, clamp(34px, 9vw, 136px));
-  height: clamp(14px, 2.2vw, 36px);
+  width: min(36%, clamp(84px, 22vw, 300px));
+  height: clamp(18px, 3vw, 48px);
   background: linear-gradient(90deg, rgb(255 242 189 / 54%), rgb(255 226 147 / 23%) 34%, transparent 100%);
   clip-path: polygon(0 42%, 100% 0, 100% 100%, 0 58%);
   content: "";
   filter: blur(3px);
   opacity: 0.8;
+  transition: opacity 720ms ease-in-out;
   transform: translateY(-50%);
   animation: train-headlamp-motion 1.6s steps(2, end) var(--locomotive-motion-delay) infinite;
   pointer-events: none;
@@ -1143,6 +1177,7 @@ html.has-scroll-nav .hero {
   background: radial-gradient(circle, #fff8d8 0 25%, #f4c965 34% 48%, rgb(255 211 118 / 36%) 62%, transparent 76%);
   content: "";
   filter: drop-shadow(0 0 7px rgb(244 201 101 / 82%));
+  transition: opacity 720ms ease-in-out;
   transform: translate(-50%, -50%);
   animation: train-headlamp-motion-centered 1.6s steps(2, end) var(--locomotive-motion-delay) infinite;
 }
@@ -1178,7 +1213,7 @@ html.has-scroll-nav .hero {
   background: var(--ptr-hero-ground);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 140ms steps(2, end);
+  transition: opacity 760ms ease-in-out;
 }
 
 .train-consist__window[data-carriage-light="off"] {
@@ -1881,7 +1916,7 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   position: relative;
   width: min(220px, 54vw);
   height: 4px;
-  overflow: hidden;
+  clip-path: inset(-18px 0);
   background: color-mix(in srgb, var(--ptr-gold-bright) 24%, transparent);
 }
 
@@ -1890,12 +1925,38 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   inset: 0 auto 0 0;
   width: 30%;
   background: var(--ptr-gold-bright);
-  animation: page-load-track 1.4s steps(8, end) infinite;
+  filter:
+    drop-shadow(0 0 3px color-mix(in srgb, var(--ptr-gold-bright) 78%, transparent))
+    drop-shadow(0 0 8px color-mix(in srgb, var(--ptr-gold-bright) 42%, transparent));
+  animation:
+    page-load-track 1.4s steps(8, end) infinite,
+    page-load-fade 1.4s ease-in-out infinite,
+    page-load-glow 1.4s ease-in-out infinite;
 }
 
 @keyframes page-load-track {
-  from { transform: translateX(-110%); }
-  to { transform: translateX(360%); }
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(360%); }
+}
+
+@keyframes page-load-fade {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  78% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes page-load-glow {
+  0%, 100% {
+    filter:
+      drop-shadow(0 0 2px color-mix(in srgb, var(--ptr-gold-bright) 52%, transparent))
+      drop-shadow(0 0 5px color-mix(in srgb, var(--ptr-gold-bright) 28%, transparent));
+  }
+  50% {
+    filter:
+      drop-shadow(0 0 6px color-mix(in srgb, var(--ptr-gold-bright) 100%, white))
+      drop-shadow(0 0 15px color-mix(in srgb, var(--ptr-gold-bright) 72%, transparent));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1905,7 +1966,9 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 
   .page-load-cover__track > span {
     animation: none;
-    transform: translateX(115%);
+    transform: none;
+    opacity: 1;
+    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ptr-gold-bright) 72%, transparent));
   }
 }
 
@@ -2051,11 +2114,6 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 
 .hero-scene__train { transform: none; animation: none; filter: none; }
 
-.train-consist--round-headlamp::before,
-.train-consist--round-headlamp::after {
-  transition: opacity 220ms steps(2, end);
-}
-
 .train-consist--round-headlamp[data-headlamp="off"]::before,
 .train-consist--round-headlamp[data-headlamp="off"]::after {
   opacity: 0;
@@ -2084,22 +2142,31 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   shape-rendering: crispEdges;
 }
 
-.architecture-route__rail,
-.architecture-route__line {
+.architecture-route__bed,
+.architecture-route__rails {
   fill: none;
   stroke-linecap: square;
   stroke-linejoin: miter;
 }
 
-.architecture-route__rail { stroke: var(--ptr-ink); stroke-width: 18; }
-.architecture-route__line { stroke: var(--ptr-gold); stroke-width: 6; stroke-dasharray: 8 14; }
+.architecture-route__bed {
+  stroke: var(--ptr-ink);
+  stroke-width: 24;
+}
+
+.architecture-route__sleeper { fill: var(--ptr-gold); }
+
+.architecture-route__rails {
+  stroke: var(--ptr-ink);
+  stroke-width: 5;
+}
 
 .architecture-flow {
   position: relative;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-rows: repeat(3, minmax(190px, auto));
-  gap: 30px 44px;
+  gap: 44px 56px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2185,7 +2252,9 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 }
 
 @media (max-width: 760px) {
-  .landing-section { min-height: 100svh; }
+  .landing-section:not(.faq-section) { min-height: 100svh; }
+  .landing-section,
+  #about { scroll-margin-top: 88px; }
   .hero-scene__train-wrap {
     bottom: calc(31.6svh - 157px - clamp(10px, 2.56vw, 12px));
   }
@@ -2207,7 +2276,10 @@ html.has-page-load-cover .page-load-cover.is-exiting {
     position: absolute;
     z-index: 0;
     inset: 0 auto 0 50%;
-    border-left: 6px dashed var(--ptr-gold);
+    width: 24px;
+    background:
+      repeating-linear-gradient(to bottom, transparent 0 8px, var(--ptr-gold) 8px 14px, transparent 14px 24px) center / 100% 24px repeat-y,
+      linear-gradient(to right, transparent 0 3px, var(--ptr-ink) 3px 8px, transparent 8px 16px, var(--ptr-ink) 16px 21px, transparent 21px 100%);
     content: "";
     transform: translateX(-50%);
   }
@@ -2215,7 +2287,7 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   .architecture-flow {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 26px;
   }
 
   .architecture-node {

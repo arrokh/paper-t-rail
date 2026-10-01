@@ -221,7 +221,7 @@ const questions = [
         </div>
         <p>Watch how Paper T-Rail connects a paper&apos;s claims, citations and candidate evidence passages.</p>
       </div>
-      <div class="how-it-works-video">
+      <div class="how-it-works-video" aria-label="Video walkthrough preview">
         <iframe
           src="https://www.youtube-nocookie.com/embed/zj7WTlL2YlU?autoplay=0"
           title="How Paper T-Rail works"
@@ -229,7 +229,14 @@ const questions = [
           referrerpolicy="strict-origin-when-cross-origin"
           allow="encrypted-media; picture-in-picture; web-share"
           allowfullscreen
+          aria-hidden="true"
+          tabindex="-1"
         ></iframe>
+        <div class="how-it-works-video__cover" role="status">
+          <span class="pixel-label">In progress</span>
+          <strong>Walkthrough coming soon</strong>
+          <span>We&apos;re preparing a guided look at the review flow.</span>
+        </div>
       </div>
     </div>
   </section>
@@ -247,9 +254,21 @@ const questions = [
         </p>
       </div>
       <div class="architecture-route">
-        <svg class="architecture-route__track" viewBox="0 0 1000 630" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-          <polyline points="250,95 750,95 750,315 250,315 250,535" class="architecture-route__rail" />
-          <polyline points="250,95 750,95 750,315 250,315 250,535" class="architecture-route__line" />
+        <svg class="architecture-route__track" viewBox="0 0 1000 658" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+          <defs>
+            <pattern id="architecture-horizontal-sleepers" width="24" height="20" patternUnits="userSpaceOnUse">
+              <rect class="architecture-route__sleeper" x="8" y="1" width="8" height="18" />
+            </pattern>
+            <pattern id="architecture-vertical-sleepers" width="20" height="24" patternUnits="userSpaceOnUse">
+              <rect class="architecture-route__sleeper" x="1" y="8" width="18" height="8" />
+            </pattern>
+          </defs>
+          <polyline points="250,95 750,95 750,329 250,329 250,563" class="architecture-route__bed" />
+          <rect x="250" y="85" width="500" height="20" fill="url(#architecture-horizontal-sleepers)" />
+          <rect x="740" y="95" width="20" height="234" fill="url(#architecture-vertical-sleepers)" />
+          <rect x="250" y="319" width="500" height="20" fill="url(#architecture-horizontal-sleepers)" />
+          <rect x="240" y="329" width="20" height="234" fill="url(#architecture-vertical-sleepers)" />
+          <path d="M250 85 H750 M250 105 H750 M740 95 V329 M760 95 V329 M250 319 H750 M250 339 H750 M240 329 V563 M260 329 V563" class="architecture-route__rails" />
         </svg>
         <ol id="architecture-flow" class="architecture-flow" aria-label="Five Analysis Run stages, connected in a zigzag route">
           {architecture.map((step, index) => (
@@ -324,11 +343,20 @@ const questions = [
   const documentElement = document.documentElement;
 
   if (hero && header && documentElement.classList.contains("has-scroll-nav")) {
-    const headerObserver = new IntersectionObserver(([entry]) => {
-      documentElement.classList.toggle("has-scroll-nav-visible", !entry.isIntersecting);
-    }, { rootMargin: `-${header.offsetHeight}px 0px 0px 0px` });
+    const updateScrollNavVisibility = () => {
+      documentElement.classList.toggle(
+        "has-scroll-nav-visible",
+        hero.getBoundingClientRect().bottom <= header.offsetHeight + 2,
+      );
+    };
+    const headerObserver = new IntersectionObserver(updateScrollNavVisibility, {
+      rootMargin: `-${header.offsetHeight}px 0px 0px 0px`,
+    });
 
     headerObserver.observe(hero);
+    window.addEventListener("scroll", updateScrollNavVisibility, { passive: true });
+    window.addEventListener("resize", updateScrollNavVisibility, { passive: true });
+    updateScrollNavVisibility();
   }
 
 </script>
@@ -419,11 +447,12 @@ const questions = [
   const setHeadlamp = (isOn) => trainForMotion?.setAttribute("data-headlamp", isOn ? "on" : "off");
   const scheduleHeadlampChange = () => {
     if (reducedMotion.matches || !trainForMotion) return;
+    const isCurrentlyOn = trainForMotion.getAttribute("data-headlamp") !== "off";
+    const delay = isCurrentlyOn ? randomBetween(8500, 18000) : randomBetween(1800, 4500);
     headlampTimer = window.setTimeout(() => {
-      const isCurrentlyOn = trainForMotion.getAttribute("data-headlamp") !== "off";
       setHeadlamp(!isCurrentlyOn);
       scheduleHeadlampChange();
-    }, 1800 + Math.random() * 13200);
+    }, delay);
   };
 
   const updateMotionPreference = () => {

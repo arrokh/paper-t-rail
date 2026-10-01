@@ -14,7 +14,10 @@ import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/componen
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
 import { normalizePipelineStageId, type PipelineStageId } from "@/features/analysis-runs/pipeline";
-import { scrollToPaperReviewCard } from "@/features/analysis-runs/scroll-to-paper-review-card";
+import {
+  scrollToAnalysisPipelineCard,
+  scrollToPaperReviewCard,
+} from "@/features/analysis-runs/scroll-to-paper-review-card";
 import { ANALYSIS_RUN_STATUS_CLASS_NAMES, analysisRunStatusLabel } from "@/features/analysis-runs/run-status";
 import {
   useAnalysisRun,
@@ -121,13 +124,15 @@ function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
 }
 
 export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string }) {
-  const shouldScrollToPaperReview = useRef(false);
   const searchParams = useSearchParams();
   const runQuery = useAnalysisRun(analysisRunId);
   const run = runQuery.data ?? null;
   const stageParam = searchParams.get("step");
   const selectedStage = normalizePipelineStageId(stageParam);
-  const selectedView = searchParams.get("view") === "review" ? "review" : "pipeline";
+  const routeSelectedView = searchParams.get("view") === "review" ? "review" : "pipeline";
+  const [selectedView, setSelectedView] = useState(routeSelectedView);
+  const previousRouteView = useRef(routeSelectedView);
+  const previousSelectedView = useRef(selectedView);
   const [hasOpenedPaperReview, setHasOpenedPaperReview] = useState(selectedView === "review");
   const selectedOutcomeId = searchParams.get("reviewPair");
   const selectedReferenceKey = searchParams.get("reviewReference");
@@ -148,42 +153,49 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const homeHref = homeHrefFor(searchParams);
 
   useEffect(() => {
-    if (selectedView !== "review" || !shouldScrollToPaperReview.current) return;
-    shouldScrollToPaperReview.current = false;
+    if (routeSelectedView === previousRouteView.current) return;
+    previousRouteView.current = routeSelectedView;
+    setSelectedView(routeSelectedView);
+  }, [routeSelectedView]);
 
-    const paperReviewPanel = document
-      .getElementById("paper-review-card")
-      ?.closest<HTMLElement>(".analysis-run-view-panel");
-    if (!paperReviewPanel) return;
+  useEffect(() => {
+    if (previousSelectedView.current === selectedView) return;
+    previousSelectedView.current = selectedView;
 
-    let frame = 0;
-    const scrollAfterPanelTransition = () => {
-      frame = window.requestAnimationFrame(scrollToPaperReviewCard);
+    const cardId = selectedView === "review" ? "paper-review-card" : "analysis-pipeline-card";
+    const panel = document.getElementById(cardId)?.closest<HTMLElement>(".analysis-run-view-panel");
+    const scrollToSelectedView = () => {
+      if (selectedView === "review") scrollToPaperReviewCard();
+      else scrollToAnalysisPipelineCard();
     };
 
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      scrollAfterPanelTransition();
-      return () => window.cancelAnimationFrame(frame);
+    let animationFrame = 0;
+    let fallbackTimer = 0;
+    const finish = () => {
+      window.clearTimeout(fallbackTimer);
+      if (panel) panel.removeEventListener("animationend", onPanelAnimationEnd);
+      scrollToSelectedView();
+    };
+    const onPanelAnimationEnd = (event: AnimationEvent) => {
+      if (event.target !== panel || event.animationName !== "analysis-run-view-enter") return;
+      finish();
+    };
+
+    if (!panel || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      animationFrame = window.requestAnimationFrame(scrollToSelectedView);
+      return () => window.cancelAnimationFrame(animationFrame);
     }
 
-    let fallbackTimer = 0;
-    const onPanelAnimationEnd = (event: AnimationEvent) => {
-      if (event.target !== paperReviewPanel || event.animationName !== "analysis-run-view-enter") return;
-      window.clearTimeout(fallbackTimer);
-      scrollAfterPanelTransition();
-    };
-    paperReviewPanel.addEventListener("animationend", onPanelAnimationEnd);
-
-    // Keep the scroll reliable if the panel is rendered without its CSS entry animation.
-    fallbackTimer = window.setTimeout(() => {
-      paperReviewPanel.removeEventListener("animationend", onPanelAnimationEnd);
-      scrollAfterPanelTransition();
-    }, 500);
+    panel.addEventListener("animationend", onPanelAnimationEnd);
+    animationFrame = window.requestAnimationFrame(() => {
+      if (!panel.matches("[data-starting-style]")) finish();
+      else fallbackTimer = window.setTimeout(finish, 500);
+    });
 
     return () => {
+      window.cancelAnimationFrame(animationFrame);
       window.clearTimeout(fallbackTimer);
-      paperReviewPanel.removeEventListener("animationend", onPanelAnimationEnd);
-      if (frame) window.cancelAnimationFrame(frame);
+      panel.removeEventListener("animationend", onPanelAnimationEnd);
     };
   }, [selectedView]);
 
@@ -211,7 +223,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
 
   function selectReviewPair(outcomeId: string, localReferenceKey: string) {
     setHasOpenedPaperReview(true);
-    shouldScrollToPaperReview.current = selectedView !== "review";
+    setSelectedView("review");
     updateQueryParameters({ view: "review", reviewPair: outcomeId, reviewReference: localReferenceKey, reviewDetail: "results" });
   }
 
@@ -225,7 +237,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
 
   function selectReviewReference(localReferenceKey: string) {
     setHasOpenedPaperReview(true);
-    shouldScrollToPaperReview.current = selectedView !== "review";
+    setSelectedView("review");
     const currentReferenceKey = new URLSearchParams(window.location.search).get("reviewReference");
     updateQueryParameters({
       view: "review",
@@ -266,9 +278,10 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
         value={selectedView}
         onValueChange={(value) => {
           if (typeof value !== "string") return;
+          const nextView = value === "review" ? "review" : "pipeline";
           if (value === "review") setHasOpenedPaperReview(true);
-          shouldScrollToPaperReview.current = value === "review";
-          updateQueryParameters({ view: value === "review" ? "review" : null });
+          setSelectedView(nextView);
+          updateQueryParameters({ view: nextView === "review" ? "review" : null });
         }}
         className="gap-5"
       >

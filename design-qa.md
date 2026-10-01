@@ -44,8 +44,10 @@
 ### Homepage annotation revision
 
 - Passenger-car dimming overlays are oversized slightly around each sprite window so no lit edge remains visible. The train sprite crop ends before its baked-in headlight beam; the CSS beam and round headlamp bob with the locomotive. Motion is disabled for reduced-motion preferences.
+- The loading cover's gold rail indicator fades in and out with a soft pulsing glow; reduced-motion mode leaves it stationary with a steady glow. The five Under the Hood cards have 44px row spacing on desktop and 26px on mobile.
 - Cloud loops retain varied speeds and the farthest layer stays slowest; durations are now 215 to 700 seconds, about 60% slower than before. The title, lake, and train fog layers drift slowly from right to left and respect reduced-motion preferences.
 - The hero setup CTA matches the navbar CTA's red fill, paper text, and hover color. The closing setup section is removed, and the FAQ height follows its content instead of filling the viewport.
+- Mobile anchor review at 390 × 844 CSS px lands the About and FAQ sections 88px below the viewport top, just below the 86.5px navigation header. The FAQ remains content-height (about 644px), and the page has no horizontal overflow.
 - The loading cover uses a system serif so it cannot flash from fallback to the downloaded display font. The landing content remains covered until page fonts and images settle.
 - The sample journey is replaced by a lazy, non-autoplaying privacy-enhanced YouTube embed under “How it works.” The About section includes a small claim-to-evidence pixel trail without changing the content hierarchy.
 - Visual review at 390 × 844 CSS px confirmed the About trail fits in four equal columns (89px each), with no horizontal overflow. The How it works iframe measures 352 × 197px (1.79:1) and stays inside the viewport; the player shows a Play control and uses `autoplay=0`.

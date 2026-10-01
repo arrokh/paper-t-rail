@@ -221,7 +221,8 @@ type RenderReviewOptions = {
 
 function renderReview({ selectedOutcomeId = null, selectedReferenceKey = null, selectedDetailSection = "results", onSelectOutcome = vi.fn(), onSelectReference = vi.fn(), onClearReviewPair = vi.fn(), onClearSelectedReference = vi.fn(), onSelectDetailSection = vi.fn() }: RenderReviewOptions = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const rendered = render(
+  const initialOptions = { selectedOutcomeId, selectedReferenceKey, selectedDetailSection, onSelectOutcome, onSelectReference, onClearReviewPair, onClearSelectedReference, onSelectDetailSection };
+  const createReview = (options: typeof initialOptions) => (
     <QueryClientProvider client={queryClient}>
       <AnalysisRunPaperReview
         run={run}
@@ -231,18 +232,19 @@ function renderReview({ selectedOutcomeId = null, selectedReferenceKey = null, s
         reportLoading={false}
         parsedError={null}
         reportError={null}
-        selectedOutcomeId={selectedOutcomeId}
-        selectedReferenceKey={selectedReferenceKey}
-        selectedDetailSection={selectedDetailSection}
-        onSelectOutcome={onSelectOutcome}
-        onSelectReference={onSelectReference}
-        onClearReviewPair={onClearReviewPair}
-        onClearSelectedReference={onClearSelectedReference}
-        onSelectDetailSection={onSelectDetailSection}
+        {...options}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return { ...rendered, queryClient, onSelectOutcome, onSelectReference, onClearReviewPair };
+  const rendered = render(createReview(initialOptions));
+  return {
+    ...rendered,
+    queryClient,
+    onSelectOutcome,
+    onSelectReference,
+    onClearReviewPair,
+    rerenderReview: (updates: Partial<typeof initialOptions>) => rendered.rerender(createReview({ ...initialOptions, ...updates })),
+  };
 }
 
 function renderDetailPage() {
@@ -306,7 +308,7 @@ describe("Analysis Run Paper Review", () => {
     renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0", selectedDetailSection: "results" });
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Show in PDF" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Show in PDF" }));
 
     await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("2"));
     await waitFor(() => expect([...document.querySelectorAll("mark[data-pdf-search-match='true']")].map((mark) => mark.textContent)).toEqual([
@@ -338,7 +340,7 @@ describe("Analysis Run Paper Review", () => {
     renderReview({ selectedReferenceKey: "b0", selectedDetailSection: "citations" });
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Show in PDF" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Show in PDF" }));
 
     await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("3"));
     await waitFor(() => expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("1 of 3 selected passages found · page 3"));
@@ -351,6 +353,7 @@ describe("Analysis Run Paper Review", () => {
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     fireEvent.click(screen.getByRole("button", { name: "AI results" }));
 
+    await screen.findByRole("region", { name: "Selected pair quick access" });
     expect(screen.getByRole("heading", { name: "Claim results" })).toBeTruthy();
     expect(screen.getAllByText(outcome.claimText)).toHaveLength(2);
     expect(screen.getByText("Machine result: supported")).toBeTruthy();
@@ -364,11 +367,27 @@ describe("Analysis Run Paper Review", () => {
     const { onSelectReference, onClearReviewPair } = renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0" });
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
-    expect(screen.getByRole("region", { name: "Selected pair quick access" })).toBeTruthy();
+    await screen.findByRole("region", { name: "Selected pair quick access" });
     fireEvent.click(screen.getByRole("button", { name: "View bibliography" }));
     expect(onSelectReference).toHaveBeenCalledWith("b0");
     fireEvent.click(screen.getByRole("button", { name: "Clear selected pair" }));
     expect(onClearReviewPair).toHaveBeenCalledOnce();
+  });
+
+  it("collapses and reopens the selected pair details from its result row", async () => {
+    installSourcePdfResponse();
+    renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0" });
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    const quickAccessName = "Selected pair quick access";
+    await screen.findByRole("region", { name: quickAccessName });
+    const trigger = screen.getByRole("button", { name: /Review claim against b0/ });
+    fireEvent.click(trigger);
+    await waitFor(() => expect(screen.queryByRole("region", { name: quickAccessName })).toBeNull());
+    expect(trigger.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("region", { name: quickAccessName })).toBeTruthy();
   });
 
   it("connects a selected bibliography entry back to its parsed citation and AI result", async () => {
@@ -379,7 +398,7 @@ describe("Analysis Run Paper Review", () => {
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     fireEvent.click(screen.getByRole("button", { name: "Citations & bibliography" }));
 
-    const pinnedReference = screen.getByRole("region", { name: "Selected bibliography quick access" });
+    const pinnedReference = await screen.findByRole("region", { name: "Selected bibliography quick access" });
     expect(within(pinnedReference).getByRole("heading", { name: "Citing contexts" })).toBeTruthy();
     expect(within(pinnedReference).getByText("The intervention improved the measured outcome [1].")).toBeTruthy();
     expect(screen.getByRole("button", { name: /A\. Author/ })).toBeTruthy();
@@ -389,6 +408,67 @@ describe("Analysis Run Paper Review", () => {
     expect(onSelectOutcome).toHaveBeenCalledWith(outcome.id, "b0");
   });
 
+  it("collapses and reopens the selected bibliography details from its entry", async () => {
+    installSourcePdfResponse();
+    renderReview({ selectedReferenceKey: "b0", selectedDetailSection: "citations" });
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    fireEvent.click(screen.getByRole("button", { name: "Citations & bibliography" }));
+
+    const quickAccessName = "Selected bibliography quick access";
+    await screen.findByRole("region", { name: quickAccessName });
+    const trigger = screen.getByRole("button", { name: /A\. Author/ });
+    fireEvent.click(trigger);
+    await waitFor(() => expect(screen.queryByRole("region", { name: quickAccessName })).toBeNull());
+    expect(trigger.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("region", { name: quickAccessName })).toBeTruthy();
+  });
+
+  it("keeps both Analysis Run views selectable and restores Paper Review from the pipeline", async () => {
+    installSourcePdfResponse();
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=source`);
+
+    renderDetailPage();
+    const reviewTab = screen.getByRole("tab", { name: "Paper Review" });
+    const pipelineTab = screen.getByRole("tab", { name: "Analysis Pipeline" });
+
+    fireEvent.click(reviewTab);
+    await waitFor(() => expect(reviewTab.getAttribute("aria-selected")).toBe("true"));
+    expect(screen.getByRole("heading", { name: "Paper Review" })).toBeTruthy();
+    expect(new URLSearchParams(window.location.search).get("view")).toBe("review");
+
+    fireEvent.click(pipelineTab);
+    await waitFor(() => expect(pipelineTab.getAttribute("aria-selected")).toBe("true"));
+    expect(new URLSearchParams(window.location.search).has("view")).toBe(false);
+
+    fireEvent.click(reviewTab);
+    await waitFor(() => expect(reviewTab.getAttribute("aria-selected")).toBe("true"));
+    expect(screen.getByRole("heading", { name: "Paper Review" })).toBeTruthy();
+  });
+
+  it("reveals the destination item when moving between a pair and its bibliography or AI result", async () => {
+    installSourcePdfResponse();
+    const review = renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0" });
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    await screen.findByRole("region", { name: "Selected pair quick access" });
+    fireEvent.click(screen.getByRole("button", { name: "View bibliography" }));
+    review.rerenderReview({ selectedDetailSection: "citations" });
+    await screen.findByRole("region", { name: "Selected bibliography quick access" });
+
+    const bibliographyTrigger = document.getElementById("review-bibliography-trigger-b0");
+    await waitFor(() => expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
+
+    fireEvent.click(screen.getByRole("button", { name: /Review AI result: supported/ }));
+    review.rerenderReview({ selectedDetailSection: "results" });
+    await screen.findByRole("region", { name: "Selected pair quick access" });
+    const pairTrigger = document.getElementById(`review-pair-trigger-${outcome.id}`);
+    await waitFor(() => expect(pairTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
+  });
+
   it("restores the URL-backed citation detail section and requests query selection when switched", async () => {
     installSourcePdfResponse();
     const onSelectDetailSection = vi.fn();
@@ -396,7 +476,7 @@ describe("Analysis Run Paper Review", () => {
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
     expect(screen.getByRole("button", { name: "Citations & bibliography" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("heading", { name: "Citing contexts" })).toBeTruthy();
+    await screen.findByRole("heading", { name: "Citing contexts" });
     fireEvent.click(screen.getByRole("button", { name: "AI results" }));
     expect(onSelectDetailSection).toHaveBeenCalledWith("results");
   });
@@ -411,7 +491,7 @@ describe("Analysis Run Paper Review", () => {
     renderDetailPage();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
-    expect(screen.getByRole("region", { name: "Selected pair quick access" })).toBeTruthy();
+    await screen.findByRole("region", { name: "Selected pair quick access" });
     fireEvent.click(screen.getByRole("button", { name: "Clear selected pair" }));
 
     await waitFor(() => {
@@ -438,7 +518,7 @@ describe("Analysis Run Paper Review", () => {
     renderDetailPage();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(screen.getByRole("button", { name: "Citations & bibliography" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(screen.getByRole("button", { name: /Review AI result: supported/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Review AI result: supported/ }));
     expect(new URLSearchParams(window.location.search).get("reviewDetail")).toBe("results");
     expect(new URLSearchParams(window.location.search).get("reviewPair")).toBe(outcome.id);
   });
