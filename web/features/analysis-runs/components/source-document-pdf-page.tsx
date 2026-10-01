@@ -121,9 +121,7 @@ export function SourceDocumentPdfPage({
     );
     for (const range of rangesInReverseTextOrder) {
       const textDiv = textDivsRef.current[range.itemIndex];
-      if (!textDiv || !highlightPdfTextRange(textDiv, range.startOffset, range.endOffset)) {
-        if (textDiv) textDiv.dataset.pdfSearchMatch = "true";
-      }
+      if (textDiv) highlightPdfTextRange(textDiv, range.startOffset, range.endOffset);
     }
 
     const target = textDivsRef.current[highlightedTextRanges[0]?.itemIndex ?? highlightedItemIndexes[0] ?? -1];
@@ -168,33 +166,35 @@ function clearPdfSearchHighlights(textDiv: HTMLElement) {
 
 function highlightPdfTextRange(textDiv: HTMLElement, startOffset: number, endOffset: number): boolean {
   if (startOffset < 0 || endOffset <= startOffset || endOffset > (textDiv.textContent?.length ?? 0)) return false;
-  const startPosition = pdfTextPositionAt(textDiv, startOffset);
-  const endPosition = pdfTextPositionAt(textDiv, endOffset);
-  if (!startPosition || !endPosition || startPosition.node !== endPosition.node) return false;
-
-  const range = document.createRange();
-  range.setStart(startPosition.node, startPosition.offset);
-  range.setEnd(endPosition.node, endPosition.offset);
-  const mark = document.createElement("mark");
-  mark.dataset.pdfSearchMatch = "true";
-  range.surroundContents(mark);
-  return true;
-}
-
-function pdfTextPositionAt(element: HTMLElement, characterOffset: number): { node: Text; offset: number } | null {
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-  let remainingOffset = characterOffset;
+  const textNodes: Array<{ node: Text; start: number; end: number }> = [];
+  const walker = document.createTreeWalker(textDiv, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode();
+  let textOffset = 0;
 
   while (node) {
     const textNode = node as Text;
     const textLength = textNode.textContent?.length ?? 0;
-    if (remainingOffset <= textLength) return { node: textNode, offset: remainingOffset };
-    remainingOffset -= textLength;
+    textNodes.push({ node: textNode, start: textOffset, end: textOffset + textLength });
+    textOffset += textLength;
     node = walker.nextNode();
   }
 
-  return null;
+  const intersectingNodes = textNodes.filter(({ start, end }) => start < endOffset && end > startOffset);
+  if (intersectingNodes.length === 0) return false;
+
+  for (const { node: textNode, start, end } of intersectingNodes.reverse()) {
+    const localStart = Math.max(0, startOffset - start);
+    const localEnd = Math.min(end - start, endOffset - start);
+    const selectedText = textNode.splitText(localStart);
+    selectedText.splitText(localEnd - localStart);
+
+    const mark = document.createElement("mark");
+    mark.dataset.pdfSearchMatch = "true";
+    selectedText.parentNode?.insertBefore(mark, selectedText);
+    mark.append(selectedText);
+  }
+
+  return true;
 }
 
 function estimatePdfViewerWidth(viewportWidth: number) {

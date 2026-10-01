@@ -12,7 +12,8 @@ import { ClaimEvidencePassages } from "@/features/reference-resolution/component
 import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
 import { BackLink } from "@/features/workspace/components/back-link";
-import { PIPELINE_STAGES, pipelineStage, type PipelineStageId } from "@/features/analysis-runs/pipeline";
+import { PIPELINE_STAGES, PIPELINE_STAGE_STATE_LABELS, pipelineStage, pipelineStageState, type PipelineStageId } from "@/features/analysis-runs/pipeline";
+import { PIPELINE_STAGE_SELECTED_CLASSES, PIPELINE_STAGE_STATE_CLASSES } from "@/features/analysis-runs/components/analysis-pipeline-chart";
 import { PipelineResultMetricFilters, type PipelineResultFilterOption } from "@/features/analysis-runs/components/pipeline-result-metric-filters";
 import { usePipelineResultFilter, usePipelineStageFilterReset } from "@/features/analysis-runs/hooks/use-pipeline-result-filter";
 import type { AnalysisRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
@@ -138,9 +139,11 @@ function RunResultsUnavailable({ stage, run }: { stage: PipelineStageId; run: An
 }
 
 function PipelineStageQuickNavigation({
+  run,
   selectedStage,
   onSelectStage,
 }: {
+  run: AnalysisRun;
   selectedStage: PipelineStageId;
   onSelectStage: (stage: PipelineStageId) => void;
 }) {
@@ -149,14 +152,20 @@ function PipelineStageQuickNavigation({
       <ol className="mx-auto flex w-fit min-w-max items-center justify-center gap-1">
         {PIPELINE_STAGES.map((pipelineStage) => {
           const selected = pipelineStage.id === selectedStage;
+          const state = pipelineStageState(run, pipelineStage.id);
           return (
             <li key={pipelineStage.id}>
               <Button
                 type="button"
-                variant={selected ? "default" : "ghost"}
+                variant="ghost"
                 size="sm"
                 aria-current={selected ? "step" : undefined}
-                className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+                aria-label={`${pipelineStage.number} ${pipelineStage.label}: ${PIPELINE_STAGE_STATE_LABELS[state]}${selected ? ", selected stage" : ""}`}
+                className={cn(
+                  "h-8 shrink-0 gap-1.5 rounded-lg border px-2 text-xs transition-all hover:-translate-y-0.5 hover:border-info-foreground hover:shadow-md motion-reduce:transition-none motion-reduce:hover:translate-y-0",
+                  PIPELINE_STAGE_STATE_CLASSES[state],
+                  selected && PIPELINE_STAGE_SELECTED_CLASSES,
+                )}
                 onClick={() => onSelectStage(pipelineStage.id)}
               >
                 <span className="font-mono text-[0.65rem]">{pipelineStage.number}</span>
@@ -896,7 +905,7 @@ export function AnalysisRunStageResults({
             href={backHref}
             label="Back to Analysis Runs"
           />
-          <PipelineStageQuickNavigation selectedStage={stage.id} onSelectStage={selectStageFromStickyNavigation} />
+          <PipelineStageQuickNavigation run={run} selectedStage={stage.id} onSelectStage={selectStageFromStickyNavigation} />
           {stageFilterReset.hasActiveFilters ? (
             <Button
               type="button"

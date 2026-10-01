@@ -16,6 +16,8 @@ This is a single-context repo. Read `CONTEXT.md` and relevant ADRs in `docs/adr/
 
 When changing API endpoints or application logging, follow `docs/paper-t-rail-tech-design.md` §§40 and 49. Never log Source Document, claim, or evidence text, request bodies, or query strings.
 
+Keep Springdoc annotations and OpenAPI contract coverage current for every public endpoint change. Update the operation, request/response schemas, and documented status/error responses in the same change; `/v3/api-docs` is the generated API contract, not a separately maintained specification. Follow `api/AGENTS.md` for the required annotation and contract-test details.
+
 ### Testing and TDD
 
 When implementing with TDD, agree on the public behavior seam before writing tests, then work in vertical red-green slices. Keep tests behavioral and derive expected outcomes independently.

@@ -22,6 +22,34 @@ describe("PDF text search", () => {
     ]);
   });
 
+  it("aligns a complete Atomic Claim around citation callouts inserted into the PDF sentence", () => {
+    const items = [
+      textItem("Combining LLMs and Symbolic Planners.", true),
+      textItem("A large body of recent work has highlighted the", false),
+      textItem("shortcomings of LLMs on long-horizon planning problems", false),
+      textItem("(Valmeekam et al., 2023; 2024; Pallagani et al., 2023; Momennejad et al., 2024; Hirsch et al., 2024; Zheng et al., 2024; Aghzal et al., 2023),", false),
+      textItem("persisting across popular prompting techniques like Chain-of-Thought", false),
+      textItem("(Wei et al., 2022), ReAct (Yao et al., 2022), and Reflexion", false),
+      textItem("(Shinn et al., 2024).", true),
+    ];
+    const claim = "A large body of recent work has highlighted the shortcomings of LLMs on long-horizon planning problems, persisting across popular prompting techniques like Chain-of-Thought, ReAct, and Reflexion.";
+    const context = "A large body of recent work has highlighted the shortcomings of LLMs on long-horizon planning problems (Valmeekam et al., 2023; 2024; Pallagani et al., 2023; Momennejad et al., 2024; Hirsch et al., 2024; Zheng et al., 2024; Aghzal et al., 2023), persisting across popular prompting techniques like Chain-of-Thought (Wei et al., 2022), ReAct (Yao et al., 2022), and Reflexion (Shinn et al., 2024).";
+    const result = findPdfTextMatches(items, [claim, "Aghzal et al., 2023"], context);
+    const highlightedText = result.itemRanges
+      .map(({ itemIndex, startOffset, endOffset }) => items[itemIndex].str.slice(startOffset, endOffset))
+      .join(" ");
+
+    expect(result).toMatchObject({ matchedTargetCount: 2, targetCount: 2, contextMatched: true });
+    expect(highlightedText).toContain("A large body of recent work has highlighted the");
+    expect(highlightedText).toContain("shortcomings of LLMs on long-horizon planning problems");
+    expect(highlightedText).toContain("persisting across popular prompting techniques like Chain-of-Thought");
+    expect(highlightedText).toContain("ReAct");
+    expect(highlightedText).toContain("Reflexion");
+    expect(highlightedText).toContain("Aghzal et al., 2023");
+    expect(highlightedText).not.toContain("Valmeekam");
+    expect(highlightedText).not.toContain("Wei et al.");
+  });
+
   it("does not resolve a repeated citation marker outside the selected citation context", () => {
     const items = [textItem("Other claim [1]. The intervention improved the measured outcome [1].", true)];
     const context = "The intervention improved the measured outcome [1].";

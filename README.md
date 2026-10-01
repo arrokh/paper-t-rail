@@ -1,175 +1,133 @@
 # Paper T-Rail
 
-Paper T-Rail helps researchers trace citation-backed claims to evidence in academic documents. Its report is a research triage aid, not certification or grading.
+**A traceable paper trail from claim to cited evidence.**
 
-This runnable slice accepts an English text-based PDF, stores it locally, creates an immutable Analysis Run pinned to the PDF's SHA-256, parser and claim-extractor identities, reference-resolution policy, and retrieval/embedding profile, durably queues work, parses citation structure with self-hosted GROBID, extracts heuristic Atomic Claims, conservatively resolves supported bibliography entries, and retrieves traceable Evidence Passages from eligible English Cited Paper assets. In local Compose, the default Laya System One evaluates eligible retrieved passages and persists uncalibrated Evidence Judgements; experimental aggregation is enabled by default. Human calibration and deployment-specific production approval are not product or release requirements. The product makes no claim that Laya outputs are calibrated or accurate; outputs must remain labeled uncalibrated. Researchers can inspect passages per Atomic Claim × Cited Reference and see the pinned asset, parser, language-detector, retrieval, and provider provenance. Access-based terminal outcomes (for example, abstract-only scope) may also be recorded.
+Paper T-Rail helps researchers inspect whether claims in an academic paper are supported by the works they cite. It connects a claim to its citation, the cited paper, and candidate evidence passages so researchers can review the source path themselves.
+
+The Evidence Coverage Report is a triage aid, not a truth certificate, paper grade, or assessment of the whole paper. AI judgements and aggregated statuses are uncalibrated and should be reviewed by a researcher.
+
+## Navigate
+
+- [What it does](#what-it-does)
+- [Run locally](#run-locally)
+- [Architecture](#architecture)
+- [Develop and contribute](#develop-and-contribute)
+- [Detailed documentation](#detailed-documentation)
+
+## What it does
+
+1. Accepts an English, text-based academic PDF.
+2. Extracts its sections, citation contexts, bibliography entries, and citation-backed Atomic Claims.
+3. Resolves references and finds accessible cited-paper passages for each claim and cited reference.
+4. Presents the source, evidence, and provenance for researcher review. Human Reviews are recorded separately and do not rewrite machine results.
+
+Scanned PDFs, OCR, and non-English analysis are outside the current product scope. Re-analysis creates a new, immutable Analysis Run with its own configuration and provenance.
 
 ## Run locally
 
-Requirements: Docker Compose or a compatible Podman Compose endpoint, [`mise`](https://mise.jdx.dev/), and Git. The Sqitch CLI runs from a version-pinned container image; no host Sqitch installation is needed.
+You need Git, [`mise`](https://mise.jdx.dev/), and Docker Compose or a compatible Podman Compose setup. The pinned Java, Gradle, Node.js, and pnpm versions are in [`mise.toml`](mise.toml).
+
+From the repository root:
 
 ```sh
 mise install
-cp .env.example .env  # optional; committed local-only defaults also work
+mise exec -- pnpm --dir web install --frozen-lockfile
+mise exec -- pnpm --dir homepage install --frozen-lockfile
+cp .env.example .env  # optional; use .env for local overrides
 make local
 ```
 
-Open the Astro homepage at <http://127.0.0.1:4321> and the Next.js research workspace at <http://127.0.0.1:3000>. `make local` keeps API and worker in Compose while running the homepage and web workspace on the host. It also starts PostgreSQL + pgvector, Redis, MinIO, Ollama, and the pinned GROBID service; deploys the Sqitch migrations; then prepares the private Laya key, verifies/downloads the pinned checkpoint, and starts the CPU-only Laya sidecar. The first startup downloads roughly 1.7 GB of model artifacts; they are stored in a persistent volume. Set `LAYA_ENABLED=false` in `.env` to skip Laya startup. `make laya-up` remains available to start/recreate the sidecar separately. The application and Compose provider preference is Laya; when its configuration is missing, an omitted choice safely resolves to mock. Per issue #45, the production Spring profile defaults to `LAYA_ENABLED=true`, `SYSTEM_ONE_DEFAULT_PROVIDER=laya`, and experimental aggregation enabled. This profile-default decision does not calibrate outputs. Human calibration and target-specific production approval are not release prerequisites. Outputs must remain visibly uncalibrated; unauthenticated access must stay on localhost/trusted private networks, external calls require per-run consent, and rollback must be available. Set `LOCAL_LAYA_AGGREGATION_ENABLED=false` whenever final statuses should be suppressed. GROBID has no host-published port; Laya publishes its HTTP API at `127.0.0.1:8000` by default. Inference and preflight routes still require the Laya bearer key. The API and worker use the same Kotlin/Spring Boot image as separate processes. Redis Streams work is at-least-once; the transactional outbox, PostgreSQL inbox, and pending-message reclaim protect committed work from duplicate delivery and worker restart.
+`make local` runs the API and worker with their dependencies in containers, and the Next.js workspace and Astro homepage on the host. It applies database migrations and uses local-only defaults when `.env` is absent. If a selected frontend from this worktree is already listening on its configured port, the command reuses it; a different app already using that port produces a clear error.
 
-Select which services `make local` starts by listing them after `local`:
+| Service | URL |
+| --- | --- |
+| Homepage | <http://127.0.0.1:4321> |
+| Research workspace | <http://127.0.0.1:3000> |
+| API health | <http://127.0.0.1:8080/api/v1/health> |
+| Swagger UI | <http://127.0.0.1:8080/swagger-ui/index.html> |
+| Scalar API reference | <http://127.0.0.1:8080/scalar> |
+| MinIO Console | <http://127.0.0.1:9001> (credentials are `S3_ACCESS_KEY` and `S3_SECRET_KEY` from `.env`) |
 
-```sh
-mise exec -- pnpm --dir web install --frozen-lockfile
-mise exec -- pnpm --dir homepage install --frozen-lockfile
-make local api web
-make local web
-make local web homepage
-```
+The default local setup enables Ollama and Laya. First startup downloads the Ollama embedding model and about 1.7 GB of pinned Laya model artifacts. To skip Laya, set `LAYA_ENABLED=false` in `.env`. See [Laya evaluation](docs/laya-evaluation.md) for its configuration and limits.
 
-`make local api web` starts API and its required infrastructure in Compose, then runs Next.js on the host; it does not select the worker. `make local web` runs only Next.js and waits for a healthy API at the configured host port, so the API must already be available. `make local web homepage` runs both frontends on the host; Ctrl+C stops those dev servers. Selecting a frontend stops its matching Compose service if it is running, freeing the default ports. The web API proxy uses `API_HOST_PORT` from `.env` (default `8080`), and the homepage links to the local workspace. Override the local ports with `WEB_PORT`, `HOMEPAGE_PORT`, or `LOCAL_API_PORT`. With no service selectors, `make local` selects `api worker web homepage`. Use `make dev` to run the full stack, including both frontends, in Compose.
-
-To rebuild selected service images, pass their service names after `dev`, for example `make dev api`, `make dev worker`, or `make dev api worker`. `make dev web` and `make dev laya` are also supported. Only the named service images are built; Compose starts the selected services and any required dependencies. When Laya is enabled, the setup still verifies its pinned model and starts the sidecar for a selected app service, but rebuilds the Laya image only when `laya` is selected or when running plain `make dev`.
-
-Stop selected development containers without removing them using `make dev-stop <service...>`:
+### Choose services
 
 ```sh
-make dev-stop web homepage
-make dev-stop web
+make local                    # API, worker, web, and homepage
+make local api web            # API and web; no worker
+make local web                # web only; requires a running API
+make local web homepage       # both frontends; web still requires a running API
+make dev                      # full application in Compose
+make dev-stop web homepage    # stop selected containers, if present
 ```
 
-It accepts `api`, `worker`, `web`, `homepage`, or `laya`. Stopped services are safe to pass, and the stop command is skipped when no matching container exists. Use `make dev-stop laya` to stop the optional Laya sidecar.
+The host-run frontends stop when you press Ctrl+C. `make dev-stop` stops containers but preserves data. `make infra-down` stops the Compose stack and also preserves data. `make clean` deletes the local Compose volumes, including uploaded papers and analysis data.
 
-The UI pins heuristic extraction and prefers Ollama embeddings when offered, with local feature-hash as the fallback; external Ollama endpoints still require reviewed enablement and explicit per-run consent. The selected provider is pinned per run. It prefers Laya System One when its authenticated local configuration is available; otherwise mock remains selected. Its workspace places Source Document upload and cursor-paginated persisted runs side by side, with the selected run's progress, parsed structure, and Evidence Coverage Report in a full-width card below. The worker verifies the stored source hash, calls self-hosted GROBID with both external consolidation options explicitly set to `0`, retains the exact raw TEI response in private run-scoped object storage, and persists parser provenance, sections, Citation Contexts, Citation Occurrences, Bibliography Entries, Atomic Claims with source spans, and all-to-all claim-to-target links within each Citation Context. The UI labels those links inferred/provisional. The worker then classifies unsupported bibliography types and resolves supported entries conservatively. Confirmed DOI identities and deterministic title/author/year matches map to Canonical Papers; ambiguous or below-threshold candidates remain unresolved. Crossref and Unpaywall are offered in the repository's local provider catalog for consent-flow testing, but recorded fixtures remain selected by default; every external request requires explicit per-run consent for its actual data categories. No external provider receives Source Document content. For each eligible English Cited Paper, the worker integrity-checks and parses that run's exact acquired asset, creates section-aware chunks, combines pgvector and PostgreSQL full-text ranks with reciprocal-rank fusion, and stores bounded ranked passages per linked Atomic Claim × Cited Reference. When feature-hash is selected, its deterministic local vectors are lexical features, not a trained semantic embedding model. The report and UI expose the exact source asset/hash, parser and language-detector versions, embedding profile, retrieval settings, candidate ranks, and fusion score. When a run selects Laya, eligible passages receive persisted uncalibrated Evidence Judgements. The `.env.example`, base Spring configuration, and Compose default experimental aggregation to `true`; set the flag to `false` to keep final statuses `NOT_RUN`. Calibration is not required for release. Outputs remain explicitly uncalibrated and no accuracy claim is implied. Mock remains the fallback only when Laya is unavailable before run selection; failures after selecting Laya do not fall back.
+## Architecture
 
-The Astro homepage and Next.js workspace share color and typography tokens from `packages/design-system/`. See the [Paper T-Rail UI Design System](docs/ui-design-system.md) for product voice, layout, accessibility, and responsive guidance; `homepage/AGENTS.md` and `web/AGENTS.md` apply those rules to each service. Use `make homepage-dev` or `make homepage-build` to run the Astro service by itself.
+The API accepts work and records an immutable Analysis Run. A transactional outbox and Redis Streams hand off long-running processing to the worker. The worker parses the source, resolves references, retrieves candidate passages from the exact cited-paper assets, and persists results with provenance. The workspace reads those results through the API.
 
-The default `grobid/grobid:0.9.1-crf` image includes native linux/arm64 and linux/amd64 builds. Compose waits for GROBID's `/api/isalive` endpoint before starting the worker. Override `GROBID_IMAGE` and `GROBID_PARSER_VERSION` together when selecting a different self-hosted build. To use an externally managed private service instead, set `GROBID_BASE_URL` to an address reachable from the worker and set `GROBID_PARSER_VERSION` to the deployed version; public destinations are rejected. For example, Docker Desktop can use `http://host.docker.internal:8070` when GROBID runs on the host.
+```mermaid
+flowchart LR
+    Researcher --> Home[Astro homepage]
+    Researcher --> Workspace[Next.js workspace]
+    PDF[English academic PDF] --> Workspace
+    Workspace --> API[Kotlin / Spring Boot API]
+    API --> DB[(PostgreSQL + pgvector)]
+    API --> Objects[(MinIO object storage)]
+    API --> Outbox[Transactional outbox]
+    Outbox --> Redis[Redis Streams]
+    Redis --> Worker[Kotlin worker]
+    Worker --> GROBID[GROBID parser]
+    Worker --> Sources[Reference resolution and cited-paper retrieval]
+    Worker --> DB
+    Worker --> Objects
+```
 
-### Local network and data safety
+| Area | Source location | Responsibility |
+| --- | --- | --- |
+| API and worker | `api/src/main/kotlin/com/papertrail/api/` | Kotlin/Spring Boot modular monolith; feature code is grouped by domain capability. API and worker use the same application with different roles. |
+| Database | `api/db/` | Sqitch schema changes and database functions. |
+| Web workspace | `web/app/`, `web/features/` | Next.js routes, same-origin API proxy, and feature-specific UI and data behavior. |
+| Homepage | `homepage/src/` | Astro product site. |
+| Shared design | `packages/design-system/` | Color and typography tokens shared by the web app and homepage. |
+| Local services | `infra/docker-compose.yml`, `infra/laya/` | Databases, object storage, GROBID, Ollama, and the optional local Laya sidecar. |
+| Local workflows | `Makefile`, `mise.toml` | Service startup, migrations, checks, and pinned development tools. |
 
-The application has no researcher authentication. The optional Laya sidecar separately requires an API key and is reachable only on its internal Compose network. The web app is published only on `127.0.0.1:3000`; the API binds to a specific address on the private Compose bridge and is published to the host only at `127.0.0.1:${API_HOST_PORT:-8080}` for local API/Swagger access. PostgreSQL, Redis, and the MinIO console/API are published only on loopback. The API rejects wildcard and public-address binds. Do not change these bindings or expose this stack to a public/untrusted network before authentication and authorization exist.
+For the full architecture and request/data flows, see [High-Level Architecture](docs/paper-t-rail-tech-design.md#7-high-level-architecture), [Backend Package Structure](docs/paper-t-rail-tech-design.md#37-suggested-backend-package-structure), and [Repository Layout](docs/paper-t-rail-tech-design.md#38-repository-layout).
 
-The local Compose credentials are development-only. Uploaded PDFs and run metadata remain in local persistent volumes until explicit deletion; there is no automatic expiry. The workspace requires confirmation before deleting a Source Document and all of its Analysis Runs and derived data. Deletion leaves only a content-free tombstone to prevent pending workers from restoring data, and cannot retract content already sent to external providers. Shared Cited Paper assets remain only while another non-deleted document/run references them. `make infra-down` stops the Compose stack, including the optional Laya profile, while preserving volumes; `make clean` remains the destructive whole-installation cleanup operation.
+## Develop and contribute
 
-### Optional Laya local evaluation
-
-The local Compose evaluation provider starts automatically with `make dev` unless `LAYA_ENABLED=false`. The setup creates or preserves a private `.env` key, verifies/downloads the pinned checkpoint, starts the sidecar, and recreates API/worker before bringing up the web app. `make laya-up` remains available to start/recreate it separately. The production Spring profile defaults Laya and experimental aggregation enabled per #45, but this does not establish model calibration. Calibration and target-specific production approval are not product requirements; outputs remain uncalibrated and Mock remains manually selectable. Failures from a run that selected Laya do not fall back to mock. The exact candidate is pinned in code and in the [provider matrix](docs/agents/provider-matrix.md): typed-decisions checkpoint at HF revision `1a793eb568e6718f15941d08f85432581df534e3`, `laya-serve` v0.3.20 at source commit `23a17522aa4942da6cce53a995a275760320b691`, with mapping `paper-trail-evidence-judgement-v1`. In Spring configuration, Laya and its local endpoint default to enabled. The sample leaves the API key blank, but `make dev` generates a private local key before starting the sidecar; outside that local setup, Laya is not selectable until a valid authenticated endpoint on a trusted host is configured. Both `.env.example` and Compose set `SYSTEM_ONE_DEFAULT_PROVIDER=laya`; if Laya is not selectable, omitted choices resolve to mock. Set `LAYA_ENABLED=false` to hide Laya. Raw Laya judgements remain uncalibrated. Experimental aggregation defaults to true in `.env.example`, base Spring configuration, and Compose; `make dev` and `make laya-up` preserve explicit `.env` values. Set it to false to suppress final statuses. It applies only to runs that select Laya. Human calibration is not required; all resulting judgements and statuses remain uncalibrated.
-
-#### Aggregation default
-
-`.env.example`, base Spring configuration, and Compose default `LOCAL_LAYA_AGGREGATION_ENABLED=true`; `make dev`/`make laya-up` preserves any explicit `.env` value. If an existing `.env` has `false`, change it to `true` to adopt the new default. Set it to `false` to keep new Laya runs at `NOT_RUN`. `make dev` starts the sidecar by default (set `LAYA_ENABLED=false` to skip it); aggregation runs only when a new run selects Laya. Compose passes the setting to API and worker. Set `LOCAL_LAYA_AGGREGATION_ENABLED=false` to suppress experimental aggregation and keep final statuses `NOT_RUN`.
-
-| Environment variable | Default | Meaning |
-|---|---:|---|
-| `LOCAL_LAYA_AGGREGATION_ENABLED` | `true` | Enables experimental aggregation only for runs whose selected System One provider is Laya. Results remain uncalibrated; set `false` to keep final statuses `NOT_RUN`. |
-| `LOCAL_LAYA_AGGREGATION_DIRECT_SUPPORT_THRESHOLD` | `0.80` | Minimum direct-support strength. |
-| `LOCAL_LAYA_AGGREGATION_PARTIAL_SUPPORT_THRESHOLD` | `0.70` | Minimum partial-support strength. |
-| `LOCAL_LAYA_AGGREGATION_CONTRADICTION_THRESHOLD` | `0.80` | Minimum contradiction strength. |
-| `LOCAL_LAYA_AGGREGATION_COMPARABILITY_MARGIN` | `0.08` | Margin used to identify comparable support and contradiction. |
-
-When enabled, each new eligible Laya run snapshots these exact values and the policy/rubric versions, persists the Laya judgements, and computes experimental final Claim–Paper statuses. Set the flag to `false` to leave new runs at `NOT_RUN`; immutable existing runs are never recalculated. If Laya is unavailable and an omitted choice resolves to mock, Laya-specific thresholds are not applied. The production Spring profile defaults to Laya enabled/selected and experimental aggregation enabled per #45. Outputs and thresholds remain uncalibrated. Calibration and target-specific approval are not product requirements. Laya outputs and thresholds remain uncalibrated and must not be presented as validated accuracy. Set aggregation to `false` whenever final statuses should be suppressed.
-
-The sidecar publishes `127.0.0.1:8000` by default. The mapping is loopback-only; inference and preflight routes require a bearer API key, and the inference network remains internal-only. `make laya-up` creates or preserves an untracked `.env` with mode `0600`, generates a random 256-bit `LAYA_API_KEY` if none is set, separately downloads/verifies the fixed checkpoint, waits for the sidecar health check, then recreates API/worker with the matching key. Do not put the key in a command, browser variable, issue, or log. Set `LAYA_ENABLED=false` in `.env` to hide Laya; an omitted System One choice then uses mock, while an explicit unavailable Laya request is rejected. To measure the running local sidecar, execute the optional synthetic smoke benchmark:
+### Run checks
 
 ```sh
-make benchmark-laya
+make validate       # API and Laya tests, web tests, lint, typecheck, and web build
+make homepage-build # Astro production build
 ```
 
-The downloader contacts Hugging Face only for the pinned model artifacts and verifies the repository revision, tokenizer/config git-blob OIDs, model weight SHA-256, and 1,024-token configuration before writing the local manifest. The inference container loads that verified snapshot offline; it cannot download models. It uses CPU-only inference, including Apple Silicon. The benchmark sends synthetic claim/evidence text directly to the sidecar and reports latency, input/output tokens, and the server process's peak/current RSS. It is not a calibration result.
+`make validate` uses a Docker-compatible runtime for API integration tests. For targeted checks, use `make test-api`, `make test-laya`, `make test-web`, `make lint-web`, `make typecheck-web`, or `make build-web`.
 
-Only one claim and one evidence passage plus an optional section heading are sent for each judgement; no Source Document or unrelated passage is included. The complete state and each of six question sequences are counted with the checkpoint tokenizer before inference. Inputs beyond 1,024 tokens are rejected without truncation. Runtime, timeout, schema, and token-limit failures remain provider failures/incomplete work; there is no inference-time fallback. When Laya is explicitly selected, eligible passages persist uncalibrated Evidence Judgements; configuration enables experimental aggregation by default, while a false setting keeps that run at `NOT_RUN`. The latest read-only database check confirms the supplied-PDF smoke runs: the latest Laya-backed run persisted 14 judgements and ended `COMPLETED_WITH_WARNINGS`; the other latest PDF run completed with no Laya judgements. Neither latest run has a Human Review attached, and these runs do not constitute calibration. The production profile defaults Laya and aggregation enabled per #45, but outputs remain uncalibrated. Calibration is not required for this release. #45 is closed as not planned; outputs remain uncalibrated and no accuracy claim is made. See [local aggregation configuration](docs/laya-evaluation.md#aggregation-default), [the current trial and evidence status](docs/laya-evaluation.md#current-pipeline-trial-and-evidence-status), and [issue #45](https://github.com/arrokh/paper-t-rail/issues/45). For response mapping, failure semantics, and the recorded measurement, see [Laya local evaluation](docs/laya-evaluation.md).
+### Contribution path
 
-### Configurable PDF limits
+1. Check [GitHub Issues](https://github.com/arrokh/paper-t-rail/issues) for existing specs and work.
+2. Read [`CONTEXT.md`](CONTEXT.md) for product vocabulary, then the relevant [architecture decision records](docs/adr/).
+3. Follow the root [`AGENTS.md`](AGENTS.md), [`docs/agents/coding-principles.md`](docs/agents/coding-principles.md), and the service guide for files you change: [`api/AGENTS.md`](api/AGENTS.md), [`web/AGENTS.md`](web/AGENTS.md), or [`homepage/AGENTS.md`](homepage/AGENTS.md).
+4. Run the targeted checks for your changes; run `make validate` for broader changes.
 
-Set these in `.env`; every cap is enforced by rejection, never by truncating the source or parsed text:
+Keep the product boundaries intact: retrieved passages are candidates for review; Analysis Runs preserve their original configuration and results; external providers require the documented enablement and per-run consent; and outputs must remain labeled uncalibrated.
 
-| Variable | Default | Behavior |
-|---|---:|---|
-| `PAPER_MAX_UPLOAD_BYTES` | `52428800` | Maximum PDF upload size |
-| `PAPER_MAX_REQUEST_SIZE` | `51MB` | Maximum complete multipart request size, including boundaries; raise it when increasing the PDF byte cap |
-| `PAPER_MAX_PAGES` | `500` | Maximum parsed page count |
-| `PAPER_MAX_CLAIM_CITATION_PAIRS` | `5000` | Maximum inferred Atomic Claim × Citation Target links; an over-limit queued run fails with an explicit reason before persisting parsed output |
-| `PAPER_MAX_EXTRACTED_CHARACTERS` | `5000000` | Maximum extracted text before rejection |
-| `PAPER_MAX_EXTRACTED_CHARACTERS_PER_PAGE` | `100000` | Maximum extracted text on one page before rejection; bounds PDFBox per-page buffering |
-| `PAPER_MAX_GROBID_RESPONSE_BYTES` | `67108864` | Maximum TEI response bytes read before rejection and XML parsing |
-| `PAPER_MIN_EXTRACTED_CHARACTERS` | `100` | Minimum text needed for language validation |
-| `PAPER_MIN_LANGUAGE_CONFIDENCE` | `0.65` | Minimum English language-detection confidence |
+### Local data and network boundary
 
-The rationale, measured article/dissertation results, pinned runtime/provider matrix, and reproduction command are recorded in [the V1 runtime matrix](docs/benchmarks/v1-runtime-matrix.md); rerun the measurements with `make benchmark-processing`.
+The workspace has no researcher authentication. Keep the local services on loopback or a trusted private network; do not expose them to an untrusted network. Uploaded PDFs and analysis data persist in local volumes until explicitly deleted. Deletion cannot retract content already sent to an external provider.
 
-Scanned PDFs without enough selectable text, unsupported languages, invalid PDFs, page/size-limit violations, and parser failures receive explicit API error codes and explanations. OCR is not performed.
+## Detailed documentation
 
-### Conservative bibliography resolution
-
-New runs snapshot the `title-author-year-weighted-edit-similarity-v1` score policy and configured threshold (`PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD`, default `0.9`). This value is configurable and pinned per run; the existing versioned heuristic threshold is used without an empirical calibration requirement. Ambiguous or below-threshold matches remain unresolved; no calibration or accuracy claim is made. A syntactically valid bibliography DOI is accepted only when the selected scholarly metadata provider confirms the same DOI; a miss or DOI mismatch stays unresolved rather than silently switching identities. Entries without a valid DOI use deterministic title/author/year matching, and ambiguous or below-threshold matches remain unresolved. Unsupported reference types terminate before metadata lookup.
-
-The safe selected provider is `recorded-fixtures`. The repository's local configuration enables and marks Crossref and Unpaywall reviewed so their consent/acquisition flows can be tested, but neither is selected by default. Before deployment, verify each exact service's current terms, replace the test contact (`test@ptr.test`) and retention disclosures with deployment-specific values, or set both `*_ENABLED` and `*_ENABLEMENT_REVIEWED` flags to `false`. Each external run must approve the actual categories shown in the UI; consent is not inherited from another run. Crossref receives bibliography metadata and the configured contact email, never Source Document text or PDF content; Unpaywall discovery receives the DOI and contact email, while a separate gate covers each content-host URL.
-
-### Configurable hybrid evidence retrieval
-
-Retrieval settings are deployment-configurable through `.env` and pinned into each new Analysis Run:
-
-| Variable | Default | Behavior |
-|---|---|---|
-| `PAPER_RETRIEVAL_PROFILE_ID` | `postgres-hybrid-rrf-v1` | Diagnostic retrieval profile identity |
-| `PAPER_RETRIEVAL_VECTOR_CANDIDATES` | `10` | Maximum vector-ranked candidates per claim/reference |
-| `PAPER_RETRIEVAL_LEXICAL_CANDIDATES` | `10` | Maximum PostgreSQL full-text candidates per claim/reference |
-| `PAPER_RETRIEVAL_FINAL_CANDIDATES` | `5` | Maximum fused passages retained per claim/reference |
-| `PAPER_RETRIEVAL_RRF_CONSTANT` | `60` | Reciprocal-rank fusion constant |
-
-`feature-hash-384-v1` remains the deterministic word-unigram/bigram fallback; it is lexical hashing, not a trained semantic model. Local Compose starts an internal Ollama service and enables the pinned `nomic-embed-text:v1.5` model (768 dimensions; Ollama manifest digest `0a109f422b47`) as the preferred embedding selection for new Analysis Runs. On first startup, Compose downloads the Ollama image and model into the persistent `ollama_data` volume. API and worker startup does not wait for the model download; verify it with `docker compose -f infra/docker-compose.yml logs ollama-model-init` before starting a run. The UI prefers Ollama whenever it is listed; external endpoints require reviewed enablement and per-run consent. API requests that omit the embedding selection prefer only locally trusted Ollama, falling back to feature-hash otherwise. Other deployments must explicitly configure Ollama before it can be selected. Ollama endpoint credentials stay server-side. Chunk and Atomic Claim query vectors use the same selected Ollama model/profile, and the immutable run pins the model, dimension, and a non-secret endpoint fingerprint. Candidate retrieval never crosses the exact Analysis Run and Cited Reference scope.
-
-For non-Compose deployments, configure `OLLAMA_ENABLED`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, and `OLLAMA_DIMENSION` in the API environment; local Compose defaults `OLLAMA_MODEL` to `nomic-embed-text:v1.5`. Only endpoint hosts explicitly listed in `OLLAMA_TRUSTED_HOSTS` are `LOCAL`; other hosts are classified `EXTERNAL` and require a reviewed retention disclosure plus fresh per-run consent. External endpoints remain unavailable until reviewed enablement and a deployment-specific disclosure are configured, and each run must approve `atomic_claims`, `cited_paper_chunks`, and `embedding_input`. An optional `OLLAMA_API_KEY` is used only by the API as a bearer credential and is never returned by the provider directory or persisted in Analysis Run configuration.
-
-## API
-
-The Next.js server proxies same-origin `/api/v1/*` calls to the private API; browser code never needs a public API binding.
-
-- `POST /api/v1/analysis-runs` — multipart `file` plus optional JSON `configuration`; validates, stores the Source Document, creates a `QUEUED` immutable Analysis Run, and commits its outbox event atomically.
-- `GET /api/v1/providers` — enabled and classified provider choices grouped by role, plus stable data-category descriptions; disabled and unclassified providers are omitted.
-- `GET /api/v1/analysis-runs?limit=25&cursor=...` — cursor-paginated recent persisted runs, ordered by creation time descending and ID descending; the response contains `items` and `nextCursor`.
-- `GET /api/v1/analysis-runs/{id}` — persisted status, progress, source hash, and configuration snapshot, including the pinned retrieval profile. A ready `PARSED` run has persisted citation structure, Atomic Claims, inferred/provisional Citation Target links, bibliography-resolution outcomes, and retrieval results for eligible cited assets. Local Laya-evaluation runs may also contain uncalibrated Evidence Judgements; final semantic statuses are `NOT_RUN` when aggregation is disabled in the run snapshot.
-- `GET /api/v1/analysis-runs/{id}/parsed-document` — parser provenance, normalized source text, sections, Citation Contexts and their marker-to-reference targets, extracted Atomic Claims and source spans, inferred/provisional claim-to-target links, and Bibliography Entries with their current resolution status. Source offsets are zero-based/end-exclusive UTF-16 code-unit indexes into `normalizedSourceText`; the parser separates semicolons and clear contrastive clause connectors, and records sentence fallback when a clause boundary is ambiguous.
-- `GET /api/v1/analysis-runs/{id}/report` — persisted resolution outcomes and Claim–Paper Verification records with ranked Evidence Passages, exact passage text/section, source asset/hash, parser and language-detector provenance, candidate ranks, fusion score, and pinned retrieval/embedding profile. Local Laya-evaluation runs include raw uncalibrated judgement outputs; semantic final statuses are absent when aggregation is `NOT_RUN`, or computed with the snapshotted thresholds when aggregation was enabled. The UI and run progress mark Laya aggregation outcomes experimental. Access-based terminal outcomes remain policy-driven.
-- `POST /api/v1/documents/{id}/analysis-runs` — re-analyze the same stored Source Document as a new run.
-- `DELETE /api/v1/documents/{id}` — tombstone and delete the Source Document, its Analysis Runs, document-scoped derived data, and unshared stored assets; safe to retry after an incomplete cleanup.
-- `GET /api/v1/health` — API/database liveness.
-
-The OpenAPI 3 document is available at <http://127.0.0.1:8080/v3/api-docs> (YAML at `/v3/api-docs.yaml`), Swagger UI at <http://127.0.0.1:8080/swagger-ui/index.html>, and the Scalar API reference at <http://127.0.0.1:8080/scalar>. The API host port defaults to `8080`; configure `API_HOST_PORT` in `.env` if that loopback port is unavailable. Compose binds this published port only to `127.0.0.1`; do not expose it publicly. Swagger, Scalar, and OpenAPI endpoints are disabled in the worker process.
-
-The upload form loads provider choices from `GET /api/v1/providers`; only enabled, classified providers are listed. Heuristic extraction, locally selectable Ollama embeddings (with feature-hash fallback), and recorded scholarly-metadata fixtures are selected by default. In local Compose, Laya is selected for System One when its authenticated trusted endpoint is available; mock remains manually selectable. The application default provider preference is Laya; if Laya is unavailable, omitted choices resolve to mock. Crossref and Unpaywall are available in the repository's local catalog for consent-flow testing, but neither is selected automatically. Ollama is offered only when its API-side endpoint/model/dimension configuration is valid; an untrusted endpoint is classified `EXTERNAL`, and its actual embedding payload categories require fresh per-run approval before any request. Laya's runtime/checkpoint/output mapping and non-secret endpoint fingerprint are pinned in each run snapshot. Endpoint credentials are API-side only and are never returned to the web client or snapshotted. The immutable Analysis Run snapshot records provider choices, the score-policy version and threshold, retrieval/embedding profile, and provider/category consent. External provider calls pass through the per-run provider-call gate immediately before dispatch, so missing consent results in no request. The default local run sends no document content to external providers.
-
-## Structured logs and request correlation
-
-The Spring API and worker emit ECS-compatible JSON logs to stdout. The web API proxy emits JSON request-completion/failure records using the same ECS field conventions. Each request gets an `X-Request-ID`: the web proxy validates or generates it, forwards it to the API, and returns it in the response; the API also validates or generates the ID for direct requests. Search both services' logs by this ID to follow synchronous proxy/API work. Worker records include `analysisRunId`, `documentId`, `eventId`, `correlationId`, and `eventType`; outbox publisher records include `analysisRunId`, `eventId`, and `correlationId`.
-
-Logs include request method, route/path, status, duration, and safe error type as applicable. Request bodies and query strings are not logged, and application logs must not include PDF, Source Document, claim, or evidence text. See the [technical design](docs/paper-t-rail-tech-design.md) for the API and observability conventions.
-
-## Development and verification
-
-Tool versions are pinned in `mise.toml` (Java 21, Gradle 8.14.3, Node.js 24.11.0, and pnpm 12.6.0). After `mise install`, install the web dependencies from the canonical frozen lockfile and run local web development with the pinned toolchain:
-
-```sh
-mise exec -- pnpm --dir web install --frozen-lockfile
-mise exec -- pnpm --dir web dev
-```
-
-The web container also uses Node.js 24.11.0 and installs with `pnpm install --frozen-lockfile`. Docker bootstraps the exact pnpm version declared in `web/package.json` using Node's bundled npm because Node 24.11's Corepack cannot load pnpm 12's `.mjs` entry point; dependency installation and scripts still run through pnpm. `web/pnpm-workspace.yaml` preserves pnpm's default release-age check, exempting only the exact `hono@4.13.9` and `lucide-react@1.48.0` versions already pinned in the lockfile. It also explicitly keeps `unrs-resolver`'s install build script disabled, matching the prior install behavior. Use the repository Make targets for validation; each web target runs through the mise-pinned Node.js and pnpm versions.
-
-```sh
-make validate       # Kotlin/queue + Laya contract tests, web tests, lint, typecheck, and production build
-make test-web       # run the web proxy behavior tests only
-make lint-web       # run web lint
-make typecheck-web  # run web typecheck
-make build-web      # create the web production build
-make migrate        # deploy the Sqitch plan into the local Compose PostgreSQL service
-make migrate:ls     # print full change IDs, oldest-first in the local timezone
-make migrate:revert CHANGE=<change-id>  # revert that change and later migrations; interactive confirmation
-make clean          # destructive: remove all local application volumes
-```
-
-The Sqitch IDs are database change IDs, not Git commit SHAs. `migrate:ls` prints events oldest-first as a full ID, an indented local timestamp/action, and an indented title; timestamps show the machine's local timezone, abbreviation, and offset. It prints directly without a pager; pass a full 40-character change ID from it to `migrate:revert`. Sqitch reverts the selected change and all later changes, retains its interactive confirmation, and runs the migration revert scripts. This can delete persisted schema data (for example, bibliography-resolution outcomes); back up and review the target database before proceeding. Neither target removes Compose volumes.
-
-`make validate` requires a Docker-compatible container runtime for its PostgreSQL/Redis integration tests. The tests execute the same schema migrations and exercise upload/run provenance, GROBID consolidation settings, DOI validation, deterministic matching and ambiguity abstention, unsupported-type precedence, Crossref consent gating with a no-request contract, persisted Canonical Paper/report output, parsing and source spans, citation-clause grouping and sentence fallback, qualifier-preserving claim extraction, per-run/context/span claim deduplication, all-to-all same-context target links with database-enforced context isolation, re-analysis, duplicate stream delivery, inbox idempotency, and reclaiming pending work with a replacement worker.
-
-If using Podman, start its machine and export the Docker-compatible socket as `DOCKER_HOST` before Compose/Testcontainers commands. Podman's socket cannot be bind-mounted into Testcontainers' Ryuk cleanup container on some setups; in that case also set `TESTCONTAINERS_RYUK_DISABLED=true` when running tests. Testcontainers still stops the declared containers during normal test shutdown, but disabling Ryuk removes its crash-cleanup safeguard. The Podman machine must have enough memory for PostgreSQL, Redis, MinIO, and the JVM build/test process.
+| Read this | For |
+| --- | --- |
+| [`docs/paper-t-rail-tech-design.md`](docs/paper-t-rail-tech-design.md) | Full system design, API, repository layout, observability, security, and testing strategy. |
+| [`docs/adr/`](docs/adr/) | Architecture and product decisions, including their current status. |
+| [`docs/agents/provider-matrix.md`](docs/agents/provider-matrix.md) | Provider boundaries, retention, and safe defaults. |
+| [`docs/laya-evaluation.md`](docs/laya-evaluation.md) | Pinned local model, configuration, failure behavior, and evaluation evidence. |
+| [`docs/benchmarks/v1-runtime-matrix.md`](docs/benchmarks/v1-runtime-matrix.md) | Runtime limits, measurements, and reproduction steps. |
+| [`docs/ui-design-system.md`](docs/ui-design-system.md) | Shared interface tokens, accessibility, and UI conventions. |
+| [`CONTEXT.md`](CONTEXT.md) | Domain terms used across the product and codebase. |

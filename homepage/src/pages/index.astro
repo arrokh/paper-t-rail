@@ -3,7 +3,6 @@ import "../styles/global.css";
 import HeroScene from "../components/hero/HeroScene.astro";
 import CloudflareWebAnalytics from "../components/CloudflareWebAnalytics.astro";
 
-const workspaceUrl = import.meta.env.PUBLIC_WORKSPACE_URL || "http://127.0.0.1:3000";
 const setupUrl = "https://github.com/arrokh/paper-t-rail";
 
 const architecture = [
@@ -140,7 +139,7 @@ const questions = [
     </a>
     <nav class="site-nav" aria-label="Main navigation">
       <a href="#about">About</a>
-      <a href="#example">Example</a>
+      <a href="#how-it-works">How it works</a>
       <a href="#architecture">Architecture</a>
       <a href="#faq">FAQ</a>
     </nav>
@@ -190,6 +189,12 @@ const questions = [
           and decide what the evidence supports.
         </p>
       </div>
+      <ol class="intro-trail" aria-label="The path from a claim to candidate evidence">
+        <li><span class="intro-trail__step">01</span><span>Claim</span></li>
+        <li><span class="intro-trail__step">02</span><span>Citation</span></li>
+        <li><span class="intro-trail__step">03</span><span>Cited paper</span></li>
+        <li><span class="intro-trail__step">04</span><span>Evidence passage</span></li>
+      </ol>
       <div id="researchers" class="principle-grid">
         <article class="principle-card principle-card--red">
           <h3>Follow the reference.</h3>
@@ -207,52 +212,25 @@ const questions = [
     </div>
   </section>
 
-  <section id="example" class="landing-section example-section" aria-labelledby="example-heading">
+  <section id="how-it-works" class="landing-section how-it-works-section" aria-labelledby="how-it-works-heading">
     <div class="landing-container">
       <div class="section-heading section-heading--split">
         <div>
-          <p class="pixel-label">A sample journey</p>
-          <h2 id="example-heading">See what the trail keeps connected.</h2>
+          <p class="pixel-label">How it works</p>
+          <h2 id="how-it-works-heading">Follow the review from source to evidence.</h2>
         </div>
-        <p class="example-disclaimer">Illustrative wording only — this is not a real paper or research result.</p>
+        <p>Watch how Paper T-Rail connects a paper&apos;s claims, citations and candidate evidence passages.</p>
       </div>
-      <div class="example-board">
-        <article class="example-card example-card--claim">
-          <p class="example-card__eyebrow">Claim in your draft</p>
-          <p class="example-claim-text">
-            “Regular aerobic exercise is associated with improved working memory in older adults.”
-          </p>
-          <div class="example-connection">
-            <span class="example-connection__marker">[1]</span>
-            <span>Citation occurrence in the claim&apos;s context</span>
-          </div>
-          <div class="example-reference">
-            <span class="pixel-icon icon-file" aria-hidden="true"></span>
-            <div>
-              <strong>Bibliography reference</strong>
-              <span>Linked to a candidate cited paper for review</span>
-            </div>
-          </div>
-        </article>
-        <article class="example-card example-card--evidence">
-          <p class="example-card__eyebrow">Candidate evidence passage</p>
-          <div class="evidence-preview">
-            <span class="evidence-preview__label">From the cited paper</span>
-            <p>
-              Candidate passages are shown with their source location so you can inspect the
-              surrounding context and decide what they support.
-            </p>
-            <span class="evidence-preview__location">Page and section location stay attached</span>
-          </div>
-          <p class="example-card__footnote">A candidate to inspect — not an automatic match or verdict.</p>
-          <a href={workspaceUrl} class="example-source-link">
-            Explore the review workspace <span class="pixel-icon icon-arrow-right" aria-hidden="true"></span>
-          </a>
-        </article>
+      <div class="how-it-works-video">
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/zj7WTlL2YlU?autoplay=0"
+          title="How Paper T-Rail works"
+          loading="lazy"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allow="encrypted-media; picture-in-picture; web-share"
+          allowfullscreen
+        ></iframe>
       </div>
-      <p class="example-note">
-        The Evidence Coverage Report is a human-review aid, not certification or grading.
-      </p>
     </div>
   </section>
 

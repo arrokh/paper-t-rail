@@ -14,10 +14,12 @@ interface Props {
 const { className = "", loading = "lazy" } = Astro.props;
 
 const segments: TrainSegment[] = [
-  { width: "0.244", sourceStart: "0", windowLefts: [24.6, 34.6, 45, 55.6, 66, 76.4], windowWidth: "5.6%" },
-  { width: "0.2", sourceStart: "0.244", windowLefts: [8.6, 21.6, 34.3, 46.9, 59.9, 72.6], windowWidth: "6.9%" },
-  { width: "0.2", sourceStart: "0.444", windowLefts: [10.9, 23.9, 36.5, 49, 61.7, 74.6], windowWidth: "6.9%" },
-  { width: "0.204", sourceStart: "0.644" },
+  { width: "0.244", sourceStart: "0", windowLefts: [23.7, 33.7, 44.1, 54.7, 65.1, 75.5], windowWidth: "7.4%" },
+  { width: "0.2", sourceStart: "0.244", windowLefts: [7.65, 20.65, 33.35, 45.95, 58.95, 71.65], windowWidth: "8.8%" },
+  { width: "0.2", sourceStart: "0.444", windowLefts: [9.95, 22.95, 35.55, 48.05, 60.75, 73.65], windowWidth: "8.8%" },
+  // Stop before the sprite's baked-in headlight beam; the animated CSS beam
+  // follows the locomotive independently and stays aligned with its motion.
+  { width: "0.19", sourceStart: "0.644" },
 ];
 ---
 

@@ -118,17 +118,45 @@ ifneq ($(strip $(LOCAL_FRONTEND_SERVICES)),)
 	pids=''; \
 	case ' $(LOCAL_FRONTEND_SERVICES) ' in \
 		*' web '*) \
-			echo "Starting the web workspace at http://127.0.0.1:$(WEB_PORT)"; \
-			PAPER_T_RAIL_API_ORIGIN="$${PAPER_T_RAIL_API_ORIGIN:-http://127.0.0.1:$(LOCAL_API_PORT)}" \
-				$(MISE) pnpm --dir web exec next dev --hostname 127.0.0.1 --port "$(WEB_PORT)" & \
-			pids="$$pids $$!" ;; \
+			web_listener=$$(lsof -tiTCP:"$(WEB_PORT)" -sTCP:LISTEN 2>/dev/null | head -n 1 || :); \
+			if [ -n "$$web_listener" ]; then \
+				web_directory=$$(lsof -a -p "$$web_listener" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || :); \
+				web_command=$$(ps -p "$$web_listener" -o command= 2>/dev/null || :); \
+				case "$$web_command" in \
+					*"next-server (v"*|*"next/dist/bin/next dev"*) \
+						if [ "$$web_directory" != "$(CURDIR)/web" ]; then \
+							echo "Port $(WEB_PORT) is serving a Next.js app outside this worktree." >&2; exit 1; \
+						fi; \
+						echo "Using the existing web workspace at http://127.0.0.1:$(WEB_PORT)" ;; \
+					*) echo "Port $(WEB_PORT) is already in use by another process." >&2; exit 1 ;; \
+				esac; \
+			else \
+				echo "Starting the web workspace at http://127.0.0.1:$(WEB_PORT)"; \
+				PAPER_T_RAIL_API_ORIGIN="$${PAPER_T_RAIL_API_ORIGIN:-http://127.0.0.1:$(LOCAL_API_PORT)}" \
+					$(MISE) pnpm --dir web exec next dev --hostname 127.0.0.1 --port "$(WEB_PORT)" & \
+				pids="$$pids $$!"; \
+			fi ;; \
 	esac; \
 	case ' $(LOCAL_FRONTEND_SERVICES) ' in \
 		*' homepage '*) \
-			echo "Starting the homepage at http://127.0.0.1:$(HOMEPAGE_PORT)"; \
-			PUBLIC_WORKSPACE_URL="$${PUBLIC_WORKSPACE_URL:-http://127.0.0.1:$(WEB_PORT)}" \
-				$(MISE) pnpm --dir homepage exec astro dev --host 127.0.0.1 --port "$(HOMEPAGE_PORT)" & \
-			pids="$$pids $$!" ;; \
+			homepage_listener=$$(lsof -tiTCP:"$(HOMEPAGE_PORT)" -sTCP:LISTEN 2>/dev/null | head -n 1 || :); \
+			if [ -n "$$homepage_listener" ]; then \
+				homepage_directory=$$(lsof -a -p "$$homepage_listener" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' || :); \
+				homepage_command=$$(ps -p "$$homepage_listener" -o command= 2>/dev/null || :); \
+				case "$$homepage_command" in \
+					*"astro.mjs dev"*) \
+						if [ "$$homepage_directory" != "$(CURDIR)/homepage" ]; then \
+							echo "Port $(HOMEPAGE_PORT) is serving an Astro app outside this worktree." >&2; exit 1; \
+						fi; \
+						echo "Using the existing homepage at http://127.0.0.1:$(HOMEPAGE_PORT)" ;; \
+					*) echo "Port $(HOMEPAGE_PORT) is already in use by another process." >&2; exit 1 ;; \
+				esac; \
+			else \
+				echo "Starting the homepage at http://127.0.0.1:$(HOMEPAGE_PORT)"; \
+				PUBLIC_WORKSPACE_URL="$${PUBLIC_WORKSPACE_URL:-http://127.0.0.1:$(WEB_PORT)}" \
+					$(MISE) pnpm --dir homepage exec astro dev --host 127.0.0.1 --port "$(HOMEPAGE_PORT)" & \
+				pids="$$pids $$!"; \
+			fi ;; \
 	esac; \
 	trap 'for pid in $$pids; do kill "$$pid" 2>/dev/null || :; done' INT TERM EXIT; \
 	wait

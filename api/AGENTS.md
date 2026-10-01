@@ -10,9 +10,9 @@ Keep the request flow legible: HTTP controllers and queue adapters should delega
 
 Use role packages such as `controller`, `service`, `repository`, `client`, and `queue` inside a feature when they improve navigation. Keep Spring-managed application services/components in `service`; keep framework adapters in their role packages. Use `model` only for persistence entities or projections, not as a bucket for request DTOs, domain concepts, or configuration snapshots. Put each named production type in a focused file by default. Keep generic infrastructure genuinely shared and avoid catch-all packages.
 
-## OpenAPI contract
+## OpenAPI contract — always maintain
 
-Keep the generated OpenAPI contract complete and current for every public API endpoint. When adding or changing a route, method, request/response schema, validation rule, consent behavior, or observable status/error response:
+OpenAPI documentation is part of every public endpoint's contract. Keep the generated contract complete and current in the same change as the implementation; no endpoint is exempt, including health checks and provider-directory endpoints. When adding or changing a route, method, request/response schema, validation rule, consent behavior, or observable status/error response:
 
 - Document the operation, parameters/request body, success and error responses, and relevant schema fields with Springdoc annotations on the owning controller and HTTP DTOs.
 - Update `api/src/test/kotlin/com/papertrail/api/openapi/OpenApiDocumentationTest.kt` to cover important contract details, including changed provider-directory behavior.

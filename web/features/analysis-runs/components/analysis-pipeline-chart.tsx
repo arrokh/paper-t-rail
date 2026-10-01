@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { PIPELINE_STAGES, PIPELINE_STAGE_STATE_LABELS, pipelineStageState, type PipelineStageId } from "@/features/analysis-runs/pipeline";
 import type { AnalysisRun } from "@/features/analysis-runs/types";
 
-const STATE_CLASSES = {
+export const PIPELINE_STAGE_STATE_CLASSES = {
   waiting: "border-border bg-card text-foreground",
   active: "border-info-foreground/35 bg-info text-info-foreground shadow-sm",
   pending: "border-border bg-muted/60 text-muted-foreground",
@@ -19,7 +19,9 @@ const STATE_CLASSES = {
   warning: "border-warning/55 bg-warning/30 text-warning-foreground",
 } as const;
 
-function StepStateIcon({ state }: { state: keyof typeof STATE_CLASSES }) {
+export const PIPELINE_STAGE_SELECTED_CLASSES = "border-2 border-info-foreground bg-info/70 text-info-foreground shadow-lg ring-2 ring-info-foreground ring-offset-2 ring-offset-background hover:border-info-foreground hover:bg-info/70 hover:text-info-foreground";
+
+function StepStateIcon({ state }: { state: keyof typeof PIPELINE_STAGE_STATE_CLASSES }) {
   if (state === "complete") return <Check className="size-3.5" aria-hidden="true" />;
   if (state === "active") return <LoaderCircle className="size-3.5 motion-safe:animate-spin" aria-hidden="true" />;
   if (state === "failed") return <CircleAlert className="size-3.5" aria-hidden="true" />;
@@ -107,8 +109,8 @@ export function AnalysisPipelineChart({
                   aria-label={`${stage.number} ${stage.label}: ${PIPELINE_STAGE_STATE_LABELS[state]}${selected ? ", selected stage" : ""}`}
                   className={cn(
                     "group flex h-full min-h-[11rem] min-w-0 flex-1 flex-col items-start justify-start gap-2 rounded-xl border px-3 py-3 text-left whitespace-normal transition-all hover:-translate-y-0.5 hover:border-info-foreground hover:shadow-md motion-reduce:transition-none motion-reduce:hover:translate-y-0",
-                    STATE_CLASSES[state],
-                    selected && "border-2 border-info-foreground bg-info/70 text-info-foreground shadow-lg ring-2 ring-info-foreground ring-offset-2 ring-offset-background hover:border-info-foreground hover:bg-info/70 hover:text-info-foreground",
+                    PIPELINE_STAGE_STATE_CLASSES[state],
+                    selected && PIPELINE_STAGE_SELECTED_CLASSES,
                   )}
                   onClick={() => onSelectStage(stage.id)}
                 >
