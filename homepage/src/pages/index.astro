@@ -3,56 +3,40 @@ import "../styles/global.css";
 import HeroScene from "../components/hero/HeroScene.astro";
 import CloudflareWebAnalytics from "../components/CloudflareWebAnalytics.astro";
 
-const workspaceUrl = import.meta.env.PUBLIC_WORKSPACE_URL || "http://127.0.0.1:3000";
 const setupUrl = "https://github.com/arrokh/paper-t-rail";
 
 const architecture = [
   {
-    name: "Public homepage",
-    system: "Astro",
-    detail: "Introduces the product and leads researchers into the workspace.",
+    name: "Read the PDF",
+    system: "Source parsing · claim extraction",
+    detail: "Parse the uploaded PDF and persist its structure, citations, and Atomic Claims.",
+    asset: "/images/architecture/stage-source.svg",
   },
   {
-    name: "Research workspace",
-    system: "Next.js",
-    detail: "Receives an English, text-based academic PDF and shows persisted runs.",
+    name: "Resolve references",
+    system: "Bibliography · identity matching",
+    detail: "Resolve supported bibliography entries to canonical scholarly papers.",
+    asset: "/images/architecture/stage-references.svg",
   },
   {
-    name: "Analysis API",
-    system: "Spring Boot + Kotlin",
-    detail: "Creates an immutable Analysis Run with its provenance.",
+    name: "Acquire cited sources",
+    system: "Legal full-text access",
+    detail: "Discover eligible cited-paper sources and record their access provenance.",
+    asset: "/images/architecture/stage-sources.svg",
   },
   {
-    name: "Async queue",
-    system: "Redis Streams",
-    detail: "Hands longer-running analysis work to the worker.",
+    name: "Prepare evidence",
+    system: "Parsing · chunking · retrieval",
+    detail: "Prepare eligible cited full text and retrieve candidate Evidence Passages.",
+    asset: "/images/architecture/stage-evidence.svg",
   },
   {
-    name: "Worker + providers",
-    system: "Parsing · retrieval · judgement",
-    detail: "GROBID and provider adapters process the source and cited papers.",
-  },
-  {
-    name: "Evidence record",
-    system: "PostgreSQL + pgvector · object storage",
-    detail: "Stores run metadata, search vectors, and source artifacts.",
-  },
-  {
-    name: "Coverage report",
-    system: "Evidence Coverage Report",
-    detail: "Returns traced findings to the workspace for human review.",
-  },
-  {
-    name: "Researcher review",
-    system: "Human decision",
-    detail: "Inspects the traceable findings and decides what to review next.",
+    name: "Assess evidence",
+    system: "Passage judgement · aggregation",
+    detail: "Record evidence judgements and aggregate Claim–Reference outcomes for review.",
+    asset: "/images/architecture/stage-assessment.svg",
   },
 ];
-
-const architecturePackets = Array.from({ length: architecture.length - 1 }, (_, index) => ({
-  position: `${11.6 + index * 12.45}%`,
-  delay: `${index * 220}ms`,
-}));
 
 const questions = [
   {
@@ -83,6 +67,7 @@ const questions = [
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f7f0de" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta
       name="description"
       content="Follow citation-backed claims from your research draft to candidate evidence in cited papers, then make the review decision yourself."
@@ -154,7 +139,7 @@ const questions = [
     </a>
     <nav class="site-nav" aria-label="Main navigation">
       <a href="#about">About</a>
-      <a href="#example">Example</a>
+      <a href="#how-it-works">How it works</a>
       <a href="#architecture">Architecture</a>
       <a href="#faq">FAQ</a>
     </nav>
@@ -204,6 +189,12 @@ const questions = [
           and decide what the evidence supports.
         </p>
       </div>
+      <ol class="intro-trail" aria-label="The path from a claim to candidate evidence">
+        <li><span class="intro-trail__step">01</span><span>Claim</span></li>
+        <li><span class="intro-trail__step">02</span><span>Citation</span></li>
+        <li><span class="intro-trail__step">03</span><span>Cited paper</span></li>
+        <li><span class="intro-trail__step">04</span><span>Evidence passage</span></li>
+      </ol>
       <div id="researchers" class="principle-grid">
         <article class="principle-card principle-card--red">
           <h3>Follow the reference.</h3>
@@ -221,52 +212,32 @@ const questions = [
     </div>
   </section>
 
-  <section id="example" class="landing-section example-section" aria-labelledby="example-heading">
+  <section id="how-it-works" class="landing-section how-it-works-section" aria-labelledby="how-it-works-heading">
     <div class="landing-container">
       <div class="section-heading section-heading--split">
         <div>
-          <p class="pixel-label">A sample journey</p>
-          <h2 id="example-heading">See what the trail keeps connected.</h2>
+          <p class="pixel-label">How it works</p>
+          <h2 id="how-it-works-heading">Follow the review from source to evidence.</h2>
         </div>
-        <p class="example-disclaimer">Illustrative wording only — this is not a real paper or research result.</p>
+        <p>Watch how Paper T-Rail connects a paper&apos;s claims, citations and candidate evidence passages.</p>
       </div>
-      <div class="example-board">
-        <article class="example-card example-card--claim">
-          <p class="example-card__eyebrow">Claim in your draft</p>
-          <p class="example-claim-text">
-            “Regular aerobic exercise is associated with improved working memory in older adults.”
-          </p>
-          <div class="example-connection">
-            <span class="example-connection__marker">[1]</span>
-            <span>Citation occurrence in the claim&apos;s context</span>
-          </div>
-          <div class="example-reference">
-            <span class="pixel-icon icon-file" aria-hidden="true"></span>
-            <div>
-              <strong>Bibliography reference</strong>
-              <span>Linked to a candidate cited paper for review</span>
-            </div>
-          </div>
-        </article>
-        <article class="example-card example-card--evidence">
-          <p class="example-card__eyebrow">Candidate evidence passage</p>
-          <div class="evidence-preview">
-            <span class="evidence-preview__label">From the cited paper</span>
-            <p>
-              Candidate passages are shown with their source location so you can inspect the
-              surrounding context and decide what they support.
-            </p>
-            <span class="evidence-preview__location">Page and section location stay attached</span>
-          </div>
-          <p class="example-card__footnote">A candidate to inspect — not an automatic match or verdict.</p>
-          <a href={workspaceUrl} class="example-source-link">
-            Explore the review workspace <span class="pixel-icon icon-arrow-right" aria-hidden="true"></span>
-          </a>
-        </article>
+      <div class="how-it-works-video" aria-label="Video walkthrough preview">
+        <iframe
+          src="https://www.youtube-nocookie.com/embed/zj7WTlL2YlU?autoplay=0"
+          title="How Paper T-Rail works"
+          loading="lazy"
+          referrerpolicy="strict-origin-when-cross-origin"
+          allow="encrypted-media; picture-in-picture; web-share"
+          allowfullscreen
+          aria-hidden="true"
+          tabindex="-1"
+        ></iframe>
+        <div class="how-it-works-video__cover" role="status">
+          <span class="pixel-label">In progress</span>
+          <strong>Walkthrough coming soon</strong>
+          <span>We&apos;re preparing a guided look at the review flow.</span>
+        </div>
       </div>
-      <p class="example-note">
-        The Evidence Coverage Report is a human-review aid, not certification or grading.
-      </p>
     </div>
   </section>
 
@@ -282,26 +253,28 @@ const questions = [
           processing separate from the research workspace.
         </p>
       </div>
-      <figure class="architecture-diagram" aria-labelledby="architecture-heading" aria-describedby="architecture-flow">
-        <img
-          src="/images/architecture/paper-trail-night-bridge.png"
-          alt="Eight connected service landmarks in 8-bit pixel art along a blue stone railway bridge, with a gold data path and dashed worker and provider zone."
-          width="2167"
-          height="726"
-          loading="lazy"
-          decoding="async"
-        />
-        <span class="architecture-diagram__packets" aria-hidden="true">
-          {architecturePackets.map(({ position, delay }) => (
-            <span class="architecture-diagram__packet" style={`--packet-position: ${position}; --flow-delay: ${delay}`}></span>
-          ))}
-        </span>
-      </figure>
       <div class="architecture-route">
-        <ol id="architecture-flow" class="architecture-flow" aria-label="Paper T-Rail system architecture, from public homepage through analysis to human review">
+        <svg class="architecture-route__track" viewBox="0 0 1000 658" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+          <defs>
+            <pattern id="architecture-horizontal-sleepers" width="24" height="20" patternUnits="userSpaceOnUse">
+              <rect class="architecture-route__sleeper" x="8" y="1" width="8" height="18" />
+            </pattern>
+            <pattern id="architecture-vertical-sleepers" width="20" height="24" patternUnits="userSpaceOnUse">
+              <rect class="architecture-route__sleeper" x="1" y="8" width="18" height="8" />
+            </pattern>
+          </defs>
+          <polyline points="250,95 750,95 750,329 250,329 250,563" class="architecture-route__bed" />
+          <rect x="250" y="85" width="500" height="20" fill="url(#architecture-horizontal-sleepers)" />
+          <rect x="740" y="95" width="20" height="234" fill="url(#architecture-vertical-sleepers)" />
+          <rect x="250" y="319" width="500" height="20" fill="url(#architecture-horizontal-sleepers)" />
+          <rect x="240" y="329" width="20" height="234" fill="url(#architecture-vertical-sleepers)" />
+          <path d="M250 85 H750 M250 105 H750 M740 95 V329 M760 95 V329 M250 319 H750 M250 339 H750 M240 329 V563 M260 329 V563" class="architecture-route__rails" />
+        </svg>
+        <ol id="architecture-flow" class="architecture-flow" aria-label="Five Analysis Run stages, connected in a zigzag route">
           {architecture.map((step, index) => (
-            <li class="architecture-node" style={`--flow-delay: ${index * 220}ms`}>
+            <li class:list={["architecture-node", `architecture-node--${index + 1}`]} style={`--flow-delay: ${index * 180}ms`}>
               <span class="architecture-node__step">{String(index + 1).padStart(2, "0")}</span>
+              <img class="architecture-node__asset" src={step.asset} alt="" width="64" height="64" loading="lazy" decoding="async" />
               <div class="architecture-node__copy">
                 <h3>{step.name}</h3>
                 <p class="architecture-node__system">{step.system}</p>
@@ -348,22 +321,6 @@ const questions = [
     </div>
   </section>
 
-  <section class="final-station" aria-labelledby="final-heading">
-    <div class="final-station__content">
-      <p class="pixel-label">Your research, on track</p>
-      <h2 id="final-heading">Follow the evidence. Choose your next step.</h2>
-      <a
-        href={setupUrl}
-        class="landing-button"
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label="Set up the workspace (opens in a new tab)"
-      >
-        Set up the workspace <span class="pixel-icon icon-arrow-right" aria-hidden="true"></span>
-      </a>
-    </div>
-  </section>
-
   <footer class="site-footer">
     <div class="site-footer__identity">
       <a href="#top" class="site-brand site-brand--footer" aria-label="Paper T-Rail home">
@@ -377,12 +334,6 @@ const questions = [
         aria-label="by nooroctavian.id (opens in a new tab)"
       >by nooroctavian.id</a>
     </div>
-    <nav aria-label="Footer navigation">
-      <a href="#about">About</a>
-      <a href="#example">Example</a>
-      <a href="#architecture">Architecture</a>
-      <a href="#faq">FAQ</a>
-    </nav>
   </footer>
     </main>
 
@@ -392,13 +343,134 @@ const questions = [
   const documentElement = document.documentElement;
 
   if (hero && header && documentElement.classList.contains("has-scroll-nav")) {
-    const headerObserver = new IntersectionObserver(([entry]) => {
-      documentElement.classList.toggle("has-scroll-nav-visible", !entry.isIntersecting);
-    }, { rootMargin: `-${header.offsetHeight}px 0px 0px 0px` });
+    const updateScrollNavVisibility = () => {
+      documentElement.classList.toggle(
+        "has-scroll-nav-visible",
+        hero.getBoundingClientRect().bottom <= header.offsetHeight + 2,
+      );
+    };
+    const headerObserver = new IntersectionObserver(updateScrollNavVisibility, {
+      rootMargin: `-${header.offsetHeight}px 0px 0px 0px`,
+    });
 
     headerObserver.observe(hero);
+    window.addEventListener("scroll", updateScrollNavVisibility, { passive: true });
+    window.addEventListener("resize", updateScrollNavVisibility, { passive: true });
+    updateScrollNavVisibility();
   }
 
+</script>
+
+<script is:inline>
+  const heroForMotion = document.querySelector(".hero");
+  const trainForMotion = document.querySelector(".train-consist--round-headlamp");
+  const passengerCars = Array.from(document.querySelectorAll("[data-passenger-car]"));
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  let pointerFrame = 0;
+  let headlampTimer = 0;
+  const carriageLightTimers = new Set();
+
+  const randomBetween = (minimum, maximum) =>
+    Math.floor(minimum + Math.random() * (maximum - minimum + 1));
+
+  const scheduleCarriageLightTimer = (callback, delay) => {
+    const timer = window.setTimeout(() => {
+      carriageLightTimers.delete(timer);
+      callback();
+    }, delay);
+    carriageLightTimers.add(timer);
+  };
+
+  const scheduleCarriageLightChange = (car, delay) => {
+    if (reducedMotion.matches || !car.isConnected) return;
+    scheduleCarriageLightTimer(() => {
+      if (reducedMotion.matches || !car.isConnected) return;
+
+      const litWindows = Array.from(car.querySelectorAll("[data-carriage-light]"))
+        .filter((lightWindow) => lightWindow.getAttribute("data-carriage-light") !== "off");
+      if (litWindows.length <= 2) {
+        scheduleCarriageLightChange(car, randomBetween(2500, 10000));
+        return;
+      }
+
+      for (let index = litWindows.length - 1; index > 0; index -= 1) {
+        const swapIndex = Math.floor(Math.random() * (index + 1));
+        [litWindows[index], litWindows[swapIndex]] = [litWindows[swapIndex], litWindows[index]];
+      }
+
+      const outageCount = randomBetween(1, Math.min(3, litWindows.length - 2));
+      const darkenedWindows = litWindows.slice(0, outageCount);
+      darkenedWindows.forEach((lightWindow) => lightWindow.setAttribute("data-carriage-light", "off"));
+
+      scheduleCarriageLightTimer(() => {
+        darkenedWindows.forEach((lightWindow) => lightWindow.setAttribute("data-carriage-light", "on"));
+        scheduleCarriageLightChange(car, randomBetween(2500, 10000));
+      }, randomBetween(4000, 30000));
+    }, delay);
+  };
+
+  const resetCarriageLights = () => {
+    carriageLightTimers.forEach((timer) => window.clearTimeout(timer));
+    carriageLightTimers.clear();
+    passengerCars.forEach((car) => {
+      car.querySelectorAll("[data-carriage-light]").forEach((lightWindow) => {
+        lightWindow.setAttribute("data-carriage-light", "on");
+      });
+    });
+  };
+
+  const resetHeroFogParallax = () => {
+    heroForMotion?.style.setProperty("--hero-title-fog-x", "0px");
+    heroForMotion?.style.setProperty("--hero-title-fog-y", "0px");
+    heroForMotion?.style.setProperty("--hero-lake-fog-x", "0px");
+    heroForMotion?.style.setProperty("--hero-lake-fog-y", "0px");
+    heroForMotion?.style.setProperty("--hero-train-fog-x", "0px");
+    heroForMotion?.style.setProperty("--hero-train-fog-y", "0px");
+  };
+
+  const updateHeroFogParallax = (event) => {
+    if (!heroForMotion || reducedMotion.matches || event.pointerType === "touch") return;
+    const bounds = heroForMotion.getBoundingClientRect();
+    const horizontal = (event.clientX - bounds.left) / bounds.width - 0.5;
+    const vertical = (event.clientY - bounds.top) / bounds.height - 0.5;
+    window.cancelAnimationFrame(pointerFrame);
+    pointerFrame = window.requestAnimationFrame(() => {
+      heroForMotion.style.setProperty("--hero-title-fog-x", `${horizontal * 12}px`);
+      heroForMotion.style.setProperty("--hero-title-fog-y", `${vertical * 8}px`);
+      heroForMotion.style.setProperty("--hero-lake-fog-x", `${horizontal * 30}px`);
+      heroForMotion.style.setProperty("--hero-lake-fog-y", `${vertical * 18}px`);
+      heroForMotion.style.setProperty("--hero-train-fog-x", `${horizontal * -36}px`);
+      heroForMotion.style.setProperty("--hero-train-fog-y", `${vertical * -22}px`);
+    });
+  };
+
+  const setHeadlamp = (isOn) => trainForMotion?.setAttribute("data-headlamp", isOn ? "on" : "off");
+  const scheduleHeadlampChange = () => {
+    if (reducedMotion.matches || !trainForMotion) return;
+    const isCurrentlyOn = trainForMotion.getAttribute("data-headlamp") !== "off";
+    const delay = isCurrentlyOn ? randomBetween(8500, 18000) : randomBetween(1800, 4500);
+    headlampTimer = window.setTimeout(() => {
+      setHeadlamp(!isCurrentlyOn);
+      scheduleHeadlampChange();
+    }, delay);
+  };
+
+  const updateMotionPreference = () => {
+    window.clearTimeout(headlampTimer);
+    window.cancelAnimationFrame(pointerFrame);
+    resetHeroFogParallax();
+    resetCarriageLights();
+    setHeadlamp(true);
+    if (!reducedMotion.matches) {
+      scheduleHeadlampChange();
+      passengerCars.forEach((car) => scheduleCarriageLightChange(car, randomBetween(1200, 8000)));
+    }
+  };
+
+  heroForMotion?.addEventListener("pointermove", updateHeroFogParallax, { passive: true });
+  heroForMotion?.addEventListener("pointerleave", resetHeroFogParallax, { passive: true });
+  reducedMotion.addEventListener("change", updateMotionPreference);
+  updateMotionPreference();
 </script>
 
     <CloudflareWebAnalytics />

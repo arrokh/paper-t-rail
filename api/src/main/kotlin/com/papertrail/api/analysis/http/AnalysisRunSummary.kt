@@ -15,6 +15,8 @@ data class AnalysisRunSummary(
     val status: String,
     @field:Schema(implementation = AnalysisRunProgress::class, description = "Persisted run progress.")
     val progress: JsonNode,
+    @field:Schema(description = "Per-stage and per-item worker execution state. This is separate from domain outcomes and does not treat the Evidence Coverage Report projection as a worker stage.")
+    val pipeline: AnalysisRunPipelineProgress? = null,
     @field:Schema(implementation = AnalysisConfigurationSnapshot::class, description = "Immutable configuration and provenance snapshot for this run.")
     val configuration: JsonNode,
     val createdAt: Instant,

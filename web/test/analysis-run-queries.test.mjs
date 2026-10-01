@@ -6,6 +6,8 @@ import {
   recentAnalysisRunsQueryOptions,
   referenceResolutionReportQueryKey,
   referenceResolutionReportQueryOptions,
+  sourceDocumentPdfAccessQueryKey,
+  sourceDocumentPdfAccessQueryOptions,
   recordHumanReviewMutationOptions,
   uploadAnalysisRunMutationOptions,
 } from "../features/analysis-runs/queries/analysis-run-queries.ts";
@@ -16,10 +18,6 @@ import {
 
 function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
-}
-
-function queryWithData(data) {
-  return { state: { data } };
 }
 
 test("provider-directory query exposes loading, successful data, and the safe API error message", async (context) => {
@@ -145,7 +143,7 @@ test("upload mutation refreshes the active recent-run query without refetching i
   assert.equal(uploadRequest.body instanceof FormData, true);
   assert.equal(JSON.parse(uploadRequest.body.get("configuration")).claimExtractorProvider, "heuristic");
   assert.equal(listRequests, 3);
-  assert.equal(client.getQueryData([...RECENT_ANALYSIS_RUNS_QUERY_KEY, null]).items[0].id, "run-created");
+  assert.equal(client.getQueryData([...RECENT_ANALYSIS_RUNS_QUERY_KEY, null, "", ""]).items[0].id, "run-created");
 });
 
 test("Human Review mutation appends a separate result and refreshes the active run report", async (context) => {
@@ -206,13 +204,55 @@ test("Human Review mutation appends a separate result and refreshes the active r
   assert.deepEqual(client.getQueryData(referenceResolutionReportQueryKey("run-1")).humanReviews, [createdReview]);
 });
 
-test("recent-run polling stays active while any displayed run is nonterminal and stops after terminal statuses", () => {
+test("recent-run list polls only while a run is active and refreshes when the window regains focus", () => {
   const options = recentAnalysisRunsQueryOptions(null);
-  const interval = options.refetchInterval;
 
-  assert.equal(interval(queryWithData({ items: [{ status: "PROCESSING" }, { status: "FAILED" }] })), 2500);
-  assert.equal(interval(queryWithData({ items: [{ status: "QUEUED" }, { status: "PARSED" }] })), 2500);
-  assert.equal(interval(queryWithData({ items: [{ status: "COMPLETED" }, { status: "COMPLETED_WITH_WARNINGS" }] })), false);
-  assert.equal(interval(queryWithData({ items: [{ status: "FAILED" }] })), false);
-  assert.equal(interval(queryWithData({ items: [] })), false);
+  assert.equal(options.refetchInterval({ state: { data: { items: [{ status: "PROCESSING" }] } } }), 2500);
+  assert.equal(options.refetchInterval({ state: { data: { items: [{ status: "COMPLETED" }] } } }), false);
+  assert.equal(options.refetchOnWindowFocus, true);
+});
+
+test("source PDF access query loads short-lived view and download URLs and reports API errors", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  const access = {
+    filename: "paper.pdf",
+    viewUrl: "http://127.0.0.1:9000/view-signed",
+    downloadUrl: "http://127.0.0.1:9000/download-signed",
+    expiresAt: "2026-10-01T00:00:00Z",
+  };
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify(access), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const query = sourceDocumentPdfAccessQueryOptions("run-1");
+  const urls = await client.fetchQuery(query);
+
+  assert.equal(request.url, "/api/v1/analysis-runs/run-1/source-document");
+  assert.deepEqual(urls, access);
+  assert.deepEqual(client.getQueryData(sourceDocumentPdfAccessQueryKey("run-1")), access);
+
+  globalThis.fetch = async () => new Response(
+    JSON.stringify({ code: "SOURCE_UNAVAILABLE", message: "The stored Source Document is temporarily unavailable." }),
+    { status: 503, headers: { "content-type": "application/json" } },
+  );
+  await assert.rejects(
+    client.fetchQuery({ ...sourceDocumentPdfAccessQueryOptions("run-2"), retry: false }),
+    { message: "The stored Source Document is temporarily unavailable." },
+  );
+});
+
+test("source PDF access URLs stay stable until the user explicitly refreshes them", () => {
+  const options = sourceDocumentPdfAccessQueryOptions("run-1");
+
+  assert.equal(options.staleTime, Infinity);
+  assert.equal(options.refetchInterval, false);
+  assert.equal(options.refetchOnWindowFocus, false);
+  assert.equal(options.retry, false);
 });

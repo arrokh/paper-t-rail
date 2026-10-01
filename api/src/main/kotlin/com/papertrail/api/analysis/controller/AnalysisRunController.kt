@@ -2,16 +2,18 @@ package com.papertrail.api.analysis.controller
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.http.AnalysisRunPage
+import com.papertrail.api.analysis.http.AnalysisRunSourcePdfAccess
 import com.papertrail.api.analysis.http.AnalysisRunSummary
 import com.papertrail.api.analysis.http.CreatedAnalysisRunResponse
 import com.papertrail.api.analysis.http.RunConfigurationRequest
-import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.analysis.http.UploadAnalysisRunRequest
+import com.papertrail.api.analysis.service.AnalysisRunService
+import com.papertrail.api.citation.parsing.ParsedDocumentView
 import com.papertrail.api.document.validation.DocumentValidationException
 import com.papertrail.api.http.ApiError
-import com.papertrail.api.citation.parsing.ParsedDocumentView
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
+import io.swagger.v3.oas.annotations.headers.Header
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
 import io.swagger.v3.oas.annotations.responses.ApiResponse
@@ -19,6 +21,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import io.swagger.v3.oas.annotations.parameters.RequestBody as OpenApiRequestBody
 import org.springframework.http.HttpStatus
+import org.springframework.http.CacheControl
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -110,12 +113,12 @@ class AnalysisRunController(
 
     @Operation(
         summary = "List recent Analysis Runs",
-        description = "Returns a cursor-paginated page in createdAt descending, then ID descending order. Pass nextCursor as cursor to fetch the next older page.",
+        description = "Returns a cursor-paginated page in createdAt descending, then ID descending order. Pass nextCursor or previousCursor as cursor to move through the list. Filename and status filters are applied before pagination.",
     )
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "200", description = "Cursor-paginated Analysis Runs", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = AnalysisRunPage::class))]),
-            ApiResponse(responseCode = "400", description = "The pagination cursor is invalid", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "400", description = "The pagination cursor, filename query, or status filter is invalid", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @GetMapping("/analysis-runs", produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -124,7 +127,11 @@ class AnalysisRunController(
         @RequestParam(defaultValue = "25") limit: Int,
         @Parameter(description = "Opaque cursor from the previous page; omit to list the newest runs.")
         @RequestParam(required = false) cursor: String?,
-    ): AnalysisRunPage = analysisRunService.list(limit, cursor)
+        @Parameter(description = "Optional case-insensitive filename search, up to 200 characters.")
+        @RequestParam(required = false) q: String? = null,
+        @Parameter(description = "Optional exact Analysis Run status filter.")
+        @RequestParam(required = false) status: String? = null,
+    ): AnalysisRunPage = analysisRunService.list(limit, cursor, q, status)
 
     @Operation(summary = "Get an Analysis Run and its persisted progress")
     @ApiResponses(
@@ -136,6 +143,33 @@ class AnalysisRunController(
     @GetMapping("/analysis-runs/{runId}", produces = [MediaType.APPLICATION_JSON_VALUE])
     fun get(@PathVariable runId: UUID): AnalysisRunSummary = analysisRunService.get(runId)
         ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
+
+    @Operation(
+        summary = "Get short-lived original Source Document PDF URLs for an Analysis Run",
+        description = "Returns short-lived, read-only MinIO URLs for viewing and downloading the exact uploaded PDF pinned to this Analysis Run, including while worker processing is in progress. The URL is valid for six hours and must be treated as a bearer credential.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "Short-lived view and download URLs",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = AnalysisRunSourcePdfAccess::class))],
+                headers = [Header(name = "Cache-Control", description = "Always no-store because the response contains bearer URLs.", schema = Schema(type = "string"))],
+            ),
+            ApiResponse(responseCode = "404", description = "Analysis Run not found or its Source Document was deleted", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "Stored Source Document integrity check failed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Stored Source Document is temporarily unavailable", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @GetMapping("/analysis-runs/{runId}/source-document", produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun getSourceDocumentAccess(
+        @Parameter(description = "Analysis Run identifier.", required = true, schema = Schema(type = "string", format = "uuid"))
+        @PathVariable runId: UUID,
+    ): ResponseEntity<AnalysisRunSourcePdfAccess> {
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(analysisRunService.getSourcePdfAccess(runId))
+    }
 
     @Operation(
         summary = "Get parsed document structure, Atomic Claims, resolution status, and inferred links",

@@ -30,7 +30,7 @@ class SourceDocumentController(
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "204", description = "Source Document and document-scoped data deleted"),
-            ApiResponse(responseCode = "404", description = "Source Document does not exist"),
+            ApiResponse(responseCode = "404", description = "Source Document does not exist", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "503", description = "Deletion is incomplete; retry the same request safely", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )

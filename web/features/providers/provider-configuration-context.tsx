@@ -31,6 +31,7 @@ type ProviderConfigurationContextValue = {
   configurationReady: boolean;
   selectProvider: (role: ProviderRole, providerId: string) => void;
   approveCategory: (providerId: string, category: string, approved: boolean) => void;
+  resetApprovals: () => void;
   createConfiguration: () => AnalysisRunConfiguration;
 };
 
@@ -88,6 +89,10 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
     });
   }, [requirements]);
 
+  const resetApprovals = useCallback(() => {
+    setDraft((current) => ({ ...current, approvedCategories: {} }));
+  }, []);
+
   const createConfiguration = useCallback((): AnalysisRunConfiguration => {
     if (!directory) throw new Error("Available providers have not loaded yet.");
 
@@ -110,8 +115,9 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
     configurationReady,
     selectProvider,
     approveCategory,
+    resetApprovals,
     createConfiguration,
-  }), [directory, providerQuery.isPending, providerQuery.error, selections, requirements, draft.approvedCategories, configurationReady, selectProvider, approveCategory, createConfiguration]);
+  }), [directory, providerQuery.isPending, providerQuery.error, selections, requirements, draft.approvedCategories, configurationReady, selectProvider, approveCategory, resetApprovals, createConfiguration]);
 
   return <ProviderConfigurationContext.Provider value={value}>{children}</ProviderConfigurationContext.Provider>;
 }

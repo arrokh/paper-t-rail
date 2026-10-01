@@ -10,6 +10,8 @@ import java.sql.Timestamp
 import java.time.Instant
 import java.util.UUID
 
+enum class EvidenceIndexingEnqueueResult { QUEUED, NOT_ELIGIBLE, FAILED }
+
 @Component
 class CitedPaperIndexingQueue(
     private val jdbc: JdbcTemplate,
@@ -22,7 +24,7 @@ class CitedPaperIndexingQueue(
         sourceContentSha256: String,
         correlationId: UUID,
         causationId: UUID,
-    ) {
+    ): EvidenceIndexingEnqueueResult {
         val eligible = jdbc.queryForObject(
             """
             SELECT EXISTS (
@@ -44,7 +46,7 @@ class CitedPaperIndexingQueue(
             analysisRunId,
             bibliographyEntryId,
         ) == true
-        if (!eligible) return
+        if (!eligible) return EvidenceIndexingEnqueueResult.NOT_ELIGIBLE
 
         val runConfiguration = jdbc.queryForObject(
             "SELECT configuration_snapshot::text FROM analysis_runs WHERE id = ?",
@@ -81,7 +83,16 @@ class CitedPaperIndexingQueue(
             profile.dimension,
             profile.profileHash,
         )
-        if (inserted == 0 || indexingStatus != "PENDING") return
+        if (inserted == 0) {
+            val currentStatus = jdbc.queryForObject(
+                "SELECT status FROM cited_paper_indexing WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+                String::class.java,
+                analysisRunId,
+                bibliographyEntryId,
+            )
+            return if (currentStatus == "FAILED") EvidenceIndexingEnqueueResult.FAILED else EvidenceIndexingEnqueueResult.QUEUED
+        }
+        if (indexingStatus != "PENDING") return EvidenceIndexingEnqueueResult.FAILED
 
         val event = PipelineEvent(
             eventId = UUID.randomUUID(),
@@ -111,5 +122,6 @@ class CitedPaperIndexingQueue(
             objectMapper.writeValueAsString(event),
             Timestamp.from(Instant.now()),
         )
+        return EvidenceIndexingEnqueueResult.QUEUED
     }
 }

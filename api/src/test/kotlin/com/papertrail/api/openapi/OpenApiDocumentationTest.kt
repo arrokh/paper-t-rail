@@ -32,6 +32,7 @@ import com.papertrail.api.scholarly.references.http.CrossrefCacheInvalidationReq
 import com.papertrail.api.scholarly.references.http.CrossrefCacheLookupType
 import com.papertrail.api.scholarly.references.service.CrossrefCacheInvalidationService
 import com.papertrail.api.analysis.http.AnalysisRunPage
+import com.papertrail.api.analysis.http.AnalysisRunSourcePdfAccess
 import com.papertrail.api.analysis.http.AnalysisRunSummary
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
 import com.papertrail.api.analysis.service.AnalysisRunService
@@ -117,6 +118,27 @@ class OpenApiDocumentationTest {
     }
 
     @Test
+    fun `source PDF access returns short-lived no-store links from its Analysis Run`() {
+        val runId = UUID.randomUUID()
+        val expiresAt = Instant.parse("2026-10-01T00:00:00Z")
+        Mockito.`when`(analysisRunService.getSourcePdfAccess(runId))
+            .thenReturn(AnalysisRunSourcePdfAccess("source paper.pdf", "http://127.0.0.1:9000/view", "http://127.0.0.1:9000/download", expiresAt))
+
+        val response = mockMvc.perform(get("/api/v1/analysis-runs/$runId/source-document"))
+            .andExpect(status().isOk)
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andReturn()
+            .response
+
+        val body = objectMapper.readTree(response.contentAsString)
+        assertEquals("source paper.pdf", body.path("filename").asText())
+        assertEquals("http://127.0.0.1:9000/view", body.path("viewUrl").asText())
+        assertEquals("http://127.0.0.1:9000/download", body.path("downloadUrl").asText())
+        assertEquals(expiresAt, Instant.parse(body.path("expiresAt").asText()))
+        assertEquals("no-store", response.getHeader("Cache-Control"))
+    }
+
+    @Test
     fun `OpenAPI contract describes the existing analysis run endpoints and PDF upload`() {
         val response = mockMvc.perform(get("/v3/api-docs"))
             .andExpect(status().isOk)
@@ -184,6 +206,20 @@ class OpenApiDocumentationTest {
         assertFalse(parsedDocument.path("description").asText().contains("completed Analysis Run"))
         assertTrue(parsedDocument.path("responses").has("404"))
         assertTrue(parsedDocument.path("responses").has("409"))
+        val sourceDocument = paths.path("/api/v1/analysis-runs/{runId}/source-document").path("get")
+        assertTrue(sourceDocument.path("parameters").any { it.path("name").asText() == "runId" && it.path("description").asText().contains("Analysis Run") })
+        val sourcePdfResponse = sourceDocument.path("responses").path("200")
+        assertTrue(sourcePdfResponse.path("content").has("application/json"))
+        assertTrue(sourcePdfResponse.path("headers").path("Cache-Control").path("description").asText().contains("bearer URLs"))
+        val sourcePdfSchemaName = sourcePdfResponse.path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val sourcePdfProperties = document.path("components").path("schemas").path(sourcePdfSchemaName).path("properties")
+        assertTrue(sourcePdfProperties.has("filename"))
+        assertTrue(sourcePdfProperties.has("viewUrl"))
+        assertTrue(sourcePdfProperties.has("downloadUrl"))
+        assertTrue(sourcePdfProperties.has("expiresAt"))
+        assertTrue(sourceDocument.path("responses").has("404"))
+        assertTrue(sourceDocument.path("responses").has("409"))
+        assertTrue(sourceDocument.path("responses").has("503"))
         val deleteDocument = paths.path("/api/v1/documents/{documentId}").path("delete")
         assertEquals("Delete a Source Document and all document-scoped data", deleteDocument.path("summary").asText())
         assertTrue(deleteDocument.path("responses").has("204"))

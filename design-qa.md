@@ -8,11 +8,15 @@
 - Final hero recapture: the local Astro preview was reviewed in the Codex In-app Browser at desktop size. The circular headlamp now casts a soft beam to the right, along the locomotive's facing direction.
 - Current hero review: the new landscape connects the right mountain range through forest and shoreline into the lake. The original bridge artwork repeats across the viewport, and the train rests on its deck.
 
-### Architecture game-view update
+### Five-stage pipeline and full-screen section revision
 
-- Source: the user's request to present the existing architecture flow as an 8-bit game view; the prior diagram supplied the stage order and subject matter.
-- Desktop visual review: `http://127.0.0.1:4321/#architecture` in the Codex In-app Browser at 1762 × 1190 CSS px. The document width is 1747 px within the 1762 px viewport.
-- Mobile visual review: the same section at 390 × 844 CSS px. All eight stages remain in a two-column layout, and the document width is 375 px within the 390 px viewport.
+- Source: browser annotations asking for full-viewport homepage sections with alternating paper backgrounds, and an 8-bit zigzag diagram that matches the five stages in the web Analysis Run pipeline.
+- The homepage diagram now shows Read the PDF, Resolve references, Acquire cited sources, Prepare evidence, and Assess evidence in that order. Each stage has its own SVG asset and staggered animation; the connector takes a right-angle route through the cards on desktop and a vertical route on mobile.
+- Desktop visual review: local Astro preview at `http://127.0.0.1:4322/#architecture`, 1280 × 720 CSS px. The 01→02 top row and 03→04 return row follow the right-angle track; stage 05 continues below the fold. The section remains readable as the user scrolls through its full content.
+- Mobile visual review: local Astro preview at `http://127.0.0.1:4322/#architecture`, 390 × 844 CSS px. The five cards stack on a centered gold route, and the document width is 375 px within the 390 px viewport.
+- Hero review at 1280 × 720 and 390 × 844 CSS px confirmed the clouds sit above the title, the title and train remain fixed while separate fog layers parallax around them, and the train meets the bridge deck. The headlamp was observed in its off state; its runtime switches randomly between on and off at intervals no longer than 15 seconds.
+- The workspace and homepage use the same Fraunces Paper T-Rail wordmark, white “P” favicon on a sky-blue background, centered one-line footer identity, shared paper palette, and shared font tokens. The homepage hero and header setup CTAs use the same red fill and bright-paper text.
+- The mobile page and the Paper Review workspace have no horizontal overflow at 390 CSS px.
 - The inline desktop and mobile browser captures were reviewed in this session; the browser tool does not persist those captures as files.
 
 ## Fidelity and interaction
@@ -23,11 +27,10 @@
 - **Reference-led landscape:** The hero uses a night landscape inspired by `hero-night-train.webp`, with mountains descending into a forested shoreline and reflective lake. The image is slightly transparent, with a soft blue fog layer over the mountains to reduce their contrast behind the trail and bridge.
 - **Previous bridge asset:** The bridge continues to use a repeating arch span from `bridge.png`. The tile is scaled to 219px on desktop and 195px on mobile, with the background crop scaled to keep the repeating edges joined. Sixteen spans cover wide viewports; the track loops left every 40 seconds behind a horizontally anchored train, independent of scroll.
 - **Independent layers:** Moon, clouds, stars, bridge, and train remain separate CSS/Astro layers. The star, moon, cloud, bridge, and carriage animations respect `prefers-reduced-motion` while keeping the scene visible.
-- **Train animation:** `TrainConsist.astro` slices the train sprite into four segments and staggers their small movement. The hero headlamp gently dims occasionally. The bridge itself scrolls from right to left in the hero and journey scene.
-- **Journey interaction:** The route reuses the hero bridge and train artwork. Choosing or scrolling to a station updates the active station and moves the train to its marker while the bridge drifts left behind it. Browser review confirmed the train moves to Evidence and Your next step; the bridge parallax offset progressed from about -54 px to -106 px while scrolling.
+- **Train animation:** `TrainConsist.astro` slices the train sprite into four segments and staggers their small movement. Passenger lights switch off at random, with each dark interval lasting no more than 30 seconds. The headlamp and beam animate with the locomotive; the train sprite is cropped before its baked-in beam.
 - **Responsive layout:** At 390 × 844, all five stations remain visible in the map without horizontal scrolling; the page has no horizontal overflow.
-- **Architecture diagram:** Eight pixel-art service landmarks now sit in sequence on a continuous blue stone railway bridge, with a warm gold data path that matches the hero bridge's masonry, pixel scale, and palette. Worker and provider processing remains inside a dashed zone. Stage names and descriptions remain selectable HTML, while consent and human review remain distinct notes.
-- **Architecture art review:** The new transparent asset `homepage/public/images/architecture/paper-trail-night-bridge.png` was reviewed in the local preview at desktop size and at 390 × 844 CSS px. The bridge fits the existing wide figure, and the eight stage descriptions remain in the mobile two-column layout. Animated gold packets are aligned with the new bridge-deck path.
+- **Architecture diagram:** Five pixel-style stage assets now map one-to-one to the five Analysis Run pipeline stages. Their labels and descriptions remain selectable HTML, while consent and human review remain distinct notes.
+- **Architecture art review:** The stage-specific transparent SVGs under `homepage/public/images/architecture/` were reviewed in the local preview at desktop and mobile sizes. The desktop cards follow the alternating horizontal route; mobile uses a vertical gold connector without horizontal overflow.
 - **Console:** No browser console warnings or errors appeared during review.
 
 ### Hero scale and atmosphere refinement
@@ -38,11 +41,27 @@
 - Mobile visual review: the same hero at 390 × 844 CSS px. The deck begins at about 653px and the train ends at about 651px; the scaled bridge crop keeps the deck aligned.
 - Browser console check: no warnings or errors.
 
+### Homepage annotation revision
+
+- Passenger-car dimming overlays are oversized slightly around each sprite window so no lit edge remains visible. The train sprite crop ends before its baked-in headlight beam; the CSS beam and round headlamp bob with the locomotive. Motion is disabled for reduced-motion preferences.
+- The loading cover's gold rail indicator fades in and out with a soft pulsing glow; reduced-motion mode leaves it stationary with a steady glow. The five Under the Hood cards have 44px row spacing on desktop and 26px on mobile.
+- Cloud loops retain varied speeds and the farthest layer stays slowest; durations are now 215 to 700 seconds, about 60% slower than before. The title, lake, and train fog layers drift slowly from right to left and respect reduced-motion preferences.
+- The hero setup CTA matches the navbar CTA's red fill, paper text, and hover color. The closing setup section is removed, and the FAQ height follows its content instead of filling the viewport.
+- Mobile anchor review at 390 × 844 CSS px lands the About and FAQ sections 88px below the viewport top, just below the 86.5px navigation header. The FAQ remains content-height (about 644px), and the page has no horizontal overflow.
+- The loading cover uses a system serif so it cannot flash from fallback to the downloaded display font. The landing content remains covered until page fonts and images settle.
+- The sample journey is replaced by a lazy, non-autoplaying privacy-enhanced YouTube embed under “How it works.” The About section includes a small claim-to-evidence pixel trail without changing the content hierarchy.
+- Visual review at 390 × 844 CSS px confirmed the About trail fits in four equal columns (89px each), with no horizontal overflow. The How it works iframe measures 352 × 197px (1.79:1) and stays inside the viewport; the player shows a Play control and uses `autoplay=0`.
+- The mobile hero at 390 × 844 CSS px keeps the train within the viewport and seated on the bridge deck. Randomly darkened carriage windows are fully opaque, and the bright headlamp and beam follow the locomotive's staggered vertical animation.
+- PDF review verified the selected claim and its Aghzal citation marker on page 10. Other citation markers in the same sentence, including Valmeekam and Wei et al., remain unhighlighted. Switching to Paper Review and clicking Focus Paper Review both placed the review card at the same viewport position (8px from the top).
+- Analysis Pipeline quick navigation uses each stage's status color, with a visible selected-stage outline. Local web, homepage, and API endpoints returned HTTP 200 and remain running for continued review.
+
 ## Build checks
 
 - `mise exec -- pnpm --dir homepage build` passed after the star, bridge-scale, and mountain-fog refinement.
 - `mise exec -- pnpm --dir web test` passed (44 tests); web lint, typecheck, and production build passed during the shared design-system review.
 - `mise exec -- docker compose -f infra/docker-compose.yml config --quiet` passed.
+- `make local web homepage` reused the existing host processes for this worktree and returned without spawning duplicate servers; web, homepage, and API health endpoints responded with HTTP 200.
+- PDF review verified the selected claim and Aghzal citation marker while excluding unrelated citations, and the Paper Review tab and focus button landed at the same position.
 - `git diff --check` passed after the final edits.
 - The homepage package has no test script; its production build passed.
 

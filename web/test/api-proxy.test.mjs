@@ -77,6 +77,41 @@ test("API proxy forwards the request ID, returns it to the caller, and emits str
   assert.equal("body" in record, false);
 });
 
+test("API proxy preserves no-store short-lived PDF links without logging bearer tokens", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const logs = [];
+  console.info = (message) => logs.push(String(message));
+  const sourceDocumentAccess = {
+    filename: "source paper.pdf",
+    viewUrl: "http://127.0.0.1:9000/source-documents/paper.pdf?X-Amz-Signature=view-secret",
+    downloadUrl: "http://127.0.0.1:9000/source-documents/paper.pdf?X-Amz-Signature=download-secret",
+    expiresAt: "2026-10-01T00:00:00Z",
+  };
+  globalThis.fetch = async () => {
+    return new Response(JSON.stringify(sourceDocumentAccess), {
+      status: 200,
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
+    });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; console.info = originalInfo; });
+
+  const response = await GET(
+    {
+      method: "GET",
+      headers: new Headers(),
+      nextUrl: new URL("http://localhost/api/v1/analysis-runs/run-1/source-document"),
+      arrayBuffer: async () => new ArrayBuffer(0),
+    },
+    { params: Promise.resolve({ path: ["analysis-runs", "run-1", "source-document"] }) },
+  );
+
+  assert.equal(response.headers.get("content-type"), "application/json");
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), sourceDocumentAccess);
+  assert.equal(logs.some((message) => message.includes("view-secret") || message.includes("download-secret")), false);
+});
+
 test("API proxy replaces an invalid request ID with a generated UUID", async (context) => {
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;

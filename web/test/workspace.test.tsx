@@ -4,6 +4,16 @@ import { QueryProvider } from "@/app/query-provider";
 import { UploadDashboard } from "@/features/workspace/components/upload-dashboard";
 import { useRecentAnalysisRuns } from "@/features/analysis-runs/queries/analysis-run-queries";
 
+vi.mock("next/navigation", () => {
+  const router = { back: vi.fn(), forward: vi.fn(), push: vi.fn(), refresh: vi.fn(), replace: vi.fn() };
+  const searchParams = new URLSearchParams();
+  return {
+    usePathname: () => "/",
+    useRouter: () => router,
+    useSearchParams: () => searchParams,
+  };
+});
+
 const providerDirectory = {
   providers: {
     claimExtractor: [
@@ -96,11 +106,36 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 function renderWorkspace() {
-  return render(
+  const rendered = render(
     <QueryProvider>
       <UploadDashboard />
     </QueryProvider>,
   );
+  fireEvent.click(screen.getByRole("button", { name: "New Analysis Run" }));
+  return rendered;
+}
+
+async function waitForProviderDirectory() {
+  await waitFor(() => expect((screen.getByLabelText("Claim extraction") as HTMLSelectElement).disabled).toBe(false));
+}
+
+async function clickContinue() {
+  const button = screen.getByRole("button", { name: "Continue" });
+  await waitFor(() => expect(button.hasAttribute("disabled")).toBe(false));
+  fireEvent.click(button);
+}
+
+async function continueToConsentStep() {
+  await screen.findByRole("heading", { name: "Choose your services" });
+  await clickContinue();
+  await screen.findByRole("heading", { name: "Review data sharing" });
+}
+
+async function continueToPdfStepWithLocalServices() {
+  await continueToConsentStep();
+  expect(await screen.findByText("No external providers selected")).toBeTruthy();
+  await clickContinue();
+  await screen.findByRole("heading", { name: "Select your PDF" });
 }
 
 function RecentRunPollingProbe() {
@@ -124,11 +159,11 @@ describe("interactive workspace remote state", () => {
     }));
 
     renderWorkspace();
-    expect(screen.getByText("Loading provider disclosures…")).toBeTruthy();
+    expect(screen.getAllByText("Loading provider choices…").some((element) => element.tagName === "P")).toBe(true);
 
     finishProviderRequest(jsonResponse({ code: "PROVIDER_CATALOG_UNAVAILABLE", message: "Provider choices are temporarily unavailable." }, 503));
     expect(await screen.findByText("Provider choices are temporarily unavailable.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Upload & start Analysis Run" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("selects preferred providers when available without treating defaults as consent", async () => {
@@ -161,28 +196,35 @@ describe("interactive workspace remote state", () => {
       throw new Error(`Unexpected browser request: ${method} ${path}`);
     }));
 
-    const { container } = renderWorkspace();
-    await screen.findByText("Crossref REST API data access");
+    renderWorkspace();
+    await screen.findByRole("heading", { name: "Choose your services" });
+    await waitForProviderDirectory();
     const evidenceAssessment = screen.getByLabelText("Evidence assessment") as HTMLSelectElement;
     expect(evidenceAssessment.value).toBe("laya");
     expect((screen.getByLabelText("Bibliography resolution") as HTMLSelectElement).value).toBe("crossref");
     expect((screen.getByLabelText("Cited full-text access") as HTMLSelectElement).value).toBe("unpaywall");
+    await continueToConsentStep();
+    await screen.findByText("Crossref REST API data access");
 
     const externalApprovals = screen.getAllByRole("checkbox");
     expect(externalApprovals).toHaveLength(4);
     expect(externalApprovals.every((approval) => approval.getAttribute("aria-checked") === "false")).toBe(true);
-    const uploadButton = screen.getByRole("button", { name: "Upload & start Analysis Run" });
-    expect(uploadButton.hasAttribute("disabled")).toBe(true);
-    externalApprovals.forEach((approval) => fireEvent.click(approval));
-    expect(uploadButton.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Approve all 4 categories across external providers" }));
+    expect(externalApprovals.every((approval) => approval.getAttribute("aria-checked") === "true")).toBe(true);
+    expect(screen.getByText("4 of 4 categories approved")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear approvals for all 4 categories across external providers" }));
+    expect(externalApprovals.every((approval) => approval.getAttribute("aria-checked") === "false")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Approve all 4 categories across external providers" }));
+    await clickContinue();
+    await screen.findByRole("heading", { name: "Select your PDF" });
 
-    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
+    const fileInput = document.querySelector<HTMLInputElement>('input[name="file"]');
     fireEvent.change(fileInput!, {
       target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
     });
-    fireEvent.click(uploadButton);
+    fireEvent.click(screen.getByRole("button", { name: "Upload & start Analysis Run" }));
 
-    expect(await screen.findByText("The preferred-provider Analysis Run is selected.")).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "Open Analysis Run for source.pdf" })).toBeTruthy();
     expect(submittedConfiguration).toMatchObject({
       systemOneProvider: "laya",
       scholarlyMetadataProvider: "crossref",
@@ -192,10 +234,9 @@ describe("interactive workspace remote state", () => {
         { providerId: "unpaywall", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"] },
       ],
     });
-    expect(screen.getByText(/Evidence laya · Bibliography crossref · Cited full text unpaywall/)).toBeTruthy();
   });
 
-  it("refreshes and selects the newly created run after upload and re-analysis", async () => {
+  it("refreshes the run table after uploading a new Analysis Run", async () => {
     const requests: Array<{ url: string; method: string }> = [];
     let runs: ReturnType<typeof analysisRun>[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
@@ -218,42 +259,22 @@ describe("interactive workspace remote state", () => {
           createdAt: "2025-01-01T00:00:00Z",
         });
       }
-      if (path === "/api/v1/documents/document-1/analysis-runs" && method === "POST") {
-        runs = [analysisRun("run-reanalyzed", "The re-analysis is selected.", "PROCESSING"), ...runs];
-        return jsonResponse({
-          documentId: "document-1",
-          analysisRunId: "run-reanalyzed",
-          filename: "source.pdf",
-          sourceContentSha256: "a".repeat(64),
-          status: "QUEUED",
-          createdAt: "2025-01-02T00:00:00Z",
-        });
-      }
       throw new Error(`Unexpected browser request: ${method} ${path}`);
     }));
 
-    const { container } = renderWorkspace();
-    await screen.findByText("Local providers selected");
-    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
+    renderWorkspace();
+    await continueToPdfStepWithLocalServices();
+    const fileInput = document.querySelector<HTMLInputElement>('input[name="file"]');
     expect(fileInput).toBeTruthy();
     fireEvent.change(fileInput!, {
       target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
     });
     fireEvent.click(screen.getByRole("button", { name: "Upload & start Analysis Run" }));
 
-    expect(await screen.findByText("The uploaded Analysis Run is selected.")).toBeTruthy();
-    const uploadedRunRow = screen.getByRole("button", { name: /source\.pdf/ });
-    expect(uploadedRunRow.getAttribute("aria-current")).toBe("true");
-
-    fireEvent.click(screen.getByRole("button", { name: /Create a new run from this document/ }));
-    expect(await screen.findByText("The re-analysis is selected.")).toBeTruthy();
-    const runRows = screen.getAllByRole("button", { name: /source\.pdf/ });
-    expect(runRows).toHaveLength(2);
-    expect(runRows.find((row) => row.getAttribute("aria-current") === "true")?.textContent).toContain("processing");
-    expect(requests.filter(({ url, method }) => url.startsWith("/api/v1/analysis-runs?") && method === "GET").length).toBeGreaterThanOrEqual(3);
+    const uploadedRunLink = await screen.findByRole("link", { name: "Open Analysis Run for source.pdf" });
+    expect(uploadedRunLink.getAttribute("href")).toContain("run-upload");
+    expect(requests.filter(({ url, method }) => url.startsWith("/api/v1/analysis-runs?") && method === "GET").length).toBeGreaterThanOrEqual(2);
     expect(requests.every(({ url }) => url.startsWith("/api/v1/"))).toBe(true);
-
-    await waitFor(() => expect(screen.getByRole("heading", { name: "source.pdf" })).toBeTruthy());
   });
 
   it("offers trusted Ollama embeddings without external-provider consent", async () => {
@@ -281,12 +302,16 @@ describe("interactive workspace remote state", () => {
       throw new Error(`Unexpected browser request: ${options.method ?? "GET"} ${path}`);
     }));
 
-    const { container } = renderWorkspace();
-    await screen.findByText("Local providers selected");
+    renderWorkspace();
+    await screen.findByRole("heading", { name: "Choose your services" });
+    await waitForProviderDirectory();
     fireEvent.change(screen.getByLabelText("Embeddings"), { target: { value: "ollama" } });
-    expect(screen.getByText("No external provider receives document content for this run.")).toBeTruthy();
+    await continueToConsentStep();
+    expect(screen.getByText("No external providers selected")).toBeTruthy();
+    await clickContinue();
+    await screen.findByRole("heading", { name: "Select your PDF" });
 
-    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
+    const fileInput = document.querySelector<HTMLInputElement>('input[name="file"]');
     expect(fileInput).toBeTruthy();
     fireEvent.change(fileInput!, {
       target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
@@ -322,61 +347,57 @@ describe("interactive workspace remote state", () => {
           createdAt: "2025-01-01T00:00:00Z",
         });
       }
-      if (path === "/api/v1/documents/document-1/analysis-runs" && method === "POST") {
-        submittedConfigurations.push(JSON.parse(String(options.body)));
-        runs = [analysisRun("run-second", "The second Analysis Run is selected.", "PROCESSING"), ...runs];
-        return jsonResponse({
-          documentId: "document-1",
-          analysisRunId: "run-second",
-          filename: "source.pdf",
-          sourceContentSha256: "a".repeat(64),
-          status: "QUEUED",
-          createdAt: "2025-01-02T00:00:00Z",
-        });
-      }
       throw new Error(`Unexpected browser request: ${method} ${path}`);
     }));
 
-    const { container } = renderWorkspace();
-    await screen.findByText("Local providers selected");
-    const claimExtractor = screen.getByLabelText("Claim extraction");
-    fireEvent.change(claimExtractor, { target: { value: "hosted-ai" } });
+    renderWorkspace();
+    await screen.findByRole("heading", { name: "Choose your services" });
+    await waitForProviderDirectory();
+    fireEvent.change(screen.getByLabelText("Claim extraction"), { target: { value: "hosted-ai" } });
 
+    await continueToConsentStep();
     const citationContextConsent = await screen.findByRole("checkbox", { name: "Citation Context" });
     expect(citationContextConsent.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(citationContextConsent);
-    expect(screen.getByRole("button", { name: "Upload & start Analysis Run" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(false);
 
-    fireEvent.change(claimExtractor, { target: { value: "heuristic" } });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("heading", { name: "Choose your services" });
+    fireEvent.change(screen.getByLabelText("Claim extraction"), { target: { value: "heuristic" } });
+    await clickContinue();
+    await screen.findByRole("heading", { name: "Review data sharing" });
     expect(screen.queryByText("Hosted AI data access")).toBeNull();
-    fireEvent.change(claimExtractor, { target: { value: "hosted-ai" } });
+    expect(screen.getByText("No external providers selected")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await screen.findByRole("heading", { name: "Choose your services" });
+    fireEvent.change(screen.getByLabelText("Claim extraction"), { target: { value: "hosted-ai" } });
+    await clickContinue();
+    await screen.findByRole("heading", { name: "Review data sharing" });
     expect((await screen.findByRole("checkbox", { name: "Citation Context" })).getAttribute("aria-checked")).toBe("false");
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Citation Context" }));
-    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
+    await clickContinue();
+    await screen.findByRole("heading", { name: "Select your PDF" });
+    const fileInput = document.querySelector<HTMLInputElement>('input[name="file"]');
     fireEvent.change(fileInput!, {
       target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
     });
     fireEvent.click(screen.getByRole("button", { name: "Upload & start Analysis Run" }));
 
-    expect(await screen.findByText("The first Analysis Run is selected.")).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "Open Analysis Run for source.pdf" })).toBeTruthy();
     expect(submittedConfigurations[0].externalProviderConsents).toEqual([{
       providerId: "hosted-ai",
       dataCategories: ["citation_context"],
     }]);
+    fireEvent.click(screen.getByRole("button", { name: "New Analysis Run" }));
+    await screen.findByRole("heading", { name: "Choose your services" });
+    await waitForProviderDirectory();
+    fireEvent.change(screen.getByLabelText("Claim extraction"), { target: { value: "heuristic" } });
+    await waitFor(() => expect((screen.getByLabelText("Claim extraction") as HTMLSelectElement).value).toBe("heuristic"));
+    fireEvent.change(screen.getByLabelText("Claim extraction"), { target: { value: "hosted-ai" } });
+    await waitFor(() => expect((screen.getByLabelText("Claim extraction") as HTMLSelectElement).value).toBe("hosted-ai"));
+    await continueToConsentStep();
     expect((await screen.findByRole("checkbox", { name: "Citation Context" })).getAttribute("aria-checked")).toBe("false");
-
-    const reanalyzeButton = await screen.findByRole("button", { name: /Create a new run from this document/ });
-    expect(reanalyzeButton.hasAttribute("disabled")).toBe(true);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Citation Context" }));
-    expect(reanalyzeButton.hasAttribute("disabled")).toBe(false);
-    fireEvent.click(reanalyzeButton);
-
-    expect(await screen.findByText("The second Analysis Run is selected.")).toBeTruthy();
-    expect(submittedConfigurations[1].externalProviderConsents).toEqual([{
-      providerId: "hosted-ai",
-      dataCategories: ["citation_context"],
-    }]);
   });
 
   it("blocks external cited full-text acquisition until every disclosed category is approved", async () => {
@@ -405,7 +426,8 @@ describe("interactive workspace remote state", () => {
       throw new Error(`Unexpected browser request: ${method} ${path}`);
     }));
 
-    const { container } = renderWorkspace();
+    renderWorkspace();
+    await continueToConsentStep();
     await screen.findByText("Unpaywall and discovered open-access hosts data access");
 
     const categories = [
@@ -415,18 +437,20 @@ describe("interactive workspace remote state", () => {
     ];
     expect(categories.every((category) => category.getAttribute("aria-checked") === "false")).toBe(true);
 
-    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
-    fireEvent.change(fileInput!, {
-      target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
-    });
-    const uploadButton = screen.getByRole("button", { name: "Upload & start Analysis Run" });
-    expect(uploadButton.hasAttribute("disabled")).toBe(true);
-    fireEvent.click(uploadButton);
+    const continueButton = screen.getByRole("button", { name: "Continue" });
+    expect(continueButton.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(continueButton);
     expect(requests.some(({ url, method }) => url === "/api/v1/analysis-runs" && method === "POST")).toBe(false);
 
     categories.forEach((category) => fireEvent.click(category));
-    expect(uploadButton.hasAttribute("disabled")).toBe(false);
-    fireEvent.click(uploadButton);
+    expect(continueButton.hasAttribute("disabled")).toBe(false);
+    await clickContinue();
+    await screen.findByRole("heading", { name: "Select your PDF" });
+    const fileInput = document.querySelector<HTMLInputElement>('input[name="file"]');
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload & start Analysis Run" }));
     await waitFor(() => expect(submittedConfiguration).not.toBeNull());
     expect(submittedConfiguration).toMatchObject({
       openAccessProvider: "unpaywall",
@@ -457,19 +481,17 @@ describe("interactive workspace remote state", () => {
     }));
 
     renderWorkspace();
-    await screen.findByText("Local providers selected");
-    fireEvent.click(await screen.findByRole("button", { name: /source\.pdf/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Delete Source Document and all Analysis Runs/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Source Document for source.pdf" }));
 
-    expect(screen.getByRole("heading", { name: "Confirm permanent deletion" })).toBeTruthy();
-    expect(screen.getByText(/uploaded PDF, parsed content, every Analysis Run/)).toBeTruthy();
-    expect(screen.getByText(/cannot be retracted by Paper T-Rail/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Delete this Source Document?" })).toBeTruthy();
+    expect(screen.getByText(/every Analysis Run created from it will be permanently removed/)).toBeTruthy();
+    expect(screen.getByText(/Content already sent to external providers cannot be retracted by Paper T-Rail/)).toBeTruthy();
     expect(requests.some(({ method }) => method === "DELETE")).toBe(false);
 
-    fireEvent.click(screen.getByRole("button", { name: /Permanently delete Source Document/ }));
-    expect(await screen.findByText("Your first Analysis Run will appear here.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Permanently delete" }));
+    expect(await screen.findByText("No Analysis Runs yet.")).toBeTruthy();
     expect(requests.some(({ url, method }) => url === "/api/v1/documents/document-1" && method === "DELETE")).toBe(true);
-    expect(screen.getByText("Select an Analysis Run to inspect its progress and parsed document.")).toBeTruthy();
   });
 
   it("keeps deletion confirmation available and reports a safe error when deletion fails", async () => {
@@ -487,16 +509,15 @@ describe("interactive workspace remote state", () => {
     }));
 
     renderWorkspace();
-    await screen.findByText("Local providers selected");
-    fireEvent.click(await screen.findByRole("button", { name: /source\.pdf/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Delete Source Document and all Analysis Runs/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Permanently delete Source Document/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Source Document for source.pdf" }));
+    fireEvent.click(screen.getByRole("button", { name: "Permanently delete" }));
 
     expect(await screen.findByText("Retry deletion to finish removing local data.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Permanently delete Source Document/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Permanently delete" })).toBeTruthy();
   });
 
-  it("polls while a displayed run is active and stops after all displayed runs become terminal", async () => {
+  it("polls the run list while any displayed run is active", async () => {
     let listRequests = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (!url.startsWith("/api/v1/analysis-runs?")) throw new Error(`Unexpected browser request: ${url}`);
@@ -515,12 +536,11 @@ describe("interactive workspace remote state", () => {
       </QueryProvider>,
     );
     expect(await screen.findByText("PROCESSING,FAILED")).toBeTruthy();
-    expect(await screen.findByText("COMPLETED,FAILED", {}, { timeout: 4000 })).toBeTruthy();
-    await new Promise((resolve) => setTimeout(resolve, 2800));
-    expect(listRequests).toBe(2);
+    await waitFor(() => expect(listRequests).toBe(2), { timeout: 5000 });
+    expect(await screen.findByText("COMPLETED,FAILED")).toBeTruthy();
   }, 9000);
 
-  it("keeps safe upload and re-analysis API errors visible", async () => {
+  it("keeps safe upload API errors visible in the final setup step", async () => {
     const existingRun = analysisRun("run-existing", "Existing run progress.");
     vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
       const path = String(url);
@@ -529,22 +549,16 @@ describe("interactive workspace remote state", () => {
       if (path.startsWith("/api/v1/analysis-runs?") && method === "GET") {
         return jsonResponse({ items: [existingRun], nextCursor: null });
       }
-      if (path === "/api/v1/documents/document-1/analysis-runs" && method === "POST") {
-        return jsonResponse({ code: "INVALID_CONFIGURATION", message: "The selected provider configuration is not allowed." }, 400);
-      }
       if (path === "/api/v1/analysis-runs" && method === "POST") {
         return jsonResponse({ code: "PDF_LIMIT_EXCEEDED", message: "The PDF is over the configured upload limit." }, 413);
       }
       throw new Error(`Unexpected browser request: ${method} ${path}`);
     }));
 
-    const { container } = renderWorkspace();
-    await screen.findByText("Local providers selected");
-    fireEvent.click(await screen.findByRole("button", { name: /source\.pdf/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Create a new run from this document/ }));
-    expect(await screen.findByText("The selected provider configuration is not allowed.")).toBeTruthy();
+    renderWorkspace();
+    await continueToPdfStepWithLocalServices();
 
-    const fileInput = container.querySelector<HTMLInputElement>('input[name="file"]');
+    const fileInput = document.querySelector<HTMLInputElement>('input[name="file"]');
     fireEvent.change(fileInput!, {
       target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
     });

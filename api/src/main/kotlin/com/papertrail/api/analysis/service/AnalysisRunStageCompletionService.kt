@@ -163,12 +163,22 @@ class AnalysisRunStageCompletionService(
             """
             SELECT count(*)::integer AS total,
                    count(*) FILTER (WHERE processing_status = 'COMPLETED')::integer AS completed,
-                   count(*) FILTER (WHERE processing_status <> 'COMPLETED')::integer AS incomplete
+                   count(*) FILTER (WHERE processing_status <> 'COMPLETED')::integer AS incomplete,
+                   count(*) FILTER (WHERE verification_scope = 'FULL_TEXT')::integer AS full_text_pairs,
+                   count(*) FILTER (WHERE aggregator_version IS NOT NULL)::integer AS aggregated_pairs
               FROM claim_paper_verifications WHERE analysis_run_id = ?
             """.trimIndent(),
-            { rs, _ -> VerificationCounts(rs.getInt("total"), rs.getInt("completed"), rs.getInt("incomplete")) },
+            { rs, _ ->
+                VerificationCounts(
+                    total = rs.getInt("total"),
+                    completed = rs.getInt("completed"),
+                    incomplete = rs.getInt("incomplete"),
+                    fullTextPairs = rs.getInt("full_text_pairs"),
+                    aggregatedPairs = rs.getInt("aggregated_pairs"),
+                )
+            },
             analysisRunId,
-        ) ?: VerificationCounts(0, 0, 0)
+        ) ?: VerificationCounts(0, 0, 0, 0, 0)
         val failedLayaEvaluationCount = if (layaEvaluationOnly) {
             jdbc.queryForObject(
                 "SELECT count(*) FROM claim_paper_verifications WHERE analysis_run_id = ? AND processing_status = 'FAILED'",
@@ -192,8 +202,10 @@ class AnalysisRunStageCompletionService(
         }
         val progressMessage = when {
             localLayaAggregation && warning && layaSpanCounts.verifications > 0 -> "Local Laya aggregation used $layaJudgementCount uncalibrated Laya Evidence Judgement(s) and ${layaSpanCounts.completed} diagnostic span judgement(s). V1 span diagnostics for ${layaSpanCounts.verifications} Claim–Reference pair(s) are not rolled up into parent or final statuses; ${verificationCounts.incomplete} pair(s) remain incomplete. Results remain uncalibrated."
+            localLayaAggregation && verificationCounts.fullTextPairs == 0 && warning -> "Analysis Run completed with warnings for ${verificationCounts.total} Claim–Reference Verification pair(s). No eligible full-text evidence was available, so Laya assessment and evidence aggregation were not run; ${verificationCounts.incomplete} pair(s) remain incomplete. Results remain uncalibrated and have no attached Human Review."
+            localLayaAggregation && verificationCounts.fullTextPairs == 0 -> "Analysis Run completed with terminal outcomes for ${verificationCounts.total} Claim–Reference Verification pair(s). No eligible full-text evidence was available, so Laya assessment and evidence aggregation were not run. Results remain uncalibrated and have no attached Human Review."
             localLayaAggregation && warning -> "Local Laya aggregation used $layaJudgementCount uncalibrated Laya Evidence Judgement(s) and experimental thresholds, but ${verificationCounts.incomplete} Claim–Reference Verification pair(s) are incomplete. Results remain uncalibrated."
-            localLayaAggregation -> "Local Laya aggregation completed for ${verificationCounts.total} Claim–Reference Verification pair(s) using $layaJudgementCount uncalibrated Laya Evidence Judgement(s) and experimental thresholds. Results remain uncalibrated and have no attached Human Review."
+            localLayaAggregation -> "Local Laya aggregation completed for ${verificationCounts.aggregatedPairs} full-text Claim–Reference Verification pair(s) using $layaJudgementCount uncalibrated Laya Evidence Judgement(s) and experimental thresholds. Results remain uncalibrated and have no attached Human Review."
             verificationPipelineConfigured && warning -> "The Evidence Coverage Report is ready, but ${verificationCounts.incomplete} Claim–Reference Verification pair(s) are incomplete after processing failures."
             verificationPipelineConfigured -> "The Evidence Coverage Report is complete for ${verificationCounts.total} Claim–Reference Verification pair(s)."
             layaEvaluationOnly && warning && layaSpanCounts.incomplete > 0 -> "Laya produced $layaJudgementCount uncalibrated Evidence Judgement(s) and ${layaSpanCounts.completed} diagnostic span judgement(s), but ${layaSpanCounts.incomplete} required span(s) are missing or incomplete; final Claim–Paper Verification remains NOT_RUN."
@@ -305,6 +317,12 @@ class AnalysisRunStageCompletionService(
         )
     }
 
-    private data class VerificationCounts(val total: Int, val completed: Int, val incomplete: Int)
+    private data class VerificationCounts(
+        val total: Int,
+        val completed: Int,
+        val incomplete: Int,
+        val fullTextPairs: Int,
+        val aggregatedPairs: Int,
+    )
     private data class LayaSpanCounts(val completed: Long, val incomplete: Long, val verifications: Long)
 }

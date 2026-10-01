@@ -14,12 +14,13 @@ import type {
   CreatedRun,
   ParsedDocument,
   ReferenceResolutionReportResponse,
+  SourceDocumentPdfAccess,
   HumanReview,
   HumanReviewAction,
   HumanReviewStatus,
 } from "../types.ts";
 
-const RUN_PAGE_SIZE = 25;
+const RUN_PAGE_SIZE = 20;
 const RUN_POLL_INTERVAL_MS = 2500;
 
 export const RECENT_ANALYSIS_RUNS_QUERY_KEY = ["analysis-runs", "recent"] as const;
@@ -28,40 +29,77 @@ export const REANALYZE_ANALYSIS_RUN_MUTATION_KEY = ["analysis-runs", "reanalyze"
 export const DELETE_SOURCE_DOCUMENT_MUTATION_KEY = ["analysis-runs", "delete-document"] as const;
 export const HUMAN_REVIEW_MUTATION_KEY = ["analysis-runs", "human-review"] as const;
 
-export function isTerminalAnalysisRun(run: Pick<AnalysisRun, "status">): boolean {
-  return run.status === "COMPLETED"
-    || run.status === "COMPLETED_WITH_WARNINGS"
-    || run.status === "FAILED";
+function isTerminalRunStatus(status: string): boolean {
+  return status === "PARSED"
+    || status === "COMPLETED"
+    || status === "COMPLETED_WITH_WARNINGS"
+    || status === "FAILED";
 }
 
-async function fetchAnalysisRunPage(cursor: string | null, signal: AbortSignal): Promise<AnalysisRunPage> {
-  const query = new URLSearchParams({ limit: String(RUN_PAGE_SIZE) });
-  if (cursor) query.set("cursor", cursor);
+export function isTerminalAnalysisRun(run: Pick<AnalysisRun, "status">): boolean {
+  return isTerminalRunStatus(run.status);
+}
 
-  const response = await fetch(`/api/v1/analysis-runs?${query.toString()}`, {
-    cache: "no-store",
-    signal,
-  });
+type RecentAnalysisRunsOptions = { cursor?: string | null; query?: string; status?: string };
+
+async function fetchRecentAnalysisRuns(signal: AbortSignal, options: RecentAnalysisRunsOptions): Promise<AnalysisRunPage> {
+  const params = new URLSearchParams({ limit: String(RUN_PAGE_SIZE) });
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.query) params.set("q", options.query);
+  if (options.status) params.set("status", options.status);
+
+  const response = await fetch(`/api/v1/analysis-runs?${params.toString()}`, { cache: "no-store", signal });
   if (!response.ok) throw new Error(await readApiError(response));
   return (await response.json()) as AnalysisRunPage;
 }
 
-export function recentAnalysisRunsQueryOptions(cursor: string | null) {
+function normalizeRecentOptions(input?: string | null | RecentAnalysisRunsOptions): Required<RecentAnalysisRunsOptions> {
+  if (typeof input === "string" || input === null) return { cursor: input, query: "", status: "" };
+  return { cursor: input?.cursor ?? null, query: input?.query?.trim() ?? "", status: input?.status ?? "" };
+}
+
+export function recentAnalysisRunsQueryOptions(input?: string | null | RecentAnalysisRunsOptions) {
+  const options = normalizeRecentOptions(input);
   return queryOptions({
-    queryKey: [...RECENT_ANALYSIS_RUNS_QUERY_KEY, cursor] as const,
-    queryFn: ({ signal }) => fetchAnalysisRunPage(cursor, signal),
-    refetchInterval: (query) =>
-      query.state.data?.items.some((run) => !isTerminalAnalysisRun(run))
-        ? RUN_POLL_INTERVAL_MS
-        : false,
-    refetchIntervalInBackground: true,
+    queryKey: [...RECENT_ANALYSIS_RUNS_QUERY_KEY, options.cursor, options.query, options.status] as const,
+    queryFn: ({ signal }) => fetchRecentAnalysisRuns(signal, options),
+    refetchInterval: (query) => query.state.data?.items.some((run) => !isTerminalAnalysisRun(run))
+      ? RUN_POLL_INTERVAL_MS
+      : false,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+}
+
+export function useRecentAnalysisRuns(input?: string | null | RecentAnalysisRunsOptions) {
+  return useQuery(recentAnalysisRunsQueryOptions(input));
+}
+
+export function analysisRunQueryKey(analysisRunId: string) {
+  return ["analysis-runs", "detail", analysisRunId] as const;
+}
+
+export function analysisRunQueryOptions(analysisRunId: string) {
+  return queryOptions({
+    queryKey: analysisRunQueryKey(analysisRunId),
+    queryFn: async ({ signal }): Promise<AnalysisRun> => {
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}`, {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as AnalysisRun;
+    },
+    refetchInterval: (query) => query.state.data && !isTerminalAnalysisRun(query.state.data)
+      ? RUN_POLL_INTERVAL_MS
+      : false,
     refetchOnWindowFocus: false,
     retry: false,
   });
 }
 
-export function useRecentAnalysisRuns(cursor: string | null) {
-  return useQuery(recentAnalysisRunsQueryOptions(cursor));
+export function useAnalysisRun(analysisRunId: string) {
+  return useQuery(analysisRunQueryOptions(analysisRunId));
 }
 
 async function refreshRecentAnalysisRuns(queryClient: QueryClient): Promise<void> {
@@ -137,8 +175,10 @@ export function deleteSourceDocumentMutationOptions(queryClient: QueryClient) {
         items: page.items.filter((run) => run.documentId !== documentId),
       }));
       deletedRunIds.forEach((runId) => {
+        queryClient.removeQueries({ queryKey: analysisRunQueryKey(runId), exact: true });
         queryClient.removeQueries({ queryKey: ["analysis-runs", "parsed-document", runId], exact: true });
         queryClient.removeQueries({ queryKey: referenceResolutionReportQueryKey(runId), exact: true });
+        queryClient.removeQueries({ queryKey: sourceDocumentPdfAccessQueryKey(runId), exact: true });
       });
       await refreshRecentAnalysisRuns(queryClient);
     },
@@ -179,6 +219,29 @@ export function referenceResolutionReportQueryKey(analysisRunId: string) {
   return ["analysis-runs", "report", analysisRunId] as const;
 }
 
+export function sourceDocumentPdfAccessQueryKey(analysisRunId: string) {
+  return ["analysis-runs", "source-pdf-access", analysisRunId] as const;
+}
+
+export function sourceDocumentPdfAccessQueryOptions(analysisRunId: string) {
+  return queryOptions({
+    queryKey: sourceDocumentPdfAccessQueryKey(analysisRunId),
+    queryFn: async ({ signal }): Promise<SourceDocumentPdfAccess> => {
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/source-document`, {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as SourceDocumentPdfAccess;
+    },
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
 export function referenceResolutionReportQueryOptions(analysisRunId: string) {
   return queryOptions({
     queryKey: referenceResolutionReportQueryKey(analysisRunId),
@@ -190,6 +253,9 @@ export function referenceResolutionReportQueryOptions(analysisRunId: string) {
       if (!response.ok) throw new Error(await readApiError(response));
       return (await response.json()) as ReferenceResolutionReportResponse;
     },
+    refetchInterval: (query) => query.state.data && !isTerminalRunStatus(query.state.data.runStatus)
+      ? RUN_POLL_INTERVAL_MS
+      : false,
     retry: false,
   });
 }

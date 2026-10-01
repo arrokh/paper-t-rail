@@ -9,6 +9,7 @@ import com.papertrail.api.document.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.service.isSourceDocumentDeleted
 import com.papertrail.api.document.service.requireActiveSourceDocument
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
+import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
@@ -38,6 +39,7 @@ class AnalysisRunProcessingService(
     private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val referenceResolutionService: ReferenceResolutionService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
+    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
@@ -113,6 +115,7 @@ class AnalysisRunProcessingService(
             if (isProcessed(event.eventId)) return event.eventId
             throw IllegalStateException("Analysis Run is not in a parsable state.")
         }
+        pipelineProgressRepository.mark(event.analysisRunId, "source", "parse-document", "document", "Source Document", "IN_PROGRESS")
 
         jdbc.requireActiveSourceDocument(event.payload.documentId)
         val existingParsed = parsedDocumentRepository.find(event.analysisRunId)
@@ -140,6 +143,7 @@ class AnalysisRunProcessingService(
             try {
                 transactionTemplate.executeWithoutResult {
                     parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, extractedClaims)
+                    pipelineProgressRepository.mark(event.analysisRunId, "source", "parse-document", "document", "Source Document", "COMPLETED")
                     if (evidenceRetrievalConfigured) {
                         claimReferenceVerificationRepository.initializeExpectedPairs(event.analysisRunId)
                     }
@@ -169,6 +173,8 @@ class AnalysisRunProcessingService(
             existingParsed.parser.provider != run.parserId || existingParsed.parser.version != run.parserVersion
         ) {
             throw IllegalStateException("Persisted parse provenance does not match the Analysis Run.")
+        } else {
+            pipelineProgressRepository.mark(event.analysisRunId, "source", "parse-document", "document", "Source Document", "COMPLETED")
         }
 
         val progressUpdated = jdbc.update(
@@ -187,12 +193,29 @@ class AnalysisRunProcessingService(
             run.sourceHash,
         )
         if (progressUpdated != 1) throw IllegalStateException("Analysis Run could not advance to reference resolution.")
-        val bibliographyEntryIds = jdbc.query(
-            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? ORDER BY entry_order",
-            { rs, _ -> rs.getObject("id", UUID::class.java) },
+        val bibliographyEntries = jdbc.query(
+            "SELECT id, local_reference_key FROM bibliography_entries WHERE analysis_run_id = ? ORDER BY entry_order",
+            { rs, _ -> AnalysisRunPipelineProgressRepository.BibliographyWorkItem(rs.getObject("id", UUID::class.java), rs.getString("local_reference_key")) },
             event.analysisRunId,
         )
         val resolutionConfigured = referenceResolutionService.isResolutionConfigured(event.analysisRunId)
+        val accessConfigured = jdbc.queryForObject(
+            "SELECT jsonb_typeof(configuration_snapshot -> 'openAccess') = 'object' FROM analysis_runs WHERE id = ?",
+            Boolean::class.java,
+            event.analysisRunId,
+        ) == true
+        val verificationConfigured = jdbc.queryForObject(
+            """
+            SELECT analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot)
+                OR (configuration_snapshot #>> '{systemOne,provider}' = ?
+                    AND configuration_snapshot #>> '{aggregation,executionStatus}' IN ('NOT_RUN', 'PENDING'))
+              FROM analysis_runs
+             WHERE id = ?
+            """.trimIndent(),
+            Boolean::class.java,
+            LayaSystemOneSettings.PROVIDER_ID,
+            event.analysisRunId,
+        ) == true
         transactionTemplate.executeWithoutResult {
             val inserted = jdbc.update(
                 "INSERT INTO inbox_events (event_id, analysis_run_id, handler_name, processed_at) VALUES (?, ?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
@@ -202,8 +225,16 @@ class AnalysisRunProcessingService(
                 Timestamp.from(Instant.now()),
             )
             if (inserted == 0) return@executeWithoutResult
+            pipelineProgressRepository.initializeBibliographyItems(
+                event.analysisRunId,
+                bibliographyEntries,
+                resolutionConfigured,
+                accessConfigured,
+                evidenceRetrievalConfigured,
+                verificationConfigured,
+            )
             if (resolutionConfigured) {
-                bibliographyEntryIds.forEach { bibliographyEntryId ->
+                bibliographyEntries.forEach { entry ->
                     val resolutionEvent = PipelineEvent(
                         eventId = UUID.randomUUID(),
                         eventType = REFERENCE_RESOLUTION_REQUESTED,
@@ -216,7 +247,7 @@ class AnalysisRunProcessingService(
                         payload = ReferenceResolutionRequestedPayload(
                             documentId = event.payload.documentId,
                             sourceContentSha256 = run.sourceHash,
-                            bibliographyEntryId = bibliographyEntryId,
+                            bibliographyEntryId = entry.id,
                         ),
                     )
                     insertOutboxEvent(resolutionEvent)
@@ -230,6 +261,7 @@ class AnalysisRunProcessingService(
     fun markFailed(event: PipelineEvent<DocumentAnalysisRequestedPayload>, reason: String) {
         if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return
         transactionTemplate.executeWithoutResult {
+            pipelineProgressRepository.mark(event.analysisRunId, "source", "parse-document", "document", "Source Document", "FAILED", "SOURCE_PARSE_FAILED")
             jdbc.update(
                 """
                 UPDATE analysis_runs
@@ -276,6 +308,7 @@ class AnalysisRunProcessingService(
     ) {
         val reason = "CLAIM_CITATION_PAIRS_TOO_MANY: The document produces $pairCount claim-citation pairs; the configured limit is $maximumPairs."
         transactionTemplate.executeWithoutResult {
+            pipelineProgressRepository.mark(event.analysisRunId, "source", "parse-document", "document", "Source Document", "FAILED", "CLAIM_CITATION_PAIR_LIMIT_EXCEEDED")
             val failed = jdbc.update(
                 """
                 UPDATE analysis_runs

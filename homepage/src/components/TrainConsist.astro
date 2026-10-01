@@ -2,6 +2,8 @@
 interface TrainSegment {
   width: string;
   sourceStart: string;
+  windowLefts?: number[];
+  windowWidth?: string;
 }
 
 interface Props {
@@ -12,18 +14,25 @@ interface Props {
 const { className = "", loading = "lazy" } = Astro.props;
 
 const segments: TrainSegment[] = [
-  { width: "0.244", sourceStart: "0" },
-  { width: "0.2", sourceStart: "0.244" },
-  { width: "0.2", sourceStart: "0.444" },
-  { width: "0.204", sourceStart: "0.644" },
+  { width: "0.244", sourceStart: "0", windowLefts: [23.7, 33.7, 44.1, 54.7, 65.1, 75.5], windowWidth: "7.4%" },
+  { width: "0.2", sourceStart: "0.244", windowLefts: [7.65, 20.65, 33.35, 45.95, 58.95, 71.65], windowWidth: "8.8%" },
+  { width: "0.2", sourceStart: "0.444", windowLefts: [9.95, 22.95, 35.55, 48.05, 60.75, 73.65], windowWidth: "8.8%" },
+  // Stop before the sprite's baked-in headlight beam; the animated CSS beam
+  // follows the locomotive independently and stays aligned with its motion.
+  { width: "0.19", sourceStart: "0.644" },
 ];
 ---
 
-<div class:list={["train-consist", "train-consist--round-headlamp", className]} aria-hidden="true">
+<div
+  class:list={["train-consist", "train-consist--round-headlamp", className]}
+  style={`--locomotive-motion-delay: ${(segments.length - 1) * 240}ms`}
+  aria-hidden="true"
+>
   {
     segments.map((segment, index) => (
       <span
         class="train-consist__car"
+        data-passenger-car={segment.windowLefts ? "true" : undefined}
         style={`--segment-width: ${segment.width}; --sprite-start: ${segment.sourceStart}; --car-delay: ${index * 240}ms`}
       >
         <img
@@ -35,6 +44,13 @@ const segments: TrainSegment[] = [
           decoding="async"
           draggable="false"
         />
+        {segment.windowLefts?.map((left) => (
+          <span
+            class="train-consist__window"
+            data-carriage-light="on"
+            style={`--window-left: ${left}%; --window-width: ${segment.windowWidth ?? "6%"}`}
+          ></span>
+        ))}
       </span>
     ))
   }

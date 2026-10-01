@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import io.swagger.v3.oas.annotations.media.Schema
 import java.security.MessageDigest
 
 const val CLAIM_EXTRACTOR_ROLE = "claimExtractor"
@@ -56,25 +57,41 @@ data class ProviderRegistration(
     val embeddingDimension: Int? = null,
 )
 
+@Schema(description = "One enabled and classified provider option available for selection.")
 data class ProviderOption(
+    @field:Schema(description = "Provider role, such as `embedding` or `systemOne`.")
     val role: String,
+    @field:Schema(description = "Stable provider identifier used in Analysis Run configuration.")
     val providerId: String,
+    @field:Schema(description = "Human-readable provider name.")
     val displayName: String,
+    @field:Schema(description = "Provider or model version used for provenance.")
     val version: String,
+    @field:Schema(description = "Model identifier when this provider uses a model.")
     val model: String?,
+    @field:Schema(description = "Provider trust boundary. Unreviewed providers are not listed.", allowableValues = ["LOCAL", "EXTERNAL"])
     val trustBoundary: String,
+    @field:Schema(description = "Stable data-category IDs that may be sent to this provider.")
     val dataCategories: List<String>,
+    @field:Schema(description = "Configured retention disclosure, when applicable.")
     val retentionDisclosure: String?,
 )
 
+@Schema(description = "Stable data category and its user-facing disclosure.")
 data class DataCategoryDisclosure(
+    @field:Schema(description = "Stable identifier used in provider consent and configuration.")
     val id: String,
+    @field:Schema(description = "Short display label.")
     val label: String,
+    @field:Schema(description = "Description of the data represented by this category.")
     val description: String,
 )
 
+@Schema(description = "Selectable providers grouped by role and the catalog of data categories used for disclosure and consent.")
 data class ProviderDirectoryResponse(
+    @field:Schema(description = "Enabled provider options grouped by their role identifier.")
     val providers: Map<String, List<ProviderOption>>,
+    @field:Schema(description = "Stable data-category identifiers and descriptions.")
     val dataCategories: List<DataCategoryDisclosure>,
 )
 

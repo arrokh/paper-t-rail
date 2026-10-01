@@ -43,36 +43,24 @@ import { ReferenceResolutionBadge } from "@/features/reference-resolution/compon
 import { ReferenceResolutionEntryCard } from "@/features/reference-resolution/components/reference-resolution-entry-card";
 import { WorkflowStepTabs, type WorkflowStep } from "@/features/analysis-runs/components/workflow-step-tabs";
 import { formatConfidenceThreshold } from "@/features/reference-resolution/format-confidence-threshold";
+import { ANALYSIS_RUN_STATUS_CLASS_NAMES, analysisRunStatusLabel } from "@/features/analysis-runs/run-status";
 import { scrollToAnchorTarget } from "@/lib/scroll-to-anchor";
 
 type AnalysisRunDetailTab = "progress" | "parsed" | "report";
 
-const EMPTY_ANALYSIS_RUN_PAGE: AnalysisRunPage = { items: [], nextCursor: null };
-
-const STATUS_CLASS_NAMES: Record<AnalysisRun["status"], string> = {
-  QUEUED: "border-border bg-muted text-muted-foreground",
-  PROCESSING: "border-info-foreground/20 bg-info text-info-foreground",
-  PARSED: "border-success-foreground/20 bg-success text-success-foreground",
-  COMPLETED: "border-success-foreground/20 bg-success text-success-foreground",
-  COMPLETED_WITH_WARNINGS: "border-warning-foreground/20 bg-warning text-warning-foreground",
-  FAILED: "border-destructive/25 bg-destructive/10 text-destructive",
-};
+const EMPTY_ANALYSIS_RUN_PAGE: AnalysisRunPage = { items: [], nextCursor: null, previousCursor: null };
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
-}
-
-function statusLabel(status: AnalysisRun["status"]): string {
-  return status.replaceAll("_", " ").toLowerCase();
 }
 
 function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
   return (
     <Badge
       variant="outline"
-      className={cn("shrink-0 capitalize", STATUS_CLASS_NAMES[status])}
+      className={cn("shrink-0 capitalize", ANALYSIS_RUN_STATUS_CLASS_NAMES[status])}
     >
-      {statusLabel(status)}
+      {analysisRunStatusLabel(status)}
     </Badge>
   );
 }
