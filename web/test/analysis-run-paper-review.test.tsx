@@ -277,6 +277,16 @@ describe("Analysis Run Paper Review", () => {
     await waitFor(() => expect(screen.getByText("Text of PDF page 1: Uploaded paper page one.")).toBeTruthy());
   });
 
+  it("allows keyboard focus on the scrollable PDF page viewport", async () => {
+    installSourcePdfResponse();
+    renderReview();
+
+    await screen.findByText("Text of PDF page 1: Uploaded paper page one.");
+    const pageViewport = screen.getByRole("region", { name: "PDF page 1 scroll area" });
+    pageViewport.focus();
+    expect(document.activeElement).toBe(pageViewport);
+  });
+
   it("renews MinIO URLs only when Refresh PDF is explicitly selected", async () => {
     installPdfJsDocument();
     let issue = 0;
@@ -306,7 +316,6 @@ describe("Analysis Run Paper Review", () => {
     installSourcePdfResponse();
     installPdfJsDocument(["Front matter.", outcome.citationContextText, "References."]);
     renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0", selectedDetailSection: "results" });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Show in PDF" }));
 
@@ -322,7 +331,6 @@ describe("Analysis Run Paper Review", () => {
     installSourcePdfResponse();
     installPdfJsDocument(["Front matter.", outcome.citationContextText]);
     renderReview();
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
     fireEvent.click(screen.getByRole("button", { name: `Show atomic claim in PDF: ${outcome.claimText}` }));
 
@@ -334,23 +342,47 @@ describe("Analysis Run Paper Review", () => {
     expect(screen.getByText("Selected text found · page 2")).toBeTruthy();
   });
 
+  it("finds an AI-result citation in the PDF when extracted text differs from the parsed citation context", async () => {
+    installSourcePdfResponse();
+    installPdfJsDocument(["Front matter.", "The intervention improved the measured outcomes [1]."]);
+    renderReview();
+
+    fireEvent.click(screen.getByRole("button", { name: `Show atomic claim in PDF: ${outcome.claimText}` }));
+
+    await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("2"));
+    await waitFor(() => expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("1 of 2 selected passages found · page 2"));
+    await waitFor(() => expect([...document.querySelectorAll("mark[data-pdf-search-match='true']")].map((mark) => mark.textContent).join(" ")).toContain("The intervention improved the"));
+  });
+
   it("finds and highlights the selected bibliography entry in the original PDF", async () => {
     installSourcePdfResponse();
     installPdfJsDocument(["Front matter.", "Body text.", "A study of outcomes"]);
     renderReview({ selectedReferenceKey: "b0", selectedDetailSection: "citations" });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Show in PDF" }));
 
     await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("3"));
-    await waitFor(() => expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("1 of 3 selected passages found · page 3"));
+    await waitFor(() => expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("Selected text found · page 3"));
+  });
+
+  it("finds a citation context when PDF text differs from the parsed context", async () => {
+    installSourcePdfResponse();
+    installPdfJsDocument(["Front matter.", "The intervention improved the measured outcomes [1]."]);
+    renderReview({ selectedReferenceKey: "b0", selectedDetailSection: "citations" });
+    fireEvent.click(screen.getByRole("button", { name: "Citations & bibliography" }));
+
+    const bibliography = await screen.findByRole("region", { name: "Selected bibliography quick access" });
+    fireEvent.click(within(bibliography).getByRole("button", { name: "Find in PDF" }));
+
+    await waitFor(() => expect((screen.getByLabelText("PDF page number") as HTMLInputElement).value).toBe("2"));
+    await waitFor(() => expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe("Selected text found · page 2"));
+    await waitFor(() => expect([...document.querySelectorAll("mark[data-pdf-search-match='true']")].map((mark) => mark.textContent).join(" ")).toContain("The intervention improved the"));
   });
 
   it("groups parsed claims with linked bibliography references and reports a selected AI pair", async () => {
     installSourcePdfResponse();
     const onSelectOutcome = vi.fn();
     renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0", onSelectOutcome });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     fireEvent.click(screen.getByRole("button", { name: "AI results" }));
 
     await screen.findByRole("region", { name: "Selected pair quick access" });
@@ -365,7 +397,6 @@ describe("Analysis Run Paper Review", () => {
   it("keeps the selected pair bibliography shortcut visible and lets users clear the selection", async () => {
     installSourcePdfResponse();
     const { onSelectReference, onClearReviewPair } = renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0" });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
     await screen.findByRole("region", { name: "Selected pair quick access" });
     fireEvent.click(screen.getByRole("button", { name: "View bibliography" }));
@@ -377,7 +408,6 @@ describe("Analysis Run Paper Review", () => {
   it("collapses and reopens the selected pair details from its result row", async () => {
     installSourcePdfResponse();
     renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0" });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
     const quickAccessName = "Selected pair quick access";
     await screen.findByRole("region", { name: quickAccessName });
@@ -395,7 +425,6 @@ describe("Analysis Run Paper Review", () => {
     installPdfJsDocument(["Front matter.", parsedDocument.citationContexts[0].text]);
     const onSelectOutcome = vi.fn();
     renderReview({ selectedReferenceKey: "b0", selectedDetailSection: "citations", onSelectOutcome });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     fireEvent.click(screen.getByRole("button", { name: "Citations & bibliography" }));
 
     const pinnedReference = await screen.findByRole("region", { name: "Selected bibliography quick access" });
@@ -411,7 +440,6 @@ describe("Analysis Run Paper Review", () => {
   it("collapses and reopens the selected bibliography details from its entry", async () => {
     installSourcePdfResponse();
     renderReview({ selectedReferenceKey: "b0", selectedDetailSection: "citations" });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     fireEvent.click(screen.getByRole("button", { name: "Citations & bibliography" }));
 
     const quickAccessName = "Selected bibliography quick access";
@@ -433,6 +461,8 @@ describe("Analysis Run Paper Review", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=source`);
 
     renderDetailPage();
+    expect(screen.queryByRole("heading", { name: "Pipeline outputs" })).toBeNull();
+    expect(screen.queryByText(/saved pipeline-stage results/i)).toBeNull();
     const reviewTab = screen.getByRole("tab", { name: "Paper Review" });
     const pipelineTab = screen.getByRole("tab", { name: "Analysis Pipeline" });
 
@@ -450,30 +480,58 @@ describe("Analysis Run Paper Review", () => {
     expect(screen.getByRole("heading", { name: "Paper Review" })).toBeTruthy();
   });
 
-  it("reveals the destination item when moving between a pair and its bibliography or AI result", async () => {
+  it("scrolls bibliography and filtered AI-result destinations to the top of the details viewport", async () => {
     installSourcePdfResponse();
+    window.history.replaceState(null, "", "/?reviewFilter=INCOMPLETE");
     const review = renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0" });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
-    await screen.findByRole("region", { name: "Selected pair quick access" });
-    fireEvent.click(screen.getByRole("button", { name: "View bibliography" }));
-    review.rerenderReview({ selectedDetailSection: "citations" });
-    await screen.findByRole("region", { name: "Selected bibliography quick access" });
+    await screen.findByRole("region", { name: "Selected pair outside active filters" });
 
-    const bibliographyTrigger = document.getElementById("review-bibliography-trigger-b0");
-    await waitFor(() => expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
+    const viewport = document.querySelector<HTMLElement>("[data-review-items-viewport]");
+    expect(viewport).not.toBeNull();
+    viewport!.style.overflowY = "auto";
+    Object.defineProperties(viewport!, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 1_200 },
+      scrollTop: { configurable: true, writable: true, value: 50 },
+    });
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === viewport) return { top: 100 } as DOMRect;
+      if (this.id === "review-bibliography-trigger-b0" || this.id === `review-pair-trigger-${outcome.id}`) {
+        return { top: 400, height: 40 } as DOMRect;
+      }
+      return originalGetBoundingClientRect.call(this);
+    });
+    const animationFrames = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(performance.now() + 2_000);
+      return 1;
+    });
 
-    fireEvent.click(screen.getByRole("button", { name: /Review AI result: supported/ }));
-    review.rerenderReview({ selectedDetailSection: "results" });
-    await screen.findByRole("region", { name: "Selected pair quick access" });
-    const pairTrigger = document.getElementById(`review-pair-trigger-${outcome.id}`);
-    await waitFor(() => expect(pairTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "View bibliography" }));
+      review.rerenderReview({ selectedDetailSection: "citations" });
+      await screen.findByRole("region", { name: "Selected bibliography quick access" });
+
+      const bibliographyTrigger = document.getElementById("review-bibliography-trigger-b0");
+      await waitFor(() => expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
+      expect(viewport!.scrollTop).toBe(350);
+
+      fireEvent.click(screen.getByRole("button", { name: /Review AI result: supported/ }));
+      review.rerenderReview({ selectedDetailSection: "results" });
+      await screen.findByRole("region", { name: "Selected pair outside active filters" });
+      const pairTrigger = document.getElementById(`review-pair-trigger-${outcome.id}`);
+      await waitFor(() => expect(pairTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
+      expect(viewport!.scrollTop).toBe(650);
+    } finally {
+      geometry.mockRestore();
+      animationFrames.mockRestore();
+    }
   });
 
   it("restores the URL-backed citation detail section and requests query selection when switched", async () => {
     installSourcePdfResponse();
     const onSelectDetailSection = vi.fn();
     renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0", selectedDetailSection: "citations", onSelectDetailSection });
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
     expect(screen.getByRole("button", { name: "Citations & bibliography" }).getAttribute("aria-pressed")).toBe("true");
     await screen.findByRole("heading", { name: "Citing contexts" });
@@ -489,7 +547,6 @@ describe("Analysis Run Paper Review", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=review&reviewPair=${outcome.id}&reviewReference=b0&reviewDetail=results`);
 
     renderDetailPage();
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
 
     await screen.findByRole("region", { name: "Selected pair quick access" });
     fireEvent.click(screen.getByRole("button", { name: "Clear selected pair" }));
@@ -510,13 +567,11 @@ describe("Analysis Run Paper Review", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=review&reviewPair=${outcome.id}&reviewReference=b0&reviewDetail=results`);
 
     const firstRender = renderDetailPage();
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     fireEvent.click(screen.getByRole("button", { name: "Citations & bibliography" }));
     expect(new URLSearchParams(window.location.search).get("reviewDetail")).toBe("citations");
     firstRender.unmount();
 
     renderDetailPage();
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     expect(screen.getByRole("button", { name: "Citations & bibliography" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(await screen.findByRole("button", { name: /Review AI result: supported/ }));
     expect(new URLSearchParams(window.location.search).get("reviewDetail")).toBe("results");
@@ -526,7 +581,6 @@ describe("Analysis Run Paper Review", () => {
   it("persists status filters in the URL", async () => {
     installSourcePdfResponse();
     renderReview();
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     const supportedCard = screen.getByRole("button", { name: /Supported\s+1/ });
     fireEvent.click(supportedCard);
 
@@ -537,7 +591,6 @@ describe("Analysis Run Paper Review", () => {
     installSourcePdfResponse();
     window.history.replaceState(null, "", "/?reviewFilter=SUPPORTED");
     renderReview();
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
     await waitFor(() => expect(new URLSearchParams(window.location.search).has("reviewFilter")).toBe(false));
   });

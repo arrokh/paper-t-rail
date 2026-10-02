@@ -23,7 +23,7 @@
 - Tablet visual review: at 768 × 1024 CSS px, the document width is 753 px and the ticket stack with controls fits within 690 px.
 - The five stage-specific SVG assets remain paired with selectable HTML labels and descriptions. Consent and human review remain separate notes below the ticket stack.
 - The workspace and homepage use the same Fraunces Paper T-Rail wordmark, white “P” favicon on a sky-blue background, centered one-line footer identity, shared paper palette, and shared font tokens. The homepage hero and header setup CTAs use the same red fill and bright-paper text.
-- The mobile page and the Paper Review workspace have no horizontal overflow at 390 CSS px.
+- At 390 × 844 CSS px, Paper Review displays a larger-screen availability note instead of its PDF/review controls; other workspace surfaces remain responsive without horizontal overflow.
 - The inline desktop and mobile browser captures were reviewed in this session; the browser tool does not persist those captures as files.
 
 ## Fidelity and interaction
@@ -52,13 +52,13 @@
 ### Homepage annotation revision
 
 - Passenger-car dimming overlays are oversized slightly around each sprite window so no lit edge remains visible. The train sprite crop ends before its baked-in headlight beam; the CSS beam and round headlamp bob with the locomotive. Motion is disabled for reduced-motion preferences.
-- The loading cover's gold rail indicator fades in and out with a soft pulsing glow; reduced-motion mode leaves it stationary with a steady glow. The five Under the Hood cards have 44px row spacing on desktop and 26px on mobile.
+- The loading cover shows five 12px square train-window lights across the full-width indicator, turning on and off in sequence from left to right with no line between them; reduced-motion mode keeps all five softly lit and steady. The five Under the Hood cards have 44px row spacing on desktop and 26px on mobile.
 - Cloud loops retain varied speeds and the farthest layer stays slowest; durations are now 215 to 700 seconds, about 60% slower than before. The title, lake, and train fog layers drift slowly from right to left and respect reduced-motion preferences.
 - The hero setup CTA matches the navbar CTA's red fill, paper text, and hover color. The closing setup section is removed, and the FAQ height follows its content instead of filling the viewport.
-- Mobile anchor review at 390 × 844 CSS px places section content below the revealed navigation. About and FAQ use content-driven heights at desktop and mobile; FAQ rows remain content-sized and the page has no horizontal overflow.
-- On the How it works section, the 390 × 844 CSS px mobile layout raises the heading and walkthrough together by 40px; their tops are 164.7px and 495.1px. At 390 × 667 CSS px, the existing balanced positions remain unchanged at 146.2px and 416.7px.
-- At 1416 × 972 CSS px, About measures 562px tall and FAQ 378px. At 390 × 844, they measure 877px and 621px; at 390 × 667, 847px and 600px. Both sections compute to `min-height: 0`, and desktop/mobile captures show their content without horizontal overflow.
-- The loading cover uses a system serif so it cannot flash from fallback to the downloaded display font. The landing content remains covered until page fonts and images settle.
+- Mobile anchor review at 390 × 844 CSS px places section content below the revealed navigation. About and FAQ use content-driven heights at desktop and mobile; FAQ rows remain content-sized and the page has no horizontal overflow. Below 760px, homepage sections use 24–32px vertical padding; desktop section padding is unchanged.
+- On the How it works section, the 390 × 844 CSS px mobile layout raises the heading and walkthrough together by 40px; after anchor navigation their tops are 176.9px and 495.9px. At 390 × 667 CSS px, the transform is off and their tops are 158.5px and 416.8px.
+- At 1416 × 972 CSS px, About measures 562px tall and FAQ 378px. At 390 × 844, they measure 843px and 574px; at 390 × 667, 816px and 555px. Both sections compute to `min-height: 0`, and desktop/mobile captures show their content without horizontal overflow.
+- The loading cover uses system fonts for its serif brand and sans-serif byline, so neither shifts when web fonts load. The landing content remains covered until page fonts and images settle.
 - The sample journey is replaced by a lazy, non-autoplaying privacy-enhanced YouTube embed under “How it works.” The About section includes a small claim-to-evidence pixel trail without changing the content hierarchy.
 - Visual review at 390 × 844 CSS px confirmed the About trail fits in four equal columns (89px each), with no horizontal overflow. The How it works iframe measures 352 × 197px (1.79:1) and stays inside the viewport; the player shows a Play control and uses `autoplay=0`.
 - The mobile hero at 390 × 844 CSS px keeps the train within the viewport and seated on the bridge deck. Randomly darkened carriage windows are fully opaque, and the bright headlamp and beam follow the locomotive's staggered vertical animation.

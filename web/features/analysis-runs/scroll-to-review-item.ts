@@ -16,8 +16,8 @@ function scrollReviewItemIntoView(element: HTMLElement): () => void {
   const itemBounds = element.getBoundingClientRect();
   const startScroll = hasScrollableViewport ? scrollViewport.scrollTop : window.scrollY;
   const targetScroll = hasScrollableViewport
-    ? scrollViewport.scrollTop + itemBounds.top - scrollViewport.getBoundingClientRect().top - (scrollViewport.clientHeight - itemBounds.height) / 2
-    : window.scrollY + itemBounds.top - (window.innerHeight - itemBounds.height) / 2;
+    ? scrollViewport.scrollTop + itemBounds.top - scrollViewport.getBoundingClientRect().top
+    : window.scrollY + itemBounds.top;
   const maxScroll = hasScrollableViewport
     ? scrollViewport.scrollHeight - scrollViewport.clientHeight
     : document.documentElement.scrollHeight - window.innerHeight;
@@ -51,7 +51,7 @@ function scrollReviewItemIntoView(element: HTMLElement): () => void {
   focusTimer = window.setTimeout(clearFocus, REVIEW_ITEM_FOCUS_DURATION_MS);
 
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    element.scrollIntoView({ behavior: "auto", block: "center" });
+    element.scrollIntoView({ behavior: "auto", block: "start" });
     return cancel;
   }
 
