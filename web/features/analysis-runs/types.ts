@@ -115,8 +115,20 @@ export type AnalysisRun = {
   progress: {
     stage?: string;
     message?: string;
+    sectionCount?: number;
+    citationContextCount?: number;
+    citationOccurrenceCount?: number;
+    bibliographyEntryCount?: number;
+    atomicClaimCount?: number;
+    inferredClaimTargetLinkCount?: number;
+    resolvedReferenceCount?: number;
+    unresolvedReferenceCount?: number;
+    unsupportedReferenceTypeCount?: number;
+    notAttemptedReferenceCount?: number;
     failedReferenceResolutionCount?: number;
+    acquiredCitedPaperCount?: number;
     failedCitedPaperAcquisitionCount?: number;
+    indexedCitedPaperCount?: number;
     failedEvidenceIndexingCount?: number;
     totalVerifications?: number;
     completedVerifications?: number;

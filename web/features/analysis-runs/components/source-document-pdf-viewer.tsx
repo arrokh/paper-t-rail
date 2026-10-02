@@ -25,11 +25,13 @@ export function SourceDocumentPdfViewer({
   filename,
   highlightText,
   highlightContextText = null,
+  highlightRequestId = 0,
 }: {
   analysisRunId: string;
   filename: string;
   highlightText: string | null | string[];
   highlightContextText?: string | null;
+  highlightRequestId?: number;
 }) {
   const pdfQuery = useQuery(sourceDocumentPdfAccessQueryOptions(analysisRunId));
   const [loadedPdf, setLoadedPdf] = useState<LoadedPdf | null>(null);
@@ -51,7 +53,7 @@ export function SourceDocumentPdfViewer({
   const pageNumber = pageState?.url === pdfDocumentUrl ? pageState.pageNumber : 1;
   const pageInput = pageState?.url === pdfDocumentUrl ? pageState.pageInput : "1";
   const documentError = documentErrorState?.url === pdfDocumentUrl ? documentErrorState.message : null;
-  const searchKey = JSON.stringify([pdfDocumentUrl, searchCandidates, highlightContextText]);
+  const searchKey = JSON.stringify([pdfDocumentUrl, searchCandidates, highlightContextText, highlightRequestId]);
   const activeSearch = searchState?.key === searchKey ? searchState : null;
   const searching = Boolean(pdfDocument && searchCandidates.length > 0 && !activeSearch);
   const searchResult = activeSearch?.result ?? null;
@@ -283,6 +285,7 @@ async function findTextInDocument(
   textCache: Map<number, Awaited<ReturnType<PDFPageProxy["getTextContent"]>>>,
 ): Promise<SearchResult | null> {
   let bestMatch: SearchResult | null = null;
+  const requiresContextMatch = Boolean(context?.trim());
 
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     let textContent = textCache.get(pageNumber);
@@ -292,7 +295,7 @@ async function findTextInDocument(
     }
 
     const match = findPdfTextMatches(textContent.items, candidates, context);
-    if (match.matchedTargetCount === 0) continue;
+    if (match.matchedTargetCount === 0 || (requiresContextMatch && !match.contextMatched)) continue;
 
     const result = { pageNumber, ...match };
     if (

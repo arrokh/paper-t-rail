@@ -25,6 +25,7 @@ type PdfTextItem = Extract<PdfTextContent["items"][number], { str: string }>;
 type NormalizedCharacter = { itemIndex: number; startOffset: number; endOffset: number } | null;
 type TextSpan = { start: number; end: number };
 type MatchingPhrase = TextSpan & { text: string; tokenSpans?: TextSpan[] };
+type MatchingLimits = { maximumSpan: number; maximumGap: number };
 
 export function findPdfTextMatch(items: readonly PdfTextContent["items"][number][], searchCandidates: readonly string[]): PdfTextMatch | null {
   const textItems = items.filter(isPdfTextItem);
@@ -64,7 +65,13 @@ export function findPdfTextMatches(
   }
 
   const normalizedContext = normalizePdfText(context ?? "");
-  const contextPhrase = normalizedContext ? findMatchingPhrase(text, normalizedContext) : null;
+  const contextTokenCount = normalizedContext ? normalizedContext.split(" ").length : 0;
+  const contextPhrase = normalizedContext
+    ? findMatchingPhrase(text, normalizedContext, undefined, {
+        maximumGap: Math.min(14, Math.max(6, Math.ceil(contextTokenCount * 0.2))),
+        maximumSpan: contextTokenCount + Math.min(36, Math.ceil(contextTokenCount * 0.5)),
+      })
+    : null;
   const contextMatched = contextPhrase?.text === normalizedContext;
   const scope = contextMatched && contextPhrase ? contextPhrase : null;
   const searchableTargets = normalizedContext && !contextMatched ? normalizedTargets.slice(0, 1) : normalizedTargets;
@@ -91,13 +98,14 @@ function findMatchingPhrase(
   source: string,
   candidate: string,
   scope?: { start: number; end: number },
+  limits?: MatchingLimits,
 ): MatchingPhrase | null {
   const startIndex = scope?.start ?? 0;
   const endIndex = scope?.end ?? source.length;
   const exactIndex = findBoundaryMatch(source, candidate, startIndex, endIndex);
   if (exactIndex >= 0) return { start: exactIndex, end: exactIndex + candidate.length, text: candidate };
 
-  const alignedTokens = findOrderedTokenMatch(source, candidate, startIndex, endIndex);
+  const alignedTokens = findOrderedTokenMatch(source, candidate, startIndex, endIndex, limits);
   if (alignedTokens) {
     return {
       start: alignedTokens[0].start,
@@ -127,13 +135,19 @@ function findMatchingPhrase(
  * sentence. Align the complete target as an ordered token sequence, and keep
  * each matched word's source span so those inserted citations stay unmarked.
  */
-function findOrderedTokenMatch(source: string, candidate: string, startIndex: number, endIndex: number): TextSpan[] | null {
+function findOrderedTokenMatch(
+  source: string,
+  candidate: string,
+  startIndex: number,
+  endIndex: number,
+  limits?: MatchingLimits,
+): TextSpan[] | null {
   const sourceTokens = tokensInRange(source, startIndex, endIndex);
   const candidateTokens = tokensInRange(candidate, 0, candidate.length);
   if (candidateTokens.length < 4 || sourceTokens.length < candidateTokens.length) return null;
 
-  const maximumSpan = candidateTokens.length * 4 + 24;
-  const maximumGap = Math.min(72, Math.max(24, Math.ceil(candidateTokens.length * 1.5)));
+  const maximumSpan = limits?.maximumSpan ?? candidateTokens.length * 4 + 24;
+  const maximumGap = limits?.maximumGap ?? Math.min(72, Math.max(24, Math.ceil(candidateTokens.length * 1.5)));
   let bestMatch: TextSpan[] | null = null;
   let bestSpan = Number.POSITIVE_INFINITY;
 

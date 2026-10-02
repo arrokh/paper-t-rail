@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronDown, FileText, Highlighter, Link2, Search, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, ChevronDown, FileText, Highlighter, Link2, RotateCcw, Search, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisRunPaperReviewFilters, PAPER_REVIEW_FILTER_OPTIONS } from "@/features/analysis-runs/components/analysis-run-paper-review-filters";
@@ -93,6 +93,8 @@ export function AnalysisRunPaperReview({
   onSelectReference,
   onClearReviewPair,
   onClearSelectedReference,
+  hasReviewState = false,
+  onClearReviewState,
   onSelectDetailSection,
 }: {
   run: AnalysisRun;
@@ -109,27 +111,32 @@ export function AnalysisRunPaperReview({
   onSelectReference: (localReferenceKey: string) => void;
   onClearReviewPair: () => void;
   onClearSelectedReference: () => void;
+  hasReviewState?: boolean;
+  onClearReviewState?: () => void;
   onSelectDetailSection: (section: "results" | "citations") => void;
 }) {
   const [mobilePane, setMobilePane] = useState<"paper" | "details">("paper");
   const [collapsedQuickAccessKey, setCollapsedQuickAccessKey] = useState<string | null>(null);
-  const [pdfHighlightOverride, setPdfHighlightOverride] = useState<{ selectionKey: string; text: string[]; contextText: string | null } | null>(null);
+  const [pdfHighlightOverride, setPdfHighlightOverride] = useState<{ requestId: number; text: string[]; contextText: string | null } | null>(null);
+  const pdfHighlightRequestSequence = useRef(0);
   const entries = report?.referenceResolution.entries ?? EMPTY_REFERENCE_ENTRIES;
   const outcomeGroups = useMemo(() => buildOutcomeGroups(entries), [entries]);
   const references = useMemo(() => sourceReferences(parsedDocument, report), [parsedDocument, report]);
   const allOutcomes = useMemo(() => entries.flatMap((entry) => entry.verificationOutcomes.map((outcome) => ({ entry, outcome }))), [entries]);
-  const selectedPair = allOutcomes.find(({ outcome }) => outcome.id === selectedOutcomeId) ?? null;
   const selectedReference = references.find((reference) => reference.localReferenceKey === selectedReferenceKey) ?? null;
-  const selectionKey = `${selectedDetailSection}:${selectedOutcomeId ?? ""}:${selectedReferenceKey ?? ""}`;
-
   const selectedQuickAccessKey = selectedDetailSection === "results" && selectedOutcomeId
     ? `results:${selectedOutcomeId}`
     : selectedDetailSection === "citations" && selectedReferenceKey
       ? `citations:${selectedReferenceKey}`
       : null;
+  const previousDetailSection = useRef(selectedDetailSection);
 
   useEffect(() => {
+    const enteredDetailSection = previousDetailSection.current !== selectedDetailSection;
+    previousDetailSection.current = selectedDetailSection;
+
     if (!selectedQuickAccessKey) return;
+    if (selectedDetailSection === "results" && !enteredDetailSection) return;
     if (mobilePane === "paper" && window.matchMedia("(max-width: 47.99rem)").matches) return;
 
     const triggerId = selectedDetailSection === "results"
@@ -146,43 +153,26 @@ export function AnalysisRunPaperReview({
     };
   }, [selectedQuickAccessKey, selectedDetailSection, selectedOutcomeId, selectedReferenceKey, allOutcomes, references, mobilePane]);
 
-  const selectedPdfSearchText = useMemo(() => {
-    if (selectedDetailSection === "citations") {
-      return selectedReference ? uniqueSearchCandidates(selectedReference.title, selectedReference.rawText) : [];
-    }
-    if (!selectedPair) return [];
-
-    return uniqueSearchCandidates(selectedPair.outcome.claimText, ...selectedPair.outcome.citationMarkers);
-  }, [selectedDetailSection, selectedPair, selectedReference]);
-  const pdfHighlightText = pdfHighlightOverride?.selectionKey === selectionKey
-    ? pdfHighlightOverride.text
-    : selectedPdfSearchText.length > 0 ? selectedPdfSearchText : null;
-  const pdfHighlightContextText = pdfHighlightOverride?.selectionKey === selectionKey
-    ? pdfHighlightOverride.contextText
-    : selectedDetailSection === "results" ? selectedPair?.outcome.citationContextText ?? null : null;
+  const pdfHighlightText = pdfHighlightOverride?.text ?? null;
+  const pdfHighlightContextText = pdfHighlightOverride?.contextText ?? null;
   function chooseOutcome(outcomeId: string, referenceKey: string) {
     setMobilePane("details");
     setCollapsedQuickAccessKey(null);
-    setPdfHighlightOverride(null);
     onSelectOutcome(outcomeId, referenceKey);
   }
 
-  function chooseReference(referenceKey: string, highlightText?: string) {
+  function chooseReference(referenceKey: string) {
     setMobilePane("details");
     setCollapsedQuickAccessKey(null);
-    if (highlightText) {
-      const reference = references.find((candidate) => candidate.localReferenceKey === referenceKey);
-      setPdfHighlightOverride({
-        selectionKey: `${selectedDetailSection}:${selectedOutcomeId ?? ""}:${referenceKey}`,
-        text: uniqueSearchCandidates(highlightText, reference?.rawText),
-        contextText: null,
-      });
-    }
     onSelectReference(referenceKey);
   }
 
   function highlightInPdf(text: string | string[], contextText: string | null = null) {
-    setPdfHighlightOverride({ selectionKey, text: uniqueSearchCandidates(...(Array.isArray(text) ? text : [text])), contextText });
+    setPdfHighlightOverride({
+      requestId: ++pdfHighlightRequestSequence.current,
+      text: uniqueSearchCandidates(...(Array.isArray(text) ? text : [text])),
+      contextText,
+    });
     setMobilePane("paper");
     scrollToPaperReviewCard();
   }
@@ -213,27 +203,41 @@ export function AnalysisRunPaperReview({
                   filename={run.filename}
                   highlightText={pdfHighlightText}
                   highlightContextText={pdfHighlightContextText}
+                  highlightRequestId={pdfHighlightOverride?.requestId ?? 0}
                 />
               </div>
               <aside className={cn("min-w-0", mobilePane === "details" ? "block" : "hidden", "md:flex md:h-full md:min-h-0 md:flex-col")} aria-label="Paper Review details">
-                <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-muted/60 p-1" role="group" aria-label="Review detail type">
+                <div className="mb-3 flex items-center gap-1 rounded-xl border border-border bg-muted/60 p-1">
+                  <div className="grid min-w-0 flex-1 grid-cols-2 gap-1" role="group" aria-label="Review detail type">
+                    <Button
+                      type="button"
+                      variant={selectedDetailSection === "results" ? "default" : "ghost"}
+                      aria-pressed={selectedDetailSection === "results"}
+                      onClick={() => { setCollapsedQuickAccessKey(null); onSelectDetailSection("results"); }}
+                      className={cn("h-auto min-h-9 min-w-0 whitespace-normal px-2 py-2 text-center text-xs leading-tight font-medium sm:text-sm", selectedDetailSection === "results" && "font-semibold shadow-sm")}
+                    >
+                      AI results
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={selectedDetailSection === "citations" ? "default" : "ghost"}
+                      aria-pressed={selectedDetailSection === "citations"}
+                      onClick={() => { setCollapsedQuickAccessKey(null); onSelectDetailSection("citations"); }}
+                      className={cn("h-auto min-h-9 min-w-0 whitespace-normal px-2 py-2 text-center text-xs leading-tight font-medium sm:text-sm", selectedDetailSection === "citations" && "font-semibold shadow-sm")}
+                    >
+                      Citations & bibliography
+                    </Button>
+                  </div>
                   <Button
                     type="button"
-                    variant={selectedDetailSection === "results" ? "default" : "ghost"}
-                    aria-pressed={selectedDetailSection === "results"}
-                    onClick={() => { setCollapsedQuickAccessKey(null); onSelectDetailSection("results"); }}
-                    className={cn("h-auto min-h-9 min-w-0 whitespace-normal px-2 py-2 text-center text-xs leading-tight font-medium sm:text-sm", selectedDetailSection === "results" && "font-semibold shadow-sm")}
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Clear Paper Review filters and selections"
+                    title="Clear Paper Review filters and selections"
+                    disabled={!hasReviewState}
+                    onClick={() => { setCollapsedQuickAccessKey(null); onClearReviewState?.(); }}
                   >
-                    AI results
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={selectedDetailSection === "citations" ? "default" : "ghost"}
-                    aria-pressed={selectedDetailSection === "citations"}
-                    onClick={() => { setCollapsedQuickAccessKey(null); onSelectDetailSection("citations"); }}
-                    className={cn("h-auto min-h-9 min-w-0 whitespace-normal px-2 py-2 text-center text-xs leading-tight font-medium sm:text-sm", selectedDetailSection === "citations" && "font-semibold shadow-sm")}
-                  >
-                    Citations & bibliography
+                    <RotateCcw aria-hidden="true" />
                   </Button>
                 </div>
                 <div data-review-items-viewport="" className="min-h-96 space-y-3 md:min-h-0 md:flex-1 md:overflow-y-auto md:p-2">
@@ -306,7 +310,7 @@ function ResultsDetails({
   reportError: string | null;
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
   onClearReviewPair: () => void;
-  onSelectReference: (localReferenceKey: string, highlightText?: string) => void;
+  onSelectReference: (localReferenceKey: string) => void;
   onHighlightInPdf: (text: string | string[], contextText?: string | null) => void;
   collapsedQuickAccessKey: string | null;
   onCollapsedQuickAccessKeyChange: (key: string | null) => void;
@@ -384,9 +388,9 @@ function ResultsDetails({
                 const sourceContextText = group.outcomes[0]?.outcome.citationContextText ?? null;
                 return (
                   <Card key={group.claimId} size="sm">
-                    <CardHeader>
-                      <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Atomic Claim {group.claimId.slice(0, 8)}</p>
-                      <CardAction>
+                    <CardHeader className="grid-cols-1 gap-2">
+                      <div className="flex min-w-0 items-center justify-between gap-2">
+                        <p className="m-0 min-w-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Atomic Claim {group.claimId.slice(0, 8)}</p>
                         <Button
                           type="button"
                           variant="secondary"
@@ -399,8 +403,8 @@ function ResultsDetails({
                           <Highlighter aria-hidden="true" />
                           Show in PDF
                         </Button>
-                      </CardAction>
-                      <CardTitle className="text-sm leading-relaxed">{group.claimText}</CardTitle>
+                      </div>
+                      <CardTitle className="min-w-0 break-words text-sm leading-relaxed">{group.claimText}</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2">
                       {group.outcomes.map(({ entry, outcome }) => (
@@ -443,38 +447,40 @@ function SelectedPairQuickAccess({
   entry: ReferenceEntry;
   outcome: VerificationOutcome;
   onHighlightInPdf: (text: string | string[], contextText?: string | null) => void;
-  onSelectReference: (localReferenceKey: string, highlightText?: string) => void;
+  onSelectReference: (localReferenceKey: string) => void;
   onClear: () => void;
 }) {
   const searchText = uniqueSearchCandidates(outcome.claimText, ...outcome.citationMarkers);
 
   return (
     <section aria-label="Selected pair quick access" className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1">
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
           <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected pair · {entry.localReferenceKey}</p>
+          <div className="flex shrink-0 flex-nowrap items-center gap-1">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => onHighlightInPdf(searchText, outcome.citationContextText)}
+            >
+              <Search aria-hidden="true" />
+              Show in PDF
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={() => onSelectReference(entry.localReferenceKey)}>
+              <ArrowRight aria-hidden="true" />
+              View bibliography
+            </Button>
+            <Button type="button" variant="ghost" size="icon" aria-label="Clear selected pair" title="Clear selected pair" onClick={onClear}>
+              <X aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+        <div className="min-w-0 space-y-1">
           <p className="m-0 break-words text-sm font-medium">{entry.title ?? entry.rawText}</p>
           <p className="m-0 text-xs text-muted-foreground">
             {entry.authors.join(", ") || "Authors not recorded"}{entry.year ? ` · ${entry.year}` : ""} · {statusLabel(entry.status)}
           </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => onHighlightInPdf(searchText, outcome.citationContextText)}
-          >
-            <Search aria-hidden="true" />
-            Show in PDF
-          </Button>
-          <Button type="button" variant="secondary" size="sm" onClick={() => onSelectReference(entry.localReferenceKey, entry.title ?? entry.rawText)}>
-            <ArrowRight aria-hidden="true" />
-            View bibliography
-          </Button>
-          <Button type="button" variant="ghost" size="icon" aria-label="Clear selected pair" title="Clear selected pair" onClick={onClear}>
-            <X aria-hidden="true" />
-          </Button>
         </div>
       </div>
       <section aria-labelledby="selected-ai-result-heading" className="space-y-2 border-t border-primary/15 pt-3">
@@ -511,7 +517,7 @@ function ReviewPairQuickAccess({
   collapsedQuickAccessKey: string | null;
   onCollapsedQuickAccessKeyChange: (key: string | null) => void;
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
-  onSelectReference: (localReferenceKey: string, highlightText?: string) => void;
+  onSelectReference: (localReferenceKey: string) => void;
   onHighlightInPdf: (text: string | string[], contextText?: string | null) => void;
   onClear: () => void;
 }) {
@@ -531,18 +537,19 @@ function ReviewPairQuickAccess({
           aria-label={`Review claim against ${entry.localReferenceKey}: ${entry.title ?? entry.rawText}`}
           onClick={() => { if (!selected) onCollapsedQuickAccessKeyChange(null); onSelectOutcome(outcome.id, entry.localReferenceKey); }}
           className={cn(
-            "group flex min-h-12 w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+            "group flex min-h-12 w-full flex-col items-stretch gap-1 rounded-xl px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
             selected && "bg-primary/10 hover:bg-primary/15",
           )}
         >
-          <span className="min-w-0">
-            <span className="block text-xs font-medium">{entry.localReferenceKey} · {entry.title ?? "Untitled bibliography entry"}</span>
-            <span className="block truncate text-xs text-muted-foreground">{outcome.citationMarkers.join(", ") || "No citation marker recorded"}</span>
+          <span className="flex min-w-0 items-center justify-between gap-2">
+            <span className="shrink-0 font-mono text-xs font-medium text-muted-foreground">{entry.localReferenceKey}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <ReferenceResolutionBadge status={formatStatus(outcome)} />
+              <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[open]/quick-access:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+            </span>
           </span>
-          <span className="flex shrink-0 items-center gap-2">
-            <ReferenceResolutionBadge status={formatStatus(outcome)} />
-            <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[open]/quick-access:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
-          </span>
+          <span className="block break-words text-xs leading-relaxed font-medium">{entry.title ?? "Untitled bibliography entry"}</span>
+          <span className="block break-words text-xs text-muted-foreground">{outcome.citationMarkers.join(", ") || "No citation marker recorded"}</span>
         </CollapsibleTrigger>
         <CollapsibleContent className="h-[var(--collapsible-panel-height)] overflow-hidden transition-[height] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] data-[starting-style]:h-0 data-[ending-style]:h-0 motion-reduce:transition-none">
           <div className="translate-y-0 border-t border-border px-3 py-3 opacity-100 transition-[opacity,translate] duration-200 ease-out group-data-[closed]/quick-access:-translate-y-1 group-data-[closed]/quick-access:opacity-0 motion-reduce:transition-none">
@@ -582,7 +589,7 @@ function CitationDetails({
   selectedReference: ParsedDocument["bibliographyEntries"][number] | null;
   referenceResults: ReferenceEntry[];
   onClearSelectedReference: () => void;
-  onSelectReference: (localReferenceKey: string, highlightText?: string) => void;
+  onSelectReference: (localReferenceKey: string) => void;
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
   onHighlightInPdf: (text: string | string[], contextText?: string | null) => void;
   collapsedQuickAccessKey: string | null;
@@ -627,7 +634,7 @@ function CitationDetails({
                     <CollapsibleTrigger
                       id={triggerId}
                       aria-pressed={selected}
-                      onClick={() => { if (!selected) onCollapsedQuickAccessKeyChange(null); onSelectReference(referenceKey, reference.title ?? reference.rawText); }}
+                      onClick={() => { if (!selected) onCollapsedQuickAccessKeyChange(null); onSelectReference(referenceKey); }}
                       className={cn(
                         "group flex min-h-12 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                         selected && "bg-primary/10 hover:bg-primary/15",
@@ -681,23 +688,25 @@ function SelectedBibliographyQuickAccess({
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
 }) {
   return (
-    <section aria-label="Selected bibliography quick access" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
-      <div className="min-w-0 flex-1 space-y-1">
-        <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected bibliography · {reference.localReferenceKey}</p>
+    <section aria-label="Selected bibliography quick access" className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="m-0 min-w-0 break-words font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected bibliography · {reference.localReferenceKey}</p>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button type="button" variant="secondary" size="sm" onClick={() => onHighlightInPdf(reference.title ?? reference.rawText)}>
+            <Search aria-hidden="true" />
+            Show in PDF
+          </Button>
+          <Button type="button" variant="ghost" size="icon" aria-label="Clear selected bibliography" title="Clear selected bibliography" onClick={onClear}>
+            <X aria-hidden="true" />
+          </Button>
+        </div>
+      </div>
+      <div className="min-w-0 space-y-1">
         <p className="m-0 break-words text-sm font-medium">{reference.title ?? reference.rawText}</p>
         <p className="m-0 text-xs text-muted-foreground">
           {reference.authors.join(", ") || "Authors not recorded"}{reference.year ? ` · ${reference.year}` : ""}{reference.doi ? ` · DOI ${reference.doi}` : ""}
         </p>
         <ReferenceResolutionBadge status={referenceResult?.status ?? reference.resolutionStatus} />
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        <Button type="button" variant="secondary" size="sm" onClick={() => onHighlightInPdf([reference.title ?? "", reference.rawText, reference.authors.join(" ")])}>
-          <Search aria-hidden="true" />
-          Show in PDF
-        </Button>
-        <Button type="button" variant="ghost" size="icon" aria-label="Clear selected bibliography" title="Clear selected bibliography" onClick={onClear}>
-          <X aria-hidden="true" />
-        </Button>
       </div>
       <SelectedCitationContexts
         referenceKey={reference.localReferenceKey}
@@ -721,7 +730,7 @@ function SelectedCitationContexts({
   contexts: ParsedDocument["citationContexts"];
   referenceResult: ReferenceEntry | null;
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
-  onHighlightInPdf: (text: string | string[]) => void;
+  onHighlightInPdf: (text: string | string[], contextText?: string | null) => void;
 }) {
   return (
     <section aria-labelledby="selected-citation-contexts-heading" className="w-full border-t border-primary/15 pt-3">
@@ -738,17 +747,17 @@ function SelectedCitationContexts({
               <p className="m-0 text-xs leading-relaxed">{context.text}</p>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="m-0 font-mono text-[0.65rem] text-muted-foreground">Source offsets {context.startOffset}–{context.endOffset}</p>
-                <Button type="button" variant="link" size="sm" className="h-auto whitespace-normal p-0 text-left" onClick={() => onHighlightInPdf(context.text)}>
+                <Button type="button" variant="link" size="sm" className="h-auto whitespace-normal p-0 text-left" onClick={() => onHighlightInPdf(context.text, context.text)}>
                   <Search aria-hidden="true" />
                   Find in PDF
                 </Button>
               </div>
               {context.atomicClaims.flatMap((claim) => claim.citationTargets
                 .filter((target) => target.bibliographyReferenceKey === referenceKey)
-                .map((target) => {
+                .map((target, targetIndex) => {
                   const relatedOutcomes = referenceResult?.verificationOutcomes.filter((outcome) => outcome.atomicClaimId === claim.id) ?? [];
                   return (
-                    <div key={target.id} className="rounded-md bg-muted/40 p-2">
+                    <div key={`${claim.id}:${target.id}:${targetIndex}`} className="rounded-md bg-muted/40 p-2">
                       <p className="m-0 text-xs"><strong>Parsed Atomic Claim:</strong> {claim.text}</p>
                       <p className="m-1 text-[0.65rem] text-muted-foreground">{target.markerText} · inferred provisional association</p>
                       {relatedOutcomes.length > 0 ? relatedOutcomes.map((outcome) => (
