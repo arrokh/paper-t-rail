@@ -1,12 +1,21 @@
 ---
+const bridgeTiles = Array.from({ length: 16 });
 ---
 
-<div class="hero-scene__bridge" aria-hidden="true">
-  <div class="hero-scene__bridge-track">
-    {
-      Array.from({ length: 16 }, () => (
-        <span class="hero-scene__bridge-tile"></span>
-      ))
-    }
+<div class="hero-scene__bridge-frame hero-scene__bridge-frame--reflection" aria-hidden="true">
+  <div class="hero-scene__bridge-reflection">
+    <div class="hero-scene__bridge-track hero-scene__bridge-reflection-track">
+      {bridgeTiles.map(() => (
+        <span class="hero-scene__bridge-tile hero-scene__bridge-reflection-tile"></span>
+      ))}
+    </div>
+  </div>
+</div>
+
+<div class="hero-scene__bridge-frame hero-scene__bridge-frame--surface" aria-hidden="true">
+  <div class="hero-scene__bridge">
+    <div class="hero-scene__bridge-track">
+      {bridgeTiles.map(() => <span class="hero-scene__bridge-tile"></span>)}
+    </div>
   </div>
 </div>

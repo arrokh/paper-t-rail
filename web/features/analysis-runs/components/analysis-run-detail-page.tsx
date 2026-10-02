@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AnalysisPipelineChart } from "@/features/analysis-runs/components/analysis-pipeline-chart";
+import { AnalysisRunPipelineOutcomes } from "@/features/analysis-runs/components/analysis-run-pipeline-outcomes";
 import { AnalysisRunPaperReview } from "@/features/analysis-runs/components/analysis-run-paper-review";
 import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/components/analysis-run-loading";
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
@@ -24,7 +25,11 @@ import {
   useParsedDocument,
   useReferenceResolutionReport,
 } from "@/features/analysis-runs/queries/analysis-run-queries";
-import type { AnalysisRun } from "@/features/analysis-runs/types";
+import type {
+  AnalysisRun,
+  ParsedDocument,
+  ReferenceResolutionReportResponse,
+} from "@/features/analysis-runs/types";
 import { cn } from "@/lib/utils";
 
 const ANALYSIS_RUN_VIEW_TAB_CLASS_NAME = cn(
@@ -84,13 +89,21 @@ function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
   return <Badge variant="outline" className={cn("shrink-0 capitalize", ANALYSIS_RUN_STATUS_CLASS_NAMES[status])}>{analysisRunStatusLabel(status)}</Badge>;
 }
 
-function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
+function AnalysisRunProvenance({
+  run,
+  parsedDocument,
+  report,
+}: {
+  run: AnalysisRun;
+  parsedDocument: ParsedDocument | null;
+  report: ReferenceResolutionReportResponse | null;
+}) {
   return (
     <Collapsible defaultOpen className="group/provenance rounded-xl border border-border bg-card shadow-sm">
       <CollapsibleTrigger className="group flex min-h-14 w-full items-center justify-between gap-4 rounded-xl px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-5">
         <span className="min-w-0">
           <span className="block font-medium">Run provenance</span>
-          <span className="mt-1 block text-xs text-muted-foreground">Source integrity, timestamps, and the provider configuration pinned to this Analysis Run</span>
+          <span className="mt-1 block text-xs text-muted-foreground">Source integrity, pinned providers, and saved pipeline-stage results for this Analysis Run</span>
         </span>
         <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[open]:rotate-180" aria-hidden="true" />
       </CollapsibleTrigger>
@@ -117,6 +130,7 @@ function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
               </div>
             )}
           </dl>
+          <AnalysisRunPipelineOutcomes run={run} parsedDocument={parsedDocument} report={report} />
         </div>
       </CollapsibleContent>
     </Collapsible>
@@ -235,6 +249,10 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
     updateQueryParameters({ reviewReference: null, reviewDetail: "citations" });
   }
 
+  function clearReviewState() {
+    updateQueryParameters({ reviewPair: null, reviewReference: null, reviewFilter: null });
+  }
+
   function selectReviewReference(localReferenceKey: string) {
     setHasOpenedPaperReview(true);
     setSelectedView("review");
@@ -306,7 +324,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             run={run}
             selectedStage={selectedStage}
             onSelectStage={selectStage}
-            afterIntro={<AnalysisRunProvenance run={run} />}
+            afterIntro={<AnalysisRunProvenance run={run} parsedDocument={parsedDocument} report={report} />}
           />
           {selectedStage && (
             <AnalysisRunStageResults
@@ -345,10 +363,12 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             selectedOutcomeId={selectedOutcomeId}
             selectedReferenceKey={selectedReferenceKey}
             selectedDetailSection={selectedReviewDetail}
+            hasReviewState={searchParams.has("reviewPair") || searchParams.has("reviewReference") || searchParams.has("reviewFilter")}
             onSelectOutcome={selectReviewPair}
             onSelectReference={selectReviewReference}
             onClearReviewPair={clearReviewPair}
             onClearSelectedReference={clearReviewReference}
+            onClearReviewState={clearReviewState}
             onSelectDetailSection={selectReviewDetail}
           />
         </TabsContent>

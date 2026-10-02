@@ -51,11 +51,13 @@ export function ClaimEvidencePassages({
 
   return (
     <li className="space-y-3 rounded-lg border border-border bg-card p-3">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="space-y-2">
         <span className="font-mono text-xs text-muted-foreground">Atomic Claim {outcome.atomicClaimId.slice(0, 8)}</span>
-        <Badge variant="outline" className="capitalize">{statusLabel(outcome)}</Badge>
-        <Badge variant="secondary">{outcome.verificationScope.replaceAll("_", " ").toLowerCase()} scope</Badge>
-        {outcome.evidenceConflict && <Badge variant="destructive">Comparable conflicting evidence</Badge>}
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" className="capitalize">{statusLabel(outcome)}</Badge>
+          <Badge variant="secondary">{outcome.verificationScope.replaceAll("_", " ").toLowerCase()} scope</Badge>
+          {outcome.evidenceConflict && <Badge variant="destructive">Comparable conflicting evidence</Badge>}
+        </div>
       </div>
       {outcome.evidenceConflict && (
         <Alert>

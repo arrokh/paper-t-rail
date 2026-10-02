@@ -2,6 +2,7 @@
 interface TrainSegment {
   width: string;
   sourceStart: string;
+  passengerCar?: boolean;
   windowLefts?: number[];
   windowWidth?: string;
 }
@@ -14,12 +15,12 @@ interface Props {
 const { className = "", loading = "lazy" } = Astro.props;
 
 const segments: TrainSegment[] = [
-  { width: "0.244", sourceStart: "0", windowLefts: [23.7, 33.7, 44.1, 54.7, 65.1, 75.5], windowWidth: "7.4%" },
-  { width: "0.2", sourceStart: "0.244", windowLefts: [7.65, 20.65, 33.35, 45.95, 58.95, 71.65], windowWidth: "8.8%" },
-  { width: "0.2", sourceStart: "0.444", windowLefts: [9.95, 22.95, 35.55, 48.05, 60.75, 73.65], windowWidth: "8.8%" },
+  { width: "0.244", sourceStart: "0", passengerCar: true, windowLefts: [23.7, 33.7, 44.1, 54.7, 65.1, 75.5], windowWidth: "7.4%" },
+  { width: "0.2", sourceStart: "0.244", passengerCar: true, windowLefts: [7.65, 20.65, 33.35, 45.95, 58.95, 71.65], windowWidth: "8.8%" },
+  { width: "0.2", sourceStart: "0.444", passengerCar: true, windowLefts: [9.95, 22.95, 35.55, 48.05, 60.75, 73.65], windowWidth: "8.8%" },
   // Stop before the sprite's baked-in headlight beam; the animated CSS beam
   // follows the locomotive independently and stays aligned with its motion.
-  { width: "0.19", sourceStart: "0.644" },
+  { width: "0.19", sourceStart: "0.644", windowLefts: [8.2, 21.5], windowWidth: "7.4%" },
 ];
 ---
 
@@ -32,7 +33,7 @@ const segments: TrainSegment[] = [
     segments.map((segment, index) => (
       <span
         class="train-consist__car"
-        data-passenger-car={segment.windowLefts ? "true" : undefined}
+        data-passenger-car={segment.passengerCar ? "true" : undefined}
         style={`--segment-width: ${segment.width}; --sprite-start: ${segment.sourceStart}; --car-delay: ${index * 240}ms`}
       >
         <img

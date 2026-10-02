@@ -60,6 +60,7 @@
 }
 
 .icon-arrow-right { --ptr-icon-mask: url("/icons/arrow-right.svg"); }
+.icon-arrow-left { --ptr-icon-mask: url("/icons/arrow-right.svg"); }
 .icon-arrow-down { --ptr-icon-mask: url("/icons/arrow-down.svg"); }
 .icon-file { --ptr-icon-mask: url("/icons/file-text.svg"); }
 .icon-search { --ptr-icon-mask: url("/icons/search.svg"); }
@@ -333,10 +334,6 @@
   scroll-margin-top: 70px;
 }
 
-#about {
-  scroll-margin-top: 0;
-}
-
 .landing-container {
   width: min(1220px, 100%);
   margin-inline: auto;
@@ -501,7 +498,7 @@
 
 .how-it-works-video {
   position: relative;
-  width: min(100%, 960px);
+  width: min(100%, 960px, 90svh);
   aspect-ratio: 16 / 9;
   margin: 34px auto 0;
   overflow: hidden;
@@ -1116,8 +1113,6 @@ html.has-scroll-nav .hero {
 
 .hero-scene__bridge {
   --hero-bridge-tile-width: 80vw;
-  --hero-bridge-height: 13.4vw;
-  --hero-bridge-crop: 8.3vw;
 
   position: absolute;
   z-index: 2;
@@ -1155,11 +1150,11 @@ html.has-scroll-nav .hero {
   left: 82.5%;
   width: min(36%, clamp(84px, 22vw, 300px));
   height: clamp(18px, 3vw, 48px);
-  background: linear-gradient(90deg, rgb(255 242 189 / 54%), rgb(255 226 147 / 23%) 34%, transparent 100%);
+  background: linear-gradient(90deg, rgb(255 242 189 / 34%), rgb(255 226 147 / 14%) 34%, transparent 100%);
   clip-path: polygon(0 42%, 100% 0, 100% 100%, 0 58%);
   content: "";
-  filter: blur(3px);
-  opacity: 0.8;
+  filter: blur(2px) drop-shadow(0 0 5px rgb(255 220 145 / 18%));
+  opacity: 0.62;
   transition: opacity 720ms ease-in-out;
   transform: translateY(-50%);
   animation: train-headlamp-motion 1.6s steps(2, end) var(--locomotive-motion-delay) infinite;
@@ -1176,7 +1171,7 @@ html.has-scroll-nav .hero {
   border-radius: 50%;
   background: radial-gradient(circle, #fff8d8 0 25%, #f4c965 34% 48%, rgb(255 211 118 / 36%) 62%, transparent 76%);
   content: "";
-  filter: drop-shadow(0 0 7px rgb(244 201 101 / 82%));
+  filter: drop-shadow(0 0 4px rgb(244 201 101 / 58%)) drop-shadow(0 0 8px rgb(255 222 146 / 18%));
   transition: opacity 720ms ease-in-out;
   transform: translate(-50%, -50%);
   animation: train-headlamp-motion-centered 1.6s steps(2, end) var(--locomotive-motion-delay) infinite;
@@ -1210,14 +1205,29 @@ html.has-scroll-nav .hero {
   left: var(--window-left);
   width: var(--window-width);
   height: 14%;
-  background: var(--ptr-hero-ground);
-  opacity: 0;
+  background: rgb(255 213 130 / 22%);
+  filter: drop-shadow(0 0 2px rgb(255 207 105 / 44%)) drop-shadow(0 0 4px rgb(255 199 84 / 18%));
+  pointer-events: none;
+  transition: background-color 760ms ease-in-out, filter 760ms ease-in-out;
+}
+
+.train-consist__window::before {
+  position: absolute;
+  inset: -125% -100%;
+  background: radial-gradient(ellipse, rgb(255 211 112 / 24%), rgb(255 211 112 / 10%) 34%, transparent 74%);
+  content: "";
+  opacity: 1;
   pointer-events: none;
   transition: opacity 760ms ease-in-out;
 }
 
 .train-consist__window[data-carriage-light="off"] {
-  opacity: 1;
+  background: var(--ptr-hero-ground);
+  filter: none;
+}
+
+.train-consist__window[data-carriage-light="off"]::before {
+  opacity: 0;
 }
 
 .hero-scene__train {
@@ -1282,8 +1292,6 @@ html.has-scroll-nav .hero {
 
   .hero-scene__bridge {
     --hero-bridge-tile-width: 160vw;
-    --hero-bridge-height: 26.7vw;
-    --hero-bridge-crop: 16.7vw;
 
     bottom: calc(12% - var(--hero-bridge-height));
   }
@@ -1423,10 +1431,6 @@ html.has-scroll-nav .hero {
     min-height: 58px;
   }
 
-  .landing-section {
-    scroll-margin-top: 96px;
-  }
-
   .architecture-flow {
     gap: 0 16px;
   }
@@ -1448,6 +1452,13 @@ html.has-scroll-nav .hero {
 .hero-scene {
   background-color: var(--ptr-hero-sky);
   background-image: none;
+  /* Align the bridge sprite's lower edge to the viewport; the train reuses this correction to stay seated on the deck. */
+  --hero-bridge-deck-position: 86%;
+  --hero-bridge-deck-offset: 196px;
+  --hero-bridge-height: clamp(460px, 82%, 520px);
+  --hero-bridge-art-bottom: 280px;
+  --hero-bridge-edge-alignment: calc(14svh + var(--hero-bridge-deck-offset) - var(--hero-bridge-art-bottom));
+  --hero-train-deck-gap: 4px;
 }
 
 .hero-scene::before {
@@ -1533,12 +1544,23 @@ html.has-scroll-nav .hero {
   position: absolute;
   z-index: 4;
   right: 0;
-  bottom: -19.9svh;
+  bottom: calc(100% - var(--hero-bridge-deck-position) + var(--hero-bridge-deck-offset) - var(--hero-bridge-height));
   left: 0;
   width: 100%;
-  height: 45svh;
+  height: var(--hero-bridge-height);
   overflow: hidden;
+  transform: translateY(var(--hero-bridge-edge-alignment));
 }
+
+.hero-scene__bridge-frame {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.hero-scene__bridge-frame--reflection { z-index: 2; }
+.hero-scene__bridge-frame--surface { z-index: 4; }
 
 .hero-scene__bridge-track {
   position: absolute;
@@ -1548,6 +1570,41 @@ html.has-scroll-nav .hero {
   height: 100%;
   animation: hero-bridge-tile-loop 40s linear infinite;
   will-change: transform;
+}
+
+.hero-scene__bridge-reflection {
+  --hero-bridge-tile-width: 219px;
+  --hero-bridge-waterline: 167px;
+
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  bottom: calc(100% - var(--hero-bridge-deck-position) + var(--hero-bridge-deck-offset) - var(--hero-bridge-height));
+  left: 0;
+  width: 100%;
+  height: var(--hero-bridge-height);
+  overflow: hidden;
+  clip-path: inset(var(--hero-bridge-waterline) 0 0);
+  opacity: 0.18;
+  pointer-events: none;
+  transform: translateY(var(--hero-bridge-edge-alignment));
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgb(0 0 0 / 0.62) calc(var(--hero-bridge-waterline) + 24px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    rgb(0 0 0 / 0.62) calc(var(--hero-bridge-waterline) + 24px),
+    transparent 100%
+  );
+}
+
+.hero-scene__bridge-reflection-tile {
+  transform: translateY(calc(var(--hero-bridge-waterline) + var(--hero-bridge-waterline) - var(--hero-bridge-height))) scaleY(-1);
+  transform-origin: center;
 }
 
 .hero-scene__bridge-tile {
@@ -1564,7 +1621,7 @@ html.has-scroll-nav .hero {
 .hero-scene__train-wrap {
   position: absolute;
   z-index: 5;
-  bottom: 13svh;
+  bottom: calc(100% - var(--hero-bridge-deck-position) + var(--hero-train-deck-gap));
   left: 52%;
   width: min(34vw, 560px);
   transform: translateX(-50%);
@@ -1603,6 +1660,39 @@ html.has-scroll-nav .hero {
     radial-gradient(ellipse 18% 52% at 59% 65%, rgb(122 155 170 / 12%), transparent 76%),
     radial-gradient(ellipse 28% 46% at 88% 43%, rgb(103 142 160 / 11%), transparent 78%);
   animation: hero-lake-fog-drift 154s linear -43s infinite;
+}
+
+.hero-scene__under-bridge-fog {
+  position: absolute;
+  z-index: 3;
+  inset: calc(var(--hero-bridge-deck-position) + 1%) -8% -4%;
+  pointer-events: none;
+  transform: translate3d(var(--hero-lake-fog-x, 0px), var(--hero-lake-fog-y, 0px), 0);
+  transition: transform 900ms ease-out;
+}
+
+.hero-scene__under-bridge-fog::before,
+.hero-scene__under-bridge-fog::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  filter: blur(8px);
+  will-change: transform;
+}
+
+.hero-scene__under-bridge-fog::before {
+  background:
+    radial-gradient(ellipse 28% 64% at 12% 43%, rgb(147 178 190 / 22%), transparent 78%),
+    radial-gradient(ellipse 35% 60% at 47% 62%, rgb(126 161 177 / 19%), transparent 78%),
+    radial-gradient(ellipse 30% 58% at 83% 42%, rgb(145 176 188 / 21%), transparent 78%);
+  animation: hero-lake-fog-drift 126s linear -19s infinite;
+}
+
+.hero-scene__under-bridge-fog::after {
+  background:
+    radial-gradient(ellipse 34% 42% at 29% 70%, rgb(172 194 202 / 13%), transparent 78%),
+    radial-gradient(ellipse 30% 44% at 72% 32%, rgb(138 171 184 / 13%), transparent 78%);
+  animation: hero-lake-fog-drift 158s linear -67s infinite;
 }
 
 .hero-scene__train {
@@ -1748,18 +1838,14 @@ html.has-scroll-nav .hero {
   80%, 100% { opacity: 0; transform: translate(var(--packet-travel), -2px); }
 }
 
-@media (max-width: 1120px) and (min-width: 761px) {
-  .architecture-flow {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 20px 14px;
-  }
-
-  .architecture-node {
-    padding-inline: 12px;
-  }
-}
-
 @media (max-width: 760px) {
+  .hero-scene {
+    --hero-bridge-deck-offset: 176px;
+    --hero-bridge-height: clamp(420px, 82%, 520px);
+    --hero-bridge-art-bottom: 298px;
+    --hero-bridge-edge-alignment: calc(14svh + var(--hero-bridge-deck-offset) - var(--hero-bridge-art-bottom));
+  }
+
   .hero-scene {
     background-position: 72% center;
   }
@@ -1789,12 +1875,15 @@ html.has-scroll-nav .hero {
 
   .hero-scene__bridge {
     --hero-bridge-tile-width: 195px;
-
-    bottom: -24.4svh;
-    height: 56svh;
   }
 
-  .hero-scene__bridge-tile {
+  .hero-scene__bridge-reflection {
+    --hero-bridge-tile-width: 195px;
+    --hero-bridge-waterline: 150px;
+  }
+
+  .hero-scene__bridge-tile,
+  .hero-scene__bridge-reflection-tile {
     background-position: -304px 53px;
     background-size: 1000px 355px;
   }
@@ -1852,6 +1941,15 @@ html.has-scroll-nav .hero {
   .hero-scene__train,
   .train-consist__car,
   .architecture-diagram__packet {
+    animation: none !important;
+  }
+
+  .hero-scene__under-bridge-fog {
+    transition: none;
+  }
+
+  .hero-scene__under-bridge-fog::before,
+  .hero-scene__under-bridge-fog::after {
     animation: none !important;
   }
 
@@ -1974,17 +2072,45 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 
 /* Section rhythm and service-wide CTA roles. */
 .landing-section {
+  --section-anchor-offset: 70px;
   display: grid;
-  min-height: 100svh;
-  align-items: center;
+  min-height: calc(100svh - var(--section-anchor-offset));
+  align-items: stretch;
+  padding-block: clamp(44px, 6svh, 72px);
+  scroll-margin-top: var(--section-anchor-offset);
 }
 
-#about { background: var(--ptr-paper-bright); }
-#how-it-works { background: var(--ptr-paper-muted); }
-#architecture { background: var(--ptr-paper-soft); }
-#faq { background: var(--ptr-paper); }
+.landing-section:not(.faq-section) > .landing-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  gap: clamp(24px, 4svh, 48px);
+}
 
-.landing-section.faq-section { min-height: 0; }
+.landing-section:not(.faq-section) > .landing-container > :nth-child(n + 2) {
+  margin-block-start: 0;
+}
+
+.intro-section { background: var(--ptr-paper-bright); }
+.how-it-works-section { background: var(--ptr-paper-muted); }
+.architecture-section { background: var(--ptr-paper-soft); }
+.faq-section { background: var(--ptr-paper); }
+
+.landing-section.faq-section { min-height: calc(100svh - var(--section-anchor-offset)); }
+
+.landing-section.intro-section,
+.landing-section.faq-section {
+  min-height: 0;
+}
+
+.faq-layout { align-items: center; }
+.faq-layout > .section-heading { justify-content: center; }
+.faq-list {
+  width: min(100%, 580px);
+  align-content: start;
+  align-self: center;
+  justify-self: center;
+}
 
 .hero .landing-button--primary {
   border-color: var(--ptr-red);
@@ -2071,8 +2197,8 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 
 .hero-scene__train-wrap {
   /* Match the wheels to the deck row in bridge.png at every viewport height. */
-  bottom: calc(25.1svh - 176px - clamp(14px, 1.12vw, 19px));
-  transform: translateX(-50%);
+  bottom: calc(100% - var(--hero-bridge-deck-position) + var(--hero-train-deck-gap));
+  transform: translateX(-50%) translateY(var(--hero-bridge-edge-alignment));
 }
 
 .hero-scene__train-fog {
@@ -2162,11 +2288,13 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 }
 
 .architecture-flow {
+  --architecture-column-gap: 56px;
+
   position: relative;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-rows: repeat(3, minmax(190px, auto));
-  gap: 44px 56px;
+  gap: 44px var(--architecture-column-gap);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2193,7 +2321,11 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 .architecture-node--2 { grid-area: 1 / 2; }
 .architecture-node--3 { grid-area: 2 / 2; }
 .architecture-node--4 { grid-area: 2 / 1; }
-.architecture-node--5 { grid-area: 3 / 1; }
+.architecture-node--5 {
+  grid-area: 3 / 1 / 4 / -1;
+  justify-self: center;
+  width: calc((100% - var(--architecture-column-gap)) / 2);
+}
 
 .architecture-node__step {
   grid-column: 1 / -1;
@@ -2243,7 +2375,11 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   line-height: 1.45;
 }
 
-.architecture-notes { position: relative; z-index: 1; }
+.architecture-notes {
+  position: relative;
+  z-index: 1;
+  margin-top: 42px;
+}
 
 @keyframes architecture-stage-pulse {
   0%, 100% { transform: translateY(0); }
@@ -2252,11 +2388,33 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 }
 
 @media (max-width: 760px) {
-  .landing-section:not(.faq-section) { min-height: 100svh; }
-  .landing-section,
-  #about { scroll-margin-top: 88px; }
+  .landing-section {
+    --section-anchor-offset: calc(86.5px + env(safe-area-inset-top));
+  }
+
+  .landing-section:not(.faq-section) > .landing-container {
+    gap: clamp(28px, 6svh, 48px);
+  }
+
+  .how-it-works-section > .landing-container {
+    transform: translateY(clamp(-40px, calc(760px - 100svh), 0px));
+  }
+
+  .faq-layout {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: clamp(28px, 6svh, 48px);
+  }
+
+  .faq-layout > .section-heading { justify-content: flex-start; }
+  .faq-list {
+    align-self: stretch;
+    flex: 0 0 auto;
+  }
+
   .hero-scene__train-wrap {
-    bottom: calc(31.6svh - 157px - clamp(10px, 2.56vw, 12px));
+    bottom: calc(100% - var(--hero-bridge-deck-position) + var(--hero-train-deck-gap));
   }
   .hero-scene__train-fog { bottom: 12svh; height: 22%; }
 
@@ -2312,6 +2470,7 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   .hero-scene__lake-fog,
   .hero-scene__title-fog,
   .hero-scene__train-fog,
+  .hero-scene__under-bridge-fog,
   .train-consist--round-headlamp::before,
   .train-consist--round-headlamp::after {
     transition: none;
@@ -2321,7 +2480,350 @@ html.has-page-load-cover .page-load-cover.is-exiting {
   .hero-scene__title-fog::after,
   .hero-scene__train-fog::before,
   .hero-scene__train-fog::after,
+  .hero-scene__under-bridge-fog::before,
+  .hero-scene__under-bridge-fog::after,
   .architecture-node__asset {
+    animation: none;
+  }
+}
+
+.architecture-ticket-carousel {
+  display: grid;
+  justify-items: center;
+  width: min(100%, 760px);
+  margin: 56px auto 0;
+}
+
+.architecture-ticket-stack {
+  position: relative;
+  isolation: isolate;
+  width: min(100%, 690px);
+  height: 370px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.architecture-ticket {
+  position: absolute;
+  inset: 12px 26px 34px 12px;
+  display: grid;
+  grid-template-columns: minmax(96px, 132px) minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  background-color: var(--ptr-paper-bright);
+  background-image:
+    url("/images/architecture/ticket-paper-texture.svg"),
+    radial-gradient(circle at 0 50%, var(--ptr-paper-soft) 0 8px, transparent 8.5px),
+    radial-gradient(circle at 100% 50%, var(--ptr-paper-soft) 0 8px, transparent 8.5px);
+  background-repeat: repeat, no-repeat, no-repeat;
+  background-size: 160px 160px, auto, auto;
+  box-shadow: 5px 5px 0 var(--ptr-border);
+  transition: transform 260ms ease, box-shadow 260ms ease;
+  transform-origin: center;
+}
+
+.architecture-ticket::before {
+  position: absolute;
+  z-index: 2;
+  inset: 8px;
+  border: 1px dashed var(--ptr-border);
+  content: "";
+  pointer-events: none;
+}
+
+.architecture-ticket::after {
+  position: absolute;
+  z-index: 3;
+  right: 28px;
+  bottom: 28px;
+  display: grid;
+  place-items: center;
+  min-width: 112px;
+  height: 46px;
+  padding: 0 8px;
+  border: 3px double var(--ptr-red);
+  border-radius: 50%;
+  color: var(--ptr-red);
+  content: "PAPER T-RAIL";
+  font: 700 10px/1 var(--ptr-font-mono);
+  letter-spacing: .08em;
+  opacity: 0;
+  pointer-events: none;
+  transform: rotate(-14deg) scale(2.4);
+  transform-origin: center;
+}
+
+.architecture-ticket[data-stamping="true"]::after {
+  animation: architecture-ticket-stamp 360ms cubic-bezier(.2, .75, .35, 1) both;
+}
+
+@keyframes architecture-ticket-stamp {
+  0% { opacity: 0; transform: rotate(-14deg) scale(2.4); }
+  42% { opacity: 1; transform: rotate(-14deg) scale(.86); }
+  56% { opacity: 1; transform: rotate(-14deg) scale(1.12); }
+  72% { opacity: .9; transform: rotate(-14deg) scale(.96); }
+  100% { opacity: .82; transform: rotate(-14deg) scale(1); }
+}
+
+.architecture-ticket[data-stack-position="front"] {
+  z-index: 5;
+  box-shadow: 5px 5px 0 var(--ptr-border);
+  transform: translate3d(0, 0, 0) rotate(0);
+}
+
+.architecture-ticket[data-stack-position="next"] {
+  z-index: 4;
+  transform: translate3d(18px, 10px, 0) rotate(1.5deg) scale(.99);
+}
+
+.architecture-ticket[data-stack-position="previous"] {
+  z-index: 3;
+  transform: translate3d(-15px, 20px, 0) rotate(-1.8deg) scale(.98);
+}
+
+.architecture-ticket[data-stack-position="back"] {
+  z-index: 2;
+  transform: translate3d(5px, 29px, 0) rotate(.7deg) scale(.97);
+}
+
+.architecture-ticket__stub {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 25px 14px;
+  border-right: 2px dashed var(--ptr-border);
+  background-color: var(--ptr-paper-gold);
+  background-image: url("/images/architecture/ticket-paper-texture.svg");
+  background-repeat: repeat;
+  background-size: 160px 160px;
+}
+
+.architecture-ticket__brand {
+  color: var(--ptr-ink);
+  font-family: var(--ptr-font-display);
+  font-size: 17px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.architecture-ticket__number {
+  color: var(--ptr-red);
+  font-family: var(--ptr-font-pixel);
+  font-size: 29px;
+  line-height: 1.4;
+}
+
+.architecture-ticket__stub-caption,
+.architecture-ticket__eyebrow {
+  color: var(--ptr-muted);
+  font-family: var(--ptr-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  line-height: 1.45;
+  text-transform: uppercase;
+}
+
+.architecture-ticket__content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px 28px;
+  text-align: center;
+}
+
+.architecture-ticket__eyebrow {
+  color: var(--ptr-red);
+  font-size: 10px;
+  letter-spacing: .12em;
+}
+
+.architecture-ticket__asset {
+  display: block;
+  flex: 0 0 auto;
+  width: 112px;
+  height: 112px;
+  image-rendering: pixelated;
+}
+
+.architecture-ticket__content h3 {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 !important;
+  padding: 4px 14px;
+  border: 1px solid var(--ptr-border);
+  background: var(--ptr-paper-gold);
+  box-shadow: 2px 2px 0 var(--ptr-border);
+  color: var(--ptr-ink);
+  font-family: var(--ptr-font-display);
+  font-size: clamp(23px, 3vw, 32px);
+  line-height: 1.08;
+}
+
+.architecture-ticket__system {
+  margin: 0 !important;
+  color: var(--ptr-teal);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.architecture-ticket__detail {
+  max-width: 52ch;
+  margin: 0 !important;
+  color: var(--ptr-muted);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.architecture-ticket-controls {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  width: min(100%, 690px);
+  margin-top: 14px;
+}
+
+.architecture-ticket-controls__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 120px;
+  min-height: 48px;
+  padding: 9px 13px;
+  border: 1px solid var(--ptr-border);
+  border-radius: 0;
+  background: var(--ptr-paper-bright);
+  box-shadow: 2px 2px 0 var(--ptr-ink);
+  color: var(--ptr-ink);
+  cursor: pointer;
+  font: 650 14px/1.2 var(--ptr-font-body);
+  transition: transform 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.architecture-ticket-controls__button:first-child { justify-self: start; }
+.architecture-ticket-controls__button:last-child { justify-self: end; }
+
+.architecture-ticket-controls__button:hover {
+  background: var(--ptr-paper-gold);
+  box-shadow: 1px 1px 0 var(--ptr-ink);
+  transform: translate(1px, 1px);
+}
+
+.architecture-ticket-controls__button:focus-visible {
+  outline: 3px solid var(--ptr-focus);
+  outline-offset: 4px;
+}
+
+.architecture-ticket-controls__button:disabled {
+  cursor: wait;
+  opacity: .72;
+}
+
+.architecture-ticket-controls__arrow {
+  width: 18px;
+  height: 18px;
+}
+
+.architecture-ticket-controls__arrow--left { transform: scaleX(-1); }
+
+.architecture-ticket-controls__status {
+  min-width: 0;
+  color: var(--ptr-muted);
+  font-family: var(--ptr-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.architecture-ticket-noscript {
+  max-width: 64ch;
+  margin-top: 16px !important;
+  color: var(--ptr-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 760px) {
+  .architecture-ticket-carousel { margin-top: 42px; }
+  .architecture-notes { margin-top: 32px; }
+  .architecture-ticket-stack { height: 378px; }
+
+  .architecture-ticket {
+    inset: 10px 18px 34px 8px;
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .architecture-ticket__stub { padding: 20px 9px; }
+  .architecture-ticket__brand { font-size: 14px; }
+  .architecture-ticket__number { font-size: 22px; }
+  .architecture-ticket__stub-caption,
+  .architecture-ticket__eyebrow { font-size: 10px; }
+
+  .architecture-ticket__content {
+    gap: 5px;
+    padding: 12px 16px;
+  }
+
+  .architecture-ticket__asset { width: 88px; height: 88px; }
+  .architecture-ticket__content h3 { font-size: clamp(20px, 4.5vw, 25px); }
+  .architecture-ticket__system { font-size: 12px; }
+  .architecture-ticket__detail { font-size: 13px; line-height: 1.35; }
+
+  .architecture-ticket-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .architecture-ticket-controls__button {
+    min-width: 0;
+    min-height: 48px;
+    padding-inline: 10px;
+  }
+
+  .architecture-ticket-controls__button:first-child,
+  .architecture-ticket-controls__button:last-child { justify-self: stretch; }
+
+  .architecture-ticket-controls__status {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+
+@media (max-width: 420px) {
+  .architecture-ticket-stack { height: 394px; }
+  .architecture-ticket { grid-template-columns: 68px minmax(0, 1fr); }
+  .architecture-ticket__stub { padding-inline: 7px; }
+  .architecture-ticket__brand { font-size: 12px; }
+  .architecture-ticket__content {
+    gap: 4px;
+    padding: 10px 10px;
+  }
+  .architecture-ticket__asset { width: 72px; height: 72px; }
+  .architecture-ticket__content h3 { font-size: clamp(18px, 5vw, 22px); padding: 3px 9px; }
+  .architecture-ticket__system { font-size: 11px; }
+  .architecture-ticket__detail { font-size: 12px; }
+  .architecture-ticket-controls__button { gap: 6px; padding-inline: 8px; }
+  .architecture-ticket-controls__status { font-size: 11px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .architecture-ticket,
+  .architecture-ticket-controls__button {
+    transition: none;
+  }
+
+  .architecture-ticket[data-stamping="true"]::after {
     animation: none;
   }
 }

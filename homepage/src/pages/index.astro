@@ -139,8 +139,8 @@ const questions = [
     </a>
     <nav class="site-nav" aria-label="Main navigation">
       <a href="#about">About</a>
-      <a href="#how-it-works">How it works</a>
       <a href="#architecture">Architecture</a>
+      <a href="#how-it-works">How it works</a>
       <a href="#faq">FAQ</a>
     </nav>
     <a
@@ -212,6 +212,102 @@ const questions = [
     </div>
   </section>
 
+  <section id="architecture" class="landing-section architecture-section" aria-labelledby="architecture-heading">
+    <div class="landing-container">
+      <div class="section-heading section-heading--split">
+        <div>
+          <p class="pixel-label">Under the hood</p>
+          <h2 id="architecture-heading">A pipeline built for traceability.</h2>
+        </div>
+        <p>
+          Each stage contributes to a recorded Analysis Run. The asynchronous design keeps document
+          processing separate from the research workspace.
+        </p>
+      </div>
+      <div class="architecture-ticket-carousel" data-ticket-carousel>
+        <ol class="architecture-ticket-stack" data-ticket-stack aria-label="Five Analysis Run stage tickets">
+          {architecture.map((step, index) => (
+            <li
+              class="architecture-ticket"
+              data-ticket-item
+              data-stage-name={step.name}
+              data-stack-position={index === 0 ? "front" : index === 1 ? "next" : "back"}
+              aria-current={index === 0 ? "step" : undefined}
+              aria-hidden={index === 0 ? undefined : "true"}
+              inert={index !== 0}
+            >
+              <div class="architecture-ticket__stub" aria-hidden="true">
+                <span class="architecture-ticket__brand">Paper<br />T-Rail</span>
+                <span class="architecture-ticket__number">{String(index + 1).padStart(2, "0")}</span>
+                <span class="architecture-ticket__stub-caption">Analysis<br />Run</span>
+              </div>
+              <div class="architecture-ticket__content">
+                <img
+                  class="architecture-ticket__asset"
+                  src={step.asset}
+                  alt=""
+                  width="112"
+                  height="112"
+                  loading={index === 0 ? "eager" : "lazy"}
+                  decoding="async"
+                />
+                <span class="architecture-ticket__eyebrow">Next station</span>
+                <h3>{step.name}</h3>
+                <p class="architecture-ticket__system">{step.system}</p>
+                <p class="architecture-ticket__detail">{step.detail}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+        <div class="architecture-ticket-controls" role="group" aria-label="Pipeline ticket navigation">
+          <button
+            class="architecture-ticket-controls__button"
+            type="button"
+            data-ticket-previous
+            aria-label="Show previous pipeline ticket"
+          >
+            <span class="pixel-icon icon-arrow-right architecture-ticket-controls__arrow architecture-ticket-controls__arrow--left" aria-hidden="true"></span>
+            <span>Previous</span>
+          </button>
+          <output class="architecture-ticket-controls__status" data-ticket-status aria-live="polite" aria-atomic="true">
+            01 / 05 · Read the PDF
+          </output>
+          <button
+            class="architecture-ticket-controls__button"
+            type="button"
+            data-ticket-next
+            aria-label="Show next pipeline ticket"
+          >
+            <span>Next</span>
+            <span class="pixel-icon icon-arrow-right architecture-ticket-controls__arrow" aria-hidden="true"></span>
+          </button>
+        </div>
+        <noscript>
+          <p class="architecture-ticket-noscript">
+            The ticket controls need JavaScript. Pipeline stages:
+            {architecture.map((step, index) => String(index + 1).padStart(2, "0") + " " + step.name).join(" · ")}
+          </p>
+        </noscript>
+      </div>
+      <div class="architecture-notes">
+        <article class="architecture-note architecture-note--consent">
+          <p class="pixel-label">Consent stays with the run</p>
+          <p>
+            External providers receive data only when that provider is enabled and the required
+            per-run consent is in place.
+          </p>
+        </article>
+        <article class="architecture-note architecture-note--review">
+          <p class="pixel-label">Human review stays distinct</p>
+          <p>
+            Machine results and human feedback are kept separate. Researchers inspect the report and
+            decide what to do next.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
   <section id="how-it-works" class="landing-section how-it-works-section" aria-labelledby="how-it-works-heading">
     <div class="landing-container">
       <div class="section-heading section-heading--split">
@@ -237,68 +333,6 @@ const questions = [
           <strong>Walkthrough coming soon</strong>
           <span>We&apos;re preparing a guided look at the review flow.</span>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <section id="architecture" class="landing-section architecture-section" aria-labelledby="architecture-heading">
-    <div class="landing-container">
-      <div class="section-heading section-heading--split">
-        <div>
-          <p class="pixel-label">Under the hood</p>
-          <h2 id="architecture-heading">A pipeline built for traceability.</h2>
-        </div>
-        <p>
-          Each stage contributes to a recorded Analysis Run. The asynchronous design keeps document
-          processing separate from the research workspace.
-        </p>
-      </div>
-      <div class="architecture-route">
-        <svg class="architecture-route__track" viewBox="0 0 1000 658" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-          <defs>
-            <pattern id="architecture-horizontal-sleepers" width="24" height="20" patternUnits="userSpaceOnUse">
-              <rect class="architecture-route__sleeper" x="8" y="1" width="8" height="18" />
-            </pattern>
-            <pattern id="architecture-vertical-sleepers" width="20" height="24" patternUnits="userSpaceOnUse">
-              <rect class="architecture-route__sleeper" x="1" y="8" width="18" height="8" />
-            </pattern>
-          </defs>
-          <polyline points="250,95 750,95 750,329 250,329 250,563" class="architecture-route__bed" />
-          <rect x="250" y="85" width="500" height="20" fill="url(#architecture-horizontal-sleepers)" />
-          <rect x="740" y="95" width="20" height="234" fill="url(#architecture-vertical-sleepers)" />
-          <rect x="250" y="319" width="500" height="20" fill="url(#architecture-horizontal-sleepers)" />
-          <rect x="240" y="329" width="20" height="234" fill="url(#architecture-vertical-sleepers)" />
-          <path d="M250 85 H750 M250 105 H750 M740 95 V329 M760 95 V329 M250 319 H750 M250 339 H750 M240 329 V563 M260 329 V563" class="architecture-route__rails" />
-        </svg>
-        <ol id="architecture-flow" class="architecture-flow" aria-label="Five Analysis Run stages, connected in a zigzag route">
-          {architecture.map((step, index) => (
-            <li class:list={["architecture-node", `architecture-node--${index + 1}`]} style={`--flow-delay: ${index * 180}ms`}>
-              <span class="architecture-node__step">{String(index + 1).padStart(2, "0")}</span>
-              <img class="architecture-node__asset" src={step.asset} alt="" width="64" height="64" loading="lazy" decoding="async" />
-              <div class="architecture-node__copy">
-                <h3>{step.name}</h3>
-                <p class="architecture-node__system">{step.system}</p>
-                <p class="architecture-node__detail">{step.detail}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </div>
-      <div class="architecture-notes">
-        <article class="architecture-note architecture-note--consent">
-          <p class="pixel-label">Consent stays with the run</p>
-          <p>
-            External providers receive data only when that provider is enabled and the required
-            per-run consent is in place.
-          </p>
-        </article>
-        <article class="architecture-note architecture-note--review">
-          <p class="pixel-label">Human review stays distinct</p>
-          <p>
-            Machine results and human feedback are kept separate. Researchers inspect the report and
-            decide what to do next.
-          </p>
-        </article>
       </div>
     </div>
   </section>
@@ -343,14 +377,15 @@ const questions = [
   const documentElement = document.documentElement;
 
   if (hero && header && documentElement.classList.contains("has-scroll-nav")) {
+    const navRevealBuffer = 12;
     const updateScrollNavVisibility = () => {
       documentElement.classList.toggle(
         "has-scroll-nav-visible",
-        hero.getBoundingClientRect().bottom <= header.offsetHeight + 2,
+        hero.getBoundingClientRect().bottom <= header.offsetHeight + navRevealBuffer,
       );
     };
     const headerObserver = new IntersectionObserver(updateScrollNavVisibility, {
-      rootMargin: `-${header.offsetHeight}px 0px 0px 0px`,
+      rootMargin: `-${header.offsetHeight + navRevealBuffer}px 0px 0px 0px`,
     });
 
     headerObserver.observe(hero);
@@ -471,6 +506,87 @@ const questions = [
   heroForMotion?.addEventListener("pointerleave", resetHeroFogParallax, { passive: true });
   reducedMotion.addEventListener("change", updateMotionPreference);
   updateMotionPreference();
+</script>
+
+<script>
+  const ticketCarousel = document.querySelector<HTMLElement>("[data-ticket-carousel]");
+
+  if (ticketCarousel) {
+    const tickets = Array.from(ticketCarousel.querySelectorAll<HTMLElement>("[data-ticket-item]"));
+    const previousButton = ticketCarousel.querySelector<HTMLButtonElement>("[data-ticket-previous]");
+    const nextButton = ticketCarousel.querySelector<HTMLButtonElement>("[data-ticket-next]");
+    const status = ticketCarousel.querySelector<HTMLOutputElement>("[data-ticket-status]");
+    let activeTicketIndex = 0;
+
+    if (tickets.length > 0 && previousButton && nextButton && status) {
+      const updateActiveTicket = (nextIndex: number) => {
+        activeTicketIndex = (nextIndex + tickets.length) % tickets.length;
+
+        tickets.forEach((ticket, index) => {
+          const position = (index - activeTicketIndex + tickets.length) % tickets.length;
+          const stackPosition =
+            position === 0
+              ? "front"
+              : position === 1
+                ? "next"
+                : position === tickets.length - 1
+                  ? "previous"
+                  : "back";
+
+          ticket.dataset.stackPosition = stackPosition;
+          ticket.toggleAttribute("aria-hidden", position !== 0);
+          ticket.inert = position !== 0;
+
+          if (position === 0) {
+            ticket.setAttribute("aria-current", "step");
+          } else {
+            ticket.removeAttribute("aria-current");
+          }
+        });
+
+        const activeTicket = tickets[activeTicketIndex];
+        const stageNumber = String(activeTicketIndex + 1).padStart(2, "0");
+        status.textContent =
+          stageNumber +
+          " / " +
+          String(tickets.length).padStart(2, "0") +
+          " · " +
+          (activeTicket.dataset.stageName ?? "");
+      };
+
+      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const stampDuration = prefersReducedMotion ? 0 : 420;
+      let isTransitioning = false;
+
+      const transitionToTicket = (offset: number, stamp: boolean) => {
+        if (isTransitioning) return;
+        if (!stamp || stampDuration === 0) {
+          updateActiveTicket(activeTicketIndex + offset);
+          return;
+        }
+
+        isTransitioning = true;
+        const outgoingTicket = tickets[activeTicketIndex];
+        outgoingTicket.dataset.stamping = "true";
+        previousButton.disabled = true;
+        nextButton.disabled = true;
+
+        window.setTimeout(() => {
+          delete outgoingTicket.dataset.stamping;
+          updateActiveTicket(activeTicketIndex + offset);
+          window.setTimeout(() => {
+            previousButton.disabled = false;
+            nextButton.disabled = false;
+            isTransitioning = false;
+          }, 300);
+        }, stampDuration);
+      };
+
+      previousButton.addEventListener("click", () => transitionToTicket(-1, false));
+      nextButton.addEventListener("click", () => transitionToTicket(1, true));
+      updateActiveTicket(activeTicketIndex);
+    }
+  }
 </script>
 
     <CloudflareWebAnalytics />
