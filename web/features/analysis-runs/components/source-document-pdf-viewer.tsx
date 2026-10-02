@@ -285,8 +285,6 @@ async function findTextInDocument(
   textCache: Map<number, Awaited<ReturnType<PDFPageProxy["getTextContent"]>>>,
 ): Promise<SearchResult | null> {
   let bestMatch: SearchResult | null = null;
-  const requiresContextMatch = Boolean(context?.trim());
-
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     let textContent = textCache.get(pageNumber);
     if (!textContent) {
@@ -295,7 +293,8 @@ async function findTextInDocument(
     }
 
     const match = findPdfTextMatches(textContent.items, candidates, context);
-    if (match.matchedTargetCount === 0 || (requiresContextMatch && !match.contextMatched)) continue;
+    // Keep a primary passage match actionable when parser and PDF extraction differ.
+    if (match.matchedTargetCount === 0) continue;
 
     const result = { pageNumber, ...match };
     if (

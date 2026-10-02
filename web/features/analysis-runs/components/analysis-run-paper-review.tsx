@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, ChevronDown, FileText, Highlighter, Link2, RotateCcw, Search, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronDown, Highlighter, RotateCcw, Search, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -115,7 +115,6 @@ export function AnalysisRunPaperReview({
   onClearReviewState?: () => void;
   onSelectDetailSection: (section: "results" | "citations") => void;
 }) {
-  const [mobilePane, setMobilePane] = useState<"paper" | "details">("paper");
   const [collapsedQuickAccessKey, setCollapsedQuickAccessKey] = useState<string | null>(null);
   const [pdfHighlightOverride, setPdfHighlightOverride] = useState<{ requestId: number; text: string[]; contextText: string | null } | null>(null);
   const pdfHighlightRequestSequence = useRef(0);
@@ -137,7 +136,7 @@ export function AnalysisRunPaperReview({
 
     if (!selectedQuickAccessKey) return;
     if (selectedDetailSection === "results" && !enteredDetailSection) return;
-    if (mobilePane === "paper" && window.matchMedia("(max-width: 47.99rem)").matches) return;
+    if (window.matchMedia("(max-width: 47.99rem)").matches) return;
 
     const triggerId = selectedDetailSection === "results"
       ? `review-pair-trigger-${selectedOutcomeId}`
@@ -151,18 +150,16 @@ export function AnalysisRunPaperReview({
       window.cancelAnimationFrame(frame);
       cancelScroll();
     };
-  }, [selectedQuickAccessKey, selectedDetailSection, selectedOutcomeId, selectedReferenceKey, allOutcomes, references, mobilePane]);
+  }, [selectedQuickAccessKey, selectedDetailSection, selectedOutcomeId, selectedReferenceKey, allOutcomes, references]);
 
   const pdfHighlightText = pdfHighlightOverride?.text ?? null;
   const pdfHighlightContextText = pdfHighlightOverride?.contextText ?? null;
   function chooseOutcome(outcomeId: string, referenceKey: string) {
-    setMobilePane("details");
     setCollapsedQuickAccessKey(null);
     onSelectOutcome(outcomeId, referenceKey);
   }
 
   function chooseReference(referenceKey: string) {
-    setMobilePane("details");
     setCollapsedQuickAccessKey(null);
     onSelectReference(referenceKey);
   }
@@ -173,7 +170,6 @@ export function AnalysisRunPaperReview({
       text: uniqueSearchCandidates(...(Array.isArray(text) ? text : [text])),
       contextText,
     });
-    setMobilePane("paper");
     scrollToPaperReviewCard();
   }
 
@@ -184,20 +180,14 @@ export function AnalysisRunPaperReview({
         <p className="m-0 text-sm text-muted-foreground">Read the uploaded paper alongside parsed citations, bibliography links, and recorded AI judgements.</p>
       </header>
 
-      <div className="relative left-1/2 w-[100cqw] -translate-x-1/2 px-4 sm:px-5 lg:px-6">
+      <p className="rounded-lg border border-border bg-card p-4 text-sm leading-relaxed text-muted-foreground md:hidden">
+        Paper Review is not available on mobile. Please open this Analysis Run on a larger screen to review the original PDF, citations, and AI results.
+      </p>
+      <div className="relative left-1/2 z-[60] hidden w-[100cqw] -translate-x-1/2 px-4 sm:px-5 md:block lg:px-6">
         <Card id="paper-review-card" className="w-full scroll-mt-2 py-0 shadow-sm md:h-[calc(100svh-1rem)] md:min-h-[32rem]">
           <CardContent className="space-y-4 px-4 py-3 sm:px-6 sm:py-4 md:flex md:h-full md:flex-col md:space-y-0">
-            <div className="flex gap-2 md:hidden" role="group" aria-label="Choose Paper Review panel">
-              <Button type="button" variant={mobilePane === "paper" ? "secondary" : "outline"} aria-pressed={mobilePane === "paper"} onClick={() => setMobilePane("paper")} className="flex-1">
-                <FileText aria-hidden="true" /> Paper
-              </Button>
-              <Button type="button" variant={mobilePane === "details" ? "secondary" : "outline"} aria-pressed={mobilePane === "details"} onClick={() => setMobilePane("details")} className="flex-1">
-                <Link2 aria-hidden="true" /> Details
-              </Button>
-            </div>
-
             <div className="grid min-w-0 gap-4 md:min-h-0 md:flex-1 md:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.9fr)] md:grid-rows-1 md:items-stretch md:overflow-hidden">
-              <div className={cn("min-w-0", mobilePane === "paper" ? "block" : "hidden", "md:h-full md:min-h-0 md:block")}>
+              <div className="min-w-0 md:h-full md:min-h-0">
                 <SourceDocumentPdfViewer
                   analysisRunId={run.id}
                   filename={run.filename}
@@ -206,7 +196,7 @@ export function AnalysisRunPaperReview({
                   highlightRequestId={pdfHighlightOverride?.requestId ?? 0}
                 />
               </div>
-              <aside className={cn("min-w-0", mobilePane === "details" ? "block" : "hidden", "md:flex md:h-full md:min-h-0 md:flex-col")} aria-label="Paper Review details">
+              <aside className="min-w-0 md:flex md:h-full md:min-h-0 md:flex-col" aria-label="Paper Review details">
                 <div className="mb-3 flex items-center gap-1 rounded-xl border border-border bg-muted/60 p-1">
                   <div className="grid min-w-0 flex-1 grid-cols-2 gap-1" role="group" aria-label="Review detail type">
                     <Button

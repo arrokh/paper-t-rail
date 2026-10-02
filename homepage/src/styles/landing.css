@@ -2006,54 +2006,54 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 
 .page-load-cover__byline {
   color: color-mix(in srgb, var(--ptr-paper-bright) 78%, transparent);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 13px;
+  font-synthesis: none;
+  font-weight: 400;
   letter-spacing: 0.02em;
+  line-height: 1.3;
 }
 
 .page-load-cover__track {
   position: relative;
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: space-between;
   width: min(220px, 54vw);
-  height: 4px;
-  clip-path: inset(-18px 0);
-  background: color-mix(in srgb, var(--ptr-gold-bright) 24%, transparent);
+  height: 14px;
+  padding-inline: 12px;
 }
 
-.page-load-cover__track > span {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 30%;
-  background: var(--ptr-gold-bright);
-  filter:
-    drop-shadow(0 0 3px color-mix(in srgb, var(--ptr-gold-bright) 78%, transparent))
-    drop-shadow(0 0 8px color-mix(in srgb, var(--ptr-gold-bright) 42%, transparent));
-  animation:
-    page-load-track 1.4s steps(8, end) infinite,
-    page-load-fade 1.4s ease-in-out infinite,
-    page-load-glow 1.4s ease-in-out infinite;
+.page-load-cover__window {
+  position: relative;
+  z-index: 1;
+  display: block;
+  box-sizing: border-box;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  border: 1px solid color-mix(in srgb, var(--ptr-gold-bright) 48%, transparent);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--ptr-gold-bright) 20%, transparent);
+  animation: page-load-window-light 1s steps(1, end) infinite;
 }
 
-@keyframes page-load-track {
-  0% { transform: translateX(-110%); }
-  100% { transform: translateX(360%); }
-}
+.page-load-cover__window:nth-child(2) { animation-delay: 160ms; }
+.page-load-cover__window:nth-child(3) { animation-delay: 320ms; }
+.page-load-cover__window:nth-child(4) { animation-delay: 480ms; }
+.page-load-cover__window:nth-child(5) { animation-delay: 640ms; }
 
-@keyframes page-load-fade {
-  0% { opacity: 0; }
-  10% { opacity: 1; }
-  78% { opacity: 1; }
-  100% { opacity: 0; }
-}
-
-@keyframes page-load-glow {
-  0%, 100% {
-    filter:
-      drop-shadow(0 0 2px color-mix(in srgb, var(--ptr-gold-bright) 52%, transparent))
-      drop-shadow(0 0 5px color-mix(in srgb, var(--ptr-gold-bright) 28%, transparent));
+@keyframes page-load-window-light {
+  0%, 14% {
+    border-color: var(--ptr-gold-bright);
+    background: var(--ptr-gold-bright);
+    box-shadow: 0 0 5px color-mix(in srgb, var(--ptr-gold-bright) 100%, white);
   }
-  50% {
-    filter:
-      drop-shadow(0 0 6px color-mix(in srgb, var(--ptr-gold-bright) 100%, white))
-      drop-shadow(0 0 15px color-mix(in srgb, var(--ptr-gold-bright) 72%, transparent));
+  15%, 100% {
+    border-color: color-mix(in srgb, var(--ptr-gold-bright) 48%, transparent);
+    background: color-mix(in srgb, var(--ptr-gold-bright) 20%, transparent);
+    box-shadow: none;
   }
 }
 
@@ -2062,11 +2062,11 @@ html.has-page-load-cover .page-load-cover.is-exiting {
     transition: none;
   }
 
-  .page-load-cover__track > span {
+  .page-load-cover__window {
     animation: none;
-    transform: none;
-    opacity: 1;
-    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--ptr-gold-bright) 72%, transparent));
+    border-color: var(--ptr-gold-bright);
+    background: color-mix(in srgb, var(--ptr-gold-bright) 76%, transparent);
+    box-shadow: 0 0 4px color-mix(in srgb, var(--ptr-gold-bright) 72%, transparent);
   }
 }
 
@@ -2390,6 +2390,7 @@ html.has-page-load-cover .page-load-cover.is-exiting {
 @media (max-width: 760px) {
   .landing-section {
     --section-anchor-offset: calc(86.5px + env(safe-area-inset-top));
+    padding-block: clamp(24px, 4svh, 32px);
   }
 
   .landing-section:not(.faq-section) > .landing-container {

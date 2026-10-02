@@ -124,6 +124,7 @@ The Next.js upload workspace keeps three task-oriented cards: **01 Source Docume
 - **Source Document:** provider choices, exact per-run external-data disclosure and consent, file selection, upload action, and concise privacy/error feedback. Use a project-owned shadcn Button to activate the native file input and display its selected filename in a consistently aligned field.
 - **Persisted Progress:** cursor-paginated Analysis Runs, explicit selection, current status, and loading/empty states. Keep the page indicator at the lower left and navigation controls at the lower right; omit Previous on the first page.
 - **Parsed Document:** selected run status, current persisted progress and provenance, then the parsed sections, Citation Contexts with their Atomic Claims and inferred/provisional Citation Target links, and Bibliography Entries. Keep the source context and source span visible with each claim; target links navigate to their bibliography entries, and each entry links back to every citing Citation Context. Briefly highlight anchor destinations after navigation, respecting `prefers-reduced-motion`. Tabs and arrow controls expose only states supported by the selected run; do not imply stage history that is not stored.
+- **Paper Review:** desktop-only at the `md` breakpoint (48rem). Below that width, hide the PDF/review interface and show a clear note asking the researcher to open the Analysis Run on a larger screen. This mobile limitation applies only to Paper Review; keep every other workspace surface responsive.
 
 Keep product copy factual and non-alarmist. Distinguish privacy/consent decisions from ordinary validation. Error, loading, empty, disabled, and success states are first-class designs, not afterthoughts.
 
@@ -136,7 +137,7 @@ Target WCAG 2.2 AA for the rendered interface.
 - Preserve semantic heading order, landmarks, lists, field groups, and tab/tabpanel relationships. Use live announcements only for meaningful asynchronous status changes.
 - Never communicate status, selection, or validation solely through color or iconography. Keep text contrast legible on all token surfaces.
 - Respect `prefers-reduced-motion`; animations must be nonessential and never block feedback. Hero scenery and architecture data-flow motion must stop when reduced motion is preferred.
-- On small screens, maintain readable content widths, minimum touch targets, and no horizontal page overflow. Test the workspace at desktop and mobile sizes.
+- On small screens, maintain readable content widths, minimum touch targets, and no horizontal page overflow for supported workspace surfaces. Verify the Paper Review availability note below 48rem and exercise its interactive workflows at desktop widths; do not expose Paper Review controls on mobile.
 
 ## Change and verification rules
 
