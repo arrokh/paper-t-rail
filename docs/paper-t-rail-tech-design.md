@@ -1347,7 +1347,7 @@ flowchart TD
     S2 --> OA
 ```
 
-Crossref is the primary identity-resolution mechanism. A syntactically valid DOI printed in a bibliography entry must be normalized and confirmed against scholarly metadata; only a record carrying that exact normalized DOI can resolve the entry. If the lookup is empty or returns another DOI, mark the entry `UNRESOLVED` and do not fall back to metadata search, preventing a supplied identifier from being silently replaced with a different work. When no valid DOI is supplied, use a deterministic score over title, author, and year, and require a configurable confidence threshold; do not choose a merely top-ranked candidate when it falls below the threshold or remains ambiguous. Mark that reference `UNRESOLVED` instead. Use the conservative, version-pinned matcher; below-threshold and ambiguous entries remain `UNRESOLVED`. Empirical threshold calibration is not a product or release requirement, and matching outcomes must not be described as calibrated. Version the score policy and threshold with each Analysis Run.
+Crossref is the primary identity-resolution mechanism. A syntactically valid DOI printed in a bibliography entry must be normalized and confirmed against scholarly metadata; only a record carrying that exact normalized DOI can resolve the entry. If the lookup is empty or returns another DOI, mark the entry `UNRESOLVED` and do not fall back to metadata search, preventing a supplied identifier from being silently replaced with a different work. When no valid DOI is supplied, use a deterministic score over title, author, and year, and require a configurable confidence threshold; the default is `0.25` (`PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD`), and each Analysis Run snapshots its configured value. Do not choose a merely top-ranked candidate when it falls below the threshold or remains ambiguous. Mark that reference `UNRESOLVED` instead. Use the conservative, version-pinned matcher; below-threshold and ambiguous entries remain `UNRESOLVED`. Empirical threshold calibration is not a product or release requirement, and matching outcomes must not be described as calibrated. Version the score policy and threshold with each Analysis Run.
 
 Semantic Scholar is enrichment/graph context, not a competing canonical-identity authority in V1.
 
@@ -1364,12 +1364,12 @@ JOURNAL_ARTICLE
 CONFERENCE_PAPER
 PREPRINT
 ACADEMIC_MANUSCRIPT
+BOOK
 ```
 
 Unsupported examples:
 
 ```text
-BOOK
 BOOK_CHAPTER
 WEBSITE
 STANDARD

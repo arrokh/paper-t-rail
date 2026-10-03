@@ -61,7 +61,7 @@ paper-trail:
     parser-version: ${GROBID_PARSER_VERSION:0.9.1-crf}
     parser-response-max-bytes: ${PAPER_MAX_GROBID_RESPONSE_BYTES:67108864}
     grobid-base-url: ${GROBID_BASE_URL:http://127.0.0.1:8070}
-    reference-resolution-confidence-threshold: ${PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD:0.9}
+    reference-resolution-confidence-threshold: ${PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD:0.25}
     retrieval:
       profile-id: ${PAPER_RETRIEVAL_PROFILE_ID:postgres-hybrid-rrf-v1}
       vector-candidates: ${PAPER_RETRIEVAL_VECTOR_CANDIDATES:10}
