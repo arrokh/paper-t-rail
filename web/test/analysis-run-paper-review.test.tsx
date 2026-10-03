@@ -194,7 +194,7 @@ function installPdfJsDocument(pages = ["Uploaded paper page one.", outcome.citat
 
 function createPdfDocument(pages: string[]) {
   const pdfPages = pages.map((text) => ({
-    getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale }),
+    getViewport: ({ scale }: { scale: number }) => ({ scale, userUnit: 1, width: 612 * scale, height: 792 * scale }),
     getTextContent: async () => ({
       items: [{ str: text, dir: "ltr", transform: [12, 0, 0, 12, 72, 720], width: 400, height: 12, fontName: "test-font", hasEOL: true }],
       styles: { "test-font": { ascent: 0.8, descent: -0.2, vertical: false, fontFamily: "Arial" } },

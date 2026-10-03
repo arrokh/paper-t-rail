@@ -451,7 +451,13 @@
   }
 
   .source-document-pdf-text-layer {
+    /* Match PDF.js's viewport sizing and browser minimum-font-size compensation. */
     --total-scale-factor: 1;
+    --scale-round-x: 1px;
+    --scale-round-y: 1px;
+    --min-font-size: 1;
+    --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+    --min-font-size-inv: calc(1 / var(--min-font-size));
 
     position: absolute;
     inset: 0;
@@ -474,8 +480,24 @@
 
   .source-document-pdf-text-layer > :not(.markedContent),
   .source-document-pdf-text-layer .markedContent span:not(.markedContent) {
-    font-size: calc(var(--total-scale-factor) * var(--font-height, 0px));
-    transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1));
+    font-size: calc(var(--text-scale-factor) * var(--font-height, 0px));
+    transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1)) scale(var(--min-font-size-inv));
+  }
+
+  .source-document-pdf-text-layer .markedContent {
+    display: contents;
+  }
+
+  .source-document-pdf-text-layer[data-main-rotation="90"] {
+    transform: rotate(90deg) translateY(-100%);
+  }
+
+  .source-document-pdf-text-layer[data-main-rotation="180"] {
+    transform: rotate(180deg) translate(-100%, -100%);
+  }
+
+  .source-document-pdf-text-layer[data-main-rotation="270"] {
+    transform: rotate(270deg) translateX(-100%);
   }
 
   .source-document-pdf-text-layer span[data-pdf-search-match="true"],
