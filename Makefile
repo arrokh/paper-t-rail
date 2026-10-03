@@ -5,7 +5,7 @@ LAYA_EVALUATION_SOURCE_PATHS = api infra/laya infra/docker-compose.yml Makefile 
 # Keep command-line CHANGE data out of shell source text in the revert target.
 export CHANGE
 
-.PHONY: local dev dev-stop dev-laya dev-app homepage-dev homepage-build infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
+.PHONY: local dev dev-stop dev-laya dev-app homepage-dev homepage-build infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-local test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
 
 DEV_SELECTABLE_SERVICES := api worker web homepage laya
 DEV_APP_SERVICES := api worker web homepage
@@ -84,15 +84,20 @@ endif
 endif
 
 local:
+	mise install
+ifneq ($(strip $(LOCAL_FRONTEND_SERVICES)),)
+	@set -eu; \
+	for service in $(LOCAL_FRONTEND_SERVICES); do \
+		echo "Checking $$service dependencies."; \
+		$(MISE) pnpm --dir "$$service" install --frozen-lockfile; \
+	done
+endif
 ifneq ($(strip $(LOCAL_CONTAINER_SERVICES)),)
 	$(MAKE) dev $(LOCAL_CONTAINER_SERVICES)
 endif
 ifneq ($(strip $(LOCAL_FRONTEND_SERVICES)),)
 	@case ' $(LOCAL_FRONTEND_SERVICES) ' in \
 		*' web '*) \
-			if [ ! -x web/node_modules/.bin/next ]; then \
-				echo 'Install web dependencies with `mise exec -- pnpm --dir web install --frozen-lockfile`.' >&2; exit 2; \
-			fi; \
 			api_origin="$${PAPER_T_RAIL_API_ORIGIN:-$(LOCAL_API_ORIGIN)}"; api_origin="$${api_origin%/}"; \
 			echo "Waiting for the API at $$api_origin/api/v1/health"; \
 			api_ready=false; attempt=0; \
@@ -102,12 +107,6 @@ ifneq ($(strip $(LOCAL_FRONTEND_SERVICES)),)
 			done; \
 			if [ "$$api_ready" != true ]; then echo "The API did not become ready at $$api_origin. Check the API service and its host port." >&2; exit 1; fi ;; \
 	 esac
-	@case ' $(LOCAL_FRONTEND_SERVICES) ' in \
-		*' homepage '*) \
-			if [ ! -x homepage/node_modules/.bin/astro ]; then \
-				echo 'Install homepage dependencies with `mise exec -- pnpm --dir homepage install --frozen-lockfile`.' >&2; exit 2; \
-			fi ;; \
-	esac
 	@if running=$$($(COMPOSE) ps --status running -q $(LOCAL_FRONTEND_SERVICES) 2>/dev/null); then \
 		if [ -n "$$running" ]; then \
 			echo 'Stopping the selected Compose frontend(s) to free their local ports.'; \
@@ -238,7 +237,10 @@ infra-down:
 clean:
 	$(COMPOSE) --profile laya-evaluation down --volumes --remove-orphans
 
-test: test-api test-laya test-web lint-web typecheck-web build-web
+test: test-local test-api test-laya test-web lint-web typecheck-web build-web
+
+test-local:
+	python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 test-api:
 	cd api && $(MISE) ./gradlew test

@@ -30,14 +30,11 @@ You need Git, [`mise`](https://mise.jdx.dev/), and Docker Compose or a compatibl
 From the repository root:
 
 ```sh
-mise install
-mise exec -- pnpm --dir web install --frozen-lockfile
-mise exec -- pnpm --dir homepage install --frozen-lockfile
 cp .env.example .env  # optional; use .env for local overrides
 make local
 ```
 
-`make local` runs the API and worker with their dependencies in containers, and the Next.js workspace and Astro homepage on the host. It applies database migrations and uses local-only defaults when `.env` is absent. If a selected frontend from this worktree is already listening on its configured port, the command reuses it; a different app already using that port produces a clear error.
+`make local` first checks and installs the pinned development tools with `mise install`, then rechecks and installs dependencies for the selected host frontends with `pnpm install --frozen-lockfile`. No manual dependency installation is needed, even in a fresh worktree. Setup must succeed before any services start. It then runs the API and worker with their dependencies in containers, and the Next.js workspace and Astro homepage on the host. It applies database migrations and uses local-only defaults when `.env` is absent. If a selected frontend from this worktree is already listening on its configured port, the command reuses it; a different app already using that port produces a clear error.
 
 | Service | URL |
 | --- | --- |
@@ -101,11 +98,17 @@ For the full architecture and request/data flows, see [High-Level Architecture](
 ### Run checks
 
 ```sh
-make validate       # API and Laya tests, web tests, lint, typecheck, and web build
+make validate       # local startup, API, Laya, and web tests, lint, typecheck, and web build
 make homepage-build # Astro production build
 ```
 
-`make validate` uses a Docker-compatible runtime for API integration tests. For targeted checks, use `make test-api`, `make test-laya`, `make test-web`, `make lint-web`, `make typecheck-web`, or `make build-web`.
+`make validate` uses a Docker-compatible runtime for API integration tests. For targeted checks, use `make test-local`, `make test-api`, `make test-laya`, `make test-web`, `make lint-web`, `make typecheck-web`, or `make build-web`.
+
+For a real-browser PDF highlight check, open Paper Review and select **Show in PDF** in an isolated Chromium `agent-browser` session, then run the following with that session's name. It checks text geometry against the original PDF, without mocked layout or logging document text:
+
+```sh
+AGENT_BROWSER_ENGINE=chrome agent-browser --session <session> eval --stdin < web/test/pdf-text-layer.browser.js
+```
 
 ### Contribution path
 

@@ -81,6 +81,7 @@ export function SourceDocumentPdfPage({
         canvas.style.height = `${Math.floor(viewport.height)}px`;
         textLayerElement.style.width = `${Math.floor(viewport.width)}px`;
         textLayerElement.style.height = `${Math.floor(viewport.height)}px`;
+        textLayerElement.style.setProperty("--total-scale-factor", String(viewport.scale * viewport.userUnit));
 
         const textContent = await page.getTextContent();
         if (!active) return;
@@ -157,7 +158,7 @@ export function SourceDocumentPdfPage({
       <div className="relative mx-auto w-fit bg-white shadow-sm">
         <canvas ref={canvasRef} aria-hidden="true" className="block" />
         <div ref={textLayerRef} className="source-document-pdf-text-layer textLayer" aria-hidden="true" />
-        <div ref={highlightLayerRef} className="pointer-events-none absolute inset-0 z-[2] overflow-hidden" aria-hidden="true" />
+        <div ref={highlightLayerRef} className="pointer-events-none absolute inset-0 z-[2] overflow-hidden mix-blend-multiply" aria-hidden="true" />
       </div>
       <p className="sr-only">Text of PDF page {pageNumber}: {accessiblePageText}</p>
     </div>
