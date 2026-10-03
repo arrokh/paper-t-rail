@@ -61,6 +61,11 @@ paper-trail:
     parser-version: ${GROBID_PARSER_VERSION:0.9.1-crf}
     parser-response-max-bytes: ${PAPER_MAX_GROBID_RESPONSE_BYTES:67108864}
     grobid-base-url: ${GROBID_BASE_URL:http://127.0.0.1:8070}
+    cited-paper-parser-id: ${CITED_PAPER_PARSER_ID:docling}
+    cited-paper-parser-version: ${CITED_PAPER_PARSER_VERSION:1.30.0}
+    docling-base-url: ${DOCLING_BASE_URL:http://127.0.0.1:5001}
+    docling-response-max-bytes: ${PAPER_MAX_DOCLING_RESPONSE_BYTES:67108864}
+    docling-request-timeout-millis: ${DOCLING_REQUEST_TIMEOUT_MILLIS:600000}
     reference-resolution-confidence-threshold: ${PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD:0.9}
     retrieval:
       profile-id: ${PAPER_RETRIEVAL_PROFILE_ID:postgres-hybrid-rrf-v1}

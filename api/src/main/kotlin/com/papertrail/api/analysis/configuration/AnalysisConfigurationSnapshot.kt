@@ -1,5 +1,7 @@
 package com.papertrail.api.analysis.configuration
 
+import io.swagger.v3.oas.annotations.media.Schema
+
 data class AnalysisConfigurationSnapshot(
     val claimExtractor: ProviderSelection,
     val embedding: ProviderSelection,
@@ -19,4 +21,8 @@ data class AnalysisConfigurationSnapshot(
         thresholds = null,
     ),
     val externalProviderConsents: List<ExternalProviderConsentSnapshot>,
-)
+    @field:Schema(description = "Cited Paper PDF parser pinned for Stage 04. Older Analysis Runs without this field use their source parser.")
+    val citedPaperParser: ProviderSelection? = null,
+) {
+    fun citedPaperParserSelection(): ProviderSelection = citedPaperParser ?: sourceParser
+}

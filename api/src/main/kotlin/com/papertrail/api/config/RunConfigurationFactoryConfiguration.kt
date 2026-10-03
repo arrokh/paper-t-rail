@@ -88,6 +88,8 @@ class RunConfigurationFactoryConfiguration {
         validator: PdfDocumentValidator,
         @Value("\${paper-trail.analysis.parser-id}") parserId: String,
         @Value("\${paper-trail.analysis.parser-version}") parserVersion: String,
+        @Value("\${paper-trail.analysis.cited-paper-parser-id}") citedPaperParserId: String,
+        @Value("\${paper-trail.analysis.cited-paper-parser-version}") citedPaperParserVersion: String,
         @Value("\${paper-trail.validation.language-detector-version}") languageDetectorVersion: String,
         @Value("\${paper-trail.analysis.reference-resolution-confidence-threshold}") referenceResolutionConfidenceThreshold: Double,
         @Value("\${paper-trail.analysis.retrieval.profile-id}") retrievalProfileId: String,
@@ -115,6 +117,8 @@ class RunConfigurationFactoryConfiguration {
             parserId = parserId,
             parserVersion = parserVersion,
             languageDetectorVersion = languageDetectorVersion,
+            citedPaperParserId = citedPaperParserId,
+            citedPaperParserVersion = citedPaperParserVersion,
             limits = ValidationLimitsSnapshot(
                 maxUploadBytes = validator.limits.maxBytes,
                 maxPages = validator.limits.maxPages,

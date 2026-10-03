@@ -1,6 +1,7 @@
 package com.papertrail.api.evidence.service
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.papertrail.api.analysis.configuration.ProviderSelection
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
@@ -26,7 +27,7 @@ import java.util.UUID
 
 class EvidenceRetrievalServiceTest {
     @Test
-    fun `rejects query vectors with a wrong dimension before persisting any embedding`() {
+    fun `uses the Stage 04 parser pin before rejecting a wrong query-vector dimension`() {
         val bytes = "A cited paper section with several words.".toByteArray()
         val configuration = RunConfigurationFactory(
             objectMapper = jacksonObjectMapper(),
@@ -44,7 +45,7 @@ class EvidenceRetrievalServiceTest {
             canonicalPaperId = UUID.randomUUID(),
             objectKey = "cited-paper/test",
             contentSha256 = sha256Hex(bytes),
-            mediaType = "text/plain",
+            mediaType = "application/pdf",
             language = "en",
             languageDetectorVersion = "0.6",
             configuration = configuration,
@@ -78,12 +79,14 @@ class EvidenceRetrievalServiceTest {
             override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int) = "http://minio.test/$objectKey"
             override fun delete(objectKey: String) = Unit
         }
+        var observedParserSelection: ProviderSelection? = null
         val parser = object : CitedPaperParser {
-            override fun parse(content: ByteArray, mediaType: String): ParsedScientificDocument {
+            override fun parse(content: ByteArray, mediaType: String, parserSelection: ProviderSelection): ParsedScientificDocument {
+                observedParserSelection = parserSelection
                 val text = content.toString(Charsets.UTF_8)
                 return ParsedScientificDocument(
-                    parserId = "plain-text",
-                    parserVersion = "v1",
+                    parserId = "docling",
+                    parserVersion = "1.30.0",
                     normalizedSourceText = text,
                     sections = listOf(ParsedSection(0, null, text, 0, text.length)),
                     citationContexts = emptyList(),
@@ -100,6 +103,7 @@ class EvidenceRetrievalServiceTest {
         )
 
         assertThrows(IllegalArgumentException::class.java) { service.retrieve(runId, referenceId) }
+        assertEquals(ProviderSelection("docling", "1.30.0"), observedParserSelection)
         assertEquals(listOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.ATOMIC_CLAIMS), embeddingCategories)
         Mockito.verify(repository).isCompleted(runId, referenceId)
         Mockito.verify(repository).loadContext(runId, referenceId)

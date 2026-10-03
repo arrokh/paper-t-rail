@@ -160,6 +160,7 @@ export type AnalysisRun = {
     };
     systemOne: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     sourceParser: { provider: string; version: string };
+    citedPaperParser?: { provider: string; version: string } | null;
     openAccess?: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     referenceResolution?: {
       executionStatus: string;

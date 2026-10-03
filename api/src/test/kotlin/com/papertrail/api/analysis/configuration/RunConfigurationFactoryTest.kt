@@ -56,6 +56,8 @@ class RunConfigurationFactoryTest {
         assertEquals(listOf("atomic_claims", "evidence_passages"), snapshot.systemOne.dataCategories)
         assertEquals("grobid", snapshot.sourceParser.provider)
         assertEquals("0.9.1-crf", snapshot.sourceParser.version)
+        assertEquals("docling", snapshot.citedPaperParser?.provider)
+        assertEquals("1.30.0", snapshot.citedPaperParser?.version)
         assertEquals(52_428_800, snapshot.validationLimits.maxUploadBytes)
         assertEquals(100_000, snapshot.validationLimits.maxExtractedCharactersPerPage)
         assertEquals(5_000, snapshot.validationLimits.maxClaimCitationPairs)
@@ -76,6 +78,19 @@ class RunConfigurationFactoryTest {
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
         assertEquals(0.9, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"]["thresholds"].isNull)
+    }
+
+    @Test
+    fun `legacy run snapshots without a Stage 04 parser pin continue using their source parser`() {
+        val objectMapper = jacksonObjectMapper()
+        val legacyJson = objectMapper.readTree(factory.toJson(factory.from(factory.parseRequest(null))))
+            .deepCopy<ObjectNode>()
+        legacyJson.remove("citedPaperParser")
+        val legacySnapshot = objectMapper.readValue(legacyJson.toString(), AnalysisConfigurationSnapshot::class.java)
+
+        assertEquals(null, legacySnapshot.citedPaperParser)
+        assertEquals("grobid", legacySnapshot.citedPaperParserSelection().provider)
+        assertEquals("0.9.1-crf", legacySnapshot.citedPaperParserSelection().version)
     }
 
     @Test

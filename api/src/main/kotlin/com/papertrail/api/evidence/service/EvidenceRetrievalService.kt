@@ -37,11 +37,12 @@ class EvidenceRetrievalService(
         val content = objectStore.get(context.objectKey)
         require(sha256Hex(content) == context.contentSha256) { "Stored Cited Paper failed its SHA-256 integrity check." }
         repository.requireActiveRun(analysisRunId)
-        val parsed = citedPaperParser.parse(content, context.mediaType)
+        val selectedParser = context.configuration.citedPaperParserSelection()
+        val parsed = citedPaperParser.parse(content, context.mediaType, selectedParser)
         if (context.mediaType == "application/pdf") {
-            require(parsed.parserId == context.configuration.sourceParser.provider &&
-                parsed.parserVersion == context.configuration.sourceParser.version
-            ) { "Cited Paper parser identity does not match the Analysis Run's pinned parser." }
+            require(parsed.parserId == selectedParser.provider && parsed.parserVersion == selectedParser.version) {
+                "Cited Paper parser identity does not match the Analysis Run's pinned parser."
+            }
         }
         val chunks = chunker.chunk(parsed.sections)
         require(chunks.isNotEmpty()) { "The Cited Paper parser returned no usable section paragraphs." }
