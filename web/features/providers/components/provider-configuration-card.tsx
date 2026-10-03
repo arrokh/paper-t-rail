@@ -68,6 +68,7 @@ export function ProviderConfigurationCard({
     selections,
     consentRequirements,
     approvedCategories,
+    approvedDisclosureFingerprints,
     configurationReady,
     selectProvider,
     approveCategory,
@@ -125,12 +126,17 @@ export function ProviderConfigurationCard({
       ? selectableProviderOptions(directory, role).find((provider) => provider.providerId === selections[selectionField]) ?? null
       : null,
   }));
+  const hasCurrentDisclosureApproval = (providerId: string, fingerprint: string) =>
+    approvedDisclosureFingerprints[providerId] === fingerprint;
   const allConsentCategoriesApproved = directory !== null && consentRequirements.every((provider) =>
-    provider.dataCategories.every((category) => approvedCategories[provider.providerId]?.includes(category)),
+    hasCurrentDisclosureApproval(provider.providerId, provider.retentionDisclosureFingerprint)
+      && provider.dataCategories.every((category) => approvedCategories[provider.providerId]?.includes(category)),
   );
   const consentCategoryCount = consentRequirements.reduce((total, provider) => total + provider.dataCategories.length, 0);
   const approvedCategoryCount = consentRequirements.reduce((total, provider) =>
-    total + provider.dataCategories.filter((category) => approvedCategories[provider.providerId]?.includes(category)).length,
+    total + (hasCurrentDisclosureApproval(provider.providerId, provider.retentionDisclosureFingerprint)
+      ? provider.dataCategories.filter((category) => approvedCategories[provider.providerId]?.includes(category)).length
+      : 0),
   0);
 
   function goToStep(nextStep: number) {
@@ -262,9 +268,12 @@ export function ProviderConfigurationCard({
               ) : (
                 <>
                   {consentRequirements.map((provider) => {
-                    const providerApprovedCount = provider.dataCategories.filter((category) =>
+                    const providerApprovedCount = hasCurrentDisclosureApproval(
+                      provider.providerId,
+                      provider.retentionDisclosureFingerprint,
+                    ) ? provider.dataCategories.filter((category) =>
                       approvedCategories[provider.providerId]?.includes(category),
-                    ).length;
+                    ).length : 0;
                     return (
                       <section
                         className="min-w-0 space-y-3 rounded-lg border border-warning/30 bg-warning/10 p-4"
@@ -290,7 +299,10 @@ export function ProviderConfigurationCard({
                                 <Checkbox
                                   id={checkboxId}
                                   disabled={busy}
-                                  checked={approvedCategories[provider.providerId]?.includes(categoryId) ?? false}
+                                  checked={hasCurrentDisclosureApproval(
+                                    provider.providerId,
+                                    provider.retentionDisclosureFingerprint,
+                                  ) && (approvedCategories[provider.providerId]?.includes(categoryId) ?? false)}
                                   onCheckedChange={(checked) => approveCategory(provider.providerId, categoryId, checked === true)}
                                 />
                                 <div className="min-w-0 space-y-1">

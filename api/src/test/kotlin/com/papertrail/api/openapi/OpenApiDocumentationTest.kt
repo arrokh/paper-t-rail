@@ -73,8 +73,8 @@ import java.util.UUID
 @AutoConfigureMockMvc
 @ExtendWith(OutputCaptureExtension::class)
 class OpenApiDocumentationTest {
-    @Value("\${paper-trail.analysis.local-laya-aggregation.enabled}")
-    private var localLayaAggregationEnabled: Boolean = true
+    @Value("\${paper-trail.analysis.system-one-aggregation.enabled}")
+    private var systemOneAggregationEnabled: Boolean = false
 
     @Autowired
     private lateinit var mockMvc: MockMvc
@@ -113,8 +113,8 @@ class OpenApiDocumentationTest {
     private lateinit var unpaywallDiscoveryCache: UnpaywallDiscoveryCache
 
     @Test
-    fun `base Spring configuration enables experimental Laya aggregation by default`() {
-        assertTrue(localLayaAggregationEnabled)
+    fun `base Spring configuration enables experimental System One aggregation by default`() {
+        assertTrue(systemOneAggregationEnabled)
     }
 
     @Test
@@ -153,6 +153,15 @@ class OpenApiDocumentationTest {
         assertTrue(paths.has("/api/v1/providers"))
         val providerListing = paths.path("/api/v1/providers").path("get")
         assertTrue(providerListing.path("responses").path("200").path("content").has("application/json"))
+        assertTrue(providerListing.path("description").asText().contains("opaque fingerprint"))
+        val providerDirectorySchema = providerListing.path("responses").path("200").path("content")
+            .path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val directoryProperties = document.path("components").path("schemas").path(providerDirectorySchema).path("properties")
+        val providerOptionsSchema = directoryProperties.path("providers").path("additionalProperties").path("items")
+            .path("${'$'}ref").asText().substringAfterLast('/')
+        val providerOptionProperties = document.path("components").path("schemas").path(providerOptionsSchema).path("properties")
+        assertTrue(providerOptionProperties.has("retentionDisclosure"))
+        assertTrue(providerOptionProperties.has("retentionDisclosureFingerprint"))
         assertTrue(paths.has("/api/v1/analysis-runs"))
         val analysisRuns = paths.path("/api/v1/analysis-runs")
         val listRuns = analysisRuns.path("get")
@@ -176,6 +185,7 @@ class OpenApiDocumentationTest {
             uploadSchema.path("properties")
         }
         assertTrue(uploadProperties.has("configuration"))
+        assertTrue(uploadProperties.path("configuration").path("description").asText().contains("retentionDisclosureFingerprint"))
         assertEquals("string", uploadProperties.path("file").path("type").asText())
         assertEquals("binary", uploadProperties.path("file").path("format").asText())
 
@@ -192,6 +202,12 @@ class OpenApiDocumentationTest {
         val snapshotProperties = document.path("components").path("schemas").path(snapshotSchemaName).path("properties")
         assertTrue(snapshotProperties.has("claimExtractor"))
         assertTrue(snapshotProperties.has("openAccess"))
+        assertTrue(snapshotProperties.has("externalProviderConsents"))
+        val consentSnapshotSchema = snapshotProperties.path("externalProviderConsents").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val consentSnapshotProperties = document.path("components").path("schemas").path(consentSnapshotSchema).path("properties")
+        assertTrue(consentSnapshotProperties.has("providerId"))
+        assertTrue(consentSnapshotProperties.has("dataCategories"))
+        assertTrue(consentSnapshotProperties.has("retentionDisclosure"))
         assertTrue(snapshotProperties.has("validationLimits"))
         val limitsSchemaName = snapshotProperties.path("validationLimits").path("${'$'}ref").asText().substringAfterLast('/')
         val limitsProperties = document.path("components").path("schemas").path(limitsSchemaName).path("properties")
@@ -227,7 +243,18 @@ class OpenApiDocumentationTest {
         assertTrue(deleteDocument.path("responses").has("503"))
         assertTrue(deleteDocument.path("description").asText().contains("cannot be retracted"))
         val reanalysis = paths.path("/api/v1/documents/{documentId}/analysis-runs").path("post")
-        assertTrue(reanalysis.path("requestBody").path("content").has("application/json"))
+        assertTrue(reanalysis.path("description").asText().contains("server-issued retention-disclosure fingerprint"))
+        val runConfigurationSchemaName = reanalysis.path("requestBody").path("content").path("application/json")
+            .path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val runConfigurationProperties = document.path("components").path("schemas")
+            .path(runConfigurationSchemaName).path("properties")
+        val externalConsentSchemaName = runConfigurationProperties.path("externalProviderConsents")
+            .path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val externalConsentProperties = document.path("components").path("schemas")
+            .path(externalConsentSchemaName).path("properties")
+        assertTrue(externalConsentProperties.has("providerId"))
+        assertTrue(externalConsentProperties.has("dataCategories"))
+        assertEquals("^[0-9a-f]{64}$", externalConsentProperties.path("retentionDisclosureFingerprint").path("pattern").asText())
         val report = paths.path("/api/v1/analysis-runs/{runId}/report").path("get")
         assertTrue(report.path("responses").path("200").path("content").has("application/json"))
         assertTrue(report.path("responses").has("404"))
@@ -247,6 +274,9 @@ class OpenApiDocumentationTest {
         val schemas = document.path("components").path("schemas")
         val verificationProperties = schemas.path("CitedReferenceVerificationOutcome").path("properties")
         assertTrue(verificationProperties.has("finalStatus"))
+        assertTrue(verificationProperties.path("processingFailureReason").path("description").asText().contains("SYSTEM_ONE_HTTP_<status>"))
+        assertTrue(verificationProperties.path("processingFailureReason").path("description").asText().contains("SYSTEM_ONE_RESPONSE_*"))
+        assertTrue(verificationProperties.path("processingFailureReason").path("description").asText().contains("never contains provider response bodies"))
         assertTrue(verificationProperties.has("humanReviews"))
         val passageProperties = schemas.path("EvidencePassageReport").path("properties")
         assertTrue(passageProperties.has("diagnosticSpans"))
@@ -279,6 +309,13 @@ class OpenApiDocumentationTest {
         assertTrue(configProperties.has("scholarlyMetadataProvider"))
         assertTrue(configProperties.has("openAccessProvider"))
         assertTrue(configProperties.has("externalProviderConsents"))
+        val consentRequestSchema = configProperties.path("externalProviderConsents").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val consentRequestProperties = document.path("components").path("schemas").path(consentRequestSchema).path("properties")
+        assertTrue(consentRequestProperties.has("providerId"))
+        assertTrue(consentRequestProperties.has("dataCategories"))
+        assertTrue(consentRequestProperties.has("retentionDisclosureFingerprint"))
+        assertFalse(consentRequestProperties.has("retentionDisclosure"))
+        assertTrue(reanalysis.path("description").asText().contains("server-issued"))
         assertTrue(reanalysis.path("responses").has("201"))
         assertTrue(reanalysis.path("responses").has("404"))
         assertTrue(paths.path("/api/v1/health").path("get").path("responses").path("200").path("content").has("application/json"))
@@ -440,7 +477,7 @@ class OpenApiDocumentationTest {
     }
 
     @Test
-    fun `provider directory exposes reviewed external options and stable category descriptions`() {
+    fun `provider directory exposes configured external options and stable category descriptions`() {
         val response = mockMvc.perform(get("/api/v1/providers"))
             .andExpect(status().isOk)
             .andReturn()
@@ -469,7 +506,7 @@ class OpenApiDocumentationTest {
         assertEquals("EXTERNAL", unpaywall.path("trustBoundary").asText())
         assertTrue(crossref.path("retentionDisclosure").asText().isNotBlank())
         assertTrue(unpaywall.path("retentionDisclosure").asText().isNotBlank())
-        assertFalse(providerOptions.any { it.path("providerId").asText() in setOf("jev", "google-gemini-api", "unreviewed-provider") })
+        assertFalse(providerOptions.any { it.path("providerId").asText() in setOf("jev", "google-gemini-api", "unclassified-provider") })
         val disclosedCategoryIds = directory.path("dataCategories").map { it.path("id").asText() }.toSet()
         assertTrue(disclosedCategoryIds.containsAll(setOf(
             "source_document_text",

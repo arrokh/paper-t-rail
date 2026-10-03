@@ -2,7 +2,6 @@ package com.papertrail.api.scholarly.references.client
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
-import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.infrastructure.cache.RedisProviderCacheStore
@@ -11,6 +10,7 @@ import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
+import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -234,7 +234,6 @@ class CrossrefLookupCacheIntegrationTest {
     private fun fixture(contactEmail: String? = null): ProviderFixture {
         val catalog = ProviderCatalog.safeDefaults(
             crossrefEnabled = true,
-            crossrefEnablementReviewed = true,
             crossrefRetentionDisclosure = "Reviewed test retention disclosure.",
             crossrefContactEmail = contactEmail,
         )
@@ -252,7 +251,7 @@ class CrossrefLookupCacheIntegrationTest {
         ).from(
             RunConfigurationRequest(
                 scholarlyMetadataProvider = "crossref",
-                externalProviderConsents = listOf(ExternalProviderConsentSnapshot("crossref", consentCategories)),
+                externalProviderConsents = listOf(externalProviderConsent(catalog, "crossref", consentCategories)),
             ),
         )
         return ProviderFixture(catalog, configuration, contactEmail)

@@ -1,6 +1,8 @@
 package com.papertrail.api.infrastructure.providers
 
-fun reviewedExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
+import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
+
+fun configuredExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
     listOf(
         ProviderRegistration(
             OPEN_ACCESS_ROLE,
@@ -31,8 +33,7 @@ fun reviewedExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
             ProviderTrustBoundary.EXTERNAL,
             true,
             setOf(DataCategory.BIBLIOGRAPHIC_METADATA),
-            retentionDisclosure = "Reviewed Crossref retention disclosure for this test deployment.",
-            enablementReviewed = true,
+            retentionDisclosure = "Crossref retention disclosure for this controlled test deployment.",
         ),
         ProviderRegistration(
             CLAIM_EXTRACTOR_ROLE,
@@ -46,15 +47,14 @@ fun reviewedExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
         ),
         ProviderRegistration(
             CLAIM_EXTRACTOR_ROLE,
-            "reviewed-llm",
-            "Reviewed LLM",
+            "configured-llm",
+            "Configured LLM",
             "v1",
             "model-1",
             ProviderTrustBoundary.EXTERNAL,
             true,
             setOf(DataCategory.CITATION_CONTEXT),
-            retentionDisclosure = "Reviewed retention and deletion terms for this test deployment.",
-            enablementReviewed = true,
+            retentionDisclosure = "Retention and deletion terms for this controlled test provider.",
         ),
         ProviderRegistration(
             EMBEDDING_ROLE,
@@ -78,8 +78,8 @@ fun reviewedExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
         ),
         ProviderRegistration(
             SYSTEM_ONE_ROLE,
-            "unreviewed-provider",
-            "Unreviewed provider fixture",
+            "unclassified-provider",
+            "Unclassified provider fixture",
             "unknown",
             null,
             ProviderTrustBoundary.UNREVIEWED,
@@ -88,3 +88,16 @@ fun reviewedExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
         ),
     ),
 )
+
+fun externalProviderConsent(
+    catalog: ProviderCatalog,
+    providerId: String,
+    dataCategories: List<String>,
+): ExternalProviderConsentRequest {
+    val provider = catalog.directory().providers.values.flatten().single { it.providerId == providerId }
+    return ExternalProviderConsentRequest(
+        providerId = providerId,
+        dataCategories = dataCategories,
+        retentionDisclosureFingerprint = requireNotNull(provider.retentionDisclosureFingerprint),
+    )
+}

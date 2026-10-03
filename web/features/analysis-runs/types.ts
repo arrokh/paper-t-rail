@@ -175,7 +175,7 @@ export type AnalysisRun = {
       thresholds: Record<string, number> | null;
     };
     languageDetector: { provider: string; version: string };
-    externalProviderConsents?: { providerId: string; dataCategories: string[] }[];
+    externalProviderConsents?: { providerId: string; dataCategories: string[]; retentionDisclosure?: string | null }[];
   };
   createdAt: string;
   startedAt: string | null;
@@ -344,5 +344,9 @@ export type AnalysisRunConfiguration = {
   systemOneProvider: string;
   scholarlyMetadataProvider: string;
   openAccessProvider: string;
-  externalProviderConsents: Array<{ providerId: string; dataCategories: string[] }>;
+  externalProviderConsents: Array<{
+    providerId: string;
+    dataCategories: string[];
+    retentionDisclosureFingerprint: string;
+  }>;
 };

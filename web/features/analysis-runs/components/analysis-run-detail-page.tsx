@@ -113,8 +113,15 @@ function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
             {run.configuration.externalProviderConsents && run.configuration.externalProviderConsents.length > 0 && (
               <div className="min-w-0 space-y-1 sm:col-span-2">
                 <dt className="font-mono text-xs uppercase text-muted-foreground">Per-run external provider consent</dt>
-                <dd className="m-0 text-sm leading-relaxed">
-                  {run.configuration.externalProviderConsents.map((consent) => `${consent.providerId}: ${consent.dataCategories.join(", ")}`).join(" · ")}
+                <dd className="m-0 space-y-3 text-sm leading-relaxed">
+                  {run.configuration.externalProviderConsents.map((consent) => (
+                    <div key={consent.providerId} className="space-y-1">
+                      <p className="m-0 font-medium">{consent.providerId}: {consent.dataCategories.join(", ")}</p>
+                      <p className="m-0 text-muted-foreground">
+                        {consent.retentionDisclosure ?? "No disclosure snapshot is available for this legacy Analysis Run."}
+                      </p>
+                    </div>
+                  ))}
                 </dd>
               </div>
             )}

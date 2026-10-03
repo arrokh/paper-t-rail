@@ -2,7 +2,6 @@ package com.papertrail.api.evidence.embedding
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
@@ -11,6 +10,7 @@ import com.papertrail.api.infrastructure.providers.EMBEDDING_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
+import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -71,7 +71,7 @@ class OllamaEmbeddingProviderContractTest {
         val invalidModel = settings("http://127.0.0.1:11434").copy(modelId = " ")
         val missingEndpoint = settings("")
         val endpointCredentials = settings("http://user:password@127.0.0.1:11434")
-        val externalUnreviewed = settings(
+        val externalEndpoint = settings(
             "http://127.0.0.1:11434",
             trustedHosts = setOf("ollama.internal"),
         )
@@ -80,18 +80,16 @@ class OllamaEmbeddingProviderContractTest {
         assertFalse(factoryCatalog(invalidModel).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
         assertFalse(factoryCatalog(missingEndpoint).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
         assertFalse(factoryCatalog(endpointCredentials).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
-        assertFalse(factoryCatalog(externalUnreviewed).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
+        assertTrue(factoryCatalog(externalEndpoint).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
         assertTrue(factoryCatalog(valid).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
     }
 
     @Test
-    fun `classifies endpoints outside the trusted host list as external and gates requests on fresh consent`() {
+    fun `classifies endpoints outside the trusted host list as external without a terms-review gate and requires fresh consent`() {
         OllamaTestServer(responseFor("nomic-embed-text", listOf(0.25, -0.5, 0.75))).use { server ->
             val settings = settings(
                 baseUrl = server.baseUrl,
                 trustedHosts = setOf("ollama.internal"),
-                enablementReviewed = true,
-                retentionDisclosure = "Operator-reviewed endpoint retention disclosure.",
             )
             val factory = configurationFactory(settings)
             val catalog = factoryCatalog(settings)
@@ -102,8 +100,10 @@ class OllamaEmbeddingProviderContractTest {
             )
             val requiredCategories = listOf("atomic_claims", "cited_paper_chunks", "embedding_input")
 
-            assertEquals("EXTERNAL", catalog.directory().providers.getValue(EMBEDDING_ROLE)
-                .single { it.providerId == "ollama" }.trustBoundary)
+            val externalOption = catalog.directory().providers.getValue(EMBEDDING_ROLE)
+                .single { it.providerId == "ollama" }
+            assertEquals("EXTERNAL", externalOption.trustBoundary)
+            assertTrue(externalOption.retentionDisclosure!!.contains("Retention and deletion details are unknown"))
             assertThrows<IllegalArgumentException> {
                 factory.from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.PROVIDER_ID))
             }
@@ -111,7 +111,7 @@ class OllamaEmbeddingProviderContractTest {
                 RunConfigurationRequest(
                     embeddingProvider = OllamaEmbeddingSettings.PROVIDER_ID,
                     externalProviderConsents = listOf(
-                        ExternalProviderConsentSnapshot(OllamaEmbeddingSettings.PROVIDER_ID, requiredCategories),
+                        externalProviderConsent(catalog, OllamaEmbeddingSettings.PROVIDER_ID, requiredCategories),
                     ),
                 ),
             )
@@ -254,7 +254,6 @@ class OllamaEmbeddingProviderContractTest {
         apiKey: String? = null,
         trustedHosts: Set<String> = setOf("localhost", "127.0.0.1"),
         requestTimeoutMillis: Long = 5_000,
-        enablementReviewed: Boolean = false,
         retentionDisclosure: String? = null,
     ): OllamaEmbeddingSettings = OllamaEmbeddingSettings(
         enabled = true,
@@ -264,7 +263,6 @@ class OllamaEmbeddingProviderContractTest {
         apiKey = apiKey,
         trustedHosts = trustedHosts,
         requestTimeoutMillis = requestTimeoutMillis,
-        enablementReviewed = enablementReviewed,
         retentionDisclosure = retentionDisclosure,
     )
 

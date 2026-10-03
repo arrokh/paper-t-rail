@@ -68,20 +68,19 @@ paper-trail:
       lexical-candidates: ${PAPER_RETRIEVAL_LEXICAL_CANDIDATES:10}
       final-candidates: ${PAPER_RETRIEVAL_FINAL_CANDIDATES:5}
       rrf-constant: ${PAPER_RETRIEVAL_RRF_CONSTANT:60}
-    # Owner-approved experimental default; all resulting judgements/statuses remain uncalibrated.
-    local-laya-aggregation:
-      enabled: ${LOCAL_LAYA_AGGREGATION_ENABLED:true}
-      direct-support-threshold: ${LOCAL_LAYA_AGGREGATION_DIRECT_SUPPORT_THRESHOLD:0.80}
-      partial-support-threshold: ${LOCAL_LAYA_AGGREGATION_PARTIAL_SUPPORT_THRESHOLD:0.70}
-      contradiction-threshold: ${LOCAL_LAYA_AGGREGATION_CONTRADICTION_THRESHOLD:0.80}
-      comparability-margin: ${LOCAL_LAYA_AGGREGATION_COMPARABILITY_MARGIN:0.08}
+    # Experimental aggregation applies to eligible Laya and Jev judgements; outputs remain uncalibrated.
+    system-one-aggregation:
+      enabled: ${SYSTEM_ONE_AGGREGATION_ENABLED:true}
+      direct-support-threshold: ${SYSTEM_ONE_AGGREGATION_DIRECT_SUPPORT_THRESHOLD:0.80}
+      partial-support-threshold: ${SYSTEM_ONE_AGGREGATION_PARTIAL_SUPPORT_THRESHOLD:0.70}
+      contradiction-threshold: ${SYSTEM_ONE_AGGREGATION_CONTRADICTION_THRESHOLD:0.80}
+      comparability-margin: ${SYSTEM_ONE_AGGREGATION_COMPARABILITY_MARGIN:0.08}
     cited-paper-max-bytes: ${PAPER_MAX_CITED_PAPER_BYTES:52428800}
     cited-paper-max-extracted-characters: ${PAPER_MAX_CITED_PAPER_EXTRACTED_CHARACTERS:5000000}
-  # Local consent-flow/acquisition testing defaults. Deployments must verify terms and replace test values.
+  # Local consent-flow/acquisition defaults. Terms are informational, not enablement gates; external calls still require per-run consent. Replace test contact values for deployments.
   providers:
     crossref:
       enabled: ${CROSSREF_ENABLED:true}
-      enablement-reviewed: ${CROSSREF_ENABLEMENT_REVIEWED:true}
       retention-disclosure: "${CROSSREF_RETENTION_DISCLOSURE:Crossref mencatat IP peminta dan isi permintaan. Email polite pool dipakai untuk pemecahan masalah, dan Crossref menyatakan log dihapus setelah tiga bulan.}"
       contact-email: ${CROSSREF_CONTACT_EMAIL:test@ptr.test}
       cache:
@@ -89,7 +88,6 @@ paper-trail:
         negative-ttl: ${CROSSREF_CACHE_NEGATIVE_TTL:1h}
     unpaywall:
       enabled: ${UNPAYWALL_ENABLED:true}
-      enablement-reviewed: ${UNPAYWALL_ENABLEMENT_REVIEWED:true}
       retention-disclosure: "${UNPAYWALL_RETENTION_DISCLOSURE:Unpaywall menerima DOI dan alamat kontak layanan; kebijakannya menyebut data permintaan dapat disimpan hingga enam bulan setelah penggunaan layanan berakhir. Repositori/host konten yang ditemukan memiliki ketentuan retensi tersendiri.}"
       contact-email: ${UNPAYWALL_CONTACT_EMAIL:test@ptr.test}
       cache:
@@ -103,17 +101,22 @@ paper-trail:
       api-key: ${OLLAMA_API_KEY:}
       trusted-hosts: ${OLLAMA_TRUSTED_HOSTS:localhost,127.0.0.1}
       request-timeout-millis: ${OLLAMA_REQUEST_TIMEOUT_MILLIS:60000}
-      external-enablement-reviewed: ${OLLAMA_EXTERNAL_ENABLEMENT_REVIEWED:false}
       external-retention-disclosure: "${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:}"
     system-one:
       default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:laya}
     laya:
-      # Enabled as an optional evaluation candidate; selection still requires valid authenticated settings.
+      # Enabled as the default local provider when authenticated settings are valid.
       enabled: ${LAYA_ENABLED:true}
       base-url: ${LAYA_BASE_URL:http://laya:8000}
       api-key: ${LAYA_API_KEY:}
       trusted-hosts: ${LAYA_TRUSTED_HOSTS:laya,localhost,127.0.0.1}
       request-timeout-millis: ${LAYA_REQUEST_TIMEOUT_MILLIS:120000}
+    jev:
+      api-key: ${JEV_API_KEY:}
+      model: ${JEV_MODEL:jev-latest}
+      base-url: ${JEV_BASE_URL:https://api.typesafe.ai}
+      request-timeout-millis: ${JEV_REQUEST_TIMEOUT_MILLIS:120000}
+      retention-disclosure: "${JEV_RETENTION_DISCLOSURE:}"
 
 scalar:
   enabled: ${API_DOCS_ENABLED:true}
@@ -145,8 +148,8 @@ spring:
 # Outputs remain uncalibrated; this configuration default does not establish accuracy or approval.
 paper-trail:
   analysis:
-    local-laya-aggregation:
-      enabled: ${LOCAL_LAYA_AGGREGATION_ENABLED:true}
+    system-one-aggregation:
+      enabled: ${SYSTEM_ONE_AGGREGATION_ENABLED:true}
   providers:
     system-one:
       default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:laya}

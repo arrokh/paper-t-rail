@@ -781,13 +781,13 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                           <AlertTitle>Conservative research triage</AlertTitle>
                           <AlertDescription>{coverage.triageDisclaimer}</AlertDescription>
                         </Alert>
-                        {selectedRun.configuration.systemOne.provider === "laya" && (
+                        {selectedRun.configuration.systemOne.provider !== "mock" && (
                           <Alert>
-                            <AlertTitle>Uncalibrated Laya output</AlertTitle>
+                            <AlertTitle>Uncalibrated System One output</AlertTitle>
                             <AlertDescription>
                               {coverage.executionStatus === "NOT_RUN"
-                                ? "Laya judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
-                                : "This run uses experimental aggregation with uncalibrated Laya judgements and thresholds. Final statuses are not human-reviewed or approved for this target."}
+                                ? "System One judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
+                                : "This run uses experimental aggregation with uncalibrated System One judgements and thresholds. Final statuses are not human-reviewed."}
                             </AlertDescription>
                           </Alert>
                         )}

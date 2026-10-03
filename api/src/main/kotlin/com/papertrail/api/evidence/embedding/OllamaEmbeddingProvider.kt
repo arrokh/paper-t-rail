@@ -6,21 +6,13 @@ import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.EMBEDDING_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
+import com.papertrail.api.infrastructure.http.BoundedHttpClient
+import com.papertrail.api.infrastructure.http.BoundedHttpRequestException
 import org.springframework.stereotype.Component
-import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
-import java.net.http.HttpTimeoutException
-import java.nio.ByteBuffer
 import java.time.Duration
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.CompletionStage
-import java.util.concurrent.ExecutionException
-import java.util.concurrent.Flow
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
 
 @Component
 class OllamaEmbeddingProvider(
@@ -33,10 +25,7 @@ class OllamaEmbeddingProvider(
     override val version = OllamaEmbeddingSettings.VERSION
     override val dimension: Int = settings.dimension
 
-    private val httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS))
-        .followRedirects(HttpClient.Redirect.NEVER)
-        .build()
+    private val httpClient = BoundedHttpClient(CONNECT_TIMEOUT_SECONDS)
 
     override fun embed(text: String, context: EmbeddingRequestContext): FloatArray {
         require(text.isNotBlank()) { "Embedding input must not be blank." }
@@ -94,65 +83,16 @@ class OllamaEmbeddingProvider(
         return parseEmbeddingResponse(responseBody)
     }
 
-    private fun sendRequest(request: HttpRequest): HttpResponse<ByteArray> {
-        val responseFuture = httpClient.sendAsync(
-            request,
-            boundedResponseBodyHandler(OllamaEmbeddingSettings.MAX_RESPONSE_BYTES),
-        )
-        return try {
-            responseFuture.get(settings.requestTimeoutMillis, TimeUnit.MILLISECONDS)
-        } catch (_: TimeoutException) {
-            responseFuture.cancel(true)
-            throw OllamaEmbeddingException("Ollama embedding request timed out.")
-        } catch (failure: ExecutionException) {
-            if (failure.cause is HttpTimeoutException) {
-                throw OllamaEmbeddingException("Ollama embedding request timed out.")
-            }
-            throw OllamaEmbeddingException("Ollama embedding endpoint is unavailable.")
-        } catch (_: InterruptedException) {
-            responseFuture.cancel(true)
-            Thread.currentThread().interrupt()
-            throw OllamaEmbeddingException("Ollama embedding request was interrupted.")
+    private fun sendRequest(request: HttpRequest): HttpResponse<ByteArray> = try {
+        httpClient.send(request, settings.requestTimeoutMillis, OllamaEmbeddingSettings.MAX_RESPONSE_BYTES)
+    } catch (failure: BoundedHttpRequestException) {
+        val message = when (failure.reason) {
+            BoundedHttpRequestException.Reason.TIMEOUT -> "Ollama embedding request timed out."
+            BoundedHttpRequestException.Reason.UNAVAILABLE -> "Ollama embedding endpoint is unavailable."
+            BoundedHttpRequestException.Reason.INTERRUPTED -> "Ollama embedding request was interrupted."
         }
+        throw OllamaEmbeddingException(message)
     }
-
-    private fun boundedResponseBodyHandler(maxBytes: Int): HttpResponse.BodyHandler<ByteArray> =
-        HttpResponse.BodyHandler {
-            object : HttpResponse.BodySubscriber<ByteArray> {
-                private val body = ByteArrayOutputStream()
-                private val result = CompletableFuture<ByteArray>()
-                private lateinit var subscription: Flow.Subscription
-
-                override fun getBody(): CompletionStage<ByteArray> = result
-
-                override fun onSubscribe(subscription: Flow.Subscription) {
-                    this.subscription = subscription
-                    subscription.request(1)
-                }
-
-                override fun onNext(items: List<ByteBuffer>) {
-                    for (buffer in items) {
-                        if (buffer.remaining() > maxBytes - body.size()) {
-                            subscription.cancel()
-                            result.complete(ByteArray(maxBytes + 1))
-                            return
-                        }
-                        val bytes = ByteArray(buffer.remaining())
-                        buffer.get(bytes)
-                        body.write(bytes, 0, bytes.size)
-                    }
-                    subscription.request(1)
-                }
-
-                override fun onError(throwable: Throwable) {
-                    result.completeExceptionally(throwable)
-                }
-
-                override fun onComplete() {
-                    result.complete(body.toByteArray())
-                }
-            }
-        }
 
     private fun parseEmbeddingResponse(responseBody: ByteArray): FloatArray {
         val response = try {

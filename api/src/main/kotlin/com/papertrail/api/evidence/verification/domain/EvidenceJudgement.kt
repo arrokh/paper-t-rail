@@ -11,8 +11,12 @@ data class EvidenceJudgement(
     val claimScopeMatch: Double,
     val studyDesignQuality: Double,
     val relevance: Double,
+    val providerReportedModelId: String? = null,
 ) {
     init {
+        require(providerReportedModelId == null ||
+            (providerReportedModelId.isNotBlank() && providerReportedModelId.length <= 160 && providerReportedModelId.none(Char::isISOControl))
+        ) { "Provider-reported model identifiers must be non-empty, bounded, and free of control characters." }
         require(listOf(confidence, directness, claimScopeMatch, studyDesignQuality, relevance).all { it in 0.0..1.0 }) {
             "Evidence judgement scores must be between zero and one."
         }

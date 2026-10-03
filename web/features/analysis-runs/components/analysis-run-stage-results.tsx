@@ -766,14 +766,14 @@ function VerificationStageResults({ run, report }: { run: AnalysisRun; report: R
   }
 
   if (executionStatus === "NOT_RUN") {
-    const evaluationOnly = run.configuration.systemOne.provider === "laya";
+    const evaluationOnly = run.configuration.systemOne.provider !== "mock";
     return (
       <div className="space-y-4">
         <Alert>
-          <AlertTitle>{evaluationOnly ? "Local Laya evaluation only" : "Claim–Paper Verification not configured"}</AlertTitle>
+          <AlertTitle>{evaluationOnly ? "System One evaluation only" : "Claim–Paper Verification not configured"}</AlertTitle>
           <AlertDescription>
             {evaluationOnly
-              ? "Laya judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
+              ? "System One judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
               : "This Analysis Run did not configure a final Claim–Paper Verification policy, so no Evidence Coverage Report outcomes were produced."}
           </AlertDescription>
         </Alert>

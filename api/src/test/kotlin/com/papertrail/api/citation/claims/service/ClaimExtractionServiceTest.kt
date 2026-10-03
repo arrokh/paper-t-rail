@@ -1,7 +1,7 @@
 package com.papertrail.api.citation.claims.service
 
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
-import com.papertrail.api.infrastructure.providers.reviewedExternalProviderCatalog
+import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
@@ -9,12 +9,12 @@ class ClaimExtractionServiceTest {
     @Test
     fun `rejects external claim extractors until their send path is consent-gated`() {
         val service = ClaimExtractionService(
-            providerCatalog = reviewedExternalProviderCatalog(),
+            providerCatalog = configuredExternalProviderCatalog(),
             providers = listOf(HeuristicClaimExtractor()),
         )
 
         assertThrows(IllegalArgumentException::class.java) {
-            service.extract(providerId = "reviewed-llm", version = "v1", contexts = emptyList())
+            service.extract(providerId = "configured-llm", version = "v1", contexts = emptyList())
         }
     }
 
