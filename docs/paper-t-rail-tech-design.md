@@ -1880,6 +1880,8 @@ The detail view groups the worker flow into the following persisted pipeline sta
 
 The Evidence Coverage Report is a read projection, not a sixth worker stage. A persisted work-item status is operational state, not its domain outcome: for example, reference resolution can be `COMPLETED` while its outcome is unresolved, and conditional downstream work can be `SKIPPED` with a stable reason code. Stage summaries derive from their item statuses. Persisted item states are `WAITING`, `IN_PROGRESS`, `COMPLETED`, `SKIPPED`, and `FAILED`; expose counts and short labels/reason codes without source claim or evidence text. Add a further stage or step only when the worker can persist its execution state at that boundary.
 
+The current code mapping, provider limits, implementation gaps, and evidence standard for these five stages are maintained in the [Pipeline Implementation and Feature Traceability Matrix](./pipeline-feature-matrix.md).
+
 ---
 
 # 31. Human Review
