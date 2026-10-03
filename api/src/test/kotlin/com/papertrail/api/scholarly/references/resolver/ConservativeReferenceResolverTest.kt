@@ -64,11 +64,27 @@ class ConservativeReferenceResolverTest {
     }
 
     @Test
+    fun `resolves books preprints and journal articles`() {
+        val supportedTypes = listOf("BOOK", "PREPRINT", "JOURNAL_ARTICLE")
+
+        supportedTypes.forEach { type ->
+            val provider = RecordingMetadataProvider(doiResult = work("10.1234/work", "A scholarly work", listOf("A Author"), 2020))
+            val resolver = ConservativeReferenceResolver(provider, ScholarlyMetadataMatcher(0.9, 0.02))
+
+            val result = resolver.resolve(reference(type = type, doi = "10.1234/work"))
+
+            assertEquals(ReferenceResolutionStatus.RESOLVED, result.status, type)
+            assertTrue(provider.doiLookupAttempted, type)
+            assertFalse(provider.searchAttempted, type)
+        }
+    }
+
+    @Test
     fun `classifies unsupported reference types before attempting scholarly metadata lookup`() {
         val provider = RecordingMetadataProvider()
         val resolver = ConservativeReferenceResolver(provider, ScholarlyMetadataMatcher(0.9, 0.02))
 
-        val result = resolver.resolve(reference(type = "BOOK", doi = "10.1234/book"))
+        val result = resolver.resolve(reference(type = "WEBSITE", doi = "10.1234/site"))
 
         assertEquals(ReferenceResolutionStatus.UNSUPPORTED_REFERENCE_TYPE, result.status)
         assertEquals("UNSUPPORTED_REFERENCE_TYPE", result.reasonCode)

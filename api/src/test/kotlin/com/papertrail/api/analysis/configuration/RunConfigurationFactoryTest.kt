@@ -66,7 +66,7 @@ class RunConfigurationFactoryTest {
         assertEquals("LOCAL", metadataProvider.trustBoundary)
         assertEquals(listOf("bibliographic_metadata"), metadataProvider.dataCategories)
         assertEquals("title-author-year-weighted-edit-similarity-v1", snapshot.referenceResolution.scorePolicyVersion)
-        assertEquals(0.9, snapshot.referenceResolution.confidenceThreshold)
+        assertEquals(0.25, snapshot.referenceResolution.confidenceThreshold)
         assertEquals("NOT_RUN", snapshot.aggregation.executionStatus)
         assertEquals(null, snapshot.aggregation.verificationPolicyVersion)
         assertEquals(null, snapshot.aggregation.aggregationPolicyVersion)
@@ -74,7 +74,7 @@ class RunConfigurationFactoryTest {
         assertEquals(0, snapshot.externalProviderConsents.size)
         val json = jacksonObjectMapper().readTree(factory.toJson(snapshot))
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
-        assertEquals(0.9, json["referenceResolution"]["confidenceThreshold"].asDouble())
+        assertEquals(0.25, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"]["thresholds"].isNull)
     }
 
