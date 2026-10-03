@@ -4,6 +4,7 @@ import org.w3c.dom.Element
 import org.w3c.dom.Node
 import org.xml.sax.InputSource
 import java.io.StringReader
+import java.util.Locale
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -78,7 +79,8 @@ class GrobidTeiParser(
         }
         val body = descendants(root).firstOrNull { it.localName == "body" }
             ?: throw IllegalArgumentException("The scientific parser response has no TEI body.")
-        val bibliographyEntries = readBibliography(root)
+        val referencedBibliographyKeys = readReferencedBibliographyKeys(body)
+        val bibliographyEntries = readBibliography(root, referencedBibliographyKeys)
         val bibliographyKeys = bibliographyEntries.mapTo(mutableSetOf()) { it.localReferenceKey }
         val sourceSections = readSections(body)
         val sections = mutableListOf<ParsedSection>()
@@ -223,11 +225,22 @@ class GrobidTeiParser(
         return NormalizedParagraph(normalizedText, parsedMarkers)
     }
 
-    private fun readBibliography(root: Element): List<ParsedBibliographyEntry> {
+    private fun readReferencedBibliographyKeys(body: Element): Set<String> = descendants(body)
+        .asSequence()
+        .filter { it.localName == "ref" && it.getAttribute("type") == "bibr" }
+        .flatMap { element ->
+            element.getAttribute("target")
+                .split(Regex("\\s+"))
+                .asSequence()
+                .mapNotNull(::referenceFragment)
+        }
+        .toSet()
+
+    private fun readBibliography(root: Element, referencedKeys: Set<String>): List<ParsedBibliographyEntry> {
         val list = descendants(root).firstOrNull { it.localName == "listBibl" } ?: return emptyList()
         val candidates = descendants(list).filter { it.localName == "biblStruct" || it.localName == "bibl" }
         val seenKeys = mutableSetOf<String>()
-        return candidates.mapIndexedNotNull { index, element ->
+        val entries = candidates.mapIndexedNotNull { index, element ->
             val id = element.getAttributeNS(XMLConstants.XML_NS_URI, "id")
                 .ifBlank { element.getAttribute("xml:id") }
                 .ifBlank { "ref${index + 1}" }
@@ -258,9 +271,26 @@ class GrobidTeiParser(
                 it.localName == "idno" && it.getAttribute("type").equals("doi", ignoreCase = true)
             }?.let { normalizeDoi(it.textContent) }
             val type = referenceType(element)
-            ParsedBibliographyEntry(index, id, rawText, title, authors, year, doi, type)
+            val entry = ParsedBibliographyEntry(index, id, rawText, title, authors, year, doi, type)
+            if (isUncitedSectionHeading(entry, referencedKeys)) return@mapIndexedNotNull null
+            entry
         }
+        return entries.mapIndexed { entryOrder, entry -> entry.copy(entryOrder = entryOrder) }
     }
+
+    private fun isUncitedSectionHeading(entry: ParsedBibliographyEntry, referencedKeys: Set<String>): Boolean {
+        if (entry.localReferenceKey in referencedKeys) return false
+        if (entry.referenceType != "OTHER" || entry.year != null || entry.doi != null) return false
+
+        val heading = normalizeBibliographyHeading(entry.rawText)
+        if (heading !in BIBLIOGRAPHY_SECTION_HEADINGS) return false
+        if (entry.title != null && normalizeBibliographyHeading(entry.title) != heading) return false
+        return entry.authors.all { normalizeBibliographyHeading(it) == heading }
+    }
+
+    private fun normalizeBibliographyHeading(value: String): String = normalizeWhitespace(value)
+        .trimEnd(':', '.')
+        .lowercase(Locale.ROOT)
 
     private fun referenceType(element: Element): String {
         val reportDescription = descendants(element)
@@ -337,6 +367,7 @@ class GrobidTeiParser(
     private data class NormalizedParagraph(val text: String, val markers: List<CitationMarker>)
 
     companion object {
+        private val BIBLIOGRAPHY_SECTION_HEADINGS = setOf("references", "bibliography", "works cited", "literature cited")
         private val WHITESPACE = Regex("[\\s\\p{Z}]+")
         private val YEAR_PATTERN = Regex("(?:18|19|20)\\d{2}")
         private val THESIS_PATTERN = Regex("\\b(?:thesis|dissertation)\\b", RegexOption.IGNORE_CASE)

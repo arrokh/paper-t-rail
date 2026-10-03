@@ -52,6 +52,53 @@ class GrobidTeiParserTest {
     }
 
     @Test
+    fun `ignores uncited heading-only bibliography artifacts without hiding real references`() {
+        val tei = """
+            <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+              <text>
+                <body><div><p>Prior work <ref type="bibr" target="#book">[1]</ref> informed this study.</p></div></body>
+                <back><listBibl>
+                  <bibl xml:id="heading"><author><persName><surname>References</surname></persName></author></bibl>
+                  <biblStruct xml:id="book">
+                    <monogr><title level="m">Instrumen perangkat pembelajaran</title><imprint><date when="2013"/></imprint></monogr>
+                  </biblStruct>
+                  <biblStruct xml:id="named-work">
+                    <analytic><title level="a">References</title><author><persName><forename>Ada</forename><surname>Author</surname></persName></author></analytic>
+                    <monogr><title level="j">Example Journal</title><imprint><date when="2024"/></imprint></monogr>
+                  </biblStruct>
+                </listBibl></back>
+              </text>
+            </TEI>
+        """.trimIndent()
+
+        val parsed = GrobidTeiParser("grobid", "0.9.1-crf").parse(tei)
+
+        assertEquals(listOf("book", "named-work"), parsed.bibliographyEntries.map { it.localReferenceKey })
+        assertEquals(listOf(0, 1), parsed.bibliographyEntries.map { it.entryOrder })
+        assertEquals(listOf("BOOK", "JOURNAL_ARTICLE"), parsed.bibliographyEntries.map { it.referenceType })
+        assertEquals("book", parsed.citationContexts.single().occurrences.single().bibliographyReferenceKeys.single())
+    }
+
+    @Test
+    fun `retains heading-only bibliography text when an in-text citation targets it`() {
+        val tei = """
+            <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+              <text>
+                <body><div><p>Prior work <ref type="bibr" target="#heading">[7]</ref> informed this study.</p></div></body>
+                <back><listBibl>
+                  <bibl xml:id="heading"><author><persName><surname>References</surname></persName></author></bibl>
+                </listBibl></back>
+              </text>
+            </TEI>
+        """.trimIndent()
+
+        val parsed = GrobidTeiParser("grobid", "0.9.1-crf").parse(tei)
+
+        assertEquals("heading", parsed.bibliographyEntries.single().localReferenceKey)
+        assertEquals("heading", parsed.citationContexts.single().occurrences.single().bibliographyReferenceKeys.single())
+    }
+
+    @Test
     fun `classifies preprints and academic manuscripts from explicit GROBID TEI signals`() {
         val tei = """
             <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
