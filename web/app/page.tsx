@@ -3,6 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AnalysisRunTableRowsSkeleton } from "@/features/analysis-runs/components/analysis-run-loading";
 import { UploadDashboard } from "@/features/workspace/components/upload-dashboard";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
+import { BackToTopFab } from "@/features/workspace/components/back-to-top-fab";
 import { WorkspaceShell } from "@/features/workspace/components/workspace-shell";
 
 function AnalysisRunsFallback() {
@@ -66,6 +67,7 @@ export default function Home() {
       <Suspense fallback={<AnalysisRunsFallback />}>
         <UploadDashboard />
       </Suspense>
+      <BackToTopFab />
     </WorkspaceShell>
   );
 }

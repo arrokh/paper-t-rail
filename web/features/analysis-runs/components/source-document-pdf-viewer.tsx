@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
-import { ChevronLeft, ChevronRight, Download, Focus, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowUp, ChevronLeft, ChevronRight, Download, Focus, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { sourceDocumentPdfAccessQueryOptions } from "@/features/analysis-runs/qu
 import { scrollToPaperReviewCard } from "@/features/analysis-runs/scroll-to-paper-review-card";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { scrollToPageTop } from "@/lib/scroll-to-page-top";
 import { findPdfTextMatches, type PdfTextMatches } from "@/features/analysis-runs/components/pdf-text-search";
 import { SourceDocumentPdfPage } from "@/features/analysis-runs/components/source-document-pdf-page";
 
@@ -148,6 +149,9 @@ export function SourceDocumentPdfViewer({
             onClick={scrollToPaperReviewCard}
           >
             <Focus aria-hidden="true" />
+          </Button>
+          <Button type="button" variant="outline" size="icon-sm" aria-label="Back to top" title="Back to top" onClick={scrollToPageTop}>
+            <ArrowUp aria-hidden="true" />
           </Button>
           {pdfQuery.data && (
             <Button type="button" variant="outline" size="sm" onClick={() => void pdfQuery.refetch()} disabled={pdfQuery.isFetching}>

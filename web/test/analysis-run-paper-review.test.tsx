@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnalysisRunDetailPage } from "@/features/analysis-runs/components/analysis-run-detail-page";
 import { AnalysisRunPaperReview } from "@/features/analysis-runs/components/analysis-run-paper-review";
+import { WorkspaceShell } from "@/features/workspace/components/workspace-shell";
 import type { AnalysisRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 
 const queryHookMocks = vi.hoisted(() => ({
@@ -209,6 +210,8 @@ function createPdfDocument(pages: string[]) {
 }
 
 type RenderReviewOptions = {
+  parsedDocument?: ParsedDocument | null;
+  report?: ReferenceResolutionReportResponse | null;
   selectedOutcomeId?: string | null;
   selectedReferenceKey?: string | null;
   selectedDetailSection?: "results" | "citations";
@@ -219,15 +222,13 @@ type RenderReviewOptions = {
   onSelectDetailSection?: (section: "results" | "citations") => void;
 };
 
-function renderReview({ selectedOutcomeId = null, selectedReferenceKey = null, selectedDetailSection = "results", onSelectOutcome = vi.fn(), onSelectReference = vi.fn(), onClearReviewPair = vi.fn(), onClearSelectedReference = vi.fn(), onSelectDetailSection = vi.fn() }: RenderReviewOptions = {}) {
+function renderReview({ parsedDocument: selectedParsedDocument = parsedDocument, report: selectedReport = report, selectedOutcomeId = null, selectedReferenceKey = null, selectedDetailSection = "results", onSelectOutcome = vi.fn(), onSelectReference = vi.fn(), onClearReviewPair = vi.fn(), onClearSelectedReference = vi.fn(), onSelectDetailSection = vi.fn() }: RenderReviewOptions = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const initialOptions = { selectedOutcomeId, selectedReferenceKey, selectedDetailSection, onSelectOutcome, onSelectReference, onClearReviewPair, onClearSelectedReference, onSelectDetailSection };
+  const initialOptions = { parsedDocument: selectedParsedDocument, report: selectedReport, selectedOutcomeId, selectedReferenceKey, selectedDetailSection, onSelectOutcome, onSelectReference, onClearReviewPair, onClearSelectedReference, onSelectDetailSection };
   const createReview = (options: typeof initialOptions) => (
     <QueryClientProvider client={queryClient}>
       <AnalysisRunPaperReview
         run={run}
-        parsedDocument={parsedDocument}
-        report={report}
         parsedLoading={false}
         reportLoading={false}
         parsedError={null}
@@ -249,9 +250,16 @@ function renderReview({ selectedOutcomeId = null, selectedReferenceKey = null, s
 
 function renderDetailPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.stubGlobal("IntersectionObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
   return render(
     <QueryClientProvider client={queryClient}>
-      <AnalysisRunDetailPage analysisRunId={run.id} />
+      <WorkspaceShell>
+        <AnalysisRunDetailPage analysisRunId={run.id} />
+      </WorkspaceShell>
     </QueryClientProvider>,
   );
 }
@@ -285,6 +293,78 @@ describe("Analysis Run Paper Review", () => {
     const pageViewport = screen.getByRole("region", { name: "PDF page 1 scroll area" });
     pageViewport.focus();
     expect(document.activeElement).toBe(pageViewport);
+  });
+
+  it("adds an icon-only Back to top action alongside Focus Paper Review", () => {
+    installSourcePdfResponse();
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    try {
+      renderReview();
+      const viewer = screen.getByRole("region", { name: "Original uploaded paper" });
+      expect(within(viewer).getByRole("button", { name: "Focus Paper Review" })).toBeTruthy();
+      fireEvent.click(within(viewer).getByRole("button", { name: "Back to top" }));
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+    } finally {
+      scrollTo.mockRestore();
+    }
+  });
+
+  it("shows one-based labels for numerically cited entries even in a mixed citation style", () => {
+    const mixedCitationParsedDocument: ParsedDocument = {
+      ...parsedDocument,
+      citationContexts: [
+        ...parsedDocument.citationContexts,
+        {
+          ...parsedDocument.citationContexts[0],
+          id: "author-year-context",
+          occurrences: [{
+            ...parsedDocument.citationContexts[0].occurrences[0],
+            id: "author-year-occurrence",
+            markerText: "(A. Author, 2024)",
+            bibliographyReferenceKeys: [],
+          }],
+          atomicClaims: [],
+        },
+      ],
+    };
+    const review = renderReview({ parsedDocument: mixedCitationParsedDocument, selectedReferenceKey: "b0", selectedDetailSection: "citations" });
+
+    expect(screen.getByText("b1 · 2024")).toBeTruthy();
+    expect(screen.getByText("Selected bibliography · b1")).toBeTruthy();
+    review.rerenderReview({ selectedReferenceKey: null });
+    fireEvent.click(screen.getByText("b1 · 2024").closest("button")!);
+    expect(review.onSelectReference).toHaveBeenCalledWith("b0");
+
+    review.rerenderReview({ selectedReferenceKey: "b0", selectedDetailSection: "results" });
+    expect(screen.getByRole("button", { name: /Review claim against b1/ })).toBeTruthy();
+
+    const authorYearParsedDocument: ParsedDocument = {
+      ...parsedDocument,
+      citationContexts: parsedDocument.citationContexts.map((context) => ({
+        ...context,
+        occurrences: context.occurrences.map((occurrence) => ({ ...occurrence, markerText: "(A. Author, 2024)" })),
+      })),
+    };
+    const authorYearReport: ReferenceResolutionReportResponse = {
+      ...report,
+      referenceResolution: {
+        ...report.referenceResolution,
+        entries: report.referenceResolution.entries.map((entry) => ({
+          ...entry,
+          verificationOutcomes: entry.verificationOutcomes.map((entryOutcome) => ({
+            ...entryOutcome,
+            citationMarkers: ["(A. Author, 2024)"],
+          })),
+        })),
+      },
+    };
+    review.rerenderReview({ parsedDocument: authorYearParsedDocument, report: authorYearReport, selectedDetailSection: "citations" });
+
+    expect(screen.getByText("b0 · 2024")).toBeTruthy();
+    expect(screen.getByText("Selected bibliography · b0")).toBeTruthy();
+    review.rerenderReview({ parsedDocument: null, report });
+    expect(screen.getByText("b1 · 2024")).toBeTruthy();
   });
 
   it("renews MinIO URLs only when Refresh PDF is explicitly selected", async () => {
@@ -390,7 +470,7 @@ describe("Analysis Run Paper Review", () => {
     expect(screen.getAllByText(outcome.claimText)).toHaveLength(2);
     expect(screen.getByText("Machine result: supported")).toBeTruthy();
     expect(screen.getByText(outcome.citationContextText)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Review claim against b0/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Review claim against b1/ }));
     expect(onSelectOutcome).toHaveBeenCalledWith(outcome.id, "b0");
   });
 
@@ -411,7 +491,7 @@ describe("Analysis Run Paper Review", () => {
 
     const quickAccessName = "Selected pair quick access";
     await screen.findByRole("region", { name: quickAccessName });
-    const trigger = screen.getByRole("button", { name: /Review claim against b0/ });
+    const trigger = screen.getByRole("button", { name: /Review claim against b1/ });
     fireEvent.click(trigger);
     await waitFor(() => expect(screen.queryByRole("region", { name: quickAccessName })).toBeNull());
     expect(trigger.getAttribute("aria-pressed")).toBe("true");
@@ -453,7 +533,7 @@ describe("Analysis Run Paper Review", () => {
     expect(await screen.findByRole("region", { name: quickAccessName })).toBeTruthy();
   });
 
-  it("keeps both Analysis Run views selectable and restores Paper Review from the pipeline", async () => {
+  it("removes Back to top while Paper Review is active and restores it for the pipeline", async () => {
     installSourcePdfResponse();
     queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
     queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
@@ -461,26 +541,40 @@ describe("Analysis Run Paper Review", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=source`);
 
     renderDetailPage();
+    const workspaceMain = screen.getByRole("main");
+    expect(workspaceMain.classList.contains("pb-6")).toBe(true);
     expect(screen.queryByRole("heading", { name: "Pipeline outputs" })).toBeNull();
     expect(screen.queryByText(/saved pipeline-stage results/i)).toBeNull();
     const reviewTab = screen.getByRole("tab", { name: "Paper Review" });
     const pipelineTab = screen.getByRole("tab", { name: "Analysis Pipeline" });
+    expect(screen.getByText("Back to top")).toBeTruthy();
+    expect(screen.getByRole("contentinfo")).toBeTruthy();
 
     fireEvent.click(reviewTab);
     await waitFor(() => expect(reviewTab.getAttribute("aria-selected")).toBe("true"));
     expect(screen.getByRole("heading", { name: "Paper Review" })).toBeTruthy();
+    expect(screen.queryByText("Back to top")).toBeNull();
+    const paperViewer = screen.getByRole("region", { name: "Original uploaded paper" });
+    expect(within(paperViewer).getByRole("button", { name: "Back to top" })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("contentinfo")).toBeNull());
+    expect(workspaceMain.classList.contains("pb-2")).toBe(true);
     expect(new URLSearchParams(window.location.search).get("view")).toBe("review");
 
     fireEvent.click(pipelineTab);
     await waitFor(() => expect(pipelineTab.getAttribute("aria-selected")).toBe("true"));
+    expect(screen.getByText("Back to top")).toBeTruthy();
+    expect(screen.getByRole("contentinfo")).toBeTruthy();
+    expect(workspaceMain.classList.contains("pb-6")).toBe(true);
     expect(new URLSearchParams(window.location.search).has("view")).toBe(false);
 
     fireEvent.click(reviewTab);
     await waitFor(() => expect(reviewTab.getAttribute("aria-selected")).toBe("true"));
     expect(screen.getByRole("heading", { name: "Paper Review" })).toBeTruthy();
+    expect(screen.queryByText("Back to top")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("contentinfo")).toBeNull());
   });
 
-  it("scrolls bibliography and filtered AI-result destinations to the top of the details viewport", async () => {
+  it("scrolls bibliography and filtered AI-result destinations with a top gap", async () => {
     installSourcePdfResponse();
     window.history.replaceState(null, "", "/?reviewFilter=INCOMPLETE");
     const review = renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0" });
@@ -514,14 +608,56 @@ describe("Analysis Run Paper Review", () => {
 
       const bibliographyTrigger = document.getElementById("review-bibliography-trigger-b0");
       await waitFor(() => expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
-      expect(viewport!.scrollTop).toBe(350);
+      expect(viewport!.scrollTop).toBe(342);
+
+      review.rerenderReview({ selectedDetailSection: "citations", selectedReferenceKey: null });
+      await waitFor(() => expect(screen.queryByRole("region", { name: "Selected bibliography quick access" })).toBeNull());
+      review.rerenderReview({ selectedDetailSection: "citations", selectedReferenceKey: "b0" });
+      await screen.findByRole("region", { name: "Selected bibliography quick access" });
+      expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(false);
+      expect(viewport!.scrollTop).toBe(342);
 
       fireEvent.click(screen.getByRole("button", { name: /Review AI result: supported/ }));
       review.rerenderReview({ selectedDetailSection: "results" });
       await screen.findByRole("region", { name: "Selected pair outside active filters" });
       const pairTrigger = document.getElementById(`review-pair-trigger-${outcome.id}`);
       await waitFor(() => expect(pairTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
-      expect(viewport!.scrollTop).toBe(650);
+      expect(viewport!.scrollTop).toBe(634);
+    } finally {
+      geometry.mockRestore();
+      animationFrames.mockRestore();
+    }
+  });
+
+  it("focuses a directly linked bibliography entry when its citation data finishes loading", async () => {
+    installSourcePdfResponse();
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.matches("[data-review-items-viewport]")) return { top: 100 } as DOMRect;
+      if (this.id === "review-bibliography-trigger-b0") return { top: 400, height: 40 } as DOMRect;
+      return originalGetBoundingClientRect.call(this);
+    });
+    const animationFrames = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(performance.now() + 2_000);
+      return 1;
+    });
+
+    try {
+      const review = renderReview({ parsedDocument: null, report: null, selectedReferenceKey: "b0", selectedDetailSection: "citations" });
+      const viewport = document.querySelector<HTMLElement>("[data-review-items-viewport]");
+      expect(viewport).not.toBeNull();
+      viewport!.style.overflowY = "auto";
+      Object.defineProperties(viewport!, {
+        clientHeight: { configurable: true, value: 400 },
+        scrollHeight: { configurable: true, value: 1_200 },
+        scrollTop: { configurable: true, writable: true, value: 50 },
+      });
+
+      review.rerenderReview({ parsedDocument, report });
+      await screen.findByRole("region", { name: "Selected bibliography quick access" });
+      const bibliographyTrigger = document.getElementById("review-bibliography-trigger-b0");
+      await waitFor(() => expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
+      expect(viewport!.scrollTop).toBe(342);
     } finally {
       geometry.mockRestore();
       animationFrames.mockRestore();
@@ -549,6 +685,11 @@ describe("Analysis Run Paper Review", () => {
     renderDetailPage();
 
     await screen.findByRole("region", { name: "Selected pair quick access" });
+    expect(screen.queryByText("Back to top")).toBeNull();
+    const paperViewer = screen.getByRole("region", { name: "Original uploaded paper" });
+    expect(within(paperViewer).getByRole("button", { name: "Back to top" })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("contentinfo")).toBeNull());
+    expect(screen.getByRole("main").classList.contains("pb-2")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Clear selected pair" }));
 
     await waitFor(() => {

@@ -12,7 +12,9 @@ import { AnalysisPipelineChart } from "@/features/analysis-runs/components/analy
 import { AnalysisRunPaperReview } from "@/features/analysis-runs/components/analysis-run-paper-review";
 import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/components/analysis-run-loading";
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
+import { BackToTopFab } from "@/features/workspace/components/back-to-top-fab";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
+import { useWorkspaceShellState } from "@/features/workspace/components/workspace-shell-state";
 import { normalizePipelineStageId, type PipelineStageId } from "@/features/analysis-runs/pipeline";
 import {
   scrollToAnalysisPipelineCard,
@@ -125,12 +127,14 @@ function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
 
 export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string }) {
   const searchParams = useSearchParams();
+  const { setPaperReviewActive: setShellPaperReviewActive } = useWorkspaceShellState();
   const runQuery = useAnalysisRun(analysisRunId);
   const run = runQuery.data ?? null;
   const stageParam = searchParams.get("step");
   const selectedStage = normalizePipelineStageId(stageParam);
   const routeSelectedView = searchParams.get("view") === "review" ? "review" : "pipeline";
   const [selectedView, setSelectedView] = useState(routeSelectedView);
+  const isPaperReviewActive = selectedView === "review" || routeSelectedView === "review";
   const previousRouteView = useRef(routeSelectedView);
   const previousSelectedView = useRef(selectedView);
   const [hasOpenedPaperReview, setHasOpenedPaperReview] = useState(selectedView === "review");
@@ -151,6 +155,12 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const parsedError = parsedQuery.error instanceof Error ? parsedQuery.error.message : parsedQuery.isError ? "Could not load the parsed Source Document." : null;
   const reportError = reportQuery.error instanceof Error ? reportQuery.error.message : reportQuery.isError ? "Could not load the Evidence Coverage Report." : null;
   const homeHref = homeHrefFor(searchParams);
+
+  useEffect(() => {
+    setShellPaperReviewActive(isPaperReviewActive);
+  }, [isPaperReviewActive, setShellPaperReviewActive]);
+
+  useEffect(() => () => setShellPaperReviewActive(false), [setShellPaperReviewActive]);
 
   useEffect(() => {
     if (routeSelectedView === previousRouteView.current) return;
@@ -358,6 +368,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             onSelectDetailSection={selectReviewDetail}
           />
         </TabsContent>
+        {!isPaperReviewActive && <BackToTopFab />}
       </Tabs>
     </article>
   );

@@ -13,6 +13,7 @@ import { SourceDocumentPdfViewer } from "@/features/analysis-runs/components/sou
 import { usePipelineResultFilter } from "@/features/analysis-runs/hooks/use-pipeline-result-filter";
 import { scrollToPaperReviewCard } from "@/features/analysis-runs/scroll-to-paper-review-card";
 import { scrollToReviewItem } from "@/features/analysis-runs/scroll-to-review-item";
+import { displayReferenceKey, getNumericCitationReferenceKeys } from "@/features/analysis-runs/reference-label";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
 import type {
@@ -25,6 +26,8 @@ import { cn } from "@/lib/utils";
 
 type ReferenceEntry = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number];
 type VerificationOutcome = ClaimReferenceVerificationOutcome;
+type ReferenceLabelSource = Pick<ParsedDocument["bibliographyEntries"][number], "entryOrder" | "localReferenceKey">;
+type ReferenceLabel = (reference: ReferenceLabelSource) => string;
 type OutcomeGroup = { claimId: string; claimText: string; outcomes: Array<{ entry: ReferenceEntry; outcome: VerificationOutcome }> };
 const EMPTY_REFERENCE_ENTRIES: ReferenceEntry[] = [];
 
@@ -121,6 +124,8 @@ export function AnalysisRunPaperReview({
   const entries = report?.referenceResolution.entries ?? EMPTY_REFERENCE_ENTRIES;
   const outcomeGroups = useMemo(() => buildOutcomeGroups(entries), [entries]);
   const references = useMemo(() => sourceReferences(parsedDocument, report), [parsedDocument, report]);
+  const numericReferenceKeys = useMemo(() => getNumericCitationReferenceKeys(parsedDocument, report), [parsedDocument, report]);
+  const referenceLabel: ReferenceLabel = (reference) => displayReferenceKey(reference, numericReferenceKeys);
   const allOutcomes = useMemo(() => entries.flatMap((entry) => entry.verificationOutcomes.map((outcome) => ({ entry, outcome }))), [entries]);
   const selectedReference = references.find((reference) => reference.localReferenceKey === selectedReferenceKey) ?? null;
   const selectedQuickAccessKey = selectedDetailSection === "results" && selectedOutcomeId
@@ -128,22 +133,30 @@ export function AnalysisRunPaperReview({
     : selectedDetailSection === "citations" && selectedReferenceKey
       ? `citations:${selectedReferenceKey}`
       : null;
-  const previousDetailSection = useRef(selectedDetailSection);
+  const previousDetailSection = useRef<"results" | "citations">("results");
 
   useEffect(() => {
     const enteredDetailSection = previousDetailSection.current !== selectedDetailSection;
-    previousDetailSection.current = selectedDetailSection;
 
-    if (!selectedQuickAccessKey) return;
-    if (selectedDetailSection === "results" && !enteredDetailSection) return;
-    if (window.matchMedia("(max-width: 47.99rem)").matches) return;
+    if (!selectedQuickAccessKey) {
+      previousDetailSection.current = selectedDetailSection;
+      return;
+    }
+    if (!enteredDetailSection) return;
+    if (window.matchMedia("(max-width: 47.99rem)").matches) {
+      previousDetailSection.current = selectedDetailSection;
+      return;
+    }
 
     const triggerId = selectedDetailSection === "results"
       ? `review-pair-trigger-${selectedOutcomeId}`
       : `review-bibliography-trigger-${selectedReferenceKey}`;
     let cancelScroll = () => {};
     const frame = window.requestAnimationFrame(() => {
-      cancelScroll = scrollToReviewItem(document.getElementById(triggerId));
+      const trigger = document.getElementById(triggerId);
+      if (!trigger) return;
+      previousDetailSection.current = selectedDetailSection;
+      cancelScroll = scrollToReviewItem(trigger);
     });
 
     return () => {
@@ -241,6 +254,7 @@ export function AnalysisRunPaperReview({
                       reportLoading={reportLoading}
                       parsedError={parsedError}
                       reportError={reportError}
+                      referenceLabel={referenceLabel}
                       onSelectOutcome={chooseOutcome}
                       onClearReviewPair={onClearReviewPair}
                       onSelectReference={chooseReference}
@@ -256,6 +270,7 @@ export function AnalysisRunPaperReview({
                       parsedError={parsedError}
                       selectedReference={selectedReference}
                       referenceResults={entries}
+                      referenceLabel={referenceLabel}
                       onClearSelectedReference={onClearSelectedReference}
                       onSelectReference={chooseReference}
                       onSelectOutcome={chooseOutcome}
@@ -283,6 +298,7 @@ function ResultsDetails({
   reportLoading,
   parsedError,
   reportError,
+  referenceLabel,
   onSelectOutcome,
   onClearReviewPair,
   onSelectReference,
@@ -298,6 +314,7 @@ function ResultsDetails({
   reportLoading: boolean;
   parsedError: string | null;
   reportError: string | null;
+  referenceLabel: ReferenceLabel;
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
   onClearReviewPair: () => void;
   onSelectReference: (localReferenceKey: string) => void;
@@ -338,6 +355,7 @@ function ResultsDetails({
             entry={selectedOutcome.entry}
             outcome={selectedOutcome.outcome}
             selected
+            referenceLabel={referenceLabel}
             collapsedQuickAccessKey={collapsedQuickAccessKey}
             onCollapsedQuickAccessKeyChange={onCollapsedQuickAccessKeyChange}
             onSelectOutcome={onSelectOutcome}
@@ -404,6 +422,7 @@ function ResultsDetails({
                           entry={entry}
                           outcome={outcome}
                           selected={selectedOutcomeId === outcome.id}
+                          referenceLabel={referenceLabel}
                           collapsedQuickAccessKey={collapsedQuickAccessKey}
                           onCollapsedQuickAccessKeyChange={onCollapsedQuickAccessKeyChange}
                           onSelectOutcome={onSelectOutcome}
@@ -429,6 +448,7 @@ function SelectedPairQuickAccess({
   run,
   entry,
   outcome,
+  referenceLabel,
   onHighlightInPdf,
   onSelectReference,
   onClear,
@@ -436,6 +456,7 @@ function SelectedPairQuickAccess({
   run: AnalysisRun;
   entry: ReferenceEntry;
   outcome: VerificationOutcome;
+  referenceLabel: ReferenceLabel;
   onHighlightInPdf: (text: string | string[], contextText?: string | null) => void;
   onSelectReference: (localReferenceKey: string) => void;
   onClear: () => void;
@@ -446,7 +467,7 @@ function SelectedPairQuickAccess({
     <section aria-label="Selected pair quick access" className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
       <div className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
-          <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected pair · {entry.localReferenceKey}</p>
+          <p className="m-0 font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected pair · {referenceLabel(entry)}</p>
           <div className="flex shrink-0 flex-nowrap items-center gap-1">
             <Button
               type="button"
@@ -493,6 +514,7 @@ function ReviewPairQuickAccess({
   entry,
   outcome,
   selected,
+  referenceLabel,
   collapsedQuickAccessKey,
   onCollapsedQuickAccessKeyChange,
   onSelectOutcome,
@@ -504,6 +526,7 @@ function ReviewPairQuickAccess({
   entry: ReferenceEntry;
   outcome: VerificationOutcome;
   selected: boolean;
+  referenceLabel: ReferenceLabel;
   collapsedQuickAccessKey: string | null;
   onCollapsedQuickAccessKeyChange: (key: string | null) => void;
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
@@ -524,7 +547,7 @@ function ReviewPairQuickAccess({
         <CollapsibleTrigger
           id={triggerId}
           aria-pressed={selected}
-          aria-label={`Review claim against ${entry.localReferenceKey}: ${entry.title ?? entry.rawText}`}
+          aria-label={`Review claim against ${referenceLabel(entry)}: ${entry.title ?? entry.rawText}`}
           onClick={() => { if (!selected) onCollapsedQuickAccessKeyChange(null); onSelectOutcome(outcome.id, entry.localReferenceKey); }}
           className={cn(
             "group flex min-h-12 w-full flex-col items-stretch gap-1 rounded-xl px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
@@ -532,7 +555,7 @@ function ReviewPairQuickAccess({
           )}
         >
           <span className="flex min-w-0 items-center justify-between gap-2">
-            <span className="shrink-0 font-mono text-xs font-medium text-muted-foreground">{entry.localReferenceKey}</span>
+            <span className="shrink-0 font-mono text-xs font-medium text-muted-foreground">{referenceLabel(entry)}</span>
             <span className="flex shrink-0 items-center gap-2">
               <ReferenceResolutionBadge status={formatStatus(outcome)} />
               <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[open]/quick-access:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
@@ -547,6 +570,7 @@ function ReviewPairQuickAccess({
               run={run}
               entry={entry}
               outcome={outcome}
+              referenceLabel={referenceLabel}
               onHighlightInPdf={onHighlightInPdf}
               onSelectReference={onSelectReference}
               onClear={onClear}
@@ -565,6 +589,7 @@ function CitationDetails({
   parsedError,
   selectedReference,
   referenceResults,
+  referenceLabel,
   onClearSelectedReference,
   onSelectReference,
   onSelectOutcome,
@@ -578,6 +603,7 @@ function CitationDetails({
   parsedError: string | null;
   selectedReference: ParsedDocument["bibliographyEntries"][number] | null;
   referenceResults: ReferenceEntry[];
+  referenceLabel: ReferenceLabel;
   onClearSelectedReference: () => void;
   onSelectReference: (localReferenceKey: string) => void;
   onSelectOutcome: (outcomeId: string, localReferenceKey: string) => void;
@@ -631,7 +657,7 @@ function CitationDetails({
                       )}
                     >
                       <span className="min-w-0">
-                        <span className="block font-mono text-xs text-muted-foreground">{reference.localReferenceKey} · {reference.year ?? "year unknown"}</span>
+                        <span className="block font-mono text-xs text-muted-foreground">{referenceLabel(reference)} · {reference.year ?? "year unknown"}</span>
                         <span className="block text-xs leading-relaxed">{reference.title ?? reference.rawText}</span>
                         {reference.authors.length > 0 && (
                           <span className="block break-words text-xs text-muted-foreground">{reference.authors.join(", ")}</span>
@@ -643,6 +669,7 @@ function CitationDetails({
                       <div className="translate-y-0 border-t border-border px-3 py-3 opacity-100 transition-[opacity,translate] duration-200 ease-out group-data-[closed]/quick-access:-translate-y-1 group-data-[closed]/quick-access:opacity-0 motion-reduce:transition-none">
                         <SelectedBibliographyQuickAccess
                           reference={reference}
+                          referenceLabel={referenceLabel}
                           referenceResult={referenceResult}
                           contexts={contexts}
                           onHighlightInPdf={onHighlightInPdf}
@@ -664,6 +691,7 @@ function CitationDetails({
 
 function SelectedBibliographyQuickAccess({
   reference,
+  referenceLabel,
   referenceResult,
   contexts,
   onHighlightInPdf,
@@ -671,6 +699,7 @@ function SelectedBibliographyQuickAccess({
   onSelectOutcome,
 }: {
   reference: ParsedDocument["bibliographyEntries"][number];
+  referenceLabel: ReferenceLabel;
   referenceResult: ReferenceEntry | null;
   contexts: ParsedDocument["citationContexts"];
   onHighlightInPdf: (text: string | string[], contextText?: string | null) => void;
@@ -680,7 +709,7 @@ function SelectedBibliographyQuickAccess({
   return (
     <section aria-label="Selected bibliography quick access" className="space-y-3 rounded-xl border border-primary/25 bg-primary/5 p-3">
       <div className="flex min-w-0 items-center justify-between gap-2">
-        <p className="m-0 min-w-0 break-words font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected bibliography · {reference.localReferenceKey}</p>
+        <p className="m-0 min-w-0 break-words font-mono text-[0.65rem] uppercase tracking-wide text-muted-foreground">Selected bibliography · {referenceLabel(reference)}</p>
         <div className="flex shrink-0 items-center gap-1">
           <Button type="button" variant="secondary" size="sm" onClick={() => onHighlightInPdf(reference.title ?? reference.rawText)}>
             <Search aria-hidden="true" />
