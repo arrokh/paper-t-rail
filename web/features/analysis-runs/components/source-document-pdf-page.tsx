@@ -31,7 +31,7 @@ export function SourceDocumentPdfPage({
   const textLayerRef = useRef<HTMLDivElement>(null);
   const highlightLayerRef = useRef<HTMLDivElement>(null);
   const textDivsRef = useRef<HTMLElement[]>([]);
-  const [viewerWidth, setViewerWidth] = useState(640);
+  const [availablePageWidth, setAvailablePageWidth] = useState(640);
   const [textLayerRevision, setTextLayerRevision] = useState(0);
   const [accessiblePageText, setAccessiblePageText] = useState("");
   const [pageReady, setPageReady] = useState(false);
@@ -41,8 +41,11 @@ export function SourceDocumentPdfPage({
     if (!viewer) return;
 
     const updateWidth = () => {
-      const fallbackWidth = estimatePdfViewerWidth(window.innerWidth);
-      setViewerWidth(viewer.clientWidth || fallbackWidth);
+      const viewerWidth = viewer.clientWidth || estimatePdfViewerWidth(window.innerWidth);
+      const computedStyle = window.getComputedStyle(viewer);
+      const horizontalPadding = (Number.parseFloat(computedStyle.paddingLeft) || 0)
+        + (Number.parseFloat(computedStyle.paddingRight) || 0);
+      setAvailablePageWidth(Math.max(1, viewerWidth - horizontalPadding));
     };
     updateWidth();
     if (typeof ResizeObserver === "undefined") return;
@@ -72,7 +75,7 @@ export function SourceDocumentPdfPage({
         if (!active) return;
 
         const baseViewport = page.getViewport({ scale: 1 });
-        const scaleToFit = Math.max(0.1, (viewerWidth - 16) / baseViewport.width);
+        const scaleToFit = Math.max(0.1, availablePageWidth / baseViewport.width);
         const viewport = page.getViewport({ scale: scaleToFit * zoom });
         const outputScale = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = Math.floor(viewport.width * outputScale);
@@ -112,7 +115,7 @@ export function SourceDocumentPdfPage({
       renderTask?.cancel();
       textLayer?.cancel();
     };
-  }, [onError, onRenderingChange, pageNumber, pdfDocument, pdfjs, viewerWidth, zoom]);
+  }, [onError, onRenderingChange, pageNumber, pdfDocument, pdfjs, availablePageWidth, zoom]);
 
   useEffect(() => {
     for (const textDiv of textDivsRef.current) {
