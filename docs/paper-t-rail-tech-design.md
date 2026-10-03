@@ -92,7 +92,7 @@ The architecture intentionally uses:
 - **Immutable Analysis Runs** so the same document can be re-analyzed with different providers/models.
 - **Human reviews** stored separately from model results to preserve ground truth.
 
-The system should be simple enough for one developer to understand end-to-end, but modular enough to replace Laya with Jev, local embeddings with Google embeddings, heuristic claim extraction with LLM extraction, or PostgreSQL retrieval with a different implementation later. External or unclassified provider implementations remain disabled until their data boundary/retention terms are reviewed and any required per-run consent is in place. Shared API/web implementation conventions for keeping code simple and maintainable are in [Coding Principles](./agents/coding-principles.md); Kotlin import requirements are in [`api/AGENTS.md`](../api/AGENTS.md).
+The system should be simple enough for one developer to understand end-to-end, but modular enough to replace Laya with Jev, local embeddings with Google embeddings, add optional LLM claim analysis alongside the heuristic, or replace PostgreSQL retrieval with a different implementation later. External or unclassified provider implementations remain disabled until their data boundary/retention terms are reviewed and any required per-run consent is in place. Shared API/web implementation conventions for keeping code simple and maintainable are in [Coding Principles](./agents/coding-principles.md); Kotlin import requirements are in [`api/AGENTS.md`](../api/AGENTS.md).
 
 ---
 
@@ -286,10 +286,10 @@ Analysis Run A
 - embedding: local/e5-small
 - system one: mock
 
-Analysis Run B (only after provider review and matching per-run consent)
-- claim extractor: llm/google
-- embedding: google/embedding-x
-- system one: jev
+Analysis Run B (after server-side configuration; external endpoints also require review and per-run consent)
+- claim analysis: openai-compatible-chat
+- embedding: local (`feature-hash-384-v1`)
+- system one: mock
 ```
 
 Old results are never overwritten by a new run.
@@ -379,7 +379,7 @@ This matters because one citation occurrence may reference multiple papers:
 "... improves performance [12, 13, 14]."
 ```
 
-Each Cited Reference should be verified independently. Within one bounded Citation Context, link every extracted Atomic Claim to every Citation Target in that context. Separate clause contexts never share targets. Deduplicate claims by source span within the same Analysis Run. These links are inferred, provisional associations—not a claim about which source the author intended for each proposition—and the report must label them accordingly.
+Each Cited Reference should be verified independently. Within one bounded Citation Context, an Atomic Claim may link only to Citation Targets from that context. The heuristic provider links every extracted claim to every target in its context; the accepted optional LLM claim-analysis provider may select a subset, including none (ADR 0009). Separate clause contexts never share targets. Deduplicate claims by source span within the same Analysis Run. All claim-to-target links are inferred, provisional associations—not a claim about which source the author intended for each proposition—and the report must label them accordingly.
 
 Likewise, one sentence may contain multiple atomic claims.
 
@@ -1025,11 +1025,25 @@ Claim source spans are absolute offsets into the normalized Source Document. Whe
 
 ## 14.2 V1 Implementations
 
+Current runtime:
+
 ```text
-ClaimExtractorProvider
-├── HeuristicClaimExtractor
-└── LlmClaimExtractor
+ClaimAnalysisProvider
+├── HeuristicClaimAnalysisProvider
+│   └── HeuristicClaimExtractor
+└── OpenAiCompatibleClaimAnalysisProvider (opt-in; deployment-configured)
+    └── OpenAiCompatibleChatClient
 ```
+
+The optional OpenAI-compatible implementation is document-level and its contract is specified in the [claim-analysis implementation plan](./openai-compatible-provider-plan.md):
+
+```text
+ClaimAnalysisProvider
+├── HeuristicClaimAnalysisProvider
+└── OpenAiCompatibleClaimAnalysisProvider
+```
+
+The LLM operation returns context-grouped Atomic Claims and their selected GROBID Citation Target keys together. The heuristic remains the default and retains all-target linking.
 
 ### Heuristic provider
 
@@ -1047,18 +1061,7 @@ Do not overbuild this initially.
 
 ### LLM provider
 
-`LlmClaimExtractor` should depend on a generic `LlmProvider`.
-
-```text
-LlmClaimExtractor
-      ↓
-LlmProvider
-├── LocalLlmProvider
-├── GoogleLlmProvider
-└── Other provider
-```
-
-The domain never receives provider-native response objects.
+The optional claim analyzer uses the shared OpenAI-compatible chat transport described in the [implementation plan](./openai-compatible-provider-plan.md). The transport handles HTTP/protocol concerns only; the claim-analysis adapter owns its prompt, response schema, source-span validation, and same-context target selection. Keep provider-native request/response objects out of the domain. Other pipeline roles may add their own adapters later; Stage 05 and embeddings are not part of the first implementation.
 
 ## 14.3 Why Claim Extraction Is Separate from System One
 
@@ -1079,29 +1082,11 @@ Do not make Laya/Jev responsible for generative claim rewriting.
 
 ---
 
-# 15. Generic LLM Port
+# 15. Shared LLM Transport and Role-Specific Adapters
 
-Optional in V1; enabled only if configured.
+The first implemented LLM integration is the optional document-level Pipeline 01 claim-analysis adapter in the [implementation plan](./openai-compatible-provider-plan.md). It uses one configured OpenAI-compatible Chat Completions transport per deployment. The shared transport owns bounded HTTP/protocol behavior and server-side credentials; it does not own claim semantics or return a universal domain result. The provider remains disabled unless explicitly configured and selected; external endpoints additionally require deployment review, retention disclosure, and exact per-run consent.
 
-```kotlin
-interface LlmProvider {
-    val providerId: String
-
-    suspend fun generate(
-        request: LlmRequest
-    ): LlmResponse
-}
-```
-
-Keep the API intentionally small.
-
-The first consumer is:
-
-```text
-LlmClaimExtractor
-```
-
-Do not use LLMs in parts of the system that can remain deterministic.
+Keep the claim-analysis adapter behind its focused domain port. It owns the prompt, structured response mapping, source-span checks, and same-context target selection. The default remains the heuristic provider. A future use case, such as System One, must implement its own existing domain port and response contract while reusing the transport only where the API operation fits. Embeddings require a distinct compatible embeddings adapter. Do not build a provider framework or send model calls to parts of the system that can remain deterministic.
 
 ---
 
@@ -2282,7 +2267,7 @@ Claim-extractor provider/version are pinned in the immutable Analysis Run config
 
 ## 35.9 atomic_claim_citation_targets
 
-Maps each extracted claim to every Citation Target in its own context. The association is inferred/provisional, not author-confirmed. Composite foreign keys carry the context ID on both sides, so PostgreSQL rejects cross-context links.
+Maps each extracted claim to the selected Citation Targets in its own context; zero links are valid. The heuristic provider selects all targets in the context, while the optional document-level OpenAI-compatible provider may select a subset. The association is inferred/provisional, not author-confirmed. Composite foreign keys carry the context ID on both sides, so PostgreSQL rejects cross-context links.
 
 ```text
 id UUID PK
@@ -2798,7 +2783,7 @@ Configure `S3_PUBLIC_ENDPOINT` to an address the user's browser can reach for si
 GET /api/v1/analysis-runs/{id}/parsed-document
 ```
 
-Returns the run's pinned parser provenance, normalized source text, sections, Citation Contexts, Citation Occurrences and target links, Bibliography Entries, and each context's extracted Atomic Claims, source spans, and inferred/provisional all-to-all Claim–Citation Target links. Offsets are zero-based, end-exclusive UTF-16 code-unit indexes into the returned normalized text. The endpoint returns `409` until parsed structure and claims are committed; a run with status `PARSED` has no Evidence Passage assessment yet and is not a completed report.
+Returns the run's pinned parser provenance, normalized source text, sections, Citation Contexts, Citation Occurrences and target links, Bibliography Entries, and each context's extracted Atomic Claims, source spans, and inferred/provisional Claim–Citation Target links selected under the run's pinned provider/policy. Offsets are zero-based, end-exclusive UTF-16 code-unit indexes into the returned normalized text. The endpoint returns `409` until parsed structure and claims are committed; a run with status `PARSED` has no Evidence Passage assessment yet and is not a completed report.
 
 ### Coverage report
 
@@ -2887,7 +2872,7 @@ TanStack Query owns browser-fetched provider-directory, recent Analysis Run, par
 
 SSE can be added later.
 
-The Parsed Document view shows each Citation Context as source context, its Atomic Claims with source spans, and links to every Citation Target in that context. Label these associations **inferred/provisional**; they are not author-confirmed. Each target link navigates to its Bibliography Entry.
+The Parsed Document view shows each Citation Context as source context, its Atomic Claims with source spans, and the selected Citation Target links for each claim. A claim with no selected target remains visible without a link. Label associations **inferred/provisional**; they are not author-confirmed. Each target link navigates to its Bibliography Entry.
 
 ## 41.3 Coverage Report
 
@@ -2956,18 +2941,9 @@ Several studies report improved engagement [12, 13, 14].
 
 GROBID may identify multiple targets.
 
-Create one Citation Context per citation-bearing clause; group markers in the same clause, and fall back to the containing sentence when clause boundaries are unclear. Never pool targets across distinct clause contexts in the same sentence. Claim extraction outputs claim text and required source spans, not an inferred bibliography mapping. The deterministic association step is:
+Create one Citation Context per citation-bearing clause; group markers in the same clause, and fall back to the containing sentence when clause boundaries are unclear. Never pool targets across distinct clause contexts in the same sentence. Claim analysis returns claim text, source spans, and selected GROBID target keys together. The heuristic provider maps every claim to all targets in its context; the optional document-level LLM provider may map a claim to a subset or none. Validate every selected key against the exact Citation Targets in that same context, then persist each link through `citation_target_id` so the report can show the exact marker/reference pair. See [ADR 0009](./adr/0009-select-citation-targets-per-claim.md) and the [implementation plan](./openai-compatible-provider-plan.md).
 
-```text
-all atomic claims in the Citation Context
-→ all citation targets in that context
-```
-
-Extract once per context and deduplicate claims by source span within the Analysis Run. Persist each link through `citation_target_id` so the report can show the exact marker/reference pair behind the inferred association.
-
-This may over-associate claims and citations, but verification will expose unrelated citations and the implementation remains understandable. The report must label these links as inferred/provisional so users do not mistake them for author-confirmed attribution.
-
-LLM-based extraction may later infer narrower claim-to-citation scope.
+Extract claims and select target links once per document-level operation. If request limits require batching, batch complete Citation Contexts; never share targets across contexts. Deduplicate claims by source span within the Analysis Run. Keep every association labeled inferred/provisional so users do not mistake it for author-confirmed attribution.
 
 ---
 
@@ -3093,7 +3069,7 @@ This enables later analyses:
 
 ```text
 Laya vs Jev
-Heuristic vs LLM claim extraction
+Heuristic vs LLM claim analysis and target selection
 Local vs Google embeddings
 Vector-only vs hybrid retrieval
 System One vs LLM verifier
@@ -3307,7 +3283,7 @@ V1 is single-user/no-auth, but still:
 - do not bypass publisher authentication/paywalls,
 - store provenance for acquired full text,
 - require explicit consent per external provider and Analysis Run; use stable data-category identifiers (`source_document_text`, `bibliographic_metadata`, `citation_context`, `cited_paper_chunks`, `atomic_claims`, `evidence_passages`, `embedding_input`, `provider_contact_email`, `cited_paper_location`), disclose the categories each provider receives, and send only the minimum necessary content; `provider_contact_email` covers provider-required or configured contact email fields (for example, polite-pool identification); any newly introduced payload category requires matching consent,
-- default payload mapping: Crossref/Semantic Scholar/OA discovery → `bibliographic_metadata`; provider-required/configured contact email → `provider_contact_email`; OA content-host GET target URL → `cited_paper_location`; LLM claim extraction → `citation_context`; embedding chunk inputs → `cited_paper_chunks` + `embedding_input`; embedding retrieval-query inputs → `atomic_claims` + `embedding_input`; System One → `atomic_claims` + `evidence_passages`; GROBID consolidation → `bibliographic_metadata` and remains disabled by default,
+- default payload mapping: Crossref/Semantic Scholar/OA discovery → `bibliographic_metadata`; provider-required/configured contact email → `provider_contact_email`; OA content-host GET target URL → `cited_paper_location`; LLM claim analysis and target selection → `citation_context` + `bibliographic_metadata`; embedding chunk inputs → `cited_paper_chunks` + `embedding_input`; embedding retrieval-query inputs → `atomic_claims` + `embedding_input`; System One → `atomic_claims` + `evidence_passages`; GROBID consolidation → `bibliographic_metadata` and remains disabled by default,
 - make clear that deleting local data cannot retract content already transmitted to an external provider; verify and disclose each provider's retention/deletion terms before enabling it,
 - because V1 has no authentication, bind the web/API to localhost or a trusted private network; do not expose it to an untrusted/public network until authentication and authorization are added,
 - provide a document deletion action that first tombstones the document and cancels/invalidates pending work, then removes the source file, document-scoped acquired assets, parsed text/chunks, embeddings, analysis results, Human Reviews, per-run provider-consent/configuration snapshots, and content-bearing logs; workers must check the tombstone before starting new provider calls and before committing results so pending events cannot resurrect deleted data. A provider call already in flight cannot be retracted. Retain shared cited-paper assets only while another non-deleted document/run references them; retain otherwise only a content-free deletion tombstone where needed for operational audit. This explicit deletion is the privacy exception to normal AnalysisRun immutability,
@@ -3380,7 +3356,7 @@ enabled: false
 
 # 55. Local Development Defaults
 
-The following describes local defaults for the current pipeline (see [the provider matrix](./agents/provider-matrix.md) and the conservative deployment example in [section 29](#29-provider-enablement-configuration)). The runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, version-pinned local heuristic claim extraction with context-scoped target linking, conservative bibliography resolution through recorded metadata fixtures, and deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. Its `feature-hash-384-v1` fallback vectors are lexical features, not a trained semantic embedding model. Local Compose prefers trusted Ollama for new runs when selectable, falling back to feature-hash when Ollama is unavailable. `make dev` configures and starts the Laya sidecar after verifying/downloading the model unless `LAYA_ENABLED=false`; `make laya-up` can start it separately. When Laya is selectable, Compose prefers it for new runs, while missing configuration resolves an omitted choice to mock. The application default preference is Laya; omitted selections resolve to mock if Laya is unselectable. Runs selecting Laya record raw, uncalibrated judgements for eligible passages. If a complete request exceeds the pinned 1,024-token context, the API preflights each of the six complete question sequences with the sidecar's pinned tokenizer, then splits only that retrieved passage at deterministic sentence boundaries. Span results are persisted idempotently and remain diagnostics only; they never roll up into a parent Evidence Judgement or final Claim–Paper status. The original Evidence Passage is retained, and an unfit sentence remains intact with an incomplete reason. `.env.example`, base Spring configuration, and Compose default `LOCAL_LAYA_AGGREGATION_ENABLED=true`; set it to `false` to leave new Laya runs at `NOT_RUN`. All runs that aggregate snapshot the four documented threshold variables and policy versions, and their judgements and statuses remain uncalibrated. The owner-approved production Spring defaults are Laya enabled/selected and experimental aggregation enabled; this is not calibration evidence. Calibration and deployment-specific approval are not product or release requirements; issue #45 is closed as not planned. All Laya outputs remain explicitly uncalibrated.
+The following describes local defaults for the current pipeline (see [the provider matrix](./agents/provider-matrix.md) and the conservative deployment example in [section 29](#29-provider-enablement-configuration)). The runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, version-pinned heuristic claim analysis by default (with an opt-in OpenAI-compatible document analyzer when configured) and context-scoped target linking, conservative bibliography resolution through recorded metadata fixtures, and deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. Its `feature-hash-384-v1` fallback vectors are lexical features, not a trained semantic embedding model. Local Compose prefers trusted Ollama for new runs when selectable, falling back to feature-hash when Ollama is unavailable. `make dev` configures and starts the Laya sidecar after verifying/downloading the model unless `LAYA_ENABLED=false`; `make laya-up` can start it separately. When Laya is selectable, Compose prefers it for new runs, while missing configuration resolves an omitted choice to mock. The application default preference is Laya; omitted selections resolve to mock if Laya is unselectable. Runs selecting Laya record raw, uncalibrated judgements for eligible passages. If a complete request exceeds the pinned 1,024-token context, the API preflights each of the six complete question sequences with the sidecar's pinned tokenizer, then splits only that retrieved passage at deterministic sentence boundaries. Span results are persisted idempotently and remain diagnostics only; they never roll up into a parent Evidence Judgement or final Claim–Paper status. The original Evidence Passage is retained, and an unfit sentence remains intact with an incomplete reason. `.env.example`, base Spring configuration, and Compose default `LOCAL_LAYA_AGGREGATION_ENABLED=true`; set it to `false` to leave new Laya runs at `NOT_RUN`. All runs that aggregate snapshot the four documented threshold variables and policy versions, and their judgements and statuses remain uncalibrated. The owner-approved production Spring defaults are Laya enabled/selected and experimental aggregation enabled; this is not calibration evidence. Calibration and deployment-specific approval are not product or release requirements; issue #45 is closed as not planned. All Laya outputs remain explicitly uncalibrated.
 
 ```text
 claim extractor:
@@ -3472,8 +3448,8 @@ Important scenarios:
 - distinct Claim–Paper retrieval scopes in one run and across runs sharing the same Cited Paper content,
 - disabled and unclassified provider rejection,
 - abstract-only reference creates `INSUFFICIENT_EVIDENCE` without semantic judging,
-- Atomic Claims persist once per run/context/source span; each claim links to every Citation Target in its own context, and database constraints reject cross-context links,
-- separated clause contexts do not cross-link their citation targets; same-context claims/targets follow the all-to-all policy,
+- Atomic Claims persist once per run/context/source span; heuristic claims link to every target in their context, while an enabled LLM claim analyzer may select a subset or none; database constraints reject cross-context links,
+- separated clause contexts do not cross-link their Citation Targets; selected same-context links remain inferred/provisional,
 - deleting a document while jobs are pending without allowing those jobs to recreate content.
 
 ## 56.4 End-to-End Fixture
@@ -3625,23 +3601,15 @@ UI can already display parsed citations.
 
 ## Phase 4 — Claim Extraction
 
-The current slice implements the version-pinned local heuristic and persists source-spanned claims plus same-context inferred/provisional target links. Extend the extractor only through separately reviewed behavior/provider changes.
-
-Implement:
+The current implementation provides the version-pinned heuristic and the optional document-level OpenAI-compatible claim analyzer. Both persist source-spanned claims and context-scoped inferred/provisional target links. Stage 05 is not part of this extension.
 
 ```text
-ClaimExtractorProvider
-HeuristicClaimExtractor
+ClaimAnalysisProvider
+HeuristicClaimAnalysisProvider (default; all targets in the context)
+OpenAiCompatibleClaimAnalysisProvider (opt-in; selected target subset or none)
 ```
 
-Then optionally:
-
-```text
-LlmClaimExtractor
-LlmProvider
-```
-
-Persist atomic claims and claim-citation links.
+The document-level operation returns claims and selected same-context Citation Target keys together, pins provider/link policy to the run, and preserves claims that have no selected target. Invalid output or provider failure never silently switches to heuristic. Permanent configuration/consent/contract failures fail without redelivery; transient transport failures remain retryable. See the [implementation plan](./openai-compatible-provider-plan.md) for the bounded request, response, and consent contract.
 
 ## Phase 5 — Reference Resolution
 
@@ -3725,17 +3693,7 @@ human reviews
 
 Before enabling an external provider, verify and disclose its data-retention/deletion terms and require per-run consent for the data categories it receives.
 
-Add:
-
-```text
-Jev
-Google embeddings
-LLM claim extractor
-analysis-run comparison
-metrics
-```
-
-Only after the primary path is stable.
+The first implemented model-provider extension is the Pipeline 01 OpenAI-compatible document-level claim analyzer described in the [implementation plan](./openai-compatible-provider-plan.md). It is not a Stage 05 implementation and remains opt-in; exact external deployments still require product/service review and per-run consent. Other optional extensions such as hosted Jev, Google embeddings, and Analysis Run comparison/metrics remain separate future work after their provider boundaries and data requirements are reviewed.
 
 ---
 
@@ -3973,8 +3931,8 @@ flowchart LR
     DOMAIN["Application / Domain"]
 
     PARSER["ScientificDocumentParser"]
-    CLAIM["ClaimExtractorProvider"]
-    LLM["LlmProvider"]
+    CLAIM["ClaimAnalysisProvider"]
+    CHAT["OpenAI-compatible Chat transport"]
     EMB["EmbeddingProvider"]
     RET["EvidenceRetriever"]
     SYS1["SystemOneProvider"]
@@ -3984,7 +3942,6 @@ flowchart LR
 
     DOMAIN --> PARSER
     DOMAIN --> CLAIM
-    CLAIM --> LLM
     DOMAIN --> EMB
     DOMAIN --> RET
     DOMAIN --> SYS1
@@ -3993,8 +3950,10 @@ flowchart LR
     DOMAIN --> OA
 
     PARSER -. adapter .-> G["GROBID"]
-    CLAIM -. adapter .-> H["Heuristic / LLM"]
-    LLM -. adapter .-> L["Local / Google / Other"]
+    CLAIM -. implementation .-> H["Heuristic analyzer"]
+    CLAIM -. optional implementation .-> OAI["OpenAI-compatible analyzer"]
+    OAI --> CHAT
+    CHAT --> L["Configured compatible endpoint"]
     EMB -. adapter .-> E["Local / Google"]
     RET -. adapter .-> P["Postgres FTS + pgvector"]
     SYS1 -. adapter .-> S["Laya / Jev"]

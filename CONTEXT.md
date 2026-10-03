@@ -19,7 +19,7 @@ One observed appearance of a Citation Marker in the Source Document, with its so
 A reference destination associated with a Citation Marker; in V1, each target points to a Bibliography Entry. One marker may have multiple targets.
 
 **Citation Context**:
-The smallest citation-bearing clause around one or more markers; use the containing sentence when clause boundaries are unclear. Do not share citation targets across separate clause contexts. Claims are linked to all targets in their own context by an inferred, not author-confirmed, association; duplicate claims within a run are recognized by source span.
+The smallest citation-bearing clause around one or more markers; use the containing sentence when clause boundaries are unclear. Do not share Citation Targets across separate contexts. An Atomic Claim may link only to targets in its own context; it may link to all, a subset, or none, and each association is inferred/provisional rather than author-confirmed. Duplicate claims within a run are recognized by source span.
 _Avoid_: citation sentence as a synonym; a context is clause-level or falls back to one containing sentence.
 
 **Bibliography Entry**:

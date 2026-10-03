@@ -7,6 +7,7 @@ import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import org.springframework.beans.factory.annotation.Value
@@ -54,8 +55,38 @@ class RunConfigurationFactoryConfiguration {
     )
 
     @Bean
+    fun openAiCompatibleClaimAnalysisSettings(
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.enabled:false}") enabled: Boolean,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.base-url:}") baseUrl: String,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.model:}") model: String,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.api-key:}") apiKey: String,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.trusted-hosts:localhost,127.0.0.1}") trustedHosts: String,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.context-window-tokens:32768}") contextWindowTokens: Int,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-completion-tokens:2048}") maxCompletionTokens: Int,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-request-bytes:1048576}") maxRequestBytes: Int,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-response-bytes:1048576}") maxResponseBytes: Int,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.request-timeout-millis:60000}") requestTimeoutMillis: Long,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.external-enablement-reviewed:false}") enablementReviewed: Boolean,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.external-retention-disclosure:}") retentionDisclosure: String,
+    ): OpenAiCompatibleClaimAnalysisSettings = OpenAiCompatibleClaimAnalysisSettings(
+        enabled = enabled,
+        baseUrl = baseUrl,
+        modelId = model,
+        apiKey = apiKey.trim().takeIf(String::isNotEmpty),
+        trustedHosts = trustedHosts.split(',').map(String::trim).filter(String::isNotEmpty).toSet(),
+        contextWindowTokens = contextWindowTokens,
+        maxCompletionTokens = maxCompletionTokens,
+        maxRequestBytes = maxRequestBytes,
+        maxResponseBytes = maxResponseBytes,
+        requestTimeoutMillis = requestTimeoutMillis,
+        enablementReviewed = enablementReviewed,
+        retentionDisclosure = retentionDisclosure.takeIf(String::isNotBlank),
+    )
+
+    @Bean
     fun providerCatalog(
         ollamaEmbeddingSettings: OllamaEmbeddingSettings,
+        openAiCompatibleClaimAnalysisSettings: OpenAiCompatibleClaimAnalysisSettings,
         layaSystemOneSettings: LayaSystemOneSettings,
         @Value("\${paper-trail.providers.crossref.enabled:false}") crossrefEnabled: Boolean,
         @Value("\${paper-trail.providers.crossref.enablement-reviewed:false}") crossrefEnablementReviewed: Boolean,
@@ -76,6 +107,7 @@ class RunConfigurationFactoryConfiguration {
         unpaywallContactEmail = unpaywallContactEmail.takeIf(String::isNotBlank),
         ollamaEmbeddingSettings = ollamaEmbeddingSettings,
         layaSystemOneSettings = layaSystemOneSettings,
+        openAiCompatibleClaimAnalysisSettings = openAiCompatibleClaimAnalysisSettings,
     )
 
     @Bean

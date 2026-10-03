@@ -631,7 +631,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                                                 Source span {claim.sourceStartOffset}–{claim.sourceEndOffset} in the Citation Context above
                                               </p>
                                               {claim.citationTargets.length === 0 ? (
-                                                <p className="text-xs text-muted-foreground">No Citation Targets were resolved in this Citation Context.</p>
+                                                <p className="text-xs text-muted-foreground">No Citation Targets are associated with this Atomic Claim.</p>
                                               ) : (
                                                 <ul className="flex flex-wrap gap-x-3 gap-y-1 border-t border-border pt-2" aria-label="Inferred Citation Targets">
                                                   {claim.citationTargets.map((target) => (

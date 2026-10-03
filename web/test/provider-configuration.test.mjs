@@ -35,6 +35,16 @@ const directory = {
       },
       {
         role: "claimExtractor",
+        providerId: "openai-compatible-chat",
+        displayName: "OpenAI-compatible chat claim analysis",
+        version: "v1",
+        model: "claim-model",
+        trustBoundary: "EXTERNAL",
+        dataCategories: ["citation_context", "bibliographic_metadata"],
+        retentionDisclosure: "Retention terms reviewed for this deployment.",
+      },
+      {
+        role: "claimExtractor",
         providerId: "unclassified-ai",
         displayName: "Unclassified AI",
         version: "v1",
@@ -286,7 +296,7 @@ test("local defaults produce a valid configuration without external consent", ()
 test("default reconciliation and available choices exclude unclassified or incomplete providers", () => {
   assert.deepEqual(
     selectableProviderOptions(directory, "claimExtractor").map(({ providerId }) => providerId),
-    ["heuristic", "hosted-ai"],
+    ["heuristic", "hosted-ai", "openai-compatible-chat"],
   );
   assert.deepEqual(
     availableProviderSelections(directory, selectionsWith({ claimExtractorProvider: "unclassified-ai" })),
@@ -316,6 +326,24 @@ test("one external provider selected for multiple roles receives the deduplicate
   assert.deepEqual(createRunConfiguration(directory, selections, fullApproval), {
     ...selections,
     externalProviderConsents: [{ providerId: "hosted-ai", dataCategories: expectedCategories }],
+  });
+});
+
+test("OpenAI-compatible claim analysis requires both Citation Context and bibliography metadata consent", () => {
+  const selections = selectionsWith({ claimExtractorProvider: "openai-compatible-chat" });
+  const requirements = consentRequirements(directory, selections);
+  const categories = ["bibliographic_metadata", "citation_context"];
+
+  assert.deepEqual(requirements, [{
+    providerId: "openai-compatible-chat",
+    displayName: "OpenAI-compatible chat claim analysis",
+    dataCategories: categories,
+    retentionDisclosure: "Retention terms reviewed for this deployment.",
+  }]);
+  assert.throws(() => createRunConfiguration(directory, selections, {}), /Approve every disclosed data category/);
+  assert.deepEqual(createRunConfiguration(directory, selections, { "openai-compatible-chat": categories }), {
+    ...selections,
+    externalProviderConsents: [{ providerId: "openai-compatible-chat", dataCategories: categories }],
   });
 });
 

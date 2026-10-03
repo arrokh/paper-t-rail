@@ -212,6 +212,10 @@ class RunConfigurationFactory(
         dataCategories = dataCategories.map(DataCategory::id).sorted(),
         configurationFingerprint = configurationFingerprint,
         embeddingDimension = embeddingDimension,
+        retentionDisclosure = retentionDisclosure,
+        targetSelectionPolicyVersion = targetSelectionPolicyVersion,
+        promptVersion = promptVersion,
+        outputMappingVersion = outputMappingVersion,
     )
 
     fun toJson(snapshot: AnalysisConfigurationSnapshot): String = objectMapper.writeValueAsString(snapshot)

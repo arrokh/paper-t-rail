@@ -1,7 +1,9 @@
 package com.papertrail.api.citation.claims.service
 
+import com.papertrail.api.citation.claims.domain.AnalyzedAtomicClaim
 import com.papertrail.api.citation.claims.domain.AtomicClaimCandidate
 import com.papertrail.api.citation.claims.domain.CitationContextClaims
+import com.papertrail.api.citation.claims.domain.CitationTargetKey
 import com.papertrail.api.citation.parsing.ParsedBibliographyEntry
 import com.papertrail.api.citation.parsing.ParsedCitationContext
 import com.papertrail.api.citation.parsing.ParsedCitationOccurrence
@@ -38,7 +40,18 @@ class ClaimCitationPairCounterTest {
                 ParsedBibliographyEntry(0, "ref1", "A cited study", "A cited study", emptyList(), 2024, null, "JOURNAL_ARTICLE"),
             ),
         )
-        val claims = listOf(CitationContextClaims(0, text.length, listOf(AtomicClaimCandidate(text, 0, text.length))))
+        val claims = listOf(
+            CitationContextClaims(
+                0,
+                text.length,
+                listOf(
+                    AnalyzedAtomicClaim(
+                        AtomicClaimCandidate(text, 0, text.length),
+                        listOf(CitationTargetKey(0, "ref1"), CitationTargetKey(1, "ref1")),
+                    ),
+                ),
+            ),
+        )
 
         assertEquals(2L, ClaimCitationPairCounter.count(parsed, claims))
     }

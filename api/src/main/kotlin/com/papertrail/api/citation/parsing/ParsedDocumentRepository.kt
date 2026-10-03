@@ -2,6 +2,7 @@ package com.papertrail.api.citation.parsing
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.citation.claims.domain.CitationContextClaims
+import com.papertrail.api.citation.claims.domain.CitationTargetKey
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import java.sql.ResultSet
@@ -79,7 +80,7 @@ class ParsedDocumentRepository(
 
         parsed.citationContexts.forEach { context ->
             val contextId = UUID.randomUUID()
-            val contextTargetIds = mutableListOf<UUID>()
+            val targetIdsByKey = mutableMapOf<CitationTargetKey, UUID>()
             val sectionId = sectionIds.getValue(context.sectionOrder)
             jdbc.update(
                 """
@@ -95,7 +96,7 @@ class ParsedDocumentRepository(
                 context.startOffset,
                 context.endOffset,
             )
-            context.occurrences.forEach { occurrence ->
+            context.occurrences.forEachIndexed { occurrenceOrdinal, occurrence ->
                 val occurrenceId = UUID.randomUUID()
                 jdbc.update(
                     """
@@ -114,14 +115,17 @@ class ParsedDocumentRepository(
                 )
                 occurrence.bibliographyReferenceKeys.distinct()
                     .forEachIndexed { targetOrder, referenceKey ->
-                        val referenceId = referenceIds[referenceKey] ?: return@forEachIndexed
+                        val referenceId = referenceIds[referenceKey]
+                            ?: throw IllegalArgumentException("A Citation Target refers to a missing Bibliography Entry.")
+                        val targetId = UUID.randomUUID()
+                        targetIdsByKey[CitationTargetKey(occurrenceOrdinal, referenceKey)] = targetId
                         jdbc.update(
                             """
                             INSERT INTO citation_targets (
                                 id, analysis_run_id, citation_context_id, citation_occurrence_id, bibliography_entry_id, target_order
                             ) VALUES (?, ?, ?, ?, ?, ?)
                             """.trimIndent(),
-                            UUID.randomUUID().also { contextTargetIds.add(it) },
+                            targetId,
                             analysisRunId,
                             contextId,
                             occurrenceId,
@@ -143,11 +147,13 @@ class ParsedDocumentRepository(
                     claimId,
                     analysisRunId,
                     contextId,
-                    claim.text,
-                    claim.sourceStartOffset,
-                    claim.sourceEndOffset,
+                    claim.candidate.text,
+                    claim.candidate.sourceStartOffset,
+                    claim.candidate.sourceEndOffset,
                 )
-                contextTargetIds.distinct().forEach { targetId ->
+                claim.citationTargetKeys.forEach { targetKey ->
+                    val targetId = targetIdsByKey[targetKey]
+                        ?: throw IllegalArgumentException("An Atomic Claim selected a Citation Target outside its Citation Context.")
                     jdbc.update(
                         """
                         INSERT INTO atomic_claim_citation_targets (

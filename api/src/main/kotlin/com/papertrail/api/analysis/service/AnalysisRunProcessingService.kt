@@ -1,8 +1,8 @@
 package com.papertrail.api.analysis.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.citation.claims.service.ClaimAnalysisService
 import com.papertrail.api.citation.claims.service.ClaimCitationPairCounter
-import com.papertrail.api.citation.claims.service.ClaimExtractionService
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
@@ -14,7 +14,7 @@ import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
-import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
+import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedPayload
@@ -35,7 +35,7 @@ class AnalysisRunProcessingService(
     private val objectStore: SourceDocumentObjectStore,
     private val scientificDocumentParser: ScientificDocumentParser,
     private val parsedDocumentRepository: ParsedDocumentRepository,
-    private val claimExtractionService: ClaimExtractionService,
+    private val claimAnalysisService: ClaimAnalysisService,
     private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val referenceResolutionService: ReferenceResolutionService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
@@ -60,9 +60,7 @@ class AnalysisRunProcessingService(
         val run = jdbc.query(
             """
             SELECT document_id, source_content_sha256, source_parser_id, source_parser_version,
-                   configuration_snapshot #>> '{claimExtractor,provider}' AS claim_extractor_provider,
-                   configuration_snapshot #>> '{claimExtractor,version}' AS claim_extractor_version,
-                   configuration_snapshot #>> '{validationLimits,maxClaimCitationPairs}' AS max_claim_citation_pairs
+                   configuration_snapshot::text AS configuration_snapshot
               FROM analysis_runs WHERE id = ?
             """.trimIndent(),
             { rs, _ ->
@@ -71,10 +69,7 @@ class AnalysisRunProcessingService(
                     rs.getString("source_content_sha256"),
                     rs.getString("source_parser_id"),
                     rs.getString("source_parser_version"),
-                    rs.getString("claim_extractor_provider") ?: throw IllegalStateException("Analysis Run has no pinned claim extractor provider."),
-                    rs.getString("claim_extractor_version") ?: throw IllegalStateException("Analysis Run has no pinned claim extractor version."),
-                    rs.getString("max_claim_citation_pairs")?.toIntOrNull()
-                        ?: ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
+                    objectMapper.readValue(rs.getString("configuration_snapshot"), AnalysisConfigurationSnapshot::class.java),
                 )
             },
             event.analysisRunId,
@@ -127,14 +122,11 @@ class AnalysisRunProcessingService(
             }
             require(parsed.rawParserOutput.isNotEmpty()) { "The scientific parser returned no raw parser output." }
             jdbc.requireActiveSourceDocument(event.payload.documentId)
-            val extractedClaims = claimExtractionService.extract(
-                run.claimExtractorProvider,
-                run.claimExtractorVersion,
-                parsed.citationContexts,
-            )
-            val claimCitationPairCount = ClaimCitationPairCounter.count(parsed, extractedClaims)
-            if (claimCitationPairCount > run.maxClaimCitationPairs.toLong()) {
-                rejectClaimCitationPairLimit(event, claimCitationPairCount, run.maxClaimCitationPairs)
+            val analyzedClaims = claimAnalysisService.analyze(parsed, run.configuration)
+            val claimCitationPairCount = ClaimCitationPairCounter.count(parsed, analyzedClaims)
+            val maxClaimCitationPairs = run.configuration.validationLimits.maxClaimCitationPairs
+            if (claimCitationPairCount > maxClaimCitationPairs.toLong()) {
+                rejectClaimCitationPairLimit(event, claimCitationPairCount, maxClaimCitationPairs)
                 return event.eventId
             }
             val rawTeiObjectKey =
@@ -142,7 +134,7 @@ class AnalysisRunProcessingService(
             objectStore.put(rawTeiObjectKey, parsed.rawParserOutput, "application/xml")
             try {
                 transactionTemplate.executeWithoutResult {
-                    parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, extractedClaims)
+                    parsedDocumentRepository.save(event.analysisRunId, run.sourceHash, parsed, rawTeiObjectKey, analyzedClaims)
                     pipelineProgressRepository.mark(event.analysisRunId, "source", "parse-document", "document", "Source Document", "COMPLETED")
                     if (evidenceRetrievalConfigured) {
                         claimReferenceVerificationRepository.initializeExpectedPairs(event.analysisRunId)
@@ -386,9 +378,7 @@ class AnalysisRunProcessingService(
         val sourceHash: String,
         val parserId: String,
         val parserVersion: String,
-        val claimExtractorProvider: String,
-        val claimExtractorVersion: String,
-        val maxClaimCitationPairs: Int,
+        val configuration: AnalysisConfigurationSnapshot,
     )
 
     companion object {

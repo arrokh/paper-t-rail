@@ -7,6 +7,7 @@ import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresh
 import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
+import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
@@ -43,6 +44,9 @@ class RunConfigurationFactoryTest {
         assertEquals("v1", snapshot.claimExtractor.version)
         assertEquals("LOCAL", snapshot.claimExtractor.trustBoundary)
         assertEquals(listOf("citation_context"), snapshot.claimExtractor.dataCategories)
+        assertEquals("heuristic-all-context-targets-v1", snapshot.claimExtractor.targetSelectionPolicyVersion)
+        assertEquals("heuristic-claim-analysis-v1", snapshot.claimExtractor.outputMappingVersion)
+        assertEquals(null, snapshot.claimExtractor.promptVersion)
         assertEquals("local", snapshot.embedding.provider)
         assertEquals("feature-hash-384-v1", snapshot.embedding.model)
         assertEquals(listOf("atomic_claims", "cited_paper_chunks", "embedding_input"), snapshot.embedding.dataCategories)
@@ -76,6 +80,36 @@ class RunConfigurationFactoryTest {
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
         assertEquals(0.9, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"]["thresholds"].isNull)
+    }
+
+    @Test
+    fun `pins explicit OpenAI-compatible claim-analysis provenance without storing endpoint or credentials`() {
+        val settings = OpenAiCompatibleClaimAnalysisSettings(
+            enabled = true,
+            baseUrl = "http://127.0.0.1:9090/v1",
+            modelId = "fixture-model",
+            apiKey = "server-side-secret",
+            trustedHosts = setOf("127.0.0.1"),
+        )
+        val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val configuredFactory = factoryFor(providerCatalog = catalog)
+
+        val selected = configuredFactory.from(
+            RunConfigurationRequest(claimExtractorProvider = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID),
+        ).claimExtractor
+        val default = configuredFactory.from(RunConfigurationRequest()).claimExtractor
+        val serialized = jacksonObjectMapper().writeValueAsString(selected)
+
+        assertEquals(OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID, selected.provider)
+        assertEquals("fixture-model", selected.model)
+        assertEquals("LOCAL", selected.trustBoundary)
+        assertEquals("model-selected-same-context-targets-v1", selected.targetSelectionPolicyVersion)
+        assertEquals("document-claim-analysis-v1", selected.promptVersion)
+        assertEquals("chat-completions-claim-analysis-json-v1", selected.outputMappingVersion)
+        assertTrue(selected.configurationFingerprint!!.matches(Regex("[0-9a-f]{64}")))
+        assertEquals("heuristic", default.provider)
+        assertFalse(serialized.contains("server-side-secret"))
+        assertFalse(serialized.contains("127.0.0.1"))
     }
 
     @Test
