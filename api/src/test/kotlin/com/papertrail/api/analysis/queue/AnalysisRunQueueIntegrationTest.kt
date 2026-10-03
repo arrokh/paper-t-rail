@@ -548,7 +548,7 @@ class AnalysisRunQueueIntegrationTest {
             ),
         )
         assertEquals(
-            0.9,
+            0.25,
             jdbc.queryForObject(
                 "SELECT (configuration_snapshot #>> '{referenceResolution,confidenceThreshold}')::double precision FROM analysis_runs WHERE id = ?",
                 Double::class.java,
@@ -2149,7 +2149,7 @@ class AnalysisRunQueueIntegrationTest {
         val report = referenceResolutionService().report(created.analysisRunId)!!
         assertEquals("COMPLETED", report.referenceResolution.executionStatus)
         assertEquals("title-author-year-weighted-edit-similarity-v1", report.referenceResolution.scorePolicyVersion)
-        assertEquals(0.9, report.referenceResolution.confidenceThreshold)
+        assertEquals(0.25, report.referenceResolution.confidenceThreshold)
         assertEquals(4, report.referenceResolution.summary.total)
         assertEquals(1, report.referenceResolution.summary.resolved)
         assertEquals(1, report.referenceResolution.summary.unresolved)
