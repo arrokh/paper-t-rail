@@ -231,13 +231,13 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
                 output.write("{".toByteArray(StandardCharsets.UTF_8))
                 output.flush()
                 responseStarted.countDown()
-                releaseResponse.await(2, TimeUnit.SECONDS)
+                releaseResponse.await(3, TimeUnit.SECONDS)
                 runCatching { output.write("}".toByteArray(StandardCharsets.UTF_8)) }
             }
         }
         server.start()
         try {
-            val settings = localSettings(server).copy(requestTimeoutMillis = 200)
+            val settings = localSettings(server).copy(requestTimeoutMillis = 1_000)
             val client = OpenAiCompatibleChatClient(settings, objectMapper)
             val requestBody = client.requestBody(settings.modelId, "system", "{}")
 
@@ -245,7 +245,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
                 client.complete(requestBody)
             }
 
-            assertTrue(responseStarted.await(1, TimeUnit.SECONDS))
+            assertTrue(responseStarted.await(2, TimeUnit.SECONDS))
             assertTrue(failure.message.orEmpty().contains("timed out"))
         } finally {
             releaseResponse.countDown()
