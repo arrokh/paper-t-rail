@@ -210,6 +210,8 @@ function createPdfDocument(pages: string[]) {
 }
 
 type RenderReviewOptions = {
+  parsedDocument?: ParsedDocument | null;
+  report?: ReferenceResolutionReportResponse | null;
   selectedOutcomeId?: string | null;
   selectedReferenceKey?: string | null;
   selectedDetailSection?: "results" | "citations";
@@ -220,15 +222,13 @@ type RenderReviewOptions = {
   onSelectDetailSection?: (section: "results" | "citations") => void;
 };
 
-function renderReview({ selectedOutcomeId = null, selectedReferenceKey = null, selectedDetailSection = "results", onSelectOutcome = vi.fn(), onSelectReference = vi.fn(), onClearReviewPair = vi.fn(), onClearSelectedReference = vi.fn(), onSelectDetailSection = vi.fn() }: RenderReviewOptions = {}) {
+function renderReview({ parsedDocument: selectedParsedDocument = parsedDocument, report: selectedReport = report, selectedOutcomeId = null, selectedReferenceKey = null, selectedDetailSection = "results", onSelectOutcome = vi.fn(), onSelectReference = vi.fn(), onClearReviewPair = vi.fn(), onClearSelectedReference = vi.fn(), onSelectDetailSection = vi.fn() }: RenderReviewOptions = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const initialOptions = { selectedOutcomeId, selectedReferenceKey, selectedDetailSection, onSelectOutcome, onSelectReference, onClearReviewPair, onClearSelectedReference, onSelectDetailSection };
+  const initialOptions = { parsedDocument: selectedParsedDocument, report: selectedReport, selectedOutcomeId, selectedReferenceKey, selectedDetailSection, onSelectOutcome, onSelectReference, onClearReviewPair, onClearSelectedReference, onSelectDetailSection };
   const createReview = (options: typeof initialOptions) => (
     <QueryClientProvider client={queryClient}>
       <AnalysisRunPaperReview
         run={run}
-        parsedDocument={parsedDocument}
-        report={report}
         parsedLoading={false}
         reportLoading={false}
         parsedError={null}
@@ -308,6 +308,63 @@ describe("Analysis Run Paper Review", () => {
     } finally {
       scrollTo.mockRestore();
     }
+  });
+
+  it("shows one-based labels for numerically cited entries even in a mixed citation style", () => {
+    const mixedCitationParsedDocument: ParsedDocument = {
+      ...parsedDocument,
+      citationContexts: [
+        ...parsedDocument.citationContexts,
+        {
+          ...parsedDocument.citationContexts[0],
+          id: "author-year-context",
+          occurrences: [{
+            ...parsedDocument.citationContexts[0].occurrences[0],
+            id: "author-year-occurrence",
+            markerText: "(A. Author, 2024)",
+            bibliographyReferenceKeys: [],
+          }],
+          atomicClaims: [],
+        },
+      ],
+    };
+    const review = renderReview({ parsedDocument: mixedCitationParsedDocument, selectedReferenceKey: "b0", selectedDetailSection: "citations" });
+
+    expect(screen.getByText("b1 · 2024")).toBeTruthy();
+    expect(screen.getByText("Selected bibliography · b1")).toBeTruthy();
+    review.rerenderReview({ selectedReferenceKey: null });
+    fireEvent.click(screen.getByText("b1 · 2024").closest("button")!);
+    expect(review.onSelectReference).toHaveBeenCalledWith("b0");
+
+    review.rerenderReview({ selectedReferenceKey: "b0", selectedDetailSection: "results" });
+    expect(screen.getByRole("button", { name: /Review claim against b1/ })).toBeTruthy();
+
+    const authorYearParsedDocument: ParsedDocument = {
+      ...parsedDocument,
+      citationContexts: parsedDocument.citationContexts.map((context) => ({
+        ...context,
+        occurrences: context.occurrences.map((occurrence) => ({ ...occurrence, markerText: "(A. Author, 2024)" })),
+      })),
+    };
+    const authorYearReport: ReferenceResolutionReportResponse = {
+      ...report,
+      referenceResolution: {
+        ...report.referenceResolution,
+        entries: report.referenceResolution.entries.map((entry) => ({
+          ...entry,
+          verificationOutcomes: entry.verificationOutcomes.map((entryOutcome) => ({
+            ...entryOutcome,
+            citationMarkers: ["(A. Author, 2024)"],
+          })),
+        })),
+      },
+    };
+    review.rerenderReview({ parsedDocument: authorYearParsedDocument, report: authorYearReport, selectedDetailSection: "citations" });
+
+    expect(screen.getByText("b0 · 2024")).toBeTruthy();
+    expect(screen.getByText("Selected bibliography · b0")).toBeTruthy();
+    review.rerenderReview({ parsedDocument: null, report });
+    expect(screen.getByText("b1 · 2024")).toBeTruthy();
   });
 
   it("renews MinIO URLs only when Refresh PDF is explicitly selected", async () => {
@@ -413,7 +470,7 @@ describe("Analysis Run Paper Review", () => {
     expect(screen.getAllByText(outcome.claimText)).toHaveLength(2);
     expect(screen.getByText("Machine result: supported")).toBeTruthy();
     expect(screen.getByText(outcome.citationContextText)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Review claim against b0/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Review claim against b1/ }));
     expect(onSelectOutcome).toHaveBeenCalledWith(outcome.id, "b0");
   });
 
@@ -434,7 +491,7 @@ describe("Analysis Run Paper Review", () => {
 
     const quickAccessName = "Selected pair quick access";
     await screen.findByRole("region", { name: quickAccessName });
-    const trigger = screen.getByRole("button", { name: /Review claim against b0/ });
+    const trigger = screen.getByRole("button", { name: /Review claim against b1/ });
     fireEvent.click(trigger);
     await waitFor(() => expect(screen.queryByRole("region", { name: quickAccessName })).toBeNull());
     expect(trigger.getAttribute("aria-pressed")).toBe("true");
@@ -517,7 +574,7 @@ describe("Analysis Run Paper Review", () => {
     await waitFor(() => expect(screen.queryByRole("contentinfo")).toBeNull());
   });
 
-  it("scrolls bibliography and filtered AI-result destinations to the top of the details viewport", async () => {
+  it("scrolls bibliography and filtered AI-result destinations with a top gap", async () => {
     installSourcePdfResponse();
     window.history.replaceState(null, "", "/?reviewFilter=INCOMPLETE");
     const review = renderReview({ selectedOutcomeId: outcome.id, selectedReferenceKey: "b0" });
@@ -551,21 +608,21 @@ describe("Analysis Run Paper Review", () => {
 
       const bibliographyTrigger = document.getElementById("review-bibliography-trigger-b0");
       await waitFor(() => expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
-      expect(viewport!.scrollTop).toBe(350);
+      expect(viewport!.scrollTop).toBe(342);
 
       review.rerenderReview({ selectedDetailSection: "citations", selectedReferenceKey: null });
       await waitFor(() => expect(screen.queryByRole("region", { name: "Selected bibliography quick access" })).toBeNull());
       review.rerenderReview({ selectedDetailSection: "citations", selectedReferenceKey: "b0" });
       await screen.findByRole("region", { name: "Selected bibliography quick access" });
       expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(false);
-      expect(viewport!.scrollTop).toBe(350);
+      expect(viewport!.scrollTop).toBe(342);
 
       fireEvent.click(screen.getByRole("button", { name: /Review AI result: supported/ }));
       review.rerenderReview({ selectedDetailSection: "results" });
       await screen.findByRole("region", { name: "Selected pair outside active filters" });
       const pairTrigger = document.getElementById(`review-pair-trigger-${outcome.id}`);
       await waitFor(() => expect(pairTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
-      expect(viewport!.scrollTop).toBe(650);
+      expect(viewport!.scrollTop).toBe(634);
     } finally {
       geometry.mockRestore();
       animationFrames.mockRestore();

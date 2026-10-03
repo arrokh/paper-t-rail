@@ -6,7 +6,7 @@ afterEach(() => {
 });
 
 describe("scrollToReviewItem", () => {
-  it("aligns a review item with the top edge of its scroll viewport after the filters", () => {
+  it("keeps an 8px gap above a review item in its scroll viewport", () => {
     const viewport = document.createElement("div");
     viewport.dataset.reviewItemsViewport = "";
     viewport.style.overflowY = "auto";
@@ -31,7 +31,7 @@ describe("scrollToReviewItem", () => {
 
     const cancelScroll = scrollToReviewItem(target);
 
-    expect(viewport.scrollTop).toBe(350);
+    expect(viewport.scrollTop).toBe(342);
     cancelScroll();
   });
 });

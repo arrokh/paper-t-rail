@@ -1,4 +1,5 @@
 const REVIEW_ITEM_SCROLL_DURATION_MS = 1800;
+const REVIEW_ITEM_TOP_GAP_PX = 8;
 const REVIEW_ITEM_FOCUS_DURATION_MS = 3200;
 const REVIEW_ITEM_FOCUS_CLASS = "analysis-run-review-item-focus";
 
@@ -14,10 +15,11 @@ function scrollReviewItemIntoView(element: HTMLElement): () => void {
     && scrollViewport.scrollHeight > scrollViewport.clientHeight
     && /auto|scroll/.test(window.getComputedStyle(scrollViewport).overflowY);
   const itemBounds = element.getBoundingClientRect();
+  const viewportTop = hasScrollableViewport ? scrollViewport.getBoundingClientRect().top : 0;
   const startScroll = hasScrollableViewport ? scrollViewport.scrollTop : window.scrollY;
   const targetScroll = hasScrollableViewport
-    ? scrollViewport.scrollTop + itemBounds.top - scrollViewport.getBoundingClientRect().top
-    : window.scrollY + itemBounds.top;
+    ? scrollViewport.scrollTop + itemBounds.top - viewportTop - REVIEW_ITEM_TOP_GAP_PX
+    : window.scrollY + itemBounds.top - REVIEW_ITEM_TOP_GAP_PX;
   const maxScroll = hasScrollableViewport
     ? scrollViewport.scrollHeight - scrollViewport.clientHeight
     : document.documentElement.scrollHeight - window.innerHeight;
@@ -50,15 +52,15 @@ function scrollReviewItemIntoView(element: HTMLElement): () => void {
   element.classList.add(REVIEW_ITEM_FOCUS_CLASS);
   focusTimer = window.setTimeout(clearFocus, REVIEW_ITEM_FOCUS_DURATION_MS);
 
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    element.scrollIntoView({ behavior: "auto", block: "start" });
-    return cancel;
-  }
-
   const setScroll = (top: number) => {
     if (hasScrollableViewport) scrollViewport.scrollTop = top;
     else window.scrollTo({ top, behavior: "instant" });
   };
+
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    setScroll(endScroll);
+    return cancel;
+  }
 
   const scrollDistance = endScroll - startScroll;
   if (Math.abs(scrollDistance) < 1) return cancel;
