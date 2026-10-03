@@ -629,6 +629,41 @@ describe("Analysis Run Paper Review", () => {
     }
   });
 
+  it("focuses a directly linked bibliography entry when its citation data finishes loading", async () => {
+    installSourcePdfResponse();
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.matches("[data-review-items-viewport]")) return { top: 100 } as DOMRect;
+      if (this.id === "review-bibliography-trigger-b0") return { top: 400, height: 40 } as DOMRect;
+      return originalGetBoundingClientRect.call(this);
+    });
+    const animationFrames = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(performance.now() + 2_000);
+      return 1;
+    });
+
+    try {
+      const review = renderReview({ parsedDocument: null, report: null, selectedReferenceKey: "b0", selectedDetailSection: "citations" });
+      const viewport = document.querySelector<HTMLElement>("[data-review-items-viewport]");
+      expect(viewport).not.toBeNull();
+      viewport!.style.overflowY = "auto";
+      Object.defineProperties(viewport!, {
+        clientHeight: { configurable: true, value: 400 },
+        scrollHeight: { configurable: true, value: 1_200 },
+        scrollTop: { configurable: true, writable: true, value: 50 },
+      });
+
+      review.rerenderReview({ parsedDocument, report });
+      await screen.findByRole("region", { name: "Selected bibliography quick access" });
+      const bibliographyTrigger = document.getElementById("review-bibliography-trigger-b0");
+      await waitFor(() => expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
+      expect(viewport!.scrollTop).toBe(342);
+    } finally {
+      geometry.mockRestore();
+      animationFrames.mockRestore();
+    }
+  });
+
   it("restores the URL-backed citation detail section and requests query selection when switched", async () => {
     installSourcePdfResponse();
     const onSelectDetailSection = vi.fn();

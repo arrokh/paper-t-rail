@@ -133,21 +133,30 @@ export function AnalysisRunPaperReview({
     : selectedDetailSection === "citations" && selectedReferenceKey
       ? `citations:${selectedReferenceKey}`
       : null;
-  const previousDetailSection = useRef(selectedDetailSection);
+  const previousDetailSection = useRef<"results" | "citations">("results");
 
   useEffect(() => {
     const enteredDetailSection = previousDetailSection.current !== selectedDetailSection;
-    previousDetailSection.current = selectedDetailSection;
 
-    if (!selectedQuickAccessKey || !enteredDetailSection) return;
-    if (window.matchMedia("(max-width: 47.99rem)").matches) return;
+    if (!selectedQuickAccessKey) {
+      previousDetailSection.current = selectedDetailSection;
+      return;
+    }
+    if (!enteredDetailSection) return;
+    if (window.matchMedia("(max-width: 47.99rem)").matches) {
+      previousDetailSection.current = selectedDetailSection;
+      return;
+    }
 
     const triggerId = selectedDetailSection === "results"
       ? `review-pair-trigger-${selectedOutcomeId}`
       : `review-bibliography-trigger-${selectedReferenceKey}`;
     let cancelScroll = () => {};
     const frame = window.requestAnimationFrame(() => {
-      cancelScroll = scrollToReviewItem(document.getElementById(triggerId));
+      const trigger = document.getElementById(triggerId);
+      if (!trigger) return;
+      previousDetailSection.current = selectedDetailSection;
+      cancelScroll = scrollToReviewItem(trigger);
     });
 
     return () => {
