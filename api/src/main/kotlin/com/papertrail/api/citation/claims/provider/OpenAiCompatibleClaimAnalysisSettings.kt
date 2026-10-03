@@ -21,7 +21,9 @@ data class OpenAiCompatibleClaimAnalysisSettings(
     val retentionDisclosure: String? = null,
 ) {
     val baseUri: URI? = parseBaseUri(baseUrl)
-    val endpointUri: URI? = baseUri?.let { URI("${it.toASCIIString().trimEnd('/')}/chat/completions") }
+    private val versionedApiBaseUri: URI? = baseUri?.let(::withApiVersion)
+    val endpointUri: URI? = versionedApiBaseUri?.let { URI("${it.toASCIIString().trimEnd('/')}/chat/completions") }
+    val modelsUri: URI? = versionedApiBaseUri?.let { URI("${it.toASCIIString().trimEnd('/')}/models") }
     private val normalizedTrustedHosts = trustedHosts.map(::normalizeHost).toSet()
     val isConfigurationValid: Boolean = baseUri != null &&
         baseUrl.length in 1..MAX_BASE_URL_LENGTH && baseUrl == baseUrl.trim() &&
@@ -92,12 +94,20 @@ data class OpenAiCompatibleClaimAnalysisSettings(
         const val MAX_RETENTION_DISCLOSURE_LENGTH = 2_000
 
         private val MODEL_ID_PATTERN = Regex("[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}")
+        private val API_VERSION_SEGMENT_PATTERN = Regex("v[0-9]+")
 
         fun disabled(): OpenAiCompatibleClaimAnalysisSettings = OpenAiCompatibleClaimAnalysisSettings(
             enabled = false,
             baseUrl = "",
             modelId = "",
         )
+
+        private fun withApiVersion(baseUri: URI): URI {
+            val normalizedBase = baseUri.toASCIIString().trimEnd('/')
+            val lastPathSegment = baseUri.path.trimEnd('/').substringAfterLast('/')
+            return if (API_VERSION_SEGMENT_PATTERN.matches(lastPathSegment)) URI(normalizedBase)
+            else URI("$normalizedBase/v1")
+        }
 
         private fun parseBaseUri(value: String): URI? = runCatching {
             val uri = URI(value.trim())

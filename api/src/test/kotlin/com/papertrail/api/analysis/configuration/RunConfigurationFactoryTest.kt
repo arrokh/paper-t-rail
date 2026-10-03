@@ -113,6 +113,28 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
+    fun `uses the configured default claim analyzer when omitted and keeps heuristic explicitly selectable`() {
+        val settings = OpenAiCompatibleClaimAnalysisSettings(
+            enabled = true,
+            baseUrl = "http://127.0.0.1:1234",
+            modelId = "microsoft/phi-4-mini-reasoning",
+            trustedHosts = setOf("127.0.0.1"),
+        )
+        val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val configuredFactory = factoryFor(
+            providerCatalog = catalog,
+            defaultClaimExtractorProvider = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID,
+        )
+
+        val default = configuredFactory.from(configuredFactory.parseRequest(null)).claimExtractor
+        val heuristic = configuredFactory.from(RunConfigurationRequest(claimExtractorProvider = "heuristic")).claimExtractor
+
+        assertEquals(OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID, default.provider)
+        assertEquals("microsoft/phi-4-mini-reasoning", default.model)
+        assertEquals("heuristic", heuristic.provider)
+    }
+
+    @Test
     fun `prefers local Ollama for an omitted embedding selection and keeps feature-hash fallback`() {
         val localOllama = OllamaEmbeddingSettings(
             enabled = true,
@@ -473,6 +495,25 @@ class RunConfigurationFactoryTest {
             "response"
         })
         assertTrue(outboundCallStarted)
+
+        outboundCallStarted = false
+        assertThrows(ProviderCallRejectedException::class.java) {
+            gate.callAvailabilityCheck(
+                CLAIM_EXTRACTOR_ROLE,
+                "reviewed-llm",
+                snapshot.copy(externalProviderConsents = emptyList()),
+            ) { outboundCallStarted = true }
+        }
+        assertFalse(outboundCallStarted)
+        assertEquals("available", gate.callAvailabilityCheck(
+            CLAIM_EXTRACTOR_ROLE,
+            "reviewed-llm",
+            snapshot,
+        ) {
+            outboundCallStarted = true
+            "available"
+        })
+        assertTrue(outboundCallStarted)
     }
 
     @Test
@@ -516,6 +557,7 @@ class RunConfigurationFactoryTest {
         maxClaimCitationPairs: Int = ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
         providerCatalog: ProviderCatalog = reviewedExternalProviderCatalog(),
         defaultSystemOneProvider: String = "mock",
+        defaultClaimExtractorProvider: String = "heuristic",
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
         providerCatalog = providerCatalog,
@@ -539,6 +581,7 @@ class RunConfigurationFactoryTest {
         evidenceAggregationThresholds = evidenceAggregationThresholds,
         localLayaAggregationEnabled = localLayaAggregationEnabled,
         defaultSystemOneProvider = defaultSystemOneProvider,
+        defaultClaimExtractorProvider = defaultClaimExtractorProvider,
     )
 
     @Test

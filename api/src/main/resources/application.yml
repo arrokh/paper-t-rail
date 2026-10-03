@@ -79,6 +79,8 @@ paper-trail:
     cited-paper-max-extracted-characters: ${PAPER_MAX_CITED_PAPER_EXTRACTED_CHARACTERS:5000000}
   # Local consent-flow/acquisition testing defaults. Deployments must verify terms and replace test values.
   providers:
+    claim-extractor:
+      default-provider: ${CLAIM_ANALYSIS_DEFAULT_PROVIDER:openai-compatible-chat}
     crossref:
       enabled: ${CROSSREF_ENABLED:true}
       enablement-reviewed: ${CROSSREF_ENABLEMENT_REVIEWED:true}
@@ -96,10 +98,10 @@ paper-trail:
         positive-ttl: ${UNPAYWALL_CACHE_POSITIVE_TTL:24h}
         negative-ttl: ${UNPAYWALL_CACHE_NEGATIVE_TTL:1h}
     openai-compatible-claim-analysis:
-      # Opt-in only. Selecting this provider still requires explicit per-run external consent when its endpoint is outside trusted hosts.
-      enabled: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_ENABLED:false}
-      base-url: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_BASE_URL:}
-      model: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MODEL:}
+      # The local OpenAI-compatible endpoint is the default for new runs; heuristic remains selectable and is never an implicit fallback.
+      enabled: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_ENABLED:true}
+      base-url: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_BASE_URL:http://127.0.0.1:1234}
+      model: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MODEL:microsoft/phi-4-mini-reasoning}
       api-key: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_API_KEY:}
       trusted-hosts: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_TRUSTED_HOSTS:localhost,127.0.0.1}
       context-window-tokens: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_CONTEXT_WINDOW_TOKENS:32768}

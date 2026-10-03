@@ -12,6 +12,9 @@ interface ClaimAnalysisProvider {
     val promptVersion: String?
     val outputMappingVersion: String
 
+    /** Content-free deployment check run before a fresh Analysis Run begins document processing. */
+    fun validateAvailability(configuration: AnalysisConfigurationSnapshot) = Unit
+
     fun analyze(
         request: ClaimAnalysisRequest,
         configuration: AnalysisConfigurationSnapshot,

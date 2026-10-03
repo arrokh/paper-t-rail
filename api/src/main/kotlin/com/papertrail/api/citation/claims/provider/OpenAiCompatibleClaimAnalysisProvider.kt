@@ -29,6 +29,12 @@ class OpenAiCompatibleClaimAnalysisProvider(
     override val promptVersion: String = ClaimAnalysisVersions.OPENAI_COMPATIBLE_PROMPT
     override val outputMappingVersion: String = ClaimAnalysisVersions.OPENAI_COMPATIBLE_OUTPUT_MAPPING
 
+    override fun validateAvailability(configuration: AnalysisConfigurationSnapshot) {
+        providerCallGate.callAvailabilityCheck(CLAIM_EXTRACTOR_ROLE, providerId, configuration) {
+            chatClient.validateAvailability()
+        }
+    }
+
     override fun analyze(
         request: ClaimAnalysisRequest,
         configuration: AnalysisConfigurationSnapshot,

@@ -38,6 +38,7 @@ class RunConfigurationFactory(
     private val evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
     private val localLayaAggregationEnabled: Boolean = false,
     private val defaultSystemOneProvider: String = "mock",
+    private val defaultClaimExtractorProvider: String = "heuristic",
 ) {
     init {
         require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
@@ -51,6 +52,7 @@ class RunConfigurationFactory(
         require(reciprocalRankFusionConstant > 0) { "Reciprocal-rank fusion constant must be positive." }
         require(limits.maxClaimCitationPairs > 0) { "The claim-citation pair limit must be positive." }
         require(defaultSystemOneProvider.isNotBlank()) { "Default System One provider must be configured." }
+        require(defaultClaimExtractorProvider.isNotBlank()) { "Default claim-analysis provider must be configured." }
         require(!localLayaAggregationEnabled || evidenceAggregationThresholds != null) {
             "Local Laya aggregation requires explicitly configured thresholds."
         }
@@ -94,7 +96,7 @@ class RunConfigurationFactory(
             }
         } ?: emptyList()
         return RunConfigurationRequest(
-            claimExtractorProvider = provider("claimExtractorProvider", "heuristic"),
+            claimExtractorProvider = optionalProvider("claimExtractorProvider"),
             embeddingProvider = optionalProvider("embeddingProvider"),
             systemOneProvider = optionalProvider("systemOneProvider"),
             scholarlyMetadataProvider = provider("scholarlyMetadataProvider", "recorded-fixtures"),
@@ -130,7 +132,10 @@ class RunConfigurationFactory(
 
     fun from(request: RunConfigurationRequest): AnalysisConfigurationSnapshot {
         val selected = listOf(
-            providerCatalog.requireSelectable(CLAIM_EXTRACTOR_ROLE, request.claimExtractorProvider),
+            providerCatalog.requireSelectable(
+                CLAIM_EXTRACTOR_ROLE,
+                request.claimExtractorProvider ?: defaultClaimExtractorProvider,
+            ),
             defaultEmbeddingRegistration(request.embeddingProvider),
             defaultSystemOneRegistration(request.systemOneProvider),
             providerCatalog.requireSelectable(SCHOLARLY_METADATA_ROLE, request.scholarlyMetadataProvider),

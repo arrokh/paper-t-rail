@@ -1,6 +1,6 @@
 # Implementation Plan: OpenAI-Compatible Claim Analysis
 
-**Status:** Implemented; local verification passed. The adapter is opt-in and disabled by default; no live external endpoint or model-accuracy claim is included. See [implementation and verification status](#implementation-and-verification-status).
+**Status:** Implemented; local Spring and Compose defaults select `openai-compatible-chat` with model `microsoft/phi-4-mini-reasoning`. Fresh runs probe the configured `/v1/models` endpoint before reading or parsing the Source Document. Contract tests use local HTTP fixtures; no live endpoint or model-accuracy claim is included. See [implementation and verification status](#implementation-and-verification-status).
 
 ## Goal
 
@@ -11,7 +11,7 @@ Add an optional OpenAI-compatible chat provider to Pipeline 01 that processes on
 ### Included
 
 - Pipeline 01 only: document-level claim analysis using an OpenAI-compatible Chat Completions endpoint.
-- An optional provider alongside the existing heuristic provider; heuristic remains the default.
+- An optional, deployment-configured provider alongside the heuristic provider. Local defaults select OpenAI-compatible claim analysis; heuristic remains explicitly selectable.
 - One model response containing claims, source spans, and selected target keys for all submitted Citation Contexts.
 - One request when the document input fits; deterministic batching at Citation Context boundaries when it does not.
 - Local and externally hosted compatible endpoints, classified by their actual configured trust boundary.
@@ -31,21 +31,22 @@ Add an optional OpenAI-compatible chat provider to Pipeline 01 that processes on
 1. A document-level claim-analysis operation receives the GROBID-produced Citation Contexts, Citation Occurrences, allowed target keys, and only the bibliography metadata needed for target selection. The raw TEI and full document body are not sent.
 2. The model returns Atomic Claims and each claim's selected target keys together. Target selection is limited to GROBID-provided targets in that claim's own Citation Context. The model cannot invent targets or link across contexts.
 3. Associations remain inferred/provisional, not author-confirmed. A selected subset—including an empty set—is allowed. Empty selection leaves the claim persisted without a Claim–Paper Verification; it does not fall back to all context targets.
-4. The heuristic provider remains the default and retains its current all-target behavior. Selecting the LLM provider is explicit and pinned to that Analysis Run.
-5. If all contexts fit, send one chat request for the document; if there are no Citation Contexts, return an empty result without an outbound model call. If they do not fit, batch whole Citation Contexts in source order using a deterministic per-deployment size estimator that includes the prompt/schema overhead and reserves the configured response budget. Configure that input budget against the selected model's context window and enforce a serialized request-byte ceiling. Never split, truncate, or omit a Citation Context. If one context cannot fit by itself, fail with a stable reason.
+4. The deployment-configured claim-analysis default is pinned to each Analysis Run. Local defaults select the OpenAI-compatible provider; heuristic remains explicitly selectable and retains its all-target behavior.
+5. If all contexts fit, send one chat request for the document; if there are no Citation Contexts, return an empty result without a chat-completion request. The selected provider's content-free availability probe still runs before a fresh Analysis Run reads or parses its source. If contexts do not fit, batch whole Citation Contexts in source order using a deterministic per-deployment size estimator that includes the prompt/schema overhead and reserves the configured response budget. Configure that input budget against the selected model's context window and enforce a serialized request-byte ceiling. Never split, truncate, or omit a Citation Context. If one context cannot fit by itself, fail with a stable reason.
 6. Validate and combine every batch before persisting parsed output. A malformed or invalid result fails the selected provider path; it never silently switches to heuristic. Retryable transport failures use worker retries; permanent configuration, consent, and response-contract failures are dead-lettered without redelivery.
 7. Pipeline 05 is only a future possible consumer of the shared chat transport, not an implementation deliverable here.
 
 ## Implementation outcome
 
 - `AnalysisRunProcessingService` invokes `ClaimAnalysisService` once per parsed document before any parsed rows are persisted. The service selects a run-pinned `ClaimAnalysisProvider` and validates exact context coverage, source-span bounds, same-context target membership, and duplicate/conflicting outputs.
-- `HeuristicClaimAnalysisProvider` adapts the existing deterministic extractor and links each extracted claim to every target in its context. `OpenAiCompatibleClaimAnalysisProvider` submits the document's Citation Contexts together and returns claims plus selected target keys in one operation; the optional implementation is exposed only when server-side configuration makes it selectable.
+- `HeuristicClaimAnalysisProvider` adapts the existing deterministic extractor and links each extracted claim to every target in its context. `OpenAiCompatibleClaimAnalysisProvider` submits the document's Citation Contexts together and returns claims plus selected target keys in one operation; the provider is exposed only when server-side configuration makes it selectable.
 - `OpenAiCompatibleChatClient` uses JSON-mode non-streaming Chat Completions, server-side bearer authentication, no redirects, explicit total-request timeout, bounded response bytes, and sanitized retryable/permanent errors. It rechecks that endpoint settings are selectable before network access and sends no raw TEI or non-citation Source Document text. The prompt treats source fields as untrusted data rather than instructions, preserves meaning-bearing qualifiers, and prohibits unsupported implications.
 - Whole Citation Contexts are packed deterministically under configured token/byte budgets. A context that cannot fit fails before any provider call; batches are all validated before persistence.
 - `ParsedDocumentRepository` maps only validated selected target keys to same-context target IDs. `ClaimCitationPairCounter` counts selected links; claims with no selected target remain persisted and create no Claim–Paper Verification.
 - Provider selection, endpoint fingerprint, target-selection policy, prompt/output-mapping versions, trust boundary, and retention disclosure are pinned in the Analysis Run snapshot. External endpoints require reviewed enablement, an explicit retention disclosure, and exact per-run consent for `citation_context` and `bibliographic_metadata`.
-- The existing provider directory and upload configuration UI expose the opt-in provider and require its declared consent categories. The UI keeps unlinked claims visible as “No Citation Targets”; they are not converted into unresolved references or verification outcomes.
+- The existing provider directory and upload configuration UI expose the provider, select the configured local default when available, and require its declared consent categories for external endpoints. The UI keeps unlinked claims visible as “No Citation Targets”; they are not converted into unresolved references or verification outcomes.
 - Invalid configuration, consent, or response-contract failures are non-retryable and dead-letter immediately. Timeouts, network failures, HTTP 408/429, and 5xx remain retryable. Neither path silently substitutes the heuristic.
+- Before retrieving or parsing a fresh run's Source Document, the worker sends a content-free `GET /v1/models` request through the provider-call gate. A 2xx response confirms endpoint availability; the response body is discarded. Network failures, timeouts, 408/429, and 5xx retry; other non-2xx responses fail without switching providers.
 
 ## Proposed architecture
 
@@ -59,7 +60,7 @@ AnalysisRunProcessingService
 ```
 
 - Evolve the claim-analysis boundary to accept all structured Citation Context inputs for one Analysis Run and return context-grouped claims plus selected target keys. The exact type names may follow repository conventions, but do not add a separate LLM call for target linking.
-- The heuristic adapter maps its existing extraction results to all GROBID target keys in each Citation Context, preserving current default behavior.
+- The heuristic adapter maps its existing extraction results to all GROBID target keys in each Citation Context, preserving its established heuristic behavior.
 - `OpenAiCompatibleChatClient` owns endpoint transport, server-side authentication, bounded response reading, timeouts, and Chat Completions request/response DTOs. It must not own claim prompts, citation semantics, persistence, or Evidence Judgement mapping.
 - `OpenAiCompatibleClaimAnalysisProvider` owns the claim-analysis prompt, JSON response mapping, source-span checks, and target-key validation. A future System One provider may reuse the chat transport while implementing `SystemOneProvider`; it will need its own contract and is outside this plan.
 - Configure one endpoint profile per deployment, with a model ID per provider role. Keep the base URL and credential in server-side configuration; do not accept them from the browser or store secrets in run snapshots. Only the `claimExtractor` role is registered by this plan.
@@ -97,7 +98,7 @@ Contract rules:
 - Reject missing/duplicate contexts, blank claims, malformed JSON, invalid spans, and invalid targets before any parsed document rows are persisted.
 - Count expected claim-citation pairs from the selected target links, not from all GROBID targets. Enforce the existing configured pair limit before persistence.
 
-Use Chat Completions (`POST /v1/chat/completions`) with JSON mode for the initial compatibility contract. Explicitly instruct the model to return a JSON object and validate the complete schema in the application: JSON mode guarantees JSON syntax, not conformance to Paper T-Rail's schema. Do not require provider-specific strict JSON Schema support in the first implementation. Do not use streaming or tools.
+Use Chat Completions (`POST /v1/chat/completions`) with JSON mode for the initial compatibility contract. A configured base URL may be the service root (`http://127.0.0.1:1234`) or include `/v1`; the client adds `/v1` only when no API version segment is present. Before a fresh run reads the PDF, issue `GET /v1/models` with no run payload, discard the response body, and require a successful status. Explicitly instruct the model to return a JSON object and validate the complete schema in the application: JSON mode guarantees JSON syntax, not conformance to Paper T-Rail's schema. Do not require provider-specific strict JSON Schema support in the first implementation. Do not use streaming or tools.
 
 ## Provider, consent, and provenance
 
@@ -106,7 +107,7 @@ Use Chat Completions (`POST /v1/chat/completions`) with JSON mode for the initia
 - For external endpoints, require reviewed enablement and a deployment-specific retention disclosure. The request sends Citation Context text and minimum referenced-entry metadata, so it declares `citation_context` and `bibliographic_metadata` and requires exact per-provider, per-run consent for both before sending.
 - Route outbound requests through `ProviderCallGate`. Extend the claim-extraction path so external calls cannot bypass provider selection, trust classification, configuration-fingerprint checks, payload-category checks, or consent.
 - Pin the selected provider ID/version/model, target-selection policy version, prompt/output-mapping version, trust boundary, and non-secret endpoint fingerprint in the run snapshot. Do not persist API keys or log contexts, bibliography payloads, prompts, or model responses.
-- Keep provider defaults safe: heuristic remains selected by default; a configured LLM appears as an explicit selectable option. An unavailable explicitly selected LLM fails closed.
+- Keep the provider configurable: local defaults select the OpenAI-compatible analyzer, while heuristic remains an explicit selectable option. An unavailable configured provider fails closed and never silently falls back.
 
 ## Implementation slices
 
@@ -139,13 +140,13 @@ Use Chat Completions (`POST /v1/chat/completions`) with JSON mode for the initia
 ### 4. Wire selection, consent, persistence, and reporting
 
 - Register the adapter in `ProviderCatalog` with exact role, categories, trust boundary, model/version, and disclosure configuration.
-- Integrate the claim-analysis path with `ProviderCallGate`; update `RunConfigurationFactory` and run snapshot pinning while preserving `heuristic` as the default.
+- Integrate analysis and content-free availability probes with `ProviderCallGate`; update `RunConfigurationFactory` and run snapshot pinning. Keep heuristic explicitly selectable.
 - Persist only the returned target links; retain `INFERRED_PROVISIONAL`. Update `ClaimCitationPairCounter` and expected-pair initialization to use those links.
 - Confirm current composite database constraints and report projections handle zero/subset links. No migration is expected if the existing same-context constraints remain sufficient; add one only if verification shows the schema cannot represent the accepted behavior.
 - Ensure unlinked claims remain visible as “No Citation Targets” and are not emitted as unresolved-reference or Claim–Paper Verification outcomes.
 - Verify that the existing provider configuration UI presents the API directory option and collects its declared external categories. Only change public API/OpenAPI schemas if implementation changes their shape.
 
-**Done when:** an Analysis Run pins the selected analyzer and policy; an external request is impossible without exact consent; only selected links generate downstream pairs; heuristic defaults and historical runs are unchanged.
+**Done when:** an Analysis Run pins the selected analyzer and policy; an external request is impossible without exact consent; only selected links generate downstream pairs; no provider failure silently changes the pinned analyzer; historical runs remain unchanged.
 
 ### 5. End-to-end verification and docs
 
@@ -184,5 +185,6 @@ Use Chat Completions (`POST /v1/chat/completions`) with JSON mode for the initia
 - [ADR 0003: provider consent and deletion](./adr/0003-explicit-provider-consent-and-data-retention.md)
 - [ADR 0004: run-scoped parsed structure](./adr/0004-run-scoped-parsed-document-structure.md)
 - [ADR 0009: selected claim-to-target associations](./adr/0009-select-citation-targets-per-claim.md)
+- [ADR 0010: configured local default and availability preflight](./adr/0010-default-local-claim-analysis-provider-and-preflight.md)
 - [OpenAI Chat Completions API reference](https://platform.openai.com/docs/api-reference/chat/create)
 - [OpenAI structured model outputs](https://developers.openai.com/api/docs/guides/structured-outputs)

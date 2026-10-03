@@ -23,6 +23,16 @@ class ClaimAnalysisService(
         require(registered.size == providers.size) { "Claim-analysis provider IDs must be unique." }
     }
 
+    fun validateProviderAvailability(configuration: AnalysisConfigurationSnapshot) {
+        try {
+            selectedProvider(configuration).validateAvailability(configuration)
+        } catch (exception: NonRetryablePipelineException) {
+            throw exception
+        } catch (exception: IllegalArgumentException) {
+            throw NonRetryablePipelineException(exception.message ?: "Claim-analysis provider configuration is invalid.")
+        }
+    }
+
     fun analyze(
         parsed: ParsedScientificDocument,
         configuration: AnalysisConfigurationSnapshot,
@@ -41,18 +51,22 @@ class ClaimAnalysisService(
         parsed: ParsedScientificDocument,
         configuration: AnalysisConfigurationSnapshot,
     ): List<CitationContextClaims> {
+        val provider = selectedProvider(configuration)
+        val request = requestFactory.from(parsed)
+        if (request.contexts.isEmpty()) return emptyList()
+
+        val output = provider.analyze(request, configuration)
+        return validateOutput(request.contexts, output)
+    }
+
+    private fun selectedProvider(configuration: AnalysisConfigurationSnapshot): ClaimAnalysisProvider {
         val selection = configuration.claimExtractor
         val registration = providerCatalog.requireSelectable(CLAIM_EXTRACTOR_ROLE, selection.provider)
         validatePinnedProvider(selection, registration)
         val provider = providersById[selection.provider]
             ?: throw IllegalArgumentException("The selected claim-analysis provider is not available in this deployment.")
         validateProviderMetadata(provider, selection, registration)
-
-        val request = requestFactory.from(parsed)
-        if (request.contexts.isEmpty()) return emptyList()
-
-        val output = provider.analyze(request, configuration)
-        return validateOutput(request.contexts, output)
+        return provider
     }
 
     private fun validatePinnedProvider(selection: ProviderSelection, registration: ProviderRegistration) {

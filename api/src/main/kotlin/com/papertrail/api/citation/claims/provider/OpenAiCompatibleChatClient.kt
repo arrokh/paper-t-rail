@@ -49,6 +49,47 @@ class OpenAiCompatibleChatClient(
         }
     }
 
+    /** Checks endpoint reachability without sending claim, document, or other run payloads. */
+    fun validateAvailability() {
+        val endpoint = settings.modelsUri
+            ?: throw OpenAiCompatibleProviderException("The OpenAI-compatible claim-analysis endpoint is not configured.")
+        if (!settings.isSelectable) {
+            throw OpenAiCompatibleProviderException("The OpenAI-compatible claim-analysis endpoint is not selectable.")
+        }
+        val requestBuilder = HttpRequest.newBuilder(endpoint)
+            .timeout(Duration.ofMillis(AVAILABILITY_TIMEOUT_MILLIS))
+            .header("Accept", "application/json")
+            .GET()
+        settings.apiKey?.takeIf(String::isNotBlank)?.let { requestBuilder.header("Authorization", "Bearer $it") }
+        val responseFuture = try {
+            httpClient.sendAsync(requestBuilder.build(), HttpResponse.BodyHandlers.discarding())
+        } catch (exception: Exception) {
+            throw RetryableOpenAiCompatibleProviderException("The OpenAI-compatible claim-analysis endpoint could not be reached.")
+        }
+        val response = try {
+            responseFuture.get(AVAILABILITY_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+        } catch (exception: InterruptedException) {
+            responseFuture.cancel(true)
+            Thread.currentThread().interrupt()
+            throw RetryableOpenAiCompatibleProviderException("The OpenAI-compatible endpoint availability check was interrupted.")
+        } catch (exception: TimeoutException) {
+            responseFuture.cancel(true)
+            throw RetryableOpenAiCompatibleProviderException("The OpenAI-compatible claim-analysis endpoint availability check timed out.")
+        } catch (exception: Exception) {
+            throw RetryableOpenAiCompatibleProviderException("The OpenAI-compatible claim-analysis endpoint could not be reached.")
+        }
+        if (response.statusCode() == 408 || response.statusCode() == 429 || response.statusCode() in 500..599) {
+            throw RetryableOpenAiCompatibleProviderException(
+                "The OpenAI-compatible claim-analysis endpoint availability check returned retryable HTTP ${response.statusCode()}.",
+            )
+        }
+        if (response.statusCode() !in 200..299) {
+            throw OpenAiCompatibleProviderException(
+                "The OpenAI-compatible claim-analysis endpoint availability check returned HTTP ${response.statusCode()}.",
+            )
+        }
+    }
+
     fun complete(requestBody: ByteArray): String {
         val endpoint = settings.endpointUri
             ?: throw OpenAiCompatibleProviderException("The OpenAI-compatible claim-analysis endpoint is not configured.")
@@ -108,6 +149,7 @@ class OpenAiCompatibleChatClient(
 
     companion object {
         private const val CONNECT_TIMEOUT_SECONDS = 5L
+        private const val AVAILABILITY_TIMEOUT_MILLIS = 5_000L
     }
 }
 

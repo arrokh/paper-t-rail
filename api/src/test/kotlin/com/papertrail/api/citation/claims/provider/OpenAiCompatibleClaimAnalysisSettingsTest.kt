@@ -26,6 +26,17 @@ class OpenAiCompatibleClaimAnalysisSettingsTest {
     }
 
     @Test
+    fun `adds the OpenAI v1 API path when the configured base URL is only a host`() {
+        val rootBase = localSettings(baseUrl = "http://127.0.0.1:1234")
+        val versionedBase = localSettings(baseUrl = "http://127.0.0.1:1234/v1")
+
+        assertEquals("http://127.0.0.1:1234/v1/chat/completions", rootBase.endpointUri.toString())
+        assertEquals("http://127.0.0.1:1234/v1/models", rootBase.modelsUri.toString())
+        assertEquals("http://127.0.0.1:1234/v1/chat/completions", versionedBase.endpointUri.toString())
+        assertEquals("http://127.0.0.1:1234/v1/models", versionedBase.modelsUri.toString())
+    }
+
+    @Test
     fun `external hosts require HTTPS deployment review and a retention disclosure`() {
         val external = OpenAiCompatibleClaimAnalysisSettings(
             enabled = true,

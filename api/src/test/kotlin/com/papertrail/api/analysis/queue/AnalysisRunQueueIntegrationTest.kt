@@ -92,6 +92,7 @@ import com.papertrail.api.citation.claims.service.ClaimAnalysisRequestFactory
 import com.papertrail.api.citation.claims.provider.ClaimAnalysisProvider
 import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
 import com.papertrail.api.citation.claims.provider.OpenAiCompatibleProviderException
+import com.papertrail.api.citation.claims.provider.RetryableOpenAiCompatibleProviderException
 import com.papertrail.api.citation.claims.service.HeuristicClaimExtractor
 import com.papertrail.api.citation.claims.service.HeuristicClaimAnalysisProvider
 import com.papertrail.api.document.validation.PdfDocumentValidator
@@ -807,6 +808,60 @@ class AnalysisRunQueueIntegrationTest {
             created.analysisRunId,
         ).toSet())
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM claim_paper_verifications WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+    }
+
+    @Test
+    fun `selected claim provider availability is checked before the source PDF is retrieved`() {
+        val settings = OpenAiCompatibleClaimAnalysisSettings(
+            enabled = true,
+            baseUrl = "http://127.0.0.1:9123",
+            modelId = "microsoft/phi-4-mini-reasoning",
+            trustedHosts = setOf("127.0.0.1"),
+        )
+        val providerCatalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val configuration = configurationFactory(providerCatalog).from(
+            RunConfigurationRequest(claimExtractorProvider = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID),
+        )
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        val unavailableProvider = object : ClaimAnalysisProvider {
+            override val providerId = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID
+            override val version = OpenAiCompatibleClaimAnalysisSettings.VERSION
+            override val modelId: String? = settings.modelId
+            override val targetSelectionPolicyVersion = ClaimAnalysisVersions.MODEL_TARGET_SELECTION_POLICY
+            override val promptVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_PROMPT
+            override val outputMappingVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_OUTPUT_MAPPING
+
+            override fun validateAvailability(configuration: AnalysisConfigurationSnapshot) {
+                throw RetryableOpenAiCompatibleProviderException("The claim-analysis endpoint is unavailable.")
+            }
+
+            override fun analyze(
+                request: ClaimAnalysisRequest,
+                configuration: AnalysisConfigurationSnapshot,
+            ): List<CitationContextClaims> = error("Analysis must not begin before the endpoint preflight succeeds.")
+        }
+
+        assertThrows(RetryableOpenAiCompatibleProviderException::class.java) {
+            eventHandler(
+                claimAnalysisProviders = listOf(unavailableProvider),
+                providerCatalog = providerCatalog,
+            ).handle(event)
+        }
+
+        assertEquals(0, objectStore.getCalls())
+        assertEquals("QUEUED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT count(*) FROM parsed_document_parses WHERE analysis_run_id = ?",
+            Int::class.java,
+            created.analysisRunId,
+        ))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = ?", Int::class.java, created.eventId))
     }
 
     @Test
@@ -3311,6 +3366,7 @@ class AnalysisRunQueueIntegrationTest {
         private val content = mutableMapOf<String, ByteArray>()
         private val contentTypes = mutableMapOf<String, String>()
         private val checksums = mutableMapOf<String, String>()
+        private val reads = AtomicInteger()
         override fun put(objectKey: String, content: ByteArray, contentType: String) {
             this.content[objectKey] = content.copyOf()
             contentTypes[objectKey] = contentType
@@ -3318,7 +3374,11 @@ class AnalysisRunQueueIntegrationTest {
                 .digest(content)
                 .joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }
-        override fun get(objectKey: String): ByteArray = content[objectKey]?.copyOf() ?: error("Source object missing")
+        override fun get(objectKey: String): ByteArray {
+            reads.incrementAndGet()
+            return content[objectKey]?.copyOf() ?: error("Source object missing")
+        }
+        fun getCalls(): Int = reads.get()
         override fun stat(objectKey: String): SourceObjectMetadata {
             val value = content[objectKey] ?: error("Source object missing")
             return SourceObjectMetadata(size = value.size.toLong(), sha256 = checksums[objectKey])
@@ -3328,7 +3388,7 @@ class AnalysisRunQueueIntegrationTest {
         override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey); checksums.remove(objectKey) }
         fun contentType(objectKey: String): String? = contentTypes[objectKey]
         fun contains(objectKey: String): Boolean = objectKey in content
-        fun clear() { content.clear(); contentTypes.clear(); checksums.clear() }
+        fun clear() { content.clear(); contentTypes.clear(); checksums.clear(); reads.set(0) }
     }
 
     @BeforeEach

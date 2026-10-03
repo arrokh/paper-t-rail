@@ -5,8 +5,12 @@ import io.swagger.v3.oas.annotations.media.Schema
 
 @Schema(description = "Provider selections and explicit per-run external-provider consent.")
 data class RunConfigurationRequest(
-    @field:Schema(description = "Claim extractor provider.", defaultValue = "heuristic", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
-    val claimExtractorProvider: String = "heuristic",
+    @field:Schema(
+        description = "Claim-analysis provider. If omitted, use the deployment-configured default; heuristic remains selectable.",
+        defaultValue = "openai-compatible-chat",
+        requiredMode = Schema.RequiredMode.NOT_REQUIRED,
+    )
+    val claimExtractorProvider: String? = null,
     @field:Schema(
         description = "Embedding provider. If omitted, select local Ollama when available; otherwise use local feature-hash embeddings.",
         defaultValue = "ollama",

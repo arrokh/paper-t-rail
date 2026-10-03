@@ -1031,11 +1031,11 @@ Current runtime:
 ClaimAnalysisProvider
 ├── HeuristicClaimAnalysisProvider
 │   └── HeuristicClaimExtractor
-└── OpenAiCompatibleClaimAnalysisProvider (opt-in; deployment-configured)
+└── OpenAiCompatibleClaimAnalysisProvider (deployment-configured; local default)
     └── OpenAiCompatibleChatClient
 ```
 
-The optional OpenAI-compatible implementation is document-level and its contract is specified in the [claim-analysis implementation plan](./openai-compatible-provider-plan.md):
+The OpenAI-compatible implementation is document-level and its contract is specified in the [claim-analysis implementation plan](./openai-compatible-provider-plan.md):
 
 ```text
 ClaimAnalysisProvider
@@ -1043,7 +1043,7 @@ ClaimAnalysisProvider
 └── OpenAiCompatibleClaimAnalysisProvider
 ```
 
-The LLM operation returns context-grouped Atomic Claims and their selected GROBID Citation Target keys together. The heuristic remains the default and retains all-target linking.
+The LLM operation returns context-grouped Atomic Claims and their selected GROBID Citation Target keys together. Local Spring and Compose defaults select the OpenAI-compatible provider; heuristic remains explicitly selectable and retains all-target linking.
 
 ### Heuristic provider
 
@@ -1061,7 +1061,7 @@ Do not overbuild this initially.
 
 ### LLM provider
 
-The optional claim analyzer uses the shared OpenAI-compatible chat transport described in the [implementation plan](./openai-compatible-provider-plan.md). The transport handles HTTP/protocol concerns only; the claim-analysis adapter owns its prompt, response schema, source-span validation, and same-context target selection. Keep provider-native request/response objects out of the domain. Other pipeline roles may add their own adapters later; Stage 05 and embeddings are not part of the first implementation.
+The claim analyzer uses the shared OpenAI-compatible chat transport described in the [implementation plan](./openai-compatible-provider-plan.md). The transport handles HTTP/protocol concerns only; the claim-analysis adapter owns its prompt, response schema, source-span validation, and same-context target selection. Before a fresh run retrieves or parses the Source Document, it probes `GET /v1/models` without run payload and discards the response body. Keep provider-native request/response objects out of the domain. Other pipeline roles may add their own adapters later; Stage 05 and embeddings are not part of this implementation.
 
 ## 14.3 Why Claim Extraction Is Separate from System One
 
@@ -1084,9 +1084,9 @@ Do not make Laya/Jev responsible for generative claim rewriting.
 
 # 15. Shared LLM Transport and Role-Specific Adapters
 
-The first implemented LLM integration is the optional document-level Pipeline 01 claim-analysis adapter in the [implementation plan](./openai-compatible-provider-plan.md). It uses one configured OpenAI-compatible Chat Completions transport per deployment. The shared transport owns bounded HTTP/protocol behavior and server-side credentials; it does not own claim semantics or return a universal domain result. The provider remains disabled unless explicitly configured and selected; external endpoints additionally require deployment review, retention disclosure, and exact per-run consent.
+The first implemented LLM integration is the document-level Pipeline 01 claim-analysis adapter in the [implementation plan](./openai-compatible-provider-plan.md). It uses one configured OpenAI-compatible Chat Completions transport per deployment. Local defaults use `http://127.0.0.1:1234` and model `microsoft/phi-4-mini-reasoning`; Compose reaches the host service through `host.docker.internal:1234`. The shared transport owns bounded HTTP/protocol behavior and server-side credentials; it does not own claim semantics or return a universal domain result. The provider can be disabled or replaced through deployment configuration; heuristic remains selectable and is never an implicit fallback. External endpoints additionally require deployment review, retention disclosure, and exact per-run consent, including before the content-free availability probe.
 
-Keep the claim-analysis adapter behind its focused domain port. It owns the prompt, structured response mapping, source-span checks, and same-context target selection. The default remains the heuristic provider. A future use case, such as System One, must implement its own existing domain port and response contract while reusing the transport only where the API operation fits. Embeddings require a distinct compatible embeddings adapter. Do not build a provider framework or send model calls to parts of the system that can remain deterministic.
+Keep the claim-analysis adapter behind its focused domain port. It owns the prompt, structured response mapping, source-span checks, and same-context target selection. A fresh run's availability probe checks the compatible `/v1/models` endpoint before source retrieval/parsing; a failed probe follows queue retry/failure policy and never changes the pinned provider. A future use case, such as System One, must implement its own existing domain port and response contract while reusing the transport only where the API operation fits. Embeddings require a distinct compatible embeddings adapter. Do not build a provider framework or send model calls to parts of the system that can remain deterministic.
 
 ---
 
@@ -1713,19 +1713,23 @@ Create a new Analysis Run. For reproducibility, each run must retain the source 
 
 # 29. Provider Enablement Configuration
 
-Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines a conservative deployment profile for implemented stages. The issue #6 runtime persists run-scoped Atomic Claims with source spans and context-scoped Citation Target links; issue #7 resolves bibliography entries conservatively; issue #8 records run-scoped legal cited-paper access and language eligibility; issue #10 implements retrieval, judgements, and conflict-aware reporting. Recorded fixtures remain the selected defaults for scholarly metadata and open-access discovery. For local consent-flow testing, the repository configuration offers reviewed Crossref and Unpaywall options; deployments must verify current terms, configure deployment-specific disclosures/contact, or disable both adapters (see [ADR 0006](adr/0006-reviewed-provider-options-in-local-default-configuration.md)). Local cited-paper indexing uses the pinned embedding profile; the new-run UI prefers Ollama whenever listed, while API requests that omit an embedding selection prefer only locally trusted Ollama and otherwise fall back to feature-hash. Ollama endpoint credentials remain API-side, and endpoints outside the trusted deployment boundary are classified `EXTERNAL` and gated by per-run consent. The Spring and Compose System One default preference is Laya; it requires a valid authenticated endpoint on a trusted host to be selectable, and omitted selections resolve to mock if it is unavailable. Per issue #45, the production Spring profile defaults Laya enabled/selected and experimental aggregation enabled; this does not establish calibration. Human calibration and deployment-specific approval are not product or release requirements. Outputs remain visibly uncalibrated and no accuracy claim is made. The conservative deployment example below explicitly disables Laya as a target-specific opt-out; it is not the production Spring profile default. `make dev` automatically prepares the private key, verifies/downloads the pinned model, and starts the sidecar unless `LAYA_ENABLED=false`; first startup downloads roughly 1.7 GB into a persistent volume. `make laya-up` remains available to start/recreate it separately. The local configured default prefers Laya when selectable, and resolves omitted selections to mock if its configuration is unavailable. Explicitly selected Laya persists uncalibrated Evidence Judgements for eligible passages. `.env.example`, base Spring configuration, and Compose enable experimental aggregation by default; set `LOCAL_LAYA_AGGREGATION_ENABLED=false` to keep final semantic statuses `NOT_RUN`. Runtime failures do not fall back. All generated judgements and statuses remain uncalibrated. The immutable run snapshot pins the selected embedding provider/profile and open-access provider, a non-secret fingerprint of provider request settings (including the configured Unpaywall contact address without storing the address itself), the selected System One runtime/checkpoint/output mapping and endpoint fingerprint, the reviewed retention disclosure, claim extraction, reference-resolution policy/threshold, and the exact external-provider consent categories. A stage that was not executed must not be represented as though it used a default policy.
+Keep configuration simple. The evidence-backed classifications, payload categories, and provider-specific retention/deletion limits are recorded in [the V1 provider matrix](./agents/provider-matrix.md). The YAML below defines the current local profile for implemented stages: new runs use the configured OpenAI-compatible Stage 01 claim analyzer, with heuristic available as an explicit alternative; scholarly metadata and open-access discovery continue to default to recorded fixtures. For local consent-flow testing, the repository configuration offers reviewed Crossref and Unpaywall options; deployments must verify current terms, configure deployment-specific disclosures/contact, or disable both adapters (see [ADR 0006](adr/0006-reviewed-provider-options-in-local-default-configuration.md)). Local cited-paper indexing uses the pinned embedding profile; the new-run UI prefers Ollama whenever listed, while API requests that omit an embedding selection prefer only locally trusted Ollama and otherwise fall back to feature-hash. Ollama endpoint credentials remain API-side, and endpoints outside the trusted deployment boundary are classified `EXTERNAL` and gated by per-run consent. The Spring and Compose System One default preference is Laya; it requires a valid authenticated endpoint on a trusted host to be selectable, and omitted selections resolve to mock if it is unavailable. Per issue #45, the production Spring profile defaults Laya enabled/selected and experimental aggregation enabled; this does not establish calibration. Human calibration and deployment-specific approval are not product or release requirements. Outputs remain visibly uncalibrated and no accuracy claim is made. The conservative deployment example below explicitly disables Laya as a target-specific opt-out; it is not the production Spring profile default. `make dev` automatically prepares the private key, verifies/downloads the pinned model, and starts the sidecar unless `LAYA_ENABLED=false`; first startup downloads roughly 1.7 GB into a persistent volume. `make laya-up` remains available to start/recreate it separately. The local configured default prefers Laya when selectable, and resolves omitted selections to mock if its configuration is unavailable. Explicitly selected Laya persists uncalibrated Evidence Judgements for eligible passages. `.env.example`, base Spring configuration, and Compose enable experimental aggregation by default; set `LOCAL_LAYA_AGGREGATION_ENABLED=false` to keep final semantic statuses `NOT_RUN`. Runtime failures do not fall back. All generated judgements and statuses remain uncalibrated. The immutable run snapshot pins the selected embedding provider/profile and open-access provider, a non-secret fingerprint of provider request settings (including the configured Unpaywall contact address without storing the address itself), the selected System One runtime/checkpoint/output mapping and endpoint fingerprint, the reviewed retention disclosure, claim extraction, reference-resolution policy/threshold, and the exact external-provider consent categories. A stage that was not executed must not be represented as though it used a default policy.
 
 Conservative deployment example:
 
 ```yaml
 providers:
   claim-extractor:
-    default: heuristic
-    heuristic:
-      enabled: true
-    llm:
-      enabled: false
-      provider: local
+    default-provider: ${CLAIM_ANALYSIS_DEFAULT_PROVIDER:openai-compatible-chat}
+
+  openai-compatible-claim-analysis:
+    enabled: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_ENABLED:true}
+    base-url: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_BASE_URL:http://127.0.0.1:1234}
+    model: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MODEL:microsoft/phi-4-mini-reasoning}
+    api-key: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_API_KEY:}  # server-side only
+    trusted-hosts: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_TRUSTED_HOSTS:localhost,127.0.0.1}
+    external-enablement-reviewed: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_EXTERNAL_ENABLEMENT_REVIEWED:false}
+    external-retention-disclosure: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_EXTERNAL_RETENTION_DISCLOSURE:}
 
   llm:
     local:
@@ -2748,7 +2752,7 @@ The multipart `configuration` field and re-analysis JSON body use the same confi
 }
 ```
 
-The example selects only local/mock providers, so it carries no external-provider consent. For an enabled, classified external provider, include one consent entry per selected provider with exactly its disclosed categories, for example `{"providerId":"jev","dataCategories":["atomic_claims","evidence_passages"]}`. Unpaywall additionally requires `bibliographic_metadata` and `provider_contact_email` consent for discovery and `cited_paper_location` for the actual content-host URL request. The server rejects disabled, unclassified, unknown, and unconsented selections before creating the Analysis Run. The immutable run snapshot records selected-provider classification/category mappings and the per-run consent. Every external adapter must pass categories derived from the actual outbound request and the run snapshot through the provider-call gate before its send action.
+The example selects only local/mock providers, so it carries no external-provider consent. For an enabled, classified external provider, include one consent entry per selected provider with exactly its disclosed categories, for example `{"providerId":"jev","dataCategories":["atomic_claims","evidence_passages"]}`. Unpaywall additionally requires `bibliographic_metadata` and `provider_contact_email` consent for discovery and `cited_paper_location` for the actual content-host URL request. The server rejects disabled, unclassified, unknown, and unconsented selections before creating the Analysis Run. The immutable run snapshot records selected-provider classification/category mappings and the per-run consent. Every external adapter must pass categorized content-bearing requests and content-free availability probes through the provider-call gate; probes require run/provider configuration checks and the consent declared for the provider's subsequent payload before sending.
 
 Returns:
 
@@ -3356,11 +3360,11 @@ enabled: false
 
 # 55. Local Development Defaults
 
-The following describes local defaults for the current pipeline (see [the provider matrix](./agents/provider-matrix.md) and the conservative deployment example in [section 29](#29-provider-enablement-configuration)). The runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, version-pinned heuristic claim analysis by default (with an opt-in OpenAI-compatible document analyzer when configured) and context-scoped target linking, conservative bibliography resolution through recorded metadata fixtures, and deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. Its `feature-hash-384-v1` fallback vectors are lexical features, not a trained semantic embedding model. Local Compose prefers trusted Ollama for new runs when selectable, falling back to feature-hash when Ollama is unavailable. `make dev` configures and starts the Laya sidecar after verifying/downloading the model unless `LAYA_ENABLED=false`; `make laya-up` can start it separately. When Laya is selectable, Compose prefers it for new runs, while missing configuration resolves an omitted choice to mock. The application default preference is Laya; omitted selections resolve to mock if Laya is unselectable. Runs selecting Laya record raw, uncalibrated judgements for eligible passages. If a complete request exceeds the pinned 1,024-token context, the API preflights each of the six complete question sequences with the sidecar's pinned tokenizer, then splits only that retrieved passage at deterministic sentence boundaries. Span results are persisted idempotently and remain diagnostics only; they never roll up into a parent Evidence Judgement or final Claim–Paper status. The original Evidence Passage is retained, and an unfit sentence remains intact with an incomplete reason. `.env.example`, base Spring configuration, and Compose default `LOCAL_LAYA_AGGREGATION_ENABLED=true`; set it to `false` to leave new Laya runs at `NOT_RUN`. All runs that aggregate snapshot the four documented threshold variables and policy versions, and their judgements and statuses remain uncalibrated. The owner-approved production Spring defaults are Laya enabled/selected and experimental aggregation enabled; this is not calibration evidence. Calibration and deployment-specific approval are not product or release requirements; issue #45 is closed as not planned. All Laya outputs remain explicitly uncalibrated.
+The following describes local defaults for the current pipeline (see [the provider matrix](./agents/provider-matrix.md) and the deployment example in [section 29](#29-provider-enablement-configuration)). The runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, version-pinned OpenAI-compatible claim analysis by default (with heuristic as an explicit alternative) and context-scoped target linking, conservative bibliography resolution through recorded metadata fixtures, and deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. Its `feature-hash-384-v1` fallback vectors are lexical features, not a trained semantic embedding model. Local Compose prefers trusted Ollama for new runs when selectable, falling back to feature-hash when Ollama is unavailable. `make dev` configures and starts the Laya sidecar after verifying/downloading the model unless `LAYA_ENABLED=false`; `make laya-up` can start it separately. When Laya is selectable, Compose prefers it for new runs, while missing configuration resolves an omitted choice to mock. The application default preference is Laya; omitted selections resolve to mock if Laya is unselectable. Runs selecting Laya record raw, uncalibrated judgements for eligible passages. If a complete request exceeds the pinned 1,024-token context, the API preflights each of the six complete question sequences with the sidecar's pinned tokenizer, then splits only that retrieved passage at deterministic sentence boundaries. Span results are persisted idempotently and remain diagnostics only; they never roll up into a parent Evidence Judgement or final Claim–Paper status. The original Evidence Passage is retained, and an unfit sentence remains intact with an incomplete reason. `.env.example`, base Spring configuration, and Compose default `LOCAL_LAYA_AGGREGATION_ENABLED=true`; set it to `false` to leave new Laya runs at `NOT_RUN`. All runs that aggregate snapshot the four documented threshold variables and policy versions, and their judgements and statuses remain uncalibrated. The owner-approved production Spring defaults are Laya enabled/selected and experimental aggregation enabled; this is not calibration evidence. Calibration and deployment-specific approval are not product or release requirements; issue #45 is closed as not planned. All Laya outputs remain explicitly uncalibrated.
 
 ```text
 claim extractor:
-heuristic
+OpenAI-compatible `microsoft/phi-4-mini-reasoning` at the local configured endpoint (content-free availability checked before fresh document processing); heuristic remains explicitly selectable
 
 embedding:
 local Ollama `nomic-embed-text:v1.5` (768 dimensions) when trusted and selectable, with `feature-hash-384-v1` word unigram/bigram vectors (deterministic; not a trained semantic model) as the safe fallback; non-Compose deployments must configure Ollama explicitly
@@ -3601,15 +3605,15 @@ UI can already display parsed citations.
 
 ## Phase 4 — Claim Extraction
 
-The current implementation provides the version-pinned heuristic and the optional document-level OpenAI-compatible claim analyzer. Both persist source-spanned claims and context-scoped inferred/provisional target links. Stage 05 is not part of this extension.
+The current implementation provides the version-pinned heuristic and the deployment-configured document-level OpenAI-compatible claim analyzer. Both persist source-spanned claims and context-scoped inferred/provisional target links. Local new runs select OpenAI-compatible analysis by default; provider failure never falls back to heuristic. Stage 05 is not part of this extension.
 
 ```text
 ClaimAnalysisProvider
-HeuristicClaimAnalysisProvider (default; all targets in the context)
-OpenAiCompatibleClaimAnalysisProvider (opt-in; selected target subset or none)
+HeuristicClaimAnalysisProvider (selectable alternative; all targets in the context)
+OpenAiCompatibleClaimAnalysisProvider (local default; selected target subset or none)
 ```
 
-The document-level operation returns claims and selected same-context Citation Target keys together, pins provider/link policy to the run, and preserves claims that have no selected target. Invalid output or provider failure never silently switches to heuristic. Permanent configuration/consent/contract failures fail without redelivery; transient transport failures remain retryable. See the [implementation plan](./openai-compatible-provider-plan.md) for the bounded request, response, and consent contract.
+The document-level operation returns claims and selected same-context Citation Target keys together, pins provider/link policy to the run, and preserves claims that have no selected target. Fresh runs check provider availability before source retrieval/parsing. Invalid output or provider failure never silently switches to heuristic. Permanent configuration/consent/contract failures fail without redelivery; transient transport failures remain retryable. See the [implementation plan](./openai-compatible-provider-plan.md) for the bounded request, response, and consent contract.
 
 ## Phase 5 — Reference Resolution
 
@@ -3693,7 +3697,7 @@ human reviews
 
 Before enabling an external provider, verify and disclose its data-retention/deletion terms and require per-run consent for the data categories it receives.
 
-The first implemented model-provider extension is the Pipeline 01 OpenAI-compatible document-level claim analyzer described in the [implementation plan](./openai-compatible-provider-plan.md). It is not a Stage 05 implementation and remains opt-in; exact external deployments still require product/service review and per-run consent. Other optional extensions such as hosted Jev, Google embeddings, and Analysis Run comparison/metrics remain separate future work after their provider boundaries and data requirements are reviewed.
+The first implemented model-provider extension is the Pipeline 01 OpenAI-compatible document-level claim analyzer described in the [implementation plan](./openai-compatible-provider-plan.md). It is not a Stage 05 implementation. Local defaults select it, while exact external deployments still require product/service review, retention disclosure, and per-run consent. Other optional extensions such as hosted Jev, Google embeddings, and Analysis Run comparison/metrics remain separate future work after their provider boundaries and data requirements are reviewed.
 
 ---
 

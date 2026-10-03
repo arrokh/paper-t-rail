@@ -79,6 +79,8 @@ class AnalysisRunProcessingService(
             throw IllegalStateException("Queue event provenance does not match the persisted Source Document and Analysis Run.")
         }
         jdbc.requireActiveSourceDocument(event.payload.documentId)
+        val existingParsed = parsedDocumentRepository.find(event.analysisRunId)
+        if (existingParsed == null) claimAnalysisService.validateProviderAvailability(run.configuration)
         val content = objectStore.get(document.objectKey)
         if (sha256Hex(content) != run.sourceHash) {
             throw IllegalStateException("Stored Source Document failed its SHA-256 integrity check.")
@@ -113,7 +115,6 @@ class AnalysisRunProcessingService(
         pipelineProgressRepository.mark(event.analysisRunId, "source", "parse-document", "document", "Source Document", "IN_PROGRESS")
 
         jdbc.requireActiveSourceDocument(event.payload.documentId)
-        val existingParsed = parsedDocumentRepository.find(event.analysisRunId)
         if (existingParsed == null) {
             jdbc.requireActiveSourceDocument(event.payload.documentId)
             val parsed = scientificDocumentParser.parse(content)

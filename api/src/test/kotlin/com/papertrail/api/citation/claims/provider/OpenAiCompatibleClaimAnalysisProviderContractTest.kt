@@ -70,6 +70,44 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     }
 
     @Test
+    fun `availability preflight uses only the content-free OpenAI models endpoint`() = withModelsServer { server, requests ->
+        val settings = localSettings(server).copy(
+            baseUrl = "http://127.0.0.1:${server.address.port}",
+            apiKey = "server-side-secret",
+        )
+        val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val provider = provider(settings, catalog)
+
+        provider.validateAvailability(configuration(catalog))
+
+        assertEquals(
+            AvailabilityRequest("GET", "/v1/models", "Bearer server-side-secret", ""),
+            requests.single(),
+        )
+    }
+
+    @Test
+    fun `availability preflight retries server failures and does not expose response content`() {
+        withModelsServer(statusCode = 503) { server, _ ->
+            val settings = localSettings(server)
+            val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+            val failure = assertThrows(RetryableOpenAiCompatibleProviderException::class.java) {
+                provider(settings, catalog).validateAvailability(configuration(catalog))
+            }
+            assertFalse(failure.message.orEmpty().contains("provider-private-response"))
+        }
+        withModelsServer(statusCode = 404) { server, _ ->
+            val settings = localSettings(server)
+            val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+            val failure = assertThrows(OpenAiCompatibleProviderException::class.java) {
+                provider(settings, catalog).validateAvailability(configuration(catalog))
+            }
+            assertTrue(failure.message.orEmpty().contains("HTTP 404"))
+            assertFalse(failure.message.orEmpty().contains("provider-private-response"))
+        }
+    }
+
+    @Test
     fun `preserves a model response with no selected Citation Targets`() = withServer(selectTargets = false) { server, _ ->
         val settings = localSettings(server)
         val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
@@ -386,6 +424,33 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         ParsedBibliographyEntry(1, "ref2", "Reference two", "Reference two", listOf("Grace Example"), 2023, "10.1000/two", "JOURNAL_ARTICLE"),
     )
 
+    private fun withModelsServer(
+        statusCode: Int = 200,
+        block: (HttpServer, CopyOnWriteArrayList<AvailabilityRequest>) -> Unit,
+    ) {
+        val requests = CopyOnWriteArrayList<AvailabilityRequest>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/v1/models") { exchange ->
+            val body = exchange.requestBody.use { it.readBytes().toString(StandardCharsets.UTF_8) }
+            requests += AvailabilityRequest(
+                method = exchange.requestMethod,
+                path = exchange.requestURI.path,
+                authorization = exchange.requestHeaders.getFirst("Authorization").orEmpty(),
+                body = body,
+            )
+            val response = "provider-private-response".toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(statusCode, response.size.toLong())
+            exchange.responseBody.use { it.write(response) }
+        }
+        server.start()
+        try {
+            block(server, requests)
+        } finally {
+            server.stop(0)
+        }
+    }
+
     private fun withServer(
         response: String? = null,
         selectTargets: Boolean = true,
@@ -412,6 +477,13 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             server.stop(0)
         }
     }
+
+    private data class AvailabilityRequest(
+        val method: String,
+        val path: String,
+        val authorization: String,
+        val body: String,
+    )
 
     private fun chatResponse(content: String): String = objectMapper.writeValueAsString(
         mapOf(

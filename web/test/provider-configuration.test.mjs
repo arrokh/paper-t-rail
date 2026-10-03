@@ -154,6 +154,11 @@ const localSelections = {
   openAccessProvider: "recorded-fixtures",
 };
 
+const preferredSelections = {
+  ...localSelections,
+  claimExtractorProvider: "openai-compatible-chat",
+};
+
 function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
@@ -199,14 +204,14 @@ test("new-run preferences default to local Ollama when exposed and feature-hash 
   };
 
   assert.deepEqual(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS), {
-    ...localSelections,
+    ...preferredSelections,
     embeddingProvider: "ollama",
     systemOneProvider: "laya",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
   assert.deepEqual(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS), {
-    ...localSelections,
+    ...preferredSelections,
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
@@ -217,6 +222,7 @@ test("new-run preferences explicitly fall back to safe providers when preferred 
     ...directory,
     providers: {
       ...directory.providers,
+      claimExtractor: directory.providers.claimExtractor.filter(({ providerId }) => providerId !== "openai-compatible-chat"),
       scholarlyMetadata: directory.providers.scholarlyMetadata.filter(({ providerId }) => providerId !== "crossref"),
       openAccess: directory.providers.openAccess.filter(({ providerId }) => providerId !== "unpaywall"),
     },
@@ -246,7 +252,7 @@ test("unavailable selections reconcile to the intended fallback instead of direc
 
   assert.deepEqual(
     availableProviderSelections(reorderedDirectory, DEFAULT_PROVIDER_SELECTIONS),
-    localSelections,
+    preferredSelections,
   );
 });
 

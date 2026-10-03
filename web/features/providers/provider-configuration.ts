@@ -12,7 +12,7 @@ export type ProviderSelections = {
 };
 
 export const DEFAULT_PROVIDER_SELECTIONS: ProviderSelections = {
-  claimExtractorProvider: "heuristic",
+  claimExtractorProvider: "openai-compatible-chat",
   embeddingProvider: "ollama",
   systemOneProvider: "laya",
   scholarlyMetadataProvider: "crossref",

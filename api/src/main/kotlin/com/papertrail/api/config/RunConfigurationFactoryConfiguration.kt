@@ -56,18 +56,18 @@ class RunConfigurationFactoryConfiguration {
 
     @Bean
     fun openAiCompatibleClaimAnalysisSettings(
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.enabled:false}") enabled: Boolean,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.base-url:}") baseUrl: String,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.model:}") model: String,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.api-key:}") apiKey: String,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.trusted-hosts:localhost,127.0.0.1}") trustedHosts: String,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.context-window-tokens:32768}") contextWindowTokens: Int,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-completion-tokens:2048}") maxCompletionTokens: Int,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-request-bytes:1048576}") maxRequestBytes: Int,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-response-bytes:1048576}") maxResponseBytes: Int,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.request-timeout-millis:60000}") requestTimeoutMillis: Long,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.external-enablement-reviewed:false}") enablementReviewed: Boolean,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.external-retention-disclosure:}") retentionDisclosure: String,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.enabled}") enabled: Boolean,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.base-url}") baseUrl: String,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.model}") model: String,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.api-key}") apiKey: String,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.trusted-hosts}") trustedHosts: String,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.context-window-tokens}") contextWindowTokens: Int,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-completion-tokens}") maxCompletionTokens: Int,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-request-bytes}") maxRequestBytes: Int,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-response-bytes}") maxResponseBytes: Int,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.request-timeout-millis}") requestTimeoutMillis: Long,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.external-enablement-reviewed}") enablementReviewed: Boolean,
+        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.external-retention-disclosure}") retentionDisclosure: String,
     ): OpenAiCompatibleClaimAnalysisSettings = OpenAiCompatibleClaimAnalysisSettings(
         enabled = enabled,
         baseUrl = baseUrl,
@@ -128,6 +128,7 @@ class RunConfigurationFactoryConfiguration {
         @Value("\${paper-trail.analysis.retrieval.final-candidates}") finalCandidateLimit: Int,
         @Value("\${paper-trail.analysis.retrieval.rrf-constant}") reciprocalRankFusionConstant: Int,
         @Value("\${paper-trail.upload.max-claim-citation-pairs}") maxClaimCitationPairs: Int,
+        @Value("\${paper-trail.providers.claim-extractor.default-provider}") defaultClaimExtractorProvider: String,
         @Value("\${paper-trail.providers.system-one.default-provider}") defaultSystemOneProvider: String,
         @Value("\${paper-trail.analysis.local-laya-aggregation.enabled}") localLayaAggregationEnabled: Boolean,
         @Value("\${paper-trail.analysis.local-laya-aggregation.direct-support-threshold}") directSupportThreshold: Double,
@@ -165,6 +166,7 @@ class RunConfigurationFactoryConfiguration {
             evidenceAggregationThresholds = aggregationThresholds.takeIf { localLayaAggregationEnabled },
             localLayaAggregationEnabled = localLayaAggregationEnabled,
             defaultSystemOneProvider = defaultSystemOneProvider,
+            defaultClaimExtractorProvider = defaultClaimExtractorProvider,
         )
     }
 }

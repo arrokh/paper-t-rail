@@ -376,6 +376,39 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
         configuration: AnalysisConfigurationSnapshot,
         sendRequest: (ProviderCallPayload) -> T,
     ): T {
+        val registration = requireMatchingSelection(role, providerId, configuration)
+        val actualPayloadCategories = payload.dataCategories
+        if (actualPayloadCategories.any { it !in registration.dataCategories }) {
+            throw ProviderCallRejectedException("Provider '$providerId' request contains an unclassified data category.")
+        }
+        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL && actualPayloadCategories.isEmpty()) {
+            throw ProviderCallRejectedException("External provider '$providerId' request has no classified payload categories.")
+        }
+        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
+            requireConsent(providerId, actualPayloadCategories, configuration)
+        }
+        return sendRequest(payload)
+    }
+
+    /** Authorizes a content-free availability probe while preserving run selection and external consent checks. */
+    fun <T> callAvailabilityCheck(
+        role: String,
+        providerId: String,
+        configuration: AnalysisConfigurationSnapshot,
+        checkAvailability: () -> T,
+    ): T {
+        val registration = requireMatchingSelection(role, providerId, configuration)
+        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
+            requireConsent(providerId, registration.dataCategories, configuration)
+        }
+        return checkAvailability()
+    }
+
+    private fun requireMatchingSelection(
+        role: String,
+        providerId: String,
+        configuration: AnalysisConfigurationSnapshot,
+    ): ProviderRegistration {
         val registration = try {
             catalog.requireSelectable(role, providerId)
         } catch (exception: ProviderNotSelectableException) {
@@ -423,26 +456,24 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
         ) {
             throw ProviderCallRejectedException("Provider '$providerId' configuration or payload mapping changed after this Analysis Run was created.")
         }
-        val actualPayloadCategories = payload.dataCategories
-        if (actualPayloadCategories.any { it !in registration.dataCategories }) {
-            throw ProviderCallRejectedException("Provider '$providerId' request contains an unclassified data category.")
+        return registration
+    }
+
+    private fun requireConsent(
+        providerId: String,
+        requiredCategories: Set<DataCategory>,
+        configuration: AnalysisConfigurationSnapshot,
+    ) {
+        val consented = configuration.externalProviderConsents
+            .firstOrNull { it.providerId == providerId }
+            ?.dataCategories
+            ?.mapNotNull(DataCategory::fromId)
+            ?.toSet()
+            .orEmpty()
+        val missingConsent = requiredCategories - consented
+        if (missingConsent.isNotEmpty()) {
+            val categories = missingConsent.map { it.id }.sorted().joinToString(", ")
+            throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent for: $categories.")
         }
-        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL && actualPayloadCategories.isEmpty()) {
-            throw ProviderCallRejectedException("External provider '$providerId' request has no classified payload categories.")
-        }
-        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
-            val consented = configuration.externalProviderConsents
-                .firstOrNull { it.providerId == providerId }
-                ?.dataCategories
-                ?.mapNotNull(DataCategory::fromId)
-                ?.toSet()
-                .orEmpty()
-            val missingConsent = actualPayloadCategories - consented
-            if (missingConsent.isNotEmpty()) {
-                val categories = missingConsent.map { it.id }.sorted().joinToString(", ")
-                throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent for: $categories.")
-            }
-        }
-        return sendRequest(payload)
     }
 }
