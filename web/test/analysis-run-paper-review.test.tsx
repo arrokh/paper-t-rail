@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnalysisRunDetailPage } from "@/features/analysis-runs/components/analysis-run-detail-page";
 import { AnalysisRunPaperReview } from "@/features/analysis-runs/components/analysis-run-paper-review";
+import { WorkspaceShell } from "@/features/workspace/components/workspace-shell";
 import type { AnalysisRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 
 const queryHookMocks = vi.hoisted(() => ({
@@ -249,9 +250,16 @@ function renderReview({ selectedOutcomeId = null, selectedReferenceKey = null, s
 
 function renderDetailPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  vi.stubGlobal("IntersectionObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
   return render(
     <QueryClientProvider client={queryClient}>
-      <AnalysisRunDetailPage analysisRunId={run.id} />
+      <WorkspaceShell>
+        <AnalysisRunDetailPage analysisRunId={run.id} />
+      </WorkspaceShell>
     </QueryClientProvider>,
   );
 }
@@ -285,6 +293,21 @@ describe("Analysis Run Paper Review", () => {
     const pageViewport = screen.getByRole("region", { name: "PDF page 1 scroll area" });
     pageViewport.focus();
     expect(document.activeElement).toBe(pageViewport);
+  });
+
+  it("adds an icon-only Back to top action alongside Focus Paper Review", () => {
+    installSourcePdfResponse();
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+
+    try {
+      renderReview();
+      const viewer = screen.getByRole("region", { name: "Original uploaded paper" });
+      expect(within(viewer).getByRole("button", { name: "Focus Paper Review" })).toBeTruthy();
+      fireEvent.click(within(viewer).getByRole("button", { name: "Back to top" }));
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+    } finally {
+      scrollTo.mockRestore();
+    }
   });
 
   it("renews MinIO URLs only when Refresh PDF is explicitly selected", async () => {
@@ -453,7 +476,7 @@ describe("Analysis Run Paper Review", () => {
     expect(await screen.findByRole("region", { name: quickAccessName })).toBeTruthy();
   });
 
-  it("keeps both Analysis Run views selectable and restores Paper Review from the pipeline", async () => {
+  it("removes Back to top while Paper Review is active and restores it for the pipeline", async () => {
     installSourcePdfResponse();
     queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
     queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
@@ -461,23 +484,37 @@ describe("Analysis Run Paper Review", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=source`);
 
     renderDetailPage();
+    const workspaceMain = screen.getByRole("main");
+    expect(workspaceMain.classList.contains("pb-6")).toBe(true);
     expect(screen.queryByRole("heading", { name: "Pipeline outputs" })).toBeNull();
     expect(screen.queryByText(/saved pipeline-stage results/i)).toBeNull();
     const reviewTab = screen.getByRole("tab", { name: "Paper Review" });
     const pipelineTab = screen.getByRole("tab", { name: "Analysis Pipeline" });
+    expect(screen.getByText("Back to top")).toBeTruthy();
+    expect(screen.getByRole("contentinfo")).toBeTruthy();
 
     fireEvent.click(reviewTab);
     await waitFor(() => expect(reviewTab.getAttribute("aria-selected")).toBe("true"));
     expect(screen.getByRole("heading", { name: "Paper Review" })).toBeTruthy();
+    expect(screen.queryByText("Back to top")).toBeNull();
+    const paperViewer = screen.getByRole("region", { name: "Original uploaded paper" });
+    expect(within(paperViewer).getByRole("button", { name: "Back to top" })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("contentinfo")).toBeNull());
+    expect(workspaceMain.classList.contains("pb-2")).toBe(true);
     expect(new URLSearchParams(window.location.search).get("view")).toBe("review");
 
     fireEvent.click(pipelineTab);
     await waitFor(() => expect(pipelineTab.getAttribute("aria-selected")).toBe("true"));
+    expect(screen.getByText("Back to top")).toBeTruthy();
+    expect(screen.getByRole("contentinfo")).toBeTruthy();
+    expect(workspaceMain.classList.contains("pb-6")).toBe(true);
     expect(new URLSearchParams(window.location.search).has("view")).toBe(false);
 
     fireEvent.click(reviewTab);
     await waitFor(() => expect(reviewTab.getAttribute("aria-selected")).toBe("true"));
     expect(screen.getByRole("heading", { name: "Paper Review" })).toBeTruthy();
+    expect(screen.queryByText("Back to top")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("contentinfo")).toBeNull());
   });
 
   it("scrolls bibliography and filtered AI-result destinations to the top of the details viewport", async () => {
@@ -556,6 +593,11 @@ describe("Analysis Run Paper Review", () => {
     renderDetailPage();
 
     await screen.findByRole("region", { name: "Selected pair quick access" });
+    expect(screen.queryByText("Back to top")).toBeNull();
+    const paperViewer = screen.getByRole("region", { name: "Original uploaded paper" });
+    expect(within(paperViewer).getByRole("button", { name: "Back to top" })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("contentinfo")).toBeNull());
+    expect(screen.getByRole("main").classList.contains("pb-2")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Clear selected pair" }));
 
     await waitFor(() => {
