@@ -516,6 +516,13 @@ describe("Analysis Run Paper Review", () => {
       await waitFor(() => expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(true));
       expect(viewport!.scrollTop).toBe(350);
 
+      review.rerenderReview({ selectedDetailSection: "citations", selectedReferenceKey: null });
+      await waitFor(() => expect(screen.queryByRole("region", { name: "Selected bibliography quick access" })).toBeNull());
+      review.rerenderReview({ selectedDetailSection: "citations", selectedReferenceKey: "b0" });
+      await screen.findByRole("region", { name: "Selected bibliography quick access" });
+      expect(bibliographyTrigger?.classList.contains("analysis-run-review-item-focus")).toBe(false);
+      expect(viewport!.scrollTop).toBe(350);
+
       fireEvent.click(screen.getByRole("button", { name: /Review AI result: supported/ }));
       review.rerenderReview({ selectedDetailSection: "results" });
       await screen.findByRole("region", { name: "Selected pair outside active filters" });

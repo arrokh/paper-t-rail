@@ -134,8 +134,7 @@ export function AnalysisRunPaperReview({
     const enteredDetailSection = previousDetailSection.current !== selectedDetailSection;
     previousDetailSection.current = selectedDetailSection;
 
-    if (!selectedQuickAccessKey) return;
-    if (selectedDetailSection === "results" && !enteredDetailSection) return;
+    if (!selectedQuickAccessKey || !enteredDetailSection) return;
     if (window.matchMedia("(max-width: 47.99rem)").matches) return;
 
     const triggerId = selectedDetailSection === "results"
