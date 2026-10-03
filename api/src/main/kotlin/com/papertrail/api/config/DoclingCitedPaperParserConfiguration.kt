@@ -24,6 +24,8 @@ class DoclingCitedPaperParserConfiguration {
         requireTrustedBaseUrl(baseUrl)
         require(requestTimeoutMillis > 0) { "The Docling request timeout must be positive." }
         val httpClient = HttpClient.newBuilder()
+            // Docling's Uvicorn endpoint rejects the JDK client's cleartext h2c multipart upgrade.
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(5))
             .build()
         val requestFactory = JdkClientHttpRequestFactory(httpClient).apply {
