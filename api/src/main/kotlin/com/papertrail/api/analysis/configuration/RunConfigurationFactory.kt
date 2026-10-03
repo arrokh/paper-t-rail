@@ -29,7 +29,7 @@ class RunConfigurationFactory(
     private val languageDetectorVersion: String,
     private val limits: ValidationLimitsSnapshot,
     private val referenceResolutionPolicyVersion: String = ScholarlyMetadataMatcher.POLICY_VERSION,
-    private val referenceResolutionConfidenceThreshold: Double = 0.9,
+    private val referenceResolutionConfidenceThreshold: Double = 0.25,
     private val retrievalProfileId: String = "postgres-hybrid-rrf-v1",
     private val vectorCandidateLimit: Int = 10,
     private val lexicalCandidateLimit: Int = 10,

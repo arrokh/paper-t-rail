@@ -65,6 +65,7 @@ class ConservativeReferenceResolver(
             "CONFERENCE_PAPER",
             "PREPRINT",
             "ACADEMIC_MANUSCRIPT",
+            "BOOK",
         )
     }
 }
