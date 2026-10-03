@@ -285,6 +285,33 @@ describe("Analysis Run Paper Review", () => {
     await waitFor(() => expect(screen.getByText("Text of PDF page 1: Uploaded paper page one.")).toBeTruthy());
   });
 
+  it("fits the PDF page inside the padded viewport at default zoom", async () => {
+    installSourcePdfResponse();
+    const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    const paddingStyles = document.createElement("style");
+    paddingStyles.textContent = ".source-document-pdf-page { padding-left: 12px; padding-right: 12px; }";
+    document.head.append(paddingStyles);
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        if (this instanceof HTMLElement && this.classList.contains("source-document-pdf-page")) return 1000;
+        return originalClientWidth?.get?.call(this) ?? 0;
+      },
+    });
+
+    try {
+      renderReview();
+      await screen.findByText("Text of PDF page 1: Uploaded paper page one.");
+      const pageViewport = screen.getByRole("region", { name: "PDF page 1 scroll area" });
+
+      await waitFor(() => expect(pageViewport.querySelector("canvas")?.getAttribute("style")).toContain("width: 976px"));
+    } finally {
+      paddingStyles.remove();
+      if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+      else Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+    }
+  });
+
   it("allows keyboard focus on the scrollable PDF page viewport", async () => {
     installSourcePdfResponse();
     renderReview();
