@@ -6,6 +6,7 @@ import {
   DEFAULT_PROVIDER_SELECTIONS,
   createRunConfiguration,
   missingConsents,
+  providerSelectionsAreAvailable,
   retainRequiredApprovals,
   selectableProviderOptions,
 } from "../features/providers/provider-configuration.ts";
@@ -36,7 +37,7 @@ const directory = {
       {
         role: "claimExtractor",
         providerId: "openai-compatible-chat",
-        displayName: "OpenAI-compatible chat claim analysis",
+        displayName: "OpenAI-compatible Chat Completions",
         version: "v1",
         model: "claim-model",
         trustBoundary: "EXTERNAL",
@@ -217,7 +218,7 @@ test("new-run preferences default to local Ollama when exposed and feature-hash 
   });
 });
 
-test("new-run preferences explicitly fall back to safe providers when preferred providers are unavailable", () => {
+test("an unavailable default claim provider is not silently replaced by heuristic", () => {
   const safeDirectory = {
     ...directory,
     providers: {
@@ -229,7 +230,11 @@ test("new-run preferences explicitly fall back to safe providers when preferred 
   };
   const selections = availableProviderSelections(safeDirectory, DEFAULT_PROVIDER_SELECTIONS);
 
-  assert.deepEqual(selections, localSelections);
+  assert.deepEqual(selections, {
+    ...localSelections,
+    claimExtractorProvider: "openai-compatible-chat",
+  });
+  assert.equal(providerSelectionsAreAvailable(safeDirectory, selections), false);
 });
 
 test("unavailable selections reconcile to the intended fallback instead of directory ordering", () => {
@@ -299,15 +304,14 @@ test("local defaults produce a valid configuration without external consent", ()
   });
 });
 
-test("default reconciliation and available choices exclude unclassified or incomplete providers", () => {
+test("available choices exclude unclassified providers without silently changing the selected claim analyzer", () => {
   assert.deepEqual(
     selectableProviderOptions(directory, "claimExtractor").map(({ providerId }) => providerId),
     ["heuristic", "hosted-ai", "openai-compatible-chat"],
   );
-  assert.deepEqual(
-    availableProviderSelections(directory, selectionsWith({ claimExtractorProvider: "unclassified-ai" })),
-    localSelections,
-  );
+  const selections = availableProviderSelections(directory, selectionsWith({ claimExtractorProvider: "unclassified-ai" }));
+  assert.equal(selections.claimExtractorProvider, "unclassified-ai");
+  assert.equal(providerSelectionsAreAvailable(directory, selections), false);
 });
 
 test("one external provider selected for multiple roles receives the deduplicated category union", () => {
@@ -342,7 +346,7 @@ test("OpenAI-compatible claim analysis requires both Citation Context and biblio
 
   assert.deepEqual(requirements, [{
     providerId: "openai-compatible-chat",
-    displayName: "OpenAI-compatible chat claim analysis",
+    displayName: "OpenAI-compatible Chat Completions",
     dataCategories: categories,
     retentionDisclosure: "Retention terms reviewed for this deployment.",
   }]);

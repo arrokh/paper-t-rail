@@ -79,8 +79,24 @@ paper-trail:
     cited-paper-max-extracted-characters: ${PAPER_MAX_CITED_PAPER_EXTRACTED_CHARACTERS:5000000}
   # Local consent-flow/acquisition testing defaults. Deployments must verify terms and replace test values.
   providers:
+    # Shared endpoint, credentials, trust policy, and HTTP limits for compatible chat adapters.
+    openai-compatible-chat:
+      enabled: ${OPENAI_COMPATIBLE_ENABLED:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_ENABLED:true}}
+      base-url: ${OPENAI_COMPATIBLE_BASE_URL:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_BASE_URL:http://127.0.0.1:1234}}
+      api-key: ${OPENAI_COMPATIBLE_API_KEY:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_API_KEY:}}
+      trusted-hosts: ${OPENAI_COMPATIBLE_TRUSTED_HOSTS:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_TRUSTED_HOSTS:localhost,127.0.0.1}}
+      max-request-bytes: ${OPENAI_COMPATIBLE_MAX_REQUEST_BYTES:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_REQUEST_BYTES:1048576}}
+      max-response-bytes: ${OPENAI_COMPATIBLE_MAX_RESPONSE_BYTES:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_RESPONSE_BYTES:1048576}}
+      request-timeout-millis: ${OPENAI_COMPATIBLE_REQUEST_TIMEOUT_MILLIS:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_REQUEST_TIMEOUT_MILLIS:60000}}
+      external-enablement-reviewed: ${OPENAI_COMPATIBLE_EXTERNAL_ENABLEMENT_REVIEWED:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_EXTERNAL_ENABLEMENT_REVIEWED:false}}
+      external-retention-disclosure: "${OPENAI_COMPATIBLE_EXTERNAL_RETENTION_DISCLOSURE:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_EXTERNAL_RETENTION_DISCLOSURE:}}"
+    # Claim-analysis model and budgets belong to this use-case role, not the shared transport.
     claim-extractor:
       default-provider: ${CLAIM_ANALYSIS_DEFAULT_PROVIDER:openai-compatible-chat}
+      openai-compatible-chat:
+        model: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MODEL:microsoft/phi-4-mini-reasoning}
+        context-window-tokens: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_CONTEXT_WINDOW_TOKENS:32768}
+        max-completion-tokens: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_COMPLETION_TOKENS:2048}
     crossref:
       enabled: ${CROSSREF_ENABLED:true}
       enablement-reviewed: ${CROSSREF_ENABLEMENT_REVIEWED:true}
@@ -97,20 +113,6 @@ paper-trail:
       cache:
         positive-ttl: ${UNPAYWALL_CACHE_POSITIVE_TTL:24h}
         negative-ttl: ${UNPAYWALL_CACHE_NEGATIVE_TTL:1h}
-    openai-compatible-claim-analysis:
-      # The local OpenAI-compatible endpoint is the default for new runs; heuristic remains selectable and is never an implicit fallback.
-      enabled: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_ENABLED:true}
-      base-url: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_BASE_URL:http://127.0.0.1:1234}
-      model: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MODEL:microsoft/phi-4-mini-reasoning}
-      api-key: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_API_KEY:}
-      trusted-hosts: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_TRUSTED_HOSTS:localhost,127.0.0.1}
-      context-window-tokens: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_CONTEXT_WINDOW_TOKENS:32768}
-      max-completion-tokens: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_COMPLETION_TOKENS:2048}
-      max-request-bytes: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_REQUEST_BYTES:1048576}
-      max-response-bytes: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_RESPONSE_BYTES:1048576}
-      request-timeout-millis: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_REQUEST_TIMEOUT_MILLIS:60000}
-      external-enablement-reviewed: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_EXTERNAL_ENABLEMENT_REVIEWED:false}
-      external-retention-disclosure: "${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_EXTERNAL_RETENTION_DISCLOSURE:}"
     ollama:
       enabled: ${OLLAMA_ENABLED:false}
       base-url: ${OLLAMA_BASE_URL:}

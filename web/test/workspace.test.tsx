@@ -18,6 +18,7 @@ const providerDirectory = {
   providers: {
     claimExtractor: [
       { role: "claimExtractor", providerId: "heuristic", displayName: "Heuristic", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["citation_context"], retentionDisclosure: null },
+      { role: "claimExtractor", providerId: "openai-compatible-chat", displayName: "OpenAI-compatible Chat Completions", version: "v1", model: "microsoft/phi-4-mini-reasoning", trustBoundary: "LOCAL", dataCategories: ["citation_context", "bibliographic_metadata"], retentionDisclosure: null },
       { role: "claimExtractor", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "model-2", trustBoundary: "EXTERNAL", dataCategories: ["citation_context"], retentionDisclosure: "Provider retention terms reviewed for this deployment." },
       { role: "claimExtractor", providerId: "unclassified-ai", displayName: "Unclassified AI", version: "v1", model: null, trustBoundary: "UNREVIEWED", dataCategories: ["citation_context"], retentionDisclosure: null },
     ],
@@ -41,6 +42,14 @@ const providerDirectory = {
     { id: "cited_paper_location", label: "Cited Paper location", description: "A discovered full-text URL." },
     { id: "provider_contact_email", label: "Provider contact email", description: "Contact email sent to a provider." },
   ],
+};
+
+const providerDirectoryWithoutOpenAi = {
+  ...providerDirectory,
+  providers: {
+    ...providerDirectory.providers,
+    claimExtractor: providerDirectory.providers.claimExtractor.filter(({ providerId }) => providerId !== "openai-compatible-chat"),
+  },
 };
 
 const unpaywallOnlyProviderDirectory = {
@@ -146,6 +155,28 @@ function RecentRunPollingProbe() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("interactive workspace remote state", () => {
+  it("keeps an unavailable claim-analysis default visible instead of silently choosing heuristic", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "/api/v1/providers") return jsonResponse(providerDirectoryWithoutOpenAi);
+      if (url.startsWith("/api/v1/analysis-runs?")) return jsonResponse({ items: [], nextCursor: null });
+      throw new Error(`Unexpected browser request: ${url}`);
+    }));
+
+    renderWorkspace();
+    await screen.findByRole("heading", { name: "Choose your services" });
+    await waitForProviderDirectory();
+
+    const claimExtractor = screen.getByLabelText("Claim extraction") as HTMLSelectElement;
+    expect(claimExtractor.value).toBe("openai-compatible-chat");
+    expect(Array.from(claimExtractor.options).some((option) => option.textContent === "Selected provider unavailable")).toBe(true);
+    expect(screen.getByText("Claim-analysis provider unavailable")).toBeTruthy();
+    expect(Array.from(claimExtractor.options).some((option) => option.value === "heuristic")).toBe(true);
+
+    fireEvent.change(claimExtractor, { target: { value: "heuristic" } });
+    await waitFor(() => expect(claimExtractor.value).toBe("heuristic"));
+    expect(screen.queryByText("Claim-analysis provider unavailable")).toBeNull();
+  });
+
   it("shows provider loading and the safe API error when provider loading fails", async () => {
     let finishProviderRequest!: (response: ReturnType<typeof jsonResponse>) => void;
     vi.stubGlobal("fetch", vi.fn((url: string) => {

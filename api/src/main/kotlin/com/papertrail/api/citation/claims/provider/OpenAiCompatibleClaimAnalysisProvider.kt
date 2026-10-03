@@ -12,6 +12,10 @@ import com.papertrail.api.citation.claims.domain.CitationContextClaims
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleChatClient
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleProviderException
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
 @Component
@@ -22,8 +26,8 @@ class OpenAiCompatibleClaimAnalysisProvider(
     private val payloadFactory: OpenAiCompatibleClaimAnalysisPayloadFactory,
     private val objectMapper: ObjectMapper,
 ) : ClaimAnalysisProvider {
-    override val providerId: String = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID
-    override val version: String = OpenAiCompatibleClaimAnalysisSettings.VERSION
+    override val providerId: String = OpenAiCompatibleEndpointSettings.PROVIDER_ID
+    override val version: String = OpenAiCompatibleEndpointSettings.VERSION
     override val modelId: String? get() = settings.modelId.takeIf(String::isNotBlank)
     override val targetSelectionPolicyVersion: String = ClaimAnalysisVersions.MODEL_TARGET_SELECTION_POLICY
     override val promptVersion: String = ClaimAnalysisVersions.OPENAI_COMPATIBLE_PROMPT
@@ -39,26 +43,65 @@ class OpenAiCompatibleClaimAnalysisProvider(
         request: ClaimAnalysisRequest,
         configuration: AnalysisConfigurationSnapshot,
     ): List<CitationContextClaims> {
-        if (request.contexts.isEmpty()) return emptyList()
-        val batches = partition(request.contexts)
-        return batches.flatMap { batch ->
-            val response = providerCallGate.call(
-                role = CLAIM_EXTRACTOR_ROLE,
-                providerId = providerId,
-                payload = batch.payload,
-                configuration = configuration,
-            ) { approvedPayload ->
-                val requestBody = chatClient.requestBody(
-                    modelId = settings.modelId,
-                    systemPrompt = OpenAiCompatibleClaimAnalysisPrompt.systemPrompt,
-                    userJson = payloadFactory.userJson(approvedPayload),
-                )
-                if (!requestBody.contentEquals(batch.requestBody) || !fitsRequestBudget(requestBody)) {
-                    throw OpenAiCompatibleProviderException("The authorized claim-analysis payload exceeded its prepared request budget.")
+        if (request.contexts.isEmpty()) {
+            logger.atDebug()
+                .addKeyValue("providerId", providerId)
+                .addKeyValue("modelId", settings.modelId)
+                .log("OpenAI-compatible claim analysis skipped because no Citation Contexts were supplied")
+            return emptyList()
+        }
+        val startedAtNanos = System.nanoTime()
+        logger.atInfo()
+            .addKeyValue("providerId", providerId)
+            .addKeyValue("modelId", settings.modelId)
+            .addKeyValue("contextCount", request.contexts.size)
+            .log("OpenAI-compatible claim analysis started")
+        try {
+            val batches = partition(request.contexts)
+            logger.atDebug()
+                .addKeyValue("providerId", providerId)
+                .addKeyValue("batchCount", batches.size)
+                .addKeyValue("contextCount", request.contexts.size)
+                .log("OpenAI-compatible claim-analysis batches prepared")
+            val result = batches.flatMap { batch ->
+                val response = providerCallGate.call(
+                    role = CLAIM_EXTRACTOR_ROLE,
+                    providerId = providerId,
+                    payload = batch.payload,
+                    configuration = configuration,
+                ) { approvedPayload ->
+                    val requestBody = chatClient.requestBody(
+                        modelId = settings.modelId,
+                        maxCompletionTokens = settings.maxCompletionTokens,
+                        systemPrompt = OpenAiCompatibleClaimAnalysisPrompt.systemPrompt,
+                        userJson = payloadFactory.userJson(approvedPayload),
+                    )
+                    if (!requestBody.contentEquals(batch.requestBody) || !fitsRequestBudget(requestBody)) {
+                        throw OpenAiCompatibleProviderException("The authorized claim-analysis payload exceeded its prepared request budget.")
+                    }
+                    chatClient.complete(requestBody)
                 }
-                chatClient.complete(requestBody)
+                parseResponse(response, batch.request.contexts)
             }
-            parseResponse(response, batch.request.contexts)
+            logger.atInfo()
+                .addKeyValue("providerId", providerId)
+                .addKeyValue("modelId", settings.modelId)
+                .addKeyValue("contextCount", request.contexts.size)
+                .addKeyValue("batchCount", batches.size)
+                .addKeyValue("claimCount", result.sumOf { it.claims.size })
+                .addKeyValue("selectedTargetCount", result.sumOf { context -> context.claims.sumOf { it.citationTargetKeys.size } })
+                .addKeyValue("durationMs", (System.nanoTime() - startedAtNanos) / NANOS_PER_MILLISECOND)
+                .log("OpenAI-compatible claim analysis completed")
+            return result
+        } catch (exception: Exception) {
+            logger.atWarn()
+                .addKeyValue("providerId", providerId)
+                .addKeyValue("modelId", settings.modelId)
+                .addKeyValue("contextCount", request.contexts.size)
+                .addKeyValue("errorType", exception.javaClass.simpleName)
+                .addKeyValue("durationMs", (System.nanoTime() - startedAtNanos) / NANOS_PER_MILLISECOND)
+                .log("OpenAI-compatible claim analysis failed")
+            throw exception
         }
     }
 
@@ -91,6 +134,7 @@ class OpenAiCompatibleClaimAnalysisProvider(
         val payload = payloadFactory.create(request)
         val requestBody = chatClient.requestBody(
             modelId = settings.modelId,
+            maxCompletionTokens = settings.maxCompletionTokens,
             systemPrompt = OpenAiCompatibleClaimAnalysisPrompt.systemPrompt,
             userJson = payloadFactory.userJson(payload),
         )
@@ -100,7 +144,7 @@ class OpenAiCompatibleClaimAnalysisProvider(
     /** A one-UTF-8-byte-per-token estimate conservatively includes the full prompt, schema, and metadata. */
     private fun fitsRequestBudget(requestBody: ByteArray): Boolean =
         settings.isSelectable &&
-            requestBody.size <= settings.maxRequestBytes &&
+            requestBody.size <= settings.endpoint.maxRequestBytes &&
             requestBody.size.toLong() <= settings.contextWindowTokens.toLong() - settings.maxCompletionTokens
 
     private fun parseResponse(
@@ -204,6 +248,11 @@ class OpenAiCompatibleClaimAnalysisProvider(
         val payload: ProviderCallPayload,
         val requestBody: ByteArray,
     )
+
+    companion object {
+        private const val NANOS_PER_MILLISECOND = 1_000_000L
+        private val logger = LoggerFactory.getLogger(OpenAiCompatibleClaimAnalysisProvider::class.java)
+    }
 
 }
 

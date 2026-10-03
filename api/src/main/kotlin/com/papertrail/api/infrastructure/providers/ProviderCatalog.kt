@@ -7,6 +7,7 @@ import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.infrastructure.messaging.NonRetryablePipelineException
 import com.papertrail.api.citation.claims.domain.ClaimAnalysisVersions
 import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
 import io.swagger.v3.oas.annotations.media.Schema
 import java.security.MessageDigest
 
@@ -270,9 +271,9 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                 ),
                 ProviderRegistration(
                     role = CLAIM_EXTRACTOR_ROLE,
-                    providerId = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID,
-                    displayName = "OpenAI-compatible chat claim analysis",
-                    version = OpenAiCompatibleClaimAnalysisSettings.VERSION,
+                    providerId = OpenAiCompatibleEndpointSettings.PROVIDER_ID,
+                    displayName = "OpenAI-compatible Chat Completions",
+                    version = OpenAiCompatibleEndpointSettings.VERSION,
                     model = openAiCompatibleClaimAnalysisSettings.modelId.takeIf(String::isNotBlank),
                     trustBoundary = openAiCompatibleClaimAnalysisSettings.trustBoundary,
                     enabled = openAiCompatibleClaimAnalysisSettings.isSelectable,

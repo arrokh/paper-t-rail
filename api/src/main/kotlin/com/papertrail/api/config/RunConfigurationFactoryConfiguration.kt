@@ -8,6 +8,7 @@ import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import org.springframework.beans.factory.annotation.Value
@@ -55,32 +56,39 @@ class RunConfigurationFactoryConfiguration {
     )
 
     @Bean
-    fun openAiCompatibleClaimAnalysisSettings(
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.enabled}") enabled: Boolean,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.base-url}") baseUrl: String,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.model}") model: String,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.api-key}") apiKey: String,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.trusted-hosts}") trustedHosts: String,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.context-window-tokens}") contextWindowTokens: Int,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-completion-tokens}") maxCompletionTokens: Int,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-request-bytes}") maxRequestBytes: Int,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.max-response-bytes}") maxResponseBytes: Int,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.request-timeout-millis}") requestTimeoutMillis: Long,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.external-enablement-reviewed}") enablementReviewed: Boolean,
-        @Value("\${paper-trail.providers.openai-compatible-claim-analysis.external-retention-disclosure}") retentionDisclosure: String,
-    ): OpenAiCompatibleClaimAnalysisSettings = OpenAiCompatibleClaimAnalysisSettings(
+    fun openAiCompatibleEndpointSettings(
+        @Value("\${paper-trail.providers.openai-compatible-chat.enabled}") enabled: Boolean,
+        @Value("\${paper-trail.providers.openai-compatible-chat.base-url}") baseUrl: String,
+        @Value("\${paper-trail.providers.openai-compatible-chat.api-key}") apiKey: String,
+        @Value("\${paper-trail.providers.openai-compatible-chat.trusted-hosts}") trustedHosts: String,
+        @Value("\${paper-trail.providers.openai-compatible-chat.max-request-bytes}") maxRequestBytes: Int,
+        @Value("\${paper-trail.providers.openai-compatible-chat.max-response-bytes}") maxResponseBytes: Int,
+        @Value("\${paper-trail.providers.openai-compatible-chat.request-timeout-millis}") requestTimeoutMillis: Long,
+        @Value("\${paper-trail.providers.openai-compatible-chat.external-enablement-reviewed}") enablementReviewed: Boolean,
+        @Value("\${paper-trail.providers.openai-compatible-chat.external-retention-disclosure}") retentionDisclosure: String,
+    ): OpenAiCompatibleEndpointSettings = OpenAiCompatibleEndpointSettings(
         enabled = enabled,
         baseUrl = baseUrl,
-        modelId = model,
         apiKey = apiKey.trim().takeIf(String::isNotEmpty),
         trustedHosts = trustedHosts.split(',').map(String::trim).filter(String::isNotEmpty).toSet(),
-        contextWindowTokens = contextWindowTokens,
-        maxCompletionTokens = maxCompletionTokens,
         maxRequestBytes = maxRequestBytes,
         maxResponseBytes = maxResponseBytes,
         requestTimeoutMillis = requestTimeoutMillis,
         enablementReviewed = enablementReviewed,
         retentionDisclosure = retentionDisclosure.takeIf(String::isNotBlank),
+    )
+
+    @Bean
+    fun openAiCompatibleClaimAnalysisSettings(
+        endpointSettings: OpenAiCompatibleEndpointSettings,
+        @Value("\${paper-trail.providers.claim-extractor.openai-compatible-chat.model}") model: String,
+        @Value("\${paper-trail.providers.claim-extractor.openai-compatible-chat.context-window-tokens}") contextWindowTokens: Int,
+        @Value("\${paper-trail.providers.claim-extractor.openai-compatible-chat.max-completion-tokens}") maxCompletionTokens: Int,
+    ): OpenAiCompatibleClaimAnalysisSettings = OpenAiCompatibleClaimAnalysisSettings(
+        endpoint = endpointSettings,
+        modelId = model,
+        contextWindowTokens = contextWindowTokens,
+        maxCompletionTokens = maxCompletionTokens,
     )
 
     @Bean

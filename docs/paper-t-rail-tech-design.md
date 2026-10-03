@@ -1031,8 +1031,9 @@ Current runtime:
 ClaimAnalysisProvider
 ├── HeuristicClaimAnalysisProvider
 │   └── HeuristicClaimExtractor
-└── OpenAiCompatibleClaimAnalysisProvider (deployment-configured; local default)
-    └── OpenAiCompatibleChatClient
+└── OpenAiCompatibleClaimAnalysisProvider (role-specific model/prompt contract)
+    └── OpenAiCompatibleChatClient (shared transport)
+        └── OpenAiCompatibleEndpointSettings (shared connection profile)
 ```
 
 The OpenAI-compatible implementation is document-level and its contract is specified in the [claim-analysis implementation plan](./openai-compatible-provider-plan.md):
@@ -1061,7 +1062,7 @@ Do not overbuild this initially.
 
 ### LLM provider
 
-The claim analyzer uses the shared OpenAI-compatible chat transport described in the [implementation plan](./openai-compatible-provider-plan.md). The transport handles HTTP/protocol concerns only; the claim-analysis adapter owns its prompt, response schema, source-span validation, and same-context target selection. Before a fresh run retrieves or parses the Source Document, it probes `GET /v1/models` without run payload and discards the response body. Keep provider-native request/response objects out of the domain. Other pipeline roles may add their own adapters later; Stage 05 and embeddings are not part of this implementation.
+The claim analyzer composes the shared OpenAI-compatible chat transport described in the [implementation plan](./openai-compatible-provider-plan.md). `OpenAiCompatibleEndpointSettings` owns endpoint/auth/trust/transport limits; the role-specific claim profile owns its model and context/completion budgets. The transport handles HTTP/protocol concerns only, while the claim-analysis adapter owns its prompt, response schema, source-span validation, and same-context target selection. Before a fresh run retrieves or parses the Source Document, it probes `GET /v1/models` without run payload and discards the response body. Keep provider-native request/response objects out of the domain. Other pipeline roles may compose the transport through their own adapters and contracts; Stage 05 and embeddings are not part of this implementation.
 
 ## 14.3 Why Claim Extraction Is Separate from System One
 
@@ -1084,7 +1085,7 @@ Do not make Laya/Jev responsible for generative claim rewriting.
 
 # 15. Shared LLM Transport and Role-Specific Adapters
 
-The first implemented LLM integration is the document-level Pipeline 01 claim-analysis adapter in the [implementation plan](./openai-compatible-provider-plan.md). It uses one configured OpenAI-compatible Chat Completions transport per deployment. Local defaults use `http://127.0.0.1:1234` and model `microsoft/phi-4-mini-reasoning`; Compose reaches the host service through `host.docker.internal:1234`. The shared transport owns bounded HTTP/protocol behavior and server-side credentials; it does not own claim semantics or return a universal domain result. The provider can be disabled or replaced through deployment configuration; heuristic remains selectable and is never an implicit fallback. External endpoints additionally require deployment review, retention disclosure, and exact per-run consent, including before the content-free availability probe.
+The first implemented LLM integration is the document-level Pipeline 01 claim-analysis adapter in the [implementation plan](./openai-compatible-provider-plan.md). It composes one shared OpenAI-compatible Chat Completions endpoint profile per deployment with a claim-analysis model profile. Local defaults use `http://127.0.0.1:1234` and model `microsoft/phi-4-mini-reasoning`; Compose reaches the host service through `host.docker.internal:1234`. Endpoint/auth/trust/transport limits are shared; model, context budget, prompts, and output contracts belong to each use-case adapter. The transport does not return a universal domain result. A future role may compose it through its own domain port and contract; do not use inheritance or build a universal LLM framework. The provider can be disabled or replaced through deployment configuration; heuristic remains selectable and is never an implicit fallback. External endpoints additionally require deployment review, retention disclosure, and exact per-run consent, including before the content-free availability probe.
 
 Keep the claim-analysis adapter behind its focused domain port. It owns the prompt, structured response mapping, source-span checks, and same-context target selection. A fresh run's availability probe checks the compatible `/v1/models` endpoint before source retrieval/parsing; a failed probe follows queue retry/failure policy and never changes the pinned provider. A future use case, such as System One, must implement its own existing domain port and response contract while reusing the transport only where the API operation fits. Embeddings require a distinct compatible embeddings adapter. Do not build a provider framework or send model calls to parts of the system that can remain deterministic.
 
@@ -1719,17 +1720,23 @@ Conservative deployment example:
 
 ```yaml
 providers:
-  claim-extractor:
-    default-provider: ${CLAIM_ANALYSIS_DEFAULT_PROVIDER:openai-compatible-chat}
+  openai-compatible-chat:  # shared deployment-level transport and trust profile
+    enabled: ${OPENAI_COMPATIBLE_ENABLED:true}
+    base-url: ${OPENAI_COMPATIBLE_BASE_URL:http://127.0.0.1:1234}
+    api-key: ${OPENAI_COMPATIBLE_API_KEY:}  # server-side only
+    trusted-hosts: ${OPENAI_COMPATIBLE_TRUSTED_HOSTS:localhost,127.0.0.1}
+    max-request-bytes: ${OPENAI_COMPATIBLE_MAX_REQUEST_BYTES:1048576}
+    max-response-bytes: ${OPENAI_COMPATIBLE_MAX_RESPONSE_BYTES:1048576}
+    request-timeout-millis: ${OPENAI_COMPATIBLE_REQUEST_TIMEOUT_MILLIS:60000}
+    external-enablement-reviewed: ${OPENAI_COMPATIBLE_EXTERNAL_ENABLEMENT_REVIEWED:false}
+    external-retention-disclosure: ${OPENAI_COMPATIBLE_EXTERNAL_RETENTION_DISCLOSURE:}
 
-  openai-compatible-claim-analysis:
-    enabled: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_ENABLED:true}
-    base-url: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_BASE_URL:http://127.0.0.1:1234}
-    model: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MODEL:microsoft/phi-4-mini-reasoning}
-    api-key: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_API_KEY:}  # server-side only
-    trusted-hosts: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_TRUSTED_HOSTS:localhost,127.0.0.1}
-    external-enablement-reviewed: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_EXTERNAL_ENABLEMENT_REVIEWED:false}
-    external-retention-disclosure: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_EXTERNAL_RETENTION_DISCLOSURE:}
+  claim-extractor:  # role-specific default and model profile
+    default-provider: ${CLAIM_ANALYSIS_DEFAULT_PROVIDER:openai-compatible-chat}
+    openai-compatible-chat:
+      model: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MODEL:microsoft/phi-4-mini-reasoning}
+      context-window-tokens: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_CONTEXT_WINDOW_TOKENS:32768}
+      max-completion-tokens: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_COMPLETION_TOKENS:2048}
 
   llm:
     local:

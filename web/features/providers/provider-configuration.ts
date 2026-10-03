@@ -108,6 +108,11 @@ export function availableProviderSelections(
       provider.providerId === selections[field]
       && (role !== "systemOne" || provider.providerId !== "laya" || provider.trustBoundary === "LOCAL"),
     );
+    if (role === "claimExtractor") {
+      // The analyzer affects claim semantics; require an explicit choice instead of silently substituting it.
+      return preferred?.providerId ?? selections[field];
+    }
+
     const safeFallback = options.find((provider) =>
       provider.providerId === SAFE_FALLBACK_PROVIDER_SELECTIONS[field],
     );

@@ -193,6 +193,8 @@ export function ProviderConfigurationCard({
                   <div className="grid gap-4 sm:grid-cols-2">
                     {PROVIDER_FIELDS.map(([role, label, selectionField]) => {
                       const selectId = `provider-${role}`;
+                      const options = directory ? selectableProviderOptions(directory, role) : [];
+                      const selectedProviderAvailable = options.some((provider) => provider.providerId === selections[selectionField]);
                       return (
                         <Field key={role}>
                           <FieldLabel htmlFor={selectId} className="text-xs font-medium text-foreground">{label}</FieldLabel>
@@ -203,9 +205,18 @@ export function ProviderConfigurationCard({
                             disabled={busy || !directory}
                             onChange={(event) => selectProvider(role, event.target.value)}
                           >
-                            {directory ? selectableProviderOptions(directory, role).map((provider) => (
-                              <NativeSelectOption key={provider.providerId} value={provider.providerId}>{provider.displayName}</NativeSelectOption>
-                            )) : (
+                            {directory ? (
+                              <>
+                                {!selectedProviderAvailable && (
+                                  <NativeSelectOption value={selections[selectionField]} disabled>
+                                    Selected provider unavailable
+                                  </NativeSelectOption>
+                                )}
+                                {options.map((provider) => (
+                                  <NativeSelectOption key={provider.providerId} value={provider.providerId}>{provider.displayName}</NativeSelectOption>
+                                ))}
+                              </>
+                            ) : (
                               <NativeSelectOption value={selections[selectionField]}>Loading provider choices…</NativeSelectOption>
                             )}
                           </NativeSelect>
@@ -226,13 +237,20 @@ export function ProviderConfigurationCard({
                     <li key={role} className="grid min-w-0 grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] items-start gap-3 rounded-md border border-border bg-background px-3 py-2.5 text-xs">
                       <span className="min-w-0 break-words leading-snug text-muted-foreground">{label}</span>
                       <span className="min-w-0 break-words text-right font-medium leading-snug text-foreground">
-                        {provider?.displayName ?? "Loading…"}
+                        {provider?.displayName ?? (directory ? "Unavailable" : "Loading…")}
                         {provider && <span className="mt-0.5 block font-mono text-[0.6rem] font-normal text-muted-foreground">{provider.trustBoundary.toLowerCase()}</span>}
                       </span>
                     </li>
                   ))}
                 </ul>
               </section>
+              {directory && !selectableProviderOptions(directory, "claimExtractor")
+                .some((provider) => provider.providerId === selections.claimExtractorProvider) && (
+                <Alert variant="destructive">
+                  <AlertTitle>Claim-analysis provider unavailable</AlertTitle>
+                  <AlertDescription>Choose an enabled provider explicitly. Paper T-Rail will not switch providers automatically.</AlertDescription>
+                </Alert>
+              )}
               {!directory && (
                 <p className="text-sm text-muted-foreground" role="status">
                   {directoryLoading ? "Loading provider choices…" : "Provider choices are unavailable."}

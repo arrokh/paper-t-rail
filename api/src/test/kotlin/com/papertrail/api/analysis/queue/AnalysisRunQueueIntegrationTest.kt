@@ -91,8 +91,9 @@ import com.papertrail.api.citation.claims.service.ClaimAnalysisService
 import com.papertrail.api.citation.claims.service.ClaimAnalysisRequestFactory
 import com.papertrail.api.citation.claims.provider.ClaimAnalysisProvider
 import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
-import com.papertrail.api.citation.claims.provider.OpenAiCompatibleProviderException
-import com.papertrail.api.citation.claims.provider.RetryableOpenAiCompatibleProviderException
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleProviderException
+import com.papertrail.api.infrastructure.providers.openai.RetryableOpenAiCompatibleProviderException
 import com.papertrail.api.citation.claims.service.HeuristicClaimExtractor
 import com.papertrail.api.citation.claims.service.HeuristicClaimAnalysisProvider
 import com.papertrail.api.document.validation.PdfDocumentValidator
@@ -743,10 +744,12 @@ class AnalysisRunQueueIntegrationTest {
     @Test
     fun `persists only selected Citation Targets and creates no verification for an unlinked claim`() {
         val settings = OpenAiCompatibleClaimAnalysisSettings(
-            enabled = true,
-            baseUrl = "http://127.0.0.1:9123/v1",
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:9123/v1",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
             modelId = "fixture-model",
-            trustedHosts = setOf("127.0.0.1"),
         )
         val providerCatalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
         val configuration = configurationFactory(providerCatalog = providerCatalog).from(
@@ -813,10 +816,12 @@ class AnalysisRunQueueIntegrationTest {
     @Test
     fun `selected claim provider availability is checked before the source PDF is retrieved`() {
         val settings = OpenAiCompatibleClaimAnalysisSettings(
-            enabled = true,
-            baseUrl = "http://127.0.0.1:9123",
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:9123",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
             modelId = "microsoft/phi-4-mini-reasoning",
-            trustedHosts = setOf("127.0.0.1"),
         )
         val providerCatalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
         val configuration = configurationFactory(providerCatalog).from(
@@ -2682,10 +2687,12 @@ class AnalysisRunQueueIntegrationTest {
     @Test
     fun `dead-letters permanent claim-analysis contract failures without retrying`() {
         val settings = OpenAiCompatibleClaimAnalysisSettings(
-            enabled = true,
-            baseUrl = "http://127.0.0.1:9123/v1",
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:9123/v1",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
             modelId = "fixture-model",
-            trustedHosts = setOf("127.0.0.1"),
         )
         val providerCatalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
         val configuration = configurationFactory(providerCatalog = providerCatalog).from(

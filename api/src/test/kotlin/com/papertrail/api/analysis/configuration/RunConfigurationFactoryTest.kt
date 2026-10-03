@@ -19,6 +19,7 @@ import com.papertrail.api.infrastructure.providers.ProviderRegistration
 import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
 import com.papertrail.api.infrastructure.providers.reviewedExternalProviderCatalog
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -85,11 +86,13 @@ class RunConfigurationFactoryTest {
     @Test
     fun `pins explicit OpenAI-compatible claim-analysis provenance without storing endpoint or credentials`() {
         val settings = OpenAiCompatibleClaimAnalysisSettings(
-            enabled = true,
-            baseUrl = "http://127.0.0.1:9090/v1",
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:9090/v1",
+                apiKey = "server-side-secret",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
             modelId = "fixture-model",
-            apiKey = "server-side-secret",
-            trustedHosts = setOf("127.0.0.1"),
         )
         val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
         val configuredFactory = factoryFor(providerCatalog = catalog)
@@ -115,10 +118,12 @@ class RunConfigurationFactoryTest {
     @Test
     fun `uses the configured default claim analyzer when omitted and keeps heuristic explicitly selectable`() {
         val settings = OpenAiCompatibleClaimAnalysisSettings(
-            enabled = true,
-            baseUrl = "http://127.0.0.1:1234",
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:1234",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
             modelId = "microsoft/phi-4-mini-reasoning",
-            trustedHosts = setOf("127.0.0.1"),
         )
         val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
         val configuredFactory = factoryFor(
