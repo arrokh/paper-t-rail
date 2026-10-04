@@ -38,6 +38,8 @@ import com.papertrail.api.review.repository.HumanReviewRepository
 import com.papertrail.api.review.repository.JdbcHumanReviewRepository
 import com.papertrail.api.review.service.HumanReviewService
 import com.papertrail.api.scholarly.acquisition.domain.TerminalVerificationStatus
+import com.papertrail.api.evidence.verification.provider.JevSystemOneProviderException
+import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneProviderException
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.MockSystemOneProvider
@@ -106,7 +108,8 @@ import com.papertrail.api.scholarly.references.service.RecordedFixtureScholarlyM
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRepository
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
-import com.papertrail.api.infrastructure.providers.reviewedExternalProviderCatalog
+import com.papertrail.api.infrastructure.providers.externalProviderConsent
+import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.storage.SourceObjectMetadata
 import com.papertrail.api.document.service.SourceDocumentDeletionService
@@ -597,13 +600,13 @@ class AnalysisRunQueueIntegrationTest {
 
     @Test
     fun `Crossref cache hit persists a resolution independently for each Analysis Run`() {
-        val catalog = reviewedExternalProviderCatalog()
+        val catalog = configuredExternalProviderCatalog()
         val configurationJson = objectMapper.writeValueAsString(
             configurationFactory(catalog).from(
                 RunConfigurationRequest(
                     scholarlyMetadataProvider = "crossref",
                     externalProviderConsents = listOf(
-                        ExternalProviderConsentSnapshot("crossref", listOf(DataCategory.BIBLIOGRAPHIC_METADATA.id)),
+                        externalProviderConsent(catalog, "crossref", listOf(DataCategory.BIBLIOGRAPHIC_METADATA.id)),
                     ),
                 ),
             ),
@@ -1060,23 +1063,21 @@ class AnalysisRunQueueIntegrationTest {
         val contactEmail = "unpaywall-cache@example.invalid"
         val catalog = ProviderCatalog.safeDefaults(
             unpaywallEnabled = true,
-            unpaywallEnablementReviewed = true,
-            unpaywallRetentionDisclosure = "Reviewed Unpaywall terms for this controlled-provider test.",
+            unpaywallRetentionDisclosure = "Retention and deletion details are unknown for this controlled-provider test.",
             unpaywallContactEmail = contactEmail,
         )
         val configuration = configurationFactory(catalog).from(
             RunConfigurationRequest(
                 openAccessProvider = UnpaywallOpenAccessProviderFactory.UNPAYWALL_PROVIDER,
-                externalProviderConsents = listOf(
-                    ExternalProviderConsentSnapshot(
-                        UnpaywallOpenAccessProviderFactory.UNPAYWALL_PROVIDER,
-                        listOf(
-                            DataCategory.BIBLIOGRAPHIC_METADATA.id,
-                            DataCategory.CITED_PAPER_LOCATION.id,
-                            DataCategory.PROVIDER_CONTACT_EMAIL.id,
-                        ),
+                externalProviderConsents = listOf(externalProviderConsent(
+                    catalog,
+                    UnpaywallOpenAccessProviderFactory.UNPAYWALL_PROVIDER,
+                    listOf(
+                        DataCategory.BIBLIOGRAPHIC_METADATA.id,
+                        DataCategory.CITED_PAPER_LOCATION.id,
+                        DataCategory.PROVIDER_CONTACT_EMAIL.id,
                     ),
-                ),
+                )),
             ),
         )
         val discoveryBuilder = RestClient.builder().baseUrl("https://api.unpaywall.org")
@@ -1278,8 +1279,296 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `runs selected Jev through shared judgement persistence and System One aggregation`() {
+        val jevSettings = JevSystemOneSettings(apiKey = "server-side-test-key")
+        val catalog = ProviderCatalog.safeDefaults(jevSystemOneSettings = jevSettings)
+        val configuration = configurationFactory(
+            providerCatalog = catalog,
+            systemOneAggregationEnabled = true,
+        ).from(
+            RunConfigurationRequest(
+                systemOneProvider = JevSystemOneSettings.PROVIDER_ID,
+                externalProviderConsents = listOf(externalProviderConsent(
+                    catalog,
+                    JevSystemOneSettings.PROVIDER_ID,
+                    listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id),
+                )),
+            ),
+        )
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val jevCalls = AtomicInteger()
+        val jevProvider = object : SystemOneProvider {
+            override val providerId = JevSystemOneSettings.PROVIDER_ID
+            override val version = JevSystemOneSettings.PROVIDER_VERSION
+            override val modelId = JevSystemOneSettings.DEFAULT_MODEL_ID
+
+            override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult = SemanticJudgementResult(
+                request.evidencePassages.map { passage ->
+                    jevCalls.incrementAndGet()
+                    EvidenceJudgement(
+                        evidenceCandidateId = passage.id,
+                        judgement = EvidenceJudgementKind.DIRECT_SUPPORT,
+                        evidenceRole = EvidenceRole.PRIMARY_FINDING,
+                        confidence = 0.9,
+                        directness = 0.9,
+                        claimScopeMatch = 0.9,
+                        studyDesignQuality = 0.9,
+                        relevance = 0.9,
+                        providerReportedModelId = "jev-1.13.0",
+                    )
+                },
+            )
+        }
+        val resolutionService = referenceResolutionService()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler(resolutionService = resolutionService).handle(documentEvent)
+
+        processReferenceResolutionEvents(
+            analysisRunId = created.analysisRunId,
+            providerFactories = listOf(RecordedFixtureOpenAccessProviderFactory(
+                objectMapper,
+                ProviderCallGate(ProviderCatalog.safeDefaults()),
+            )),
+            resolutionService = resolutionService,
+            systemOneProvider = jevProvider,
+            providerCatalog = catalog,
+        )
+
+        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        assertTrue(jevCalls.get() > 0)
+        assertEquals("COMPLETED", report.runStatus)
+        assertEquals("COMPLETED", report.evidenceCoverage.executionStatus)
+        assertTrue(outcomes.filter { it.verificationScope == "FULL_TEXT" }
+            .all { it.processingStatus == "COMPLETED" && it.finalStatus == "SUPPORTED" })
+        assertTrue(jdbc.queryForObject(
+            "SELECT count(*) FROM evidence_judgements WHERE analysis_run_id = ? AND system_one_provider = 'jev' AND system_one_model = 'jev-1.13.0'",
+            Long::class.java,
+            created.analysisRunId,
+        )!! > 0)
+        assertTrue(jdbc.queryForObject(
+            "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            created.analysisRunId,
+        )!!.contains("Jev aggregation completed"))
+    }
+
+    @Test
+    fun `a selected Jev provider failure leaves verification incomplete without fallback`() {
+        val jevSettings = JevSystemOneSettings(apiKey = "server-side-test-key")
+        val catalog = ProviderCatalog.safeDefaults(jevSystemOneSettings = jevSettings)
+        val configuration = configurationFactory(
+            providerCatalog = catalog,
+            systemOneAggregationEnabled = true,
+        ).from(
+            RunConfigurationRequest(
+                systemOneProvider = JevSystemOneSettings.PROVIDER_ID,
+                externalProviderConsents = listOf(externalProviderConsent(
+                    catalog,
+                    JevSystemOneSettings.PROVIDER_ID,
+                    listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id),
+                )),
+            ),
+        )
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val jevCalls = AtomicInteger()
+        val failingJevProvider = object : SystemOneProvider {
+            override val providerId = JevSystemOneSettings.PROVIDER_ID
+            override val version = JevSystemOneSettings.PROVIDER_VERSION
+            override val modelId = JevSystemOneSettings.DEFAULT_MODEL_ID
+
+            override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult {
+                jevCalls.incrementAndGet()
+                throw JevSystemOneProviderException(
+                    "Jev System One returned an inconsistent weighted score.",
+                    JevSystemOneProviderException.SCORE_INVALID,
+                    "answers.directness.score",
+                    JevSystemOneProviderException.SCORE_WEIGHTED_MEAN_MISMATCH,
+                )
+            }
+        }
+        val resolutionService = referenceResolutionService()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler(resolutionService = resolutionService).handle(documentEvent)
+
+        val verificationLogger = LoggerFactory.getLogger(EvidenceVerificationService::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        verificationLogger.addAppender(appender)
+        val stageLogger = LoggerFactory.getLogger(AnalysisRunStageCompletionService::class.java) as Logger
+        val stageAppender = ListAppender<ILoggingEvent>().apply { start() }
+        stageLogger.addAppender(stageAppender)
+        try {
+            processReferenceResolutionEvents(
+                analysisRunId = created.analysisRunId,
+                providerFactories = listOf(RecordedFixtureOpenAccessProviderFactory(
+                    objectMapper,
+                    ProviderCallGate(ProviderCatalog.safeDefaults()),
+                )),
+                resolutionService = resolutionService,
+                systemOneProvider = failingJevProvider,
+                providerCatalog = catalog,
+            )
+        } finally {
+            verificationLogger.detachAppender(appender)
+            appender.stop()
+            stageLogger.detachAppender(stageAppender)
+            stageAppender.stop()
+        }
+
+        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        assertTrue(jevCalls.get() > 0)
+        val startedLog = appender.list.first { it.message == "System One verification started" }
+        val startedFields = startedLog.keyValuePairs.associate { it.key to it.value.toString() }
+        assertEquals(
+            setOf("analysisRunId", "bibliographyEntryId", "verificationId", "providerId", "modelId", "atomicClaimId", "evidencePassageCount", "evidencePassageIds"),
+            startedFields.keys,
+        )
+        assertEquals(created.analysisRunId.toString(), startedFields["analysisRunId"])
+        assertEquals("jev", startedFields["providerId"])
+        val failureLog = appender.list.first { it.message == "System One provider request failed" }
+        val logFields = failureLog.keyValuePairs.associate { it.key to it.value.toString() }
+        assertEquals(
+            setOf("analysisRunId", "bibliographyEntryId", "verificationId", "providerId", "failureReasonCode", "exceptionType", "evidencePassageCount", "diagnosticField", "diagnosticReasonCode", "atomicClaimId", "evidencePassageIds"),
+            logFields.keys,
+        )
+        assertEquals(created.analysisRunId.toString(), logFields["analysisRunId"])
+        assertEquals("jev", logFields["providerId"])
+        assertEquals(JevSystemOneProviderException.SCORE_INVALID, logFields["failureReasonCode"])
+        assertEquals("answers.directness.score", logFields["diagnosticField"])
+        assertEquals(
+            JevSystemOneProviderException.SCORE_WEIGHTED_MEAN_MISMATCH,
+            logFields["diagnosticReasonCode"],
+        )
+        assertFalse(failureLog.formattedMessage.contains("private claim"))
+        assertFalse(failureLog.formattedMessage.contains("server-side-test-key"))
+        val stageSummary = stageAppender.list.first { it.message == "Analysis Run processing stage completed" }
+        val stageFields = stageSummary.keyValuePairs.associate { it.key to it.value.toString() }
+        assertEquals(created.analysisRunId.toString(), stageFields["analysisRunId"])
+        assertEquals("COMPLETED_WITH_WARNINGS", stageFields["runStatus"])
+        assertEquals("jev", stageFields["systemOneProviderId"])
+        assertEquals("0", stageFields["evidenceJudgementCount"])
+        assertEquals("2", stageFields["failedEvaluationPairCount"])
+        assertEquals("2", stageFields["failedSystemOneEvaluationCount"])
+        assertTrue(stageFields.getValue("incompleteVerificationCount").toInt() > 0)
+        assertFalse(stageSummary.formattedMessage.contains("private claim"))
+        assertEquals("COMPLETED_WITH_WARNINGS", report.runStatus)
+        assertEquals("COMPLETED_WITH_WARNINGS", report.evidenceCoverage.executionStatus)
+        assertTrue(outcomes.filter { it.verificationScope == "FULL_TEXT" }.all {
+            it.processingStatus == "INCOMPLETE" &&
+                it.processingFailureReason == JevSystemOneProviderException.SCORE_INVALID &&
+                it.finalStatus == null
+        })
+        assertEquals(0L, jdbc.queryForObject(
+            "SELECT count(*) FROM evidence_judgements WHERE analysis_run_id = ?",
+            Long::class.java,
+            created.analysisRunId,
+        ))
+    }
+
+    @Test
+    fun `runs selected Jev for eligible passages without final aggregation when aggregation is disabled`() {
+        val jevSettings = JevSystemOneSettings(apiKey = "server-side-test-key")
+        val catalog = ProviderCatalog.safeDefaults(jevSystemOneSettings = jevSettings)
+        val configuration = configurationFactory(
+            providerCatalog = catalog,
+            systemOneAggregationEnabled = false,
+        ).from(
+            RunConfigurationRequest(
+                systemOneProvider = JevSystemOneSettings.PROVIDER_ID,
+                externalProviderConsents = listOf(externalProviderConsent(
+                    catalog,
+                    JevSystemOneSettings.PROVIDER_ID,
+                    listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id),
+                )),
+            ),
+        )
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val jevCalls = AtomicInteger()
+        val jevProvider = object : SystemOneProvider {
+            override val providerId = JevSystemOneSettings.PROVIDER_ID
+            override val version = JevSystemOneSettings.PROVIDER_VERSION
+            override val modelId = JevSystemOneSettings.DEFAULT_MODEL_ID
+
+            override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult = SemanticJudgementResult(
+                request.evidencePassages.map { passage ->
+                    jevCalls.incrementAndGet()
+                    EvidenceJudgement(
+                        evidenceCandidateId = passage.id,
+                        judgement = EvidenceJudgementKind.DIRECT_SUPPORT,
+                        evidenceRole = EvidenceRole.PRIMARY_FINDING,
+                        confidence = 0.9,
+                        directness = 0.9,
+                        claimScopeMatch = 0.9,
+                        studyDesignQuality = 0.9,
+                        relevance = 0.9,
+                        providerReportedModelId = "jev-1.13.0",
+                    )
+                },
+            )
+        }
+        val resolutionService = referenceResolutionService()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler(resolutionService = resolutionService).handle(documentEvent)
+
+        val verificationLogger = LoggerFactory.getLogger(EvidenceVerificationService::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        verificationLogger.addAppender(appender)
+        try {
+            processReferenceResolutionEvents(
+                analysisRunId = created.analysisRunId,
+                providerFactories = listOf(RecordedFixtureOpenAccessProviderFactory(
+                    objectMapper,
+                    ProviderCallGate(ProviderCatalog.safeDefaults()),
+                )),
+                resolutionService = resolutionService,
+                systemOneProvider = jevProvider,
+                providerCatalog = catalog,
+            )
+        } finally {
+            verificationLogger.detachAppender(appender)
+            appender.stop()
+        }
+
+        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        assertTrue(jevCalls.get() > 0)
+        val persistedLog = appender.list.first { it.message == "System One judgements persisted" }
+        val persistedFields = persistedLog.keyValuePairs.associate { it.key to it.value.toString() }
+        assertEquals(created.analysisRunId.toString(), persistedFields["analysisRunId"])
+        assertEquals("jev", persistedFields["providerId"])
+        assertEquals("JUDGEMENT_ONLY", persistedFields["evaluationMode"])
+        assertEquals(persistedFields["evidencePassageCount"], persistedFields["judgementCount"])
+        assertFalse(persistedLog.formattedMessage.contains("private claim"))
+        assertEquals("PARSED", report.runStatus)
+        assertEquals("NOT_RUN", report.evidenceCoverage.executionStatus)
+        assertTrue(outcomes.filter { it.verificationScope == "FULL_TEXT" }
+            .all { it.processingStatus == "PENDING" && it.finalStatus == null })
+        assertTrue(jdbc.queryForObject(
+            "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            created.analysisRunId,
+        )!!.contains("Jev produced"))
+    }
+
+    @Test
     fun `runs selected Laya for eligible passages when local aggregation is disabled`() {
-        val (analysisRunId, layaCallCount) = runLayaPipeline(localLayaAggregationEnabled = false)
+        val (analysisRunId, layaCallCount) = runLayaPipeline(systemOneAggregationEnabled = false)
         val report = referenceResolutionService().report(analysisRunId)!!
         val reference = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }
         val passages = reference.verificationOutcomes.flatMap { it.evidencePassages }
@@ -1309,7 +1598,7 @@ class AnalysisRunQueueIntegrationTest {
     @Test
     fun `records a Laya context-limit rejection as an incomplete pair without retrying the request`() {
         val (analysisRunId, layaCallCount) = runLayaPipeline(
-            localLayaAggregationEnabled = false,
+            systemOneAggregationEnabled = false,
             providerFailureReasonCode = LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED,
         )
         val report = referenceResolutionService().report(analysisRunId)!!
@@ -1326,6 +1615,7 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("COMPLETED_WITH_WARNINGS", report.runStatus)
         assertEquals("NOT_RUN", report.evidenceCoverage.executionStatus)
         assertTrue(progressMessage.contains("pair(s) unjudged"))
+        assertTrue(progressMessage.contains("after System One assessment failed"))
         assertTrue(failedPairs.isNotEmpty())
         assertTrue(failedPairs.all { it.finalStatus == null })
         assertEquals(0L, jdbc.queryForObject(
@@ -1338,7 +1628,7 @@ class AnalysisRunQueueIntegrationTest {
 
     @Test
     fun `explicit local Laya aggregation persists final statuses and labels them experimental`() {
-        val (analysisRunId, layaCallCount) = runLayaPipeline(localLayaAggregationEnabled = true)
+        val (analysisRunId, layaCallCount) = runLayaPipeline(systemOneAggregationEnabled = true)
         val report = referenceResolutionService().report(analysisRunId)!!
         val reference = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }
         val semanticOutcomes = reference.verificationOutcomes.filter { it.verificationScope == "FULL_TEXT" }
@@ -1356,7 +1646,7 @@ class AnalysisRunQueueIntegrationTest {
             "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
             String::class.java,
             analysisRunId,
-        )!!.contains("uncalibrated Laya"))
+        )!!.contains("uncalibrated Evidence Judgement"))
         assertEquals(
             layaCallCount.toLong(),
             jdbc.queryForObject(
@@ -1371,7 +1661,7 @@ class AnalysisRunQueueIntegrationTest {
     @Test
     fun `completed run with no eligible full text does not claim Laya aggregation ran`() {
         val (analysisRunId, layaCallCount) = runLayaPipeline(
-            localLayaAggregationEnabled = true,
+            systemOneAggregationEnabled = true,
             metadataOnly = true,
         )
         val report = referenceResolutionService().report(analysisRunId)!!
@@ -1407,7 +1697,7 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     private fun runLayaPipeline(
-        localLayaAggregationEnabled: Boolean,
+        systemOneAggregationEnabled: Boolean,
         providerFailureReasonCode: String? = null,
         tokenCountForPassage: (EvidencePassageForJudgement) -> Int = { 1 },
         judgementForResult: (Int) -> EvidenceJudgementKind = { EvidenceJudgementKind.DIRECT_SUPPORT },
@@ -1426,9 +1716,9 @@ class AnalysisRunQueueIntegrationTest {
         val layaCatalog = ProviderCatalog.safeDefaults(layaSystemOneSettings = layaSettings)
         val configured = configurationFactory(
             providerCatalog = layaCatalog,
-            localLayaAggregationEnabled = localLayaAggregationEnabled,
+            systemOneAggregationEnabled = systemOneAggregationEnabled,
         ).from(RunConfigurationRequest(systemOneProvider = LayaSystemOneSettings.PROVIDER_ID))
-        val configuration = if (localLayaAggregationEnabled) configured else {
+        val configuration = if (systemOneAggregationEnabled) configured else {
             configured.copy(aggregation = AggregationPolicySnapshot("NOT_RUN", null, null, null))
         }
         val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
@@ -1526,7 +1816,7 @@ class AnalysisRunQueueIntegrationTest {
     fun `a complete Laya request at the exact tokenizer limit keeps the existing passage path`() {
         val text = "Prior results support the method. The study reports evidence in the treatment group. Later results do not support the method."
         val (analysisRunId, layaCallCount) = runLayaPipeline(
-            localLayaAggregationEnabled = true,
+            systemOneAggregationEnabled = true,
             tokenCountForPassage = { LayaSystemOneSettings.MODEL_CONTEXT_TOKENS },
             paperText = text,
         )
@@ -1550,7 +1840,7 @@ class AnalysisRunQueueIntegrationTest {
     fun `an over-limit single sentence is persisted as incomplete without inference or truncation`() {
         val text = "Prior results support the method and reproduce it for the treatment group using carefully collected observations and independently validated outcomes."
         val (analysisRunId, layaCallCount) = runLayaPipeline(
-            localLayaAggregationEnabled = false,
+            systemOneAggregationEnabled = false,
             tokenCountForPassage = { LayaSystemOneSettings.MODEL_CONTEXT_TOKENS + 1 },
             paperText = text,
         )
@@ -1573,14 +1863,14 @@ class AnalysisRunQueueIntegrationTest {
             "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
             String::class.java,
             analysisRunId,
-        )!!.contains("required span(s) are missing or incomplete"))
+        )!!.contains("required Laya span(s) are missing or incomplete"))
     }
 
     @Test
     fun `over-limit passage spans persist independently and retries skip successful span judgements`() {
         val text = "Prior results support the method. The study reports evidence in the treatment group. Later results do not support the method."
         val (analysisRunId, layaCallCount) = runLayaPipeline(
-            localLayaAggregationEnabled = true,
+            systemOneAggregationEnabled = true,
             tokenCountForPassage = { passage -> 500 + passage.text.count { it == '.' } * 260 },
             judgementForResult = { index ->
                 if (index % 2 == 1) EvidenceJudgementKind.DIRECT_SUPPORT else EvidenceJudgementKind.CONTRADICTS
@@ -1830,9 +2120,9 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(1, betaPassage.fusedRank)
         assertEquals("postgres-hybrid-rrf-v1", alphaPassage.retrievalProfile.profileId)
         assertEquals(384, alphaPassage.retrievalProfile.embeddingDimension)
-        assertEquals(10, alphaPassage.retrievalProfile.vectorCandidateLimit)
-        assertEquals(10, alphaPassage.retrievalProfile.lexicalCandidateLimit)
-        assertEquals(5, alphaPassage.retrievalProfile.finalCandidateLimit)
+        assertEquals(3, alphaPassage.retrievalProfile.vectorCandidateLimit)
+        assertEquals(3, alphaPassage.retrievalProfile.lexicalCandidateLimit)
+        assertEquals(3, alphaPassage.retrievalProfile.finalCandidateLimit)
         assertTrue(alphaPassage.retrievalProfile.embeddingProfileHash.matches(Regex("[0-9a-f]{64}")))
         assertTrue(alphaPassage.fusionScore > 0)
         assertNotEquals(alphaPassage.sourceAssetId, betaPassage.sourceAssetId)
@@ -1938,15 +2228,13 @@ class AnalysisRunQueueIntegrationTest {
 
     @Test
     fun `persists exact external provider consent in the immutable run snapshot`() {
-        val consent = ExternalProviderConsentSnapshot(
-            "reviewed-llm",
-            listOf("citation_context"),
-        )
-        val created = analysisRunService(providerCatalog = reviewedExternalProviderCatalog()).createFromUpload(
+        val providerCatalog = configuredExternalProviderCatalog()
+        val consent = externalProviderConsent(providerCatalog, "configured-llm", listOf("citation_context"))
+        val created = analysisRunService(providerCatalog = providerCatalog).createFromUpload(
             "paper.pdf",
             "application/pdf",
             englishPdf(),
-            RunConfigurationRequest(claimExtractorProvider = "reviewed-llm", externalProviderConsents = listOf(consent)),
+            RunConfigurationRequest(claimExtractorProvider = "configured-llm", externalProviderConsents = listOf(consent)),
         )
 
         assertEquals(
@@ -1966,9 +2254,17 @@ class AnalysisRunQueueIntegrationTest {
             ),
         )
         assertEquals(
-            "reviewed-llm",
+            "configured-llm",
             jdbc.queryForObject(
                 "SELECT configuration_snapshot #>> '{externalProviderConsents,0,providerId}' FROM analysis_runs WHERE id = ?",
+                String::class.java,
+                created.analysisRunId,
+            ),
+        )
+        assertEquals(
+            "Retention and deletion terms for this controlled test provider.",
+            jdbc.queryForObject(
+                "SELECT configuration_snapshot #>> '{externalProviderConsents,0,retentionDisclosure}' FROM analysis_runs WHERE id = ?",
                 String::class.java,
                 created.analysisRunId,
             ),
@@ -2829,7 +3125,7 @@ class AnalysisRunQueueIntegrationTest {
     private fun configurationFactory(
         providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
         maxClaimCitationPairs: Int = ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
-        localLayaAggregationEnabled: Boolean = false,
+        systemOneAggregationEnabled: Boolean = false,
     ) = RunConfigurationFactory(
         objectMapper = objectMapper,
         providerCatalog = providerCatalog,
@@ -2846,7 +3142,7 @@ class AnalysisRunQueueIntegrationTest {
             maxClaimCitationPairs = maxClaimCitationPairs,
         ),
         evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
-        localLayaAggregationEnabled = localLayaAggregationEnabled,
+        systemOneAggregationEnabled = systemOneAggregationEnabled,
     )
 
     private fun claimReferenceVerificationRepository(): ClaimReferenceVerificationRepository = JdbcClaimReferenceVerificationRepository(jdbc)

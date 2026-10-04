@@ -17,6 +17,7 @@ import { PIPELINE_STAGE_SELECTED_CLASSES, PIPELINE_STAGE_STATE_CLASSES } from "@
 import { PipelineResultMetricFilters, type PipelineResultFilterOption } from "@/features/analysis-runs/components/pipeline-result-metric-filters";
 import { usePipelineResultFilter, usePipelineStageFilterReset } from "@/features/analysis-runs/hooks/use-pipeline-result-filter";
 import type { AnalysisRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
+import { displayReferenceKey } from "@/lib/display-reference-key";
 import { cn } from "@/lib/utils";
 
 type ReportEntry = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number];
@@ -112,6 +113,11 @@ function matchesVerificationResultsFilter(selectedValues: ReadonlySet<string>, o
     || (selectedValues.has("WITH_EVIDENCE_PASSAGES") && outcome.evidencePassages.length > 0)
     || (selectedValues.has("WITH_JUDGEMENTS") && outcome.evidencePassages.some((passage) => passage.evidenceJudgement))
     || (selectedValues.has("INCOMPLETE_PAIRS") && outcome.processingStatus !== "COMPLETED");
+}
+
+function displayCitationTargetKey(parsedDocument: ParsedDocument, referenceKey: string): string {
+  const reference = parsedDocument.bibliographyEntries.find((entry) => entry.localReferenceKey === referenceKey);
+  return displayReferenceKey(reference ?? { localReferenceKey: referenceKey }, parsedDocument.bibliographyEntries);
 }
 
 function RunResultsUnavailable({ stage, run }: { stage: PipelineStageId; run: AnalysisRun }) {
@@ -305,7 +311,7 @@ function AnnotationResults({ parsedDocument, view }: { parsedDocument: ParsedDoc
                 <div className="mt-3 flex flex-wrap gap-2">
                   {claim.citationTargets.length === 0 ? <Badge variant="outline">No Citation Targets</Badge> : claim.citationTargets.map((target) => (
                     <Badge variant="secondary" key={target.id} className="max-w-full break-words whitespace-normal">
-                      {target.markerText} · {target.bibliographyTitle || target.bibliographyReferenceKey} · inferred
+                      {target.markerText} · {target.bibliographyTitle || displayCitationTargetKey(parsedDocument, target.bibliographyReferenceKey)} · inferred
                     </Badge>
                   ))}
                 </div>
@@ -361,7 +367,7 @@ function ParsedBibliographyResults({ parsedDocument }: { parsedDocument: ParsedD
           {parsedDocument.bibliographyEntries.map((entry) => (
             <li key={entry.localReferenceKey} className="rounded-lg border border-border bg-card p-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <p className="font-mono text-xs text-muted-foreground">{entry.localReferenceKey} · {entry.referenceType.replaceAll("_", " ").toLowerCase()}</p>
+                <p className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, parsedDocument.bibliographyEntries)} · {entry.referenceType.replaceAll("_", " ").toLowerCase()}</p>
                 {entry.year && <span className="font-mono text-xs text-muted-foreground">{entry.year}</span>}
               </div>
               <h5 className="mt-1 break-words font-medium">{entry.title || entry.rawText}</h5>
@@ -404,22 +410,22 @@ function ReferenceMatchResults({ report, view }: { report: ReferenceResolutionRe
       />
       {resolution.entries.length === 0 ? <p className="text-sm text-muted-foreground">No Bibliography Entries were available for resolution.</p> : displayedEntries.length === 0 ? <p className="text-sm text-muted-foreground">No entries match the selected resolution statuses.</p> : (
         <ol className="space-y-2">
-          {displayedEntries.map((entry) => <ReferenceMatchCard key={entry.localReferenceKey} entry={entry} view={view} />)}
+          {displayedEntries.map((entry) => <ReferenceMatchCard key={entry.localReferenceKey} entry={entry} references={resolution.entries} view={view} />)}
         </ol>
       )}
     </div>
   );
 }
 
-function ReferenceMatchCard({ entry, view }: { entry: ReportEntry; view: string }) {
+function ReferenceMatchCard({ entry, references, view }: { entry: ReportEntry; references: readonly ReportEntry[]; view: string }) {
   return (
     <li className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
-        <p className="min-w-0 break-words font-mono text-xs text-muted-foreground">{entry.localReferenceKey}{entry.year ? ` · ${entry.year}` : ""}</p>
+        <p className="min-w-0 break-words font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, references)}{entry.year ? ` · ${entry.year}` : ""}</p>
         <ReferenceResolutionBadge status={entry.status} />
       </div>
       <div className="mt-1 min-w-0 space-y-1">
-        <h4 className="break-words font-medium">{entry.title || entry.localReferenceKey}</h4>
+        <h4 className="break-words font-medium">{entry.title || displayReferenceKey(entry, references)}</h4>
         {entry.authors.length > 0 && <p className="break-words text-sm text-muted-foreground">{entry.authors.join(", ")}</p>}
       </div>
       {view === "normalize" ? (
@@ -461,8 +467,8 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
         <ol className="space-y-3">
           {entries.map((entry) => (
             <li key={entry.localReferenceKey} className="rounded-lg border border-border bg-card p-4">
-              <h4 className="break-words font-medium">{entry.title || entry.localReferenceKey}</h4>
-              <p className="mt-1 text-xs text-muted-foreground">{entry.localReferenceKey} · {entry.status.replaceAll("_", " ").toLowerCase()}</p>
+              <h4 className="break-words font-medium">{entry.title || displayReferenceKey(entry, entries)}</h4>
+              <p className="mt-1 text-xs text-muted-foreground">{displayReferenceKey(entry, entries)} · {entry.status.replaceAll("_", " ").toLowerCase()}</p>
               <CitedPaperAccessSummary access={entry.citedPaperAccess} />
               {!entry.citedPaperAccess && <p className="mt-3 text-sm text-muted-foreground">No access result was persisted; unresolved and unsupported references do not enter the access lookup.</p>}
             </li>
@@ -488,7 +494,7 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
             {discovered.map((entry) => (
               <li key={entry.localReferenceKey} className="rounded-lg border border-border bg-card p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0"><p className="font-mono text-xs text-muted-foreground">{entry.localReferenceKey} · {entry.citedPaperAccess?.providerId}</p><h4 className="break-words font-medium">{entry.title || entry.localReferenceKey}</h4></div>
+                  <div className="min-w-0"><p className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, entries)} · {entry.citedPaperAccess?.providerId}</p><h4 className="break-words font-medium">{entry.title || displayReferenceKey(entry, entries)}</h4></div>
                   <Badge variant="outline">{entry.citedPaperAccess?.accessStatus.replaceAll("_", " ").toLowerCase()}</Badge>
                 </div>
                 <dl className="mt-3 grid gap-2 border-t border-border pt-3 text-xs sm:grid-cols-2">
@@ -527,7 +533,7 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
           {displayedEntries.map((entry) => (
             <li key={entry.localReferenceKey} className="rounded-lg border border-border bg-card p-4">
               <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
-                <div><p className="font-mono text-xs text-muted-foreground">{entry.localReferenceKey}</p><h4 className="break-words font-medium">{entry.title || entry.localReferenceKey}</h4></div>
+                <div><p className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, entries)}</p><h4 className="break-words font-medium">{entry.title || displayReferenceKey(entry, entries)}</h4></div>
                 {entry.citedPaperAccess && <Badge variant="outline">{entry.citedPaperAccess.language?.toLowerCase() ?? "language not recorded"}</Badge>}
               </div>
               {entry.citedPaperAccess
@@ -555,7 +561,7 @@ function IndexingResults({ run, report, view }: { run: AnalysisRun; report: Refe
               const access = entry.citedPaperAccess!;
               return (
                 <li key={entry.localReferenceKey} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-4">
-                  <div className="min-w-0"><p className="font-mono text-xs text-muted-foreground">{entry.localReferenceKey}</p><p className="break-words text-sm font-medium">{entry.title || entry.localReferenceKey}</p></div>
+                  <div className="min-w-0"><p className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, entries)}</p><p className="break-words text-sm font-medium">{entry.title || displayReferenceKey(entry, entries)}</p></div>
                   <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{access.accessStatus.replaceAll("_", " ").toLowerCase()}</Badge><Badge variant="secondary">{access.language?.toLowerCase() ?? "language not recorded"}</Badge></div>
                   <p className="w-full text-xs text-muted-foreground">Detector {access.languageDetectorVersion ?? "not recorded"}{access.accessReason ? ` · ${access.accessReason.replaceAll("_", " ").toLowerCase()}` : ""}</p>
                 </li>
@@ -606,7 +612,7 @@ function IndexingResults({ run, report, view }: { run: AnalysisRun; report: Refe
           const indexing = access?.evidenceIndexing;
           return (
             <li key={entry.localReferenceKey} className="rounded-lg border border-border bg-card p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-mono text-xs text-muted-foreground">{entry.localReferenceKey}</p><h4 className="break-words font-medium">{entry.title || entry.localReferenceKey}</h4></div><Badge variant="outline" className="capitalize">{indexingStatus(entry).replaceAll("_", " ").toLowerCase()}</Badge></div>
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, entries)}</p><h4 className="break-words font-medium">{entry.title || displayReferenceKey(entry, entries)}</h4></div><Badge variant="outline" className="capitalize">{indexingStatus(entry).replaceAll("_", " ").toLowerCase()}</Badge></div>
               {indexing ? (
                 <dl className="mt-3 grid gap-3 border-t border-border pt-3 text-xs sm:grid-cols-2">
                   <div><dt className="font-mono uppercase text-muted-foreground">Cited Paper parser</dt><dd className="mt-1">{indexing.parserProvider ?? "Not recorded"} {indexing.parserVersion ?? ""}</dd></div>
@@ -675,7 +681,7 @@ function VerificationResults({
           {displayedOutcomes.map(({ outcome, entry }) => (
             <li key={outcome.id} className="rounded-lg border border-border bg-muted/10 p-3">
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="font-mono text-xs text-muted-foreground">{entry.localReferenceKey}</span>
+                <span className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, report.referenceResolution.entries)}</span>
                 <ReferenceResolutionBadge status={outcome.finalStatus ?? outcome.processingStatus} />
               </div>
               <ol className="space-y-2">
@@ -683,6 +689,7 @@ function VerificationResults({
                   analysisRunId={runId}
                   outcome={outcome}
                   indexingStatus={entry.citedPaperAccess?.evidenceIndexing?.status ?? null}
+                  presentation="pipeline"
                 />
               </ol>
             </li>
@@ -767,14 +774,14 @@ function VerificationStageResults({ run, report }: { run: AnalysisRun; report: R
   }
 
   if (executionStatus === "NOT_RUN") {
-    const evaluationOnly = run.configuration.systemOne.provider === "laya";
+    const evaluationOnly = run.configuration.systemOne.provider !== "mock";
     return (
       <div className="space-y-4">
         <Alert>
-          <AlertTitle>{evaluationOnly ? "Local Laya evaluation only" : "Claim–Paper Verification not configured"}</AlertTitle>
+          <AlertTitle>{evaluationOnly ? "System One evaluation only" : "Claim–Paper Verification not configured"}</AlertTitle>
           <AlertDescription>
             {evaluationOnly
-              ? "Laya judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
+              ? "System One judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
               : "This Analysis Run did not configure a final Claim–Paper Verification policy, so no Evidence Coverage Report outcomes were produced."}
           </AlertDescription>
         </Alert>

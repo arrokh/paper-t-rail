@@ -5,7 +5,6 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
-import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
@@ -14,6 +13,7 @@ import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
+import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
 import com.papertrail.api.scholarly.references.client.BibliographyReference
@@ -55,8 +55,7 @@ class UnpaywallDiscoveryCacheIntegrationTest {
     private val contactEmail = "researcher@example.invalid"
     private val providerCatalog = ProviderCatalog.safeDefaults(
         unpaywallEnabled = true,
-        unpaywallEnablementReviewed = true,
-        unpaywallRetentionDisclosure = "Reviewed Unpaywall terms for this controlled-provider test.",
+        unpaywallRetentionDisclosure = null,
         unpaywallContactEmail = contactEmail,
     )
     private val configurationFactory = RunConfigurationFactory(
@@ -239,16 +238,15 @@ class UnpaywallDiscoveryCacheIntegrationTest {
     private fun configuredRun() = configurationFactory.from(
         RunConfigurationRequest(
             openAccessProvider = UnpaywallOpenAccessProviderFactory.UNPAYWALL_PROVIDER,
-            externalProviderConsents = listOf(
-                ExternalProviderConsentSnapshot(
-                    UnpaywallOpenAccessProviderFactory.UNPAYWALL_PROVIDER,
-                    listOf(
-                        DataCategory.BIBLIOGRAPHIC_METADATA.id,
-                        DataCategory.CITED_PAPER_LOCATION.id,
-                        DataCategory.PROVIDER_CONTACT_EMAIL.id,
-                    ),
+            externalProviderConsents = listOf(externalProviderConsent(
+                providerCatalog,
+                UnpaywallOpenAccessProviderFactory.UNPAYWALL_PROVIDER,
+                listOf(
+                    DataCategory.BIBLIOGRAPHIC_METADATA.id,
+                    DataCategory.CITED_PAPER_LOCATION.id,
+                    DataCategory.PROVIDER_CONTACT_EMAIL.id,
                 ),
-            ),
+            )),
         ),
     )
 

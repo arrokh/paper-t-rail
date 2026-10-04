@@ -43,6 +43,7 @@ import { ReferenceResolutionBadge } from "@/features/reference-resolution/compon
 import { ReferenceResolutionEntryCard } from "@/features/reference-resolution/components/reference-resolution-entry-card";
 import { WorkflowStepTabs, type WorkflowStep } from "@/features/analysis-runs/components/workflow-step-tabs";
 import { formatConfidenceThreshold } from "@/features/reference-resolution/format-confidence-threshold";
+import { displayReferenceKey } from "@/lib/display-reference-key";
 import { ANALYSIS_RUN_STATUS_CLASS_NAMES, analysisRunStatusLabel } from "@/features/analysis-runs/run-status";
 import { scrollToAnchorTarget } from "@/lib/scroll-to-anchor";
 
@@ -162,9 +163,14 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
     () => new Map(coverageReport?.referenceResolution.entries.map((entry) => [entry.localReferenceKey, entry] as const) ?? []),
     [coverageReport],
   );
-  const parsedReferenceKeys = useMemo(
-    () => new Set(parsedDocument?.bibliographyEntries.map((entry) => entry.localReferenceKey) ?? []),
+  const parsedEntriesByReferenceKey = useMemo(
+    () => new Map(parsedDocument?.bibliographyEntries.map((entry) => [entry.localReferenceKey, entry] as const) ?? []),
     [parsedDocument],
+  );
+  const parsedReferenceKeys = useMemo(() => new Set(parsedEntriesByReferenceKey.keys()), [parsedEntriesByReferenceKey]);
+  const formattedReferenceKey = (referenceKey: string) => displayReferenceKey(
+    parsedEntriesByReferenceKey.get(referenceKey) ?? { localReferenceKey: referenceKey },
+    parsedDocument?.bibliographyEntries ?? [],
   );
   const coverageReportLoading = Boolean(selectedRun && parsedDocumentReady && reportQuery.isPending);
   const citationContextAnchorsByReferenceKey = useMemo(() => {
@@ -642,7 +648,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                                                         onClick={scrollToParsedDocumentTarget}
                                                       >
                                                         <code className="font-mono">{target.markerText}</code>
-                                                        <span className="ml-1">{target.bibliographyTitle || target.bibliographyReferenceKey}</span>
+                                                        <span className="ml-1">{target.bibliographyTitle || formattedReferenceKey(target.bibliographyReferenceKey)}</span>
                                                       </a>
                                                     </li>
                                                   ))}
@@ -666,7 +672,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                                             <span className="sr-only">Bibliography entries:</span>
                                             {occurrence.bibliographyReferenceKeys.map((key) => (
                                               <a key={key} className="text-primary underline underline-offset-4 hover:text-primary/80" href={`#bibliography-${key}`} onClick={scrollToParsedDocumentTarget}>
-                                                {key}
+                                                {formattedReferenceKey(key)}
                                               </a>
                                             ))}
                                           </span>
@@ -697,10 +703,10 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                               return (
                                 <li key={entry.localReferenceKey} id={`bibliography-${entry.localReferenceKey}`} className="bibliography-entry-anchor scroll-mt-5 rounded-lg border border-border bg-card p-4">
                                   <h5 className="break-words font-medium leading-relaxed">
-                                    {entry.title || entry.localReferenceKey}
+                                    {entry.title || displayReferenceKey(entry, parsedDocument.bibliographyEntries)}
                                   </h5>
                                   <p className="mt-1 font-mono text-xs text-muted-foreground uppercase">
-                                    {entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}
+                                    {displayReferenceKey(entry, parsedDocument.bibliographyEntries)} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}
                                   </p>
                                   {entry.authors.length > 0 && (
                                     <p className="mt-2 break-words text-sm text-muted-foreground">{entry.authors.join(", ")}</p>
@@ -781,13 +787,13 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                           <AlertTitle>Conservative research triage</AlertTitle>
                           <AlertDescription>{coverage.triageDisclaimer}</AlertDescription>
                         </Alert>
-                        {selectedRun.configuration.systemOne.provider === "laya" && (
+                        {selectedRun.configuration.systemOne.provider !== "mock" && (
                           <Alert>
-                            <AlertTitle>Uncalibrated Laya output</AlertTitle>
+                            <AlertTitle>Uncalibrated System One output</AlertTitle>
                             <AlertDescription>
                               {coverage.executionStatus === "NOT_RUN"
-                                ? "Laya judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
-                                : "This run uses experimental aggregation with uncalibrated Laya judgements and thresholds. Final statuses are not human-reviewed or approved for this target."}
+                                ? "System One judgements in this run are uncalibrated evaluation outputs and are not aggregated into final Claim–Paper Verification statuses."
+                                : "This run uses experimental aggregation with uncalibrated System One judgements and thresholds. Final statuses are not human-reviewed."}
                             </AlertDescription>
                           </Alert>
                         )}
@@ -887,6 +893,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                                 key={entry.localReferenceKey}
                                 analysisRunId={selectedRun.id}
                                 entry={entry}
+                                references={resolution.entries}
                                 anchorId={referenceResolutionAnchorId(entry.localReferenceKey)}
                                 parsedEntryHref={`#bibliography-${entry.localReferenceKey}`}
                                 parsedEntryAvailable={parsedReferenceKeys.has(entry.localReferenceKey)}

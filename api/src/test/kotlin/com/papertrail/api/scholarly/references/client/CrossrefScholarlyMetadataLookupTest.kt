@@ -5,8 +5,8 @@ import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
-import com.papertrail.api.infrastructure.providers.reviewedExternalProviderCatalog
-import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
+import com.papertrail.api.infrastructure.providers.externalProviderConsent
+import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
@@ -26,7 +26,7 @@ import org.hamcrest.Matchers.containsString
 
 class CrossrefScholarlyMetadataLookupTest {
     private val objectMapper = jacksonObjectMapper()
-    private val providerCatalog = reviewedExternalProviderCatalog()
+    private val providerCatalog = configuredExternalProviderCatalog()
     private val gate = ProviderCallGate(providerCatalog)
     private val runConfigurationFactory = RunConfigurationFactory(
         objectMapper = objectMapper,
@@ -97,7 +97,7 @@ class CrossrefScholarlyMetadataLookupTest {
     @Test
     fun `contact email is separately consented before Crossref can dispatch a request`() {
         val contactEmail = "operator@example.invalid"
-        val catalog = reviewedExternalProviderCatalogWithContactEmail(contactEmail)
+        val catalog = configuredExternalProviderCatalogWithContactEmail(contactEmail)
         val configurationFactory = RunConfigurationFactory(
             objectMapper = objectMapper,
             providerCatalog = catalog,
@@ -110,13 +110,13 @@ class CrossrefScholarlyMetadataLookupTest {
             RunConfigurationRequest(
                 scholarlyMetadataProvider = "crossref",
                 externalProviderConsents = listOf(
-                    ExternalProviderConsentSnapshot("crossref", listOf("bibliographic_metadata", "provider_contact_email")),
+                    externalProviderConsent(catalog, "crossref", listOf("bibliographic_metadata", "provider_contact_email")),
                 ),
             ),
         )
         val missingEmailConsent = fullyConsented.copy(
             externalProviderConsents = listOf(
-                ExternalProviderConsentSnapshot("crossref", listOf("bibliographic_metadata")),
+                fullyConsented.externalProviderConsents.single().copy(dataCategories = listOf("bibliographic_metadata")),
             ),
         )
         val builder = RestClient.builder().baseUrl("https://api.crossref.org")
@@ -142,7 +142,7 @@ class CrossrefScholarlyMetadataLookupTest {
     fun `rejects changed Crossref contact email after the run is configured without making a request`() {
         val originalEmail = "original@example.invalid"
         val changedEmail = "changed@example.invalid"
-        val originalCatalog = reviewedExternalProviderCatalogWithContactEmail(originalEmail)
+        val originalCatalog = configuredExternalProviderCatalogWithContactEmail(originalEmail)
         val configuration = RunConfigurationFactory(
             objectMapper = objectMapper,
             providerCatalog = originalCatalog,
@@ -154,7 +154,7 @@ class CrossrefScholarlyMetadataLookupTest {
             RunConfigurationRequest(
                 scholarlyMetadataProvider = "crossref",
                 externalProviderConsents = listOf(
-                    ExternalProviderConsentSnapshot("crossref", listOf("bibliographic_metadata", "provider_contact_email")),
+                    externalProviderConsent(originalCatalog, "crossref", listOf("bibliographic_metadata", "provider_contact_email")),
                 ),
             ),
         )
@@ -164,7 +164,7 @@ class CrossrefScholarlyMetadataLookupTest {
         val lookup = CrossrefScholarlyMetadataLookup(
             builder.build(),
             objectMapper,
-            ProviderCallGate(reviewedExternalProviderCatalogWithContactEmail(changedEmail)),
+            ProviderCallGate(configuredExternalProviderCatalogWithContactEmail(changedEmail)),
             configuration,
             changedEmail,
             NoOpCrossrefLookupCache,
@@ -177,10 +177,9 @@ class CrossrefScholarlyMetadataLookupTest {
         server.verify()
     }
 
-    private fun reviewedExternalProviderCatalogWithContactEmail(contactEmail: String) =
+    private fun configuredExternalProviderCatalogWithContactEmail(contactEmail: String) =
         ProviderCatalog.safeDefaults(
             crossrefEnabled = true,
-            crossrefEnablementReviewed = true,
             crossrefRetentionDisclosure = "Reviewed test retention disclosure.",
             crossrefContactEmail = contactEmail,
         )
@@ -189,7 +188,7 @@ class CrossrefScholarlyMetadataLookupTest {
         RunConfigurationRequest(
             scholarlyMetadataProvider = "crossref",
             externalProviderConsents = listOf(
-                ExternalProviderConsentSnapshot("crossref", listOf(DataCategory.BIBLIOGRAPHIC_METADATA.id)),
+                externalProviderConsent(providerCatalog, "crossref", listOf(DataCategory.BIBLIOGRAPHIC_METADATA.id)),
             ),
         ),
     )

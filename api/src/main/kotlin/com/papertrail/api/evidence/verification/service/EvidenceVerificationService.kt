@@ -10,9 +10,10 @@ import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
 import com.papertrail.api.evidence.verification.domain.LayaEvidencePassageSpanPlanner
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementRequest
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneProviderException
+import com.papertrail.api.evidence.verification.provider.JevSystemOneProviderException
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.SystemOneProvider
+import com.papertrail.api.evidence.verification.provider.SystemOneProviderException
 import com.papertrail.api.evidence.verification.provider.SystemOneRequestPreflight
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.evidence.verification.repository.EvidenceJudgementRepository
@@ -22,6 +23,7 @@ import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
+import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import java.util.UUID
@@ -41,7 +43,7 @@ class EvidenceVerificationService(
         val configuration = loadConfiguration(analysisRunId)
         val aggregationSnapshot = configuration.aggregation
         val evaluationOnly = aggregationSnapshot.executionStatus == "NOT_RUN" &&
-            configuration.systemOne.provider == LayaSystemOneSettings.PROVIDER_ID
+            configuration.systemOne.provider != "mock"
         if (aggregationSnapshot.executionStatus == "NOT_RUN" && !evaluationOnly) return
         require(aggregationSnapshot.executionStatus == "PENDING" || evaluationOnly) {
             "Conflict-aware verification is not configured for this Analysis Run."
@@ -72,6 +74,14 @@ class EvidenceVerificationService(
 
         judgementRepository.pendingRequests(analysisRunId, bibliographyEntryId).forEach { pending ->
             val requestedIds = pending.request.evidencePassages.map(EvidencePassageForJudgement::id).toSet()
+            logVerificationStarted(
+                analysisRunId = analysisRunId,
+                bibliographyEntryId = bibliographyEntryId,
+                verificationId = pending.verificationId,
+                provider = provider,
+                atomicClaimId = pending.request.atomicClaim.id,
+                evidencePassageIds = requestedIds,
+            )
             val passageBudgets = if (requestedIds.isNotEmpty() && layaPreflight != null) {
                 pending.request.evidencePassages.associate { passage ->
                     passage.id to preflightThroughProviderGate(
@@ -110,8 +120,18 @@ class EvidenceVerificationService(
                 jdbc.requireActiveAnalysisRun(analysisRunId)
                 try {
                     evaluateThroughProviderGate(provider, configuration, pending.request)
-                } catch (exception: LayaSystemOneProviderException) {
+                } catch (exception: SystemOneProviderException) {
                     val failureReasonCode = exception.failureReasonCode ?: throw exception
+                    logProviderFailure(
+                        analysisRunId = analysisRunId,
+                        bibliographyEntryId = bibliographyEntryId,
+                        verificationId = pending.verificationId,
+                        providerId = provider.providerId,
+                        failureReasonCode = failureReasonCode,
+                        exception = exception,
+                        atomicClaimId = pending.request.atomicClaim.id,
+                        evidencePassageIds = requestedIds,
+                    )
                     verificationRepository.failVerification(pending.verificationId, failureReasonCode)
                     return@forEach
                 }
@@ -131,6 +151,16 @@ class EvidenceVerificationService(
             require(persisted.map(EvidenceJudgement::evidenceCandidateId).toSet() == requestedIds &&
                 persisted.size == requestedIds.size
             ) { "Persisted System One judgements do not match the requested Evidence Passages." }
+            logJudgementsPersisted(
+                analysisRunId = analysisRunId,
+                bibliographyEntryId = bibliographyEntryId,
+                verificationId = pending.verificationId,
+                provider = provider,
+                atomicClaimId = pending.request.atomicClaim.id,
+                evidencePassageIds = requestedIds,
+                judgementCount = persisted.size,
+                evaluationMode = if (evaluationOnly) "JUDGEMENT_ONLY" else "AGGREGATION",
+            )
             if (evaluationOnly) return@forEach
             completeVerification(
                 pending.verificationId,
@@ -144,6 +174,83 @@ class EvidenceVerificationService(
     fun failFullText(analysisRunId: UUID, bibliographyEntryId: UUID, reason: String) {
         spanRepository.failPendingForReference(analysisRunId, bibliographyEntryId, reason)
         verificationRepository.failFullText(analysisRunId, bibliographyEntryId, reason)
+    }
+
+    private fun logVerificationStarted(
+        analysisRunId: UUID,
+        bibliographyEntryId: UUID,
+        verificationId: UUID,
+        provider: SystemOneProvider,
+        atomicClaimId: UUID,
+        evidencePassageIds: Set<UUID>,
+    ) {
+        val log = logger.atInfo()
+            .addKeyValue("analysisRunId", analysisRunId)
+            .addKeyValue("bibliographyEntryId", bibliographyEntryId)
+            .addKeyValue("verificationId", verificationId)
+            .addKeyValue("providerId", provider.providerId)
+            .addKeyValue("atomicClaimId", atomicClaimId)
+            .addKeyValue("evidencePassageCount", evidencePassageIds.size)
+            .addKeyValue("evidencePassageIds", evidencePassageIds.sortedBy(UUID::toString))
+        provider.modelId?.let { log.addKeyValue("modelId", it) }
+        log.log("System One verification started")
+    }
+
+    private fun logJudgementsPersisted(
+        analysisRunId: UUID,
+        bibliographyEntryId: UUID,
+        verificationId: UUID,
+        provider: SystemOneProvider,
+        atomicClaimId: UUID,
+        evidencePassageIds: Set<UUID>,
+        judgementCount: Int,
+        evaluationMode: String,
+    ) {
+        val log = logger.atInfo()
+            .addKeyValue("analysisRunId", analysisRunId)
+            .addKeyValue("bibliographyEntryId", bibliographyEntryId)
+            .addKeyValue("verificationId", verificationId)
+            .addKeyValue("providerId", provider.providerId)
+            .addKeyValue("atomicClaimId", atomicClaimId)
+            .addKeyValue("evidencePassageCount", evidencePassageIds.size)
+            .addKeyValue("evidencePassageIds", evidencePassageIds.sortedBy(UUID::toString))
+            .addKeyValue("judgementCount", judgementCount)
+            .addKeyValue("evaluationMode", evaluationMode)
+        provider.modelId?.let { log.addKeyValue("modelId", it) }
+        log.log("System One judgements persisted")
+    }
+
+    private fun logProviderFailure(
+        analysisRunId: UUID,
+        verificationId: UUID,
+        providerId: String,
+        failureReasonCode: String,
+        exception: SystemOneProviderException,
+        bibliographyEntryId: UUID? = null,
+        atomicClaimId: UUID? = null,
+        evidencePassageIds: Set<UUID>? = null,
+        evidencePassageSpanId: UUID? = null,
+    ) {
+        val log = logger.atWarn()
+            .addKeyValue("analysisRunId", analysisRunId)
+            .addKeyValue("verificationId", verificationId)
+            .addKeyValue("providerId", providerId)
+            .addKeyValue("failureReasonCode", failureReasonCode)
+            .addKeyValue("exceptionType", exception.javaClass.simpleName)
+        bibliographyEntryId?.let { log.addKeyValue("bibliographyEntryId", it) }
+        atomicClaimId?.let { log.addKeyValue("atomicClaimId", it) }
+        evidencePassageIds?.let {
+            log.addKeyValue("evidencePassageCount", it.size)
+            log.addKeyValue("evidencePassageIds", it.sortedBy(UUID::toString))
+        }
+        (exception as? JevSystemOneProviderException)
+            ?.diagnosticField
+            ?.let { log.addKeyValue("diagnosticField", it) }
+        (exception as? JevSystemOneProviderException)
+            ?.diagnosticReasonCode
+            ?.let { log.addKeyValue("diagnosticReasonCode", it) }
+        evidencePassageSpanId?.let { log.addKeyValue("evidencePassageSpanId", it) }
+        log.log("System One provider request failed")
     }
 
     private fun processSplitPassages(
@@ -215,6 +322,7 @@ class EvidenceVerificationService(
         planned.forEach { (parentPassage, spans) ->
             evaluatePendingSpans(
                 analysisRunId = analysisRunId,
+                verificationId = verificationId,
                 parentPassage = parentPassage,
                 atomicClaim = request.atomicClaim,
                 spans = spans,
@@ -229,6 +337,7 @@ class EvidenceVerificationService(
 
     private fun evaluatePendingSpans(
         analysisRunId: UUID,
+        verificationId: UUID,
         parentPassage: EvidencePassageForJudgement,
         atomicClaim: AtomicClaimForJudgement,
         spans: List<PersistedEvidencePassageSpan>,
@@ -254,8 +363,19 @@ class EvidenceVerificationService(
                 evaluateThroughProviderGate(provider, configuration, request).singleOrNull()
                     ?.also { require(it.evidenceCandidateId == span.id) { "Laya returned a judgement for a different span." } }
                     ?: throw IllegalStateException("Laya must return exactly one judgement for each Evidence Passage span.")
-            } catch (exception: LayaSystemOneProviderException) {
-                exception.failureReasonCode?.let { spanRepository.fail(span.id, it) }
+            } catch (exception: SystemOneProviderException) {
+                val failureReasonCode = exception.failureReasonCode ?: throw exception
+                logProviderFailure(
+                    analysisRunId = analysisRunId,
+                    verificationId = verificationId,
+                    providerId = provider.providerId,
+                    failureReasonCode = failureReasonCode,
+                    exception = exception,
+                    atomicClaimId = atomicClaim.id,
+                    evidencePassageIds = setOf(parentPassage.id),
+                    evidencePassageSpanId = span.id,
+                )
+                spanRepository.fail(span.id, failureReasonCode)
                 throw exception
             }
             spanRepository.complete(span.id, judgement)
@@ -346,6 +466,7 @@ class EvidenceVerificationService(
     ).firstOrNull() ?: throw IllegalStateException("Analysis Run is not available for semantic verification.")
 
     companion object {
+        private val logger = LoggerFactory.getLogger(EvidenceVerificationService::class.java)
         private const val QUESTION_SEQUENCE_COUNT = 6
         private const val SYSTEM_ONE_INCOMPLETE_REASON = "SYSTEM_ONE_INCOMPLETE"
     }

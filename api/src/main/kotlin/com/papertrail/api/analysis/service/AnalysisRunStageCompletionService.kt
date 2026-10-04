@@ -3,10 +3,12 @@ package com.papertrail.api.analysis.service
 import com.papertrail.api.citation.parsing.ParsedDocumentRepository
 import com.papertrail.api.document.service.lockActiveAnalysisRun
 import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
+import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
+import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
@@ -113,36 +115,42 @@ class AnalysisRunStageCompletionService(
             Boolean::class.java,
             analysisRunId,
         ) == true
-        val layaAggregationMode = jdbc.queryForObject(
+        val systemOneProviderId = jdbc.queryForObject(
+            "SELECT configuration_snapshot #>> '{systemOne,provider}' FROM analysis_runs WHERE id = ?",
+            String::class.java,
+            analysisRunId,
+        ) ?: "mock"
+        val systemOneAggregationMode = jdbc.queryForObject(
             """
             SELECT CASE
-                     WHEN configuration_snapshot #>> '{systemOne,provider}' = ?
+                     WHEN configuration_snapshot #>> '{systemOne,provider}' <> 'mock'
                       AND configuration_snapshot #>> '{aggregation,executionStatus}' = 'NOT_RUN' THEN 'JUDGEMENT_ONLY'
-                     WHEN configuration_snapshot #>> '{systemOne,provider}' = ?
-                      AND configuration_snapshot #>> '{aggregation,executionStatus}' = 'PENDING' THEN 'LOCAL_AGGREGATION'
+                     WHEN configuration_snapshot #>> '{systemOne,provider}' <> 'mock'
+                      AND configuration_snapshot #>> '{aggregation,executionStatus}' = 'PENDING' THEN 'AGGREGATION'
                      ELSE 'NONE'
                    END
               FROM analysis_runs
              WHERE id = ?
             """.trimIndent(),
             String::class.java,
-            LayaSystemOneSettings.PROVIDER_ID,
-            LayaSystemOneSettings.PROVIDER_ID,
             analysisRunId,
         ) ?: "NONE"
-        val layaEvaluationOnly = layaAggregationMode == "JUDGEMENT_ONLY"
-        val localLayaAggregation = layaAggregationMode == "LOCAL_AGGREGATION"
-        val layaJudgementCount = if (layaEvaluationOnly || localLayaAggregation) {
+        val systemOneEvaluationOnly = systemOneAggregationMode == "JUDGEMENT_ONLY"
+        val systemOneAggregation = systemOneAggregationMode == "AGGREGATION"
+        val systemOneJudgementCount = if (systemOneEvaluationOnly || systemOneAggregation) {
             jdbc.queryForObject(
                 "SELECT count(*) FROM evidence_judgements WHERE analysis_run_id = ? AND system_one_provider = ?",
                 Long::class.java,
                 analysisRunId,
-                LayaSystemOneSettings.PROVIDER_ID,
+                systemOneProviderId,
             ) ?: 0L
         } else {
             0L
         }
-        val layaSpanCounts = if (layaEvaluationOnly || localLayaAggregation) {
+        val layaSpanCounts = if (
+            systemOneProviderId == LayaSystemOneSettings.PROVIDER_ID &&
+            (systemOneEvaluationOnly || systemOneAggregation)
+        ) {
             jdbc.queryForObject(
                 """
                 SELECT count(*) FILTER (WHERE status = 'COMPLETED') AS completed,
@@ -157,6 +165,11 @@ class AnalysisRunStageCompletionService(
             ) ?: LayaSpanCounts(0, 0, 0)
         } else {
             LayaSpanCounts(0, 0, 0)
+        }
+        val systemOneDisplayName = when (systemOneProviderId) {
+            LayaSystemOneSettings.PROVIDER_ID -> "Laya"
+            JevSystemOneSettings.PROVIDER_ID -> "Jev"
+            else -> "System One"
         }
         if (verificationPipelineConfigured) markOrphanedPendingVerifications(analysisRunId)
         val verificationCounts = jdbc.queryForObject(
@@ -179,21 +192,36 @@ class AnalysisRunStageCompletionService(
             },
             analysisRunId,
         ) ?: VerificationCounts(0, 0, 0, 0, 0)
-        val failedLayaEvaluationCount = if (layaEvaluationOnly) {
+        val evaluationFailureCounts = if (systemOneEvaluationOnly || systemOneAggregation) {
             jdbc.queryForObject(
-                "SELECT count(*) FROM claim_paper_verifications WHERE analysis_run_id = ? AND processing_status = 'FAILED'",
-                Long::class.java,
+                """
+                SELECT count(*) FILTER (WHERE processing_status = 'FAILED') AS failed_pair_count,
+                       count(*) FILTER (
+                           WHERE processing_status = 'FAILED'
+                             AND left(processing_failure_reason, 11) = 'SYSTEM_ONE_'
+                       ) AS failed_system_one_count
+                  FROM claim_paper_verifications
+                 WHERE analysis_run_id = ?
+                """.trimIndent(),
+                { rs, _ ->
+                    EvaluationFailureCounts(
+                        failedPairCount = rs.getLong("failed_pair_count"),
+                        failedSystemOneCount = rs.getLong("failed_system_one_count"),
+                    )
+                },
                 analysisRunId,
-            ) ?: 0L
+            ) ?: EvaluationFailureCounts(0L, 0L)
         } else {
-            0L
+            EvaluationFailureCounts(0L, 0L)
         }
+        val failedEvaluationPairCount = evaluationFailureCounts.failedPairCount
+        val failedSystemOneEvaluationCount = evaluationFailureCounts.failedSystemOneCount
         val atomicClaims = parsed.citationContexts.flatMap { it.atomicClaims }
         val inferredClaimTargetLinkCount = atomicClaims.sumOf { it.citationTargets.size }
         val warning = failedTaskCount > 0 ||
             (verificationPipelineConfigured && verificationCounts.incomplete > 0) ||
-            (layaEvaluationOnly && failedLayaEvaluationCount > 0) ||
-            ((layaEvaluationOnly || localLayaAggregation) && layaSpanCounts.incomplete > 0)
+            (systemOneEvaluationOnly && failedEvaluationPairCount > 0) ||
+            ((systemOneEvaluationOnly || systemOneAggregation) && layaSpanCounts.incomplete > 0)
         val finalStatus = when {
             verificationPipelineConfigured && warning -> "COMPLETED_WITH_WARNINGS"
             verificationPipelineConfigured -> "COMPLETED"
@@ -201,21 +229,23 @@ class AnalysisRunStageCompletionService(
             else -> "PARSED"
         }
         val progressMessage = when {
-            localLayaAggregation && warning && layaSpanCounts.verifications > 0 -> "Local Laya aggregation used $layaJudgementCount uncalibrated Laya Evidence Judgement(s) and ${layaSpanCounts.completed} diagnostic span judgement(s). V1 span diagnostics for ${layaSpanCounts.verifications} Claim–Reference pair(s) are not rolled up into parent or final statuses; ${verificationCounts.incomplete} pair(s) remain incomplete. Results remain uncalibrated."
-            localLayaAggregation && verificationCounts.fullTextPairs == 0 && warning -> "Analysis Run completed with warnings for ${verificationCounts.total} Claim–Reference Verification pair(s). No eligible full-text evidence was available, so Laya assessment and evidence aggregation were not run; ${verificationCounts.incomplete} pair(s) remain incomplete. Results remain uncalibrated and have no attached Human Review."
-            localLayaAggregation && verificationCounts.fullTextPairs == 0 -> "Analysis Run completed with terminal outcomes for ${verificationCounts.total} Claim–Reference Verification pair(s). No eligible full-text evidence was available, so Laya assessment and evidence aggregation were not run. Results remain uncalibrated and have no attached Human Review."
-            localLayaAggregation && warning -> "Local Laya aggregation used $layaJudgementCount uncalibrated Laya Evidence Judgement(s) and experimental thresholds, but ${verificationCounts.incomplete} Claim–Reference Verification pair(s) are incomplete. Results remain uncalibrated."
-            localLayaAggregation -> "Local Laya aggregation completed for ${verificationCounts.aggregatedPairs} full-text Claim–Reference Verification pair(s) using $layaJudgementCount uncalibrated Laya Evidence Judgement(s) and experimental thresholds. Results remain uncalibrated and have no attached Human Review."
+            systemOneAggregation && warning && layaSpanCounts.verifications > 0 -> "$systemOneDisplayName aggregation used $systemOneJudgementCount uncalibrated Evidence Judgement(s) and ${layaSpanCounts.completed} diagnostic span judgement(s). Laya V1 span diagnostics for ${layaSpanCounts.verifications} Claim–Reference pair(s) are not rolled up into parent or final statuses; ${verificationCounts.incomplete} pair(s) remain incomplete. Results remain uncalibrated."
+            systemOneAggregation && verificationCounts.fullTextPairs == 0 && warning -> "Analysis Run completed with warnings for ${verificationCounts.total} Claim–Reference Verification pair(s). No eligible full-text evidence was available, so $systemOneDisplayName assessment and evidence aggregation were not run; ${verificationCounts.incomplete} pair(s) remain incomplete. Results remain uncalibrated and have no attached Human Review."
+            systemOneAggregation && verificationCounts.fullTextPairs == 0 -> "Analysis Run completed with terminal outcomes for ${verificationCounts.total} Claim–Reference Verification pair(s). No eligible full-text evidence was available, so $systemOneDisplayName assessment and evidence aggregation were not run. Results remain uncalibrated and have no attached Human Review."
+            systemOneAggregation && warning -> "$systemOneDisplayName aggregation used $systemOneJudgementCount uncalibrated Evidence Judgement(s) and experimental thresholds, but ${verificationCounts.incomplete} Claim–Reference Verification pair(s) are incomplete. Results remain uncalibrated."
+            systemOneAggregation -> "$systemOneDisplayName aggregation completed for ${verificationCounts.aggregatedPairs} full-text Claim–Reference Verification pair(s) using $systemOneJudgementCount uncalibrated Evidence Judgement(s) and experimental thresholds. Results remain uncalibrated and have no attached Human Review."
             verificationPipelineConfigured && warning -> "The Evidence Coverage Report is ready, but ${verificationCounts.incomplete} Claim–Reference Verification pair(s) are incomplete after processing failures."
             verificationPipelineConfigured -> "The Evidence Coverage Report is complete for ${verificationCounts.total} Claim–Reference Verification pair(s)."
-            layaEvaluationOnly && warning && layaSpanCounts.incomplete > 0 -> "Laya produced $layaJudgementCount uncalibrated Evidence Judgement(s) and ${layaSpanCounts.completed} diagnostic span judgement(s), but ${layaSpanCounts.incomplete} required span(s) are missing or incomplete; final Claim–Paper Verification remains NOT_RUN."
-            layaEvaluationOnly && warning && failedLayaEvaluationCount > 0 && layaJudgementCount > 0 -> "Laya produced $layaJudgementCount uncalibrated Evidence Judgement(s), but $failedLayaEvaluationCount Claim–Reference pair(s) could not be judged; final Claim–Paper Verification remains NOT_RUN."
-            layaEvaluationOnly && warning && failedLayaEvaluationCount > 0 -> "Laya evaluation left $failedLayaEvaluationCount Claim–Reference pair(s) unjudged; final Claim–Paper Verification remains NOT_RUN."
-            layaEvaluationOnly && warning && layaJudgementCount > 0 -> "Laya produced $layaJudgementCount uncalibrated Evidence Judgement(s), but $failedTaskCount pipeline task(s) failed; final Claim–Paper Verification remains NOT_RUN."
-            layaEvaluationOnly && warning -> "Laya evaluation was incomplete because $failedTaskCount pipeline task(s) failed; final Claim–Paper Verification remains NOT_RUN."
+            systemOneEvaluationOnly && warning && layaSpanCounts.incomplete > 0 -> "$systemOneDisplayName produced $systemOneJudgementCount uncalibrated Evidence Judgement(s) and ${layaSpanCounts.completed} diagnostic span judgement(s), but ${layaSpanCounts.incomplete} required Laya span(s) are missing or incomplete; final Claim–Paper Verification remains NOT_RUN."
+            systemOneEvaluationOnly && warning && failedSystemOneEvaluationCount > 0 && systemOneJudgementCount > 0 -> "$systemOneDisplayName produced $systemOneJudgementCount uncalibrated Evidence Judgement(s), but $failedSystemOneEvaluationCount Claim–Reference pair(s) could not be judged; final Claim–Paper Verification remains NOT_RUN."
+            systemOneEvaluationOnly && warning && failedSystemOneEvaluationCount > 0 -> "$systemOneDisplayName evaluation left $failedSystemOneEvaluationCount Claim–Reference pair(s) unjudged after System One assessment failed; final Claim–Paper Verification remains NOT_RUN."
+            systemOneEvaluationOnly && warning && failedEvaluationPairCount > 0 && systemOneJudgementCount > 0 -> "$systemOneDisplayName produced $systemOneJudgementCount uncalibrated Evidence Judgement(s), but $failedEvaluationPairCount Claim–Reference pair(s) could not be assessed because reference or evidence processing failed; final Claim–Paper Verification remains NOT_RUN."
+            systemOneEvaluationOnly && warning && failedEvaluationPairCount > 0 -> "$systemOneDisplayName could not assess $failedEvaluationPairCount Claim–Reference pair(s) because reference or evidence processing failed; final Claim–Paper Verification remains NOT_RUN."
+            systemOneEvaluationOnly && warning && systemOneJudgementCount > 0 -> "$systemOneDisplayName produced $systemOneJudgementCount uncalibrated Evidence Judgement(s), but $failedTaskCount pipeline task(s) failed; final Claim–Paper Verification remains NOT_RUN."
+            systemOneEvaluationOnly && warning -> "$systemOneDisplayName evaluation was incomplete because $failedTaskCount pipeline task(s) failed; final Claim–Paper Verification remains NOT_RUN."
             warning -> "Parsed structure is ready, but $failedTaskCount reference-resolution, cited-paper access, or Evidence Passage indexing task(s) failed; semantic verification has not run."
-            layaEvaluationOnly && (layaJudgementCount > 0 || layaSpanCounts.completed > 0) -> "Laya produced $layaJudgementCount uncalibrated Evidence Judgement(s) and ${layaSpanCounts.completed} diagnostic span judgement(s); final Claim–Paper Verification remains NOT_RUN."
-            layaEvaluationOnly -> "Laya is selected for evaluation, but no eligible full-text Evidence Passage was available; no Laya judgement was produced and final verification remains NOT_RUN."
+            systemOneEvaluationOnly && (systemOneJudgementCount > 0 || layaSpanCounts.completed > 0) -> "$systemOneDisplayName produced $systemOneJudgementCount uncalibrated Evidence Judgement(s) and ${layaSpanCounts.completed} diagnostic span judgement(s); final Claim–Paper Verification remains NOT_RUN."
+            systemOneEvaluationOnly -> "$systemOneDisplayName is selected for assessment, but no eligible full-text Evidence Passage was available; no Evidence Judgement was produced and final verification remains NOT_RUN."
             else -> "Parsed structure and reference resolution are ready; semantic verification was not configured for this Analysis Run."
         }
         val updated = jdbc.update(
@@ -281,6 +311,25 @@ class AnalysisRunStageCompletionService(
             analysisRunId,
         )
         if (updated != 1) throw IllegalStateException("Analysis Run could not complete its parsed stage.")
+        logger.atInfo()
+            .addKeyValue("analysisRunId", analysisRunId)
+            .addKeyValue("runStatus", finalStatus)
+            .addKeyValue("systemOneProviderId", systemOneProviderId)
+            .addKeyValue("systemOneMode", systemOneAggregationMode)
+            .addKeyValue("failedPipelineTaskCount", failedTaskCount)
+            .addKeyValue("resolvedReferenceCount", resolutionSummary.resolved)
+            .addKeyValue("unresolvedReferenceCount", resolutionSummary.unresolved)
+            .addKeyValue("unsupportedReferenceTypeCount", resolutionSummary.unsupportedReferenceType)
+            .addKeyValue("failedReferenceResolutionCount", resolutionSummary.failed)
+            .addKeyValue("verificationCount", verificationCounts.total)
+            .addKeyValue("completedVerificationCount", verificationCounts.completed)
+            .addKeyValue("incompleteVerificationCount", verificationCounts.incomplete)
+            .addKeyValue("fullTextPairCount", verificationCounts.fullTextPairs)
+            .addKeyValue("evidenceJudgementCount", systemOneJudgementCount)
+            .addKeyValue("failedEvaluationPairCount", failedEvaluationPairCount)
+            .addKeyValue("failedSystemOneEvaluationCount", failedSystemOneEvaluationCount)
+            .addKeyValue("warning", warning)
+            .log("Analysis Run processing stage completed")
         true
     } ?: false
 
@@ -316,6 +365,10 @@ class AnalysisRunStageCompletionService(
             analysisRunId,
         )
     }
+
+    private val logger = LoggerFactory.getLogger(AnalysisRunStageCompletionService::class.java)
+
+    private data class EvaluationFailureCounts(val failedPairCount: Long, val failedSystemOneCount: Long)
 
     private data class VerificationCounts(
         val total: Int,

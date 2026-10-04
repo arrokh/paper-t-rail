@@ -1,13 +1,13 @@
 package com.papertrail.api.scholarly.acquisition.client
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
+import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
 import com.papertrail.api.scholarly.references.client.BibliographyReference
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -29,8 +29,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
     private val contactEmail = "researcher@example.invalid"
     private val catalog = ProviderCatalog.safeDefaults(
         unpaywallEnabled = true,
-        unpaywallEnablementReviewed = true,
-        unpaywallRetentionDisclosure = "Reviewed Unpaywall terms for this controlled-provider test.",
+        unpaywallRetentionDisclosure = null,
         unpaywallContactEmail = contactEmail,
     )
     private val factory = RunConfigurationFactory(
@@ -49,7 +48,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
         assertNotNull(configuration.openAccessProviderConfigurationFingerprint)
         assertFalse(configuration.openAccessProviderConfigurationFingerprint!!.contains(contactEmail))
         assertEquals(
-            "Reviewed Unpaywall terms for this controlled-provider test.",
+            "Paper T-Rail has not verified this provider's data-retention or deletion terms. Retention and deletion details are unknown; consult the provider's terms.",
             configuration.openAccessRetentionDisclosure,
         )
     }
@@ -58,8 +57,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
     fun `changed Unpaywall contact settings reject requests pinned to an earlier run`() {
         val changedCatalog = ProviderCatalog.safeDefaults(
             unpaywallEnabled = true,
-            unpaywallEnablementReviewed = true,
-            unpaywallRetentionDisclosure = "Reviewed Unpaywall terms for this controlled-provider test.",
+            unpaywallRetentionDisclosure = null,
             unpaywallContactEmail = "changed@example.invalid",
         )
         val discoveryBuilder = RestClient.builder().baseUrl("https://api.unpaywall.org")
@@ -109,9 +107,10 @@ class UnpaywallOpenAccessProviderFactoryTest {
         val contentBuilder = RestClient.builder()
         val server = MockRestServiceServer.bindTo(contentBuilder).build()
         server.expect(ExpectedCount.never(), requestTo(containsString("8.8.8.8")))
+        val originalConsent = configuredRun().externalProviderConsents.single()
         val configuration = configuredRun().copy(
             externalProviderConsents = listOf(
-                ExternalProviderConsentSnapshot("unpaywall", listOf("bibliographic_metadata", "provider_contact_email")),
+                originalConsent.copy(dataCategories = listOf("bibliographic_metadata", "provider_contact_email")),
             ),
         )
         val provider = UnpaywallOpenAccessProviderFactory(
@@ -171,7 +170,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
         RunConfigurationRequest(
             openAccessProvider = "unpaywall",
             externalProviderConsents = listOf(
-                ExternalProviderConsentSnapshot("unpaywall", listOf("bibliographic_metadata", "cited_paper_location", "provider_contact_email")),
+                externalProviderConsent(catalog, "unpaywall", listOf("bibliographic_metadata", "cited_paper_location", "provider_contact_email")),
             ),
         ),
     )

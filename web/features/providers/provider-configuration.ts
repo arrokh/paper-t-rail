@@ -36,6 +36,7 @@ export type ProviderOption = {
   trustBoundary: "LOCAL" | "EXTERNAL" | "UNREVIEWED";
   dataCategories: string[];
   retentionDisclosure: string | null;
+  retentionDisclosureFingerprint: string | null;
 };
 
 export type DataCategoryDisclosure = {
@@ -54,6 +55,7 @@ export type ProviderConsentRequirement = {
   displayName: string;
   dataCategories: string[];
   retentionDisclosure: string | null;
+  retentionDisclosureFingerprint: string;
 };
 
 const SELECTION_FIELD_BY_ROLE: Record<ProviderRole, keyof ProviderSelections> = {
@@ -79,12 +81,16 @@ function isSelectableProviderOption(option: unknown, role: ProviderRole): option
     || !Array.isArray(candidate.dataCategories)
     || candidate.dataCategories.some((category) => typeof category !== "string" || !category.trim())
     || !(candidate.retentionDisclosure === null || typeof candidate.retentionDisclosure === "string")
+    || !(candidate.retentionDisclosureFingerprint === null || typeof candidate.retentionDisclosureFingerprint === "string")
   ) {
     return false;
   }
 
   if (candidate.trustBoundary === "EXTERNAL") {
-    return candidate.dataCategories.length > 0 && Boolean(candidate.retentionDisclosure?.trim());
+    return candidate.dataCategories.length > 0
+      && Boolean(candidate.retentionDisclosure?.trim())
+      && typeof candidate.retentionDisclosureFingerprint === "string"
+      && /^[0-9a-f]{64}$/.test(candidate.retentionDisclosureFingerprint);
   }
 
   return true;
@@ -100,14 +106,20 @@ export function selectableProviderOptions(directory: ProviderDirectory, role: Pr
 export function availableProviderSelections(
   directory: ProviderDirectory,
   selections: ProviderSelections,
+  explicitSelections: Partial<Record<ProviderRole, string>> = {},
 ): ProviderSelections {
   const selectAvailable = (role: ProviderRole, field: keyof ProviderSelections) => {
     const options = selectableProviderOptions(directory, role);
-    // The API directory gates availability; Laya is retained only as a local selectable provider.
-    const preferred = options.find((provider) =>
-      provider.providerId === selections[field]
-      && (role !== "systemOne" || provider.providerId !== "laya" || provider.trustBoundary === "LOCAL"),
-    );
+    const preferredProviderId = explicitSelections[role] ?? selections[field];
+    // The API directory gates availability; Laya and implicit Ollama preferences must be local.
+    const preferred = options.find((provider) => {
+      if (provider.providerId !== preferredProviderId) return false;
+      if (role === "systemOne" && provider.providerId === "laya" && provider.trustBoundary !== "LOCAL") return false;
+      const implicitOllamaPreference = role === "embedding"
+        && explicitSelections.embedding === undefined
+        && provider.providerId === "ollama";
+      return !implicitOllamaPreference || provider.trustBoundary === "LOCAL";
+    });
     const safeFallback = options.find((provider) =>
       provider.providerId === SAFE_FALLBACK_PROVIDER_SELECTIONS[field],
     );
@@ -161,11 +173,15 @@ export function consentRequirements(
       continue;
     }
 
+    const retentionDisclosureFingerprint = selectedProvider.retentionDisclosureFingerprint;
+    if (!retentionDisclosureFingerprint) continue;
+
     grouped.set(selectedProvider.providerId, {
       providerId: selectedProvider.providerId,
       displayName: selectedProvider.displayName,
       dataCategories: [...new Set(selectedProvider.dataCategories)].sort(),
       retentionDisclosure: selectedProvider.retentionDisclosure,
+      retentionDisclosureFingerprint,
     });
   }
 
@@ -175,18 +191,22 @@ export function consentRequirements(
 export function missingConsents(
   requirements: ProviderConsentRequirement[],
   approvedCategories: Record<string, string[]>,
+  approvedDisclosureFingerprints: Record<string, string> = {},
 ): ProviderConsentRequirement[] {
   return requirements.filter((provider) =>
-    provider.dataCategories.some((category) => !approvedCategories[provider.providerId]?.includes(category)),
+    approvedDisclosureFingerprints[provider.providerId] !== provider.retentionDisclosureFingerprint
+      || provider.dataCategories.some((category) => !approvedCategories[provider.providerId]?.includes(category)),
   );
 }
 
 export function retainRequiredApprovals(
   requirements: ProviderConsentRequirement[],
   approvedCategories: Record<string, string[]>,
+  approvedDisclosureFingerprints: Record<string, string> = {},
 ): Record<string, string[]> {
   return Object.fromEntries(
-    requirements.flatMap(({ providerId, dataCategories }) => {
+    requirements.flatMap(({ providerId, dataCategories, retentionDisclosureFingerprint }) => {
+      if (approvedDisclosureFingerprints[providerId] !== retentionDisclosureFingerprint) return [];
       const retained = (approvedCategories[providerId] ?? []).filter((category) => dataCategories.includes(category));
       return retained.length > 0 ? [[providerId, [...new Set(retained)]]] : [];
     }),
@@ -197,22 +217,24 @@ export function isRunConfigurationReady(
   directory: ProviderDirectory | null,
   selections: ProviderSelections,
   approvedCategories: Record<string, string[]>,
+  approvedDisclosureFingerprints: Record<string, string> = {},
 ): boolean {
   if (!directory || !providerSelectionsAreAvailable(directory, selections)) return false;
-  return missingConsents(consentRequirements(directory, selections), approvedCategories).length === 0;
+  return missingConsents(consentRequirements(directory, selections), approvedCategories, approvedDisclosureFingerprints).length === 0;
 }
 
 export function createRunConfiguration(
   directory: ProviderDirectory,
   selections: ProviderSelections,
   approvedCategories: Record<string, string[]>,
+  approvedDisclosureFingerprints: Record<string, string> = {},
 ): AnalysisRunConfiguration {
   if (!providerSelectionsAreAvailable(directory, selections)) {
     throw new Error("Choose an enabled, classified provider for every Analysis Run stage.");
   }
 
   const requirements = consentRequirements(directory, selections);
-  if (missingConsents(requirements, approvedCategories).length > 0) {
+  if (missingConsents(requirements, approvedCategories, approvedDisclosureFingerprints).length > 0) {
     throw new Error("Approve every disclosed data category for each selected external provider, or choose a local provider.");
   }
 
@@ -221,6 +243,7 @@ export function createRunConfiguration(
     externalProviderConsents: requirements.map((provider) => ({
       providerId: provider.providerId,
       dataCategories: [...provider.dataCategories],
+      retentionDisclosureFingerprint: provider.retentionDisclosureFingerprint,
     })),
   };
 }

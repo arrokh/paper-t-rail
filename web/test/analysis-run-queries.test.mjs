@@ -43,12 +43,13 @@ test("provider-directory query exposes loading, successful data, and the safe AP
     trustBoundary: "LOCAL",
     dataCategories: [],
     retentionDisclosure: null,
+    retentionDisclosureFingerprint: null,
   });
   const directory = {
     providers: Object.fromEntries(roles.map((role) => [role, [optionFor(role), {
       ...optionFor(role),
-      providerId: "unreviewed",
-      displayName: "Unreviewed",
+      providerId: "unclassified",
+      displayName: "Unclassified",
       trustBoundary: "UNREVIEWED",
     }]])),
     dataCategories: [],

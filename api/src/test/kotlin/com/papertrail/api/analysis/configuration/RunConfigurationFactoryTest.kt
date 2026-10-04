@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
+import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
@@ -17,7 +18,8 @@ import com.papertrail.api.infrastructure.providers.ProviderNotSelectableExceptio
 import com.papertrail.api.infrastructure.providers.ProviderRegistration
 import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
-import com.papertrail.api.infrastructure.providers.reviewedExternalProviderCatalog
+import com.papertrail.api.infrastructure.providers.externalProviderConsent
+import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -47,9 +49,9 @@ class RunConfigurationFactoryTest {
         assertEquals("feature-hash-384-v1", snapshot.embedding.model)
         assertEquals(listOf("atomic_claims", "cited_paper_chunks", "embedding_input"), snapshot.embedding.dataCategories)
         assertEquals("postgres-hybrid-rrf-v1", snapshot.retrieval.profileId)
-        assertEquals(10, snapshot.retrieval.vectorCandidateLimit)
-        assertEquals(10, snapshot.retrieval.lexicalCandidateLimit)
-        assertEquals(5, snapshot.retrieval.finalCandidateLimit)
+        assertEquals(3, snapshot.retrieval.vectorCandidateLimit)
+        assertEquals(3, snapshot.retrieval.lexicalCandidateLimit)
+        assertEquals(3, snapshot.retrieval.finalCandidateLimit)
         assertEquals(60, snapshot.retrieval.reciprocalRankFusionConstant)
         assertTrue(snapshot.retrieval.embeddingProfileHash.matches(Regex("[0-9a-f]{64}")))
         assertEquals("mock", snapshot.systemOne.provider)
@@ -117,8 +119,7 @@ class RunConfigurationFactoryTest {
                 ollamaEmbeddingSettings = localOllama.copy(
                     baseUrl = "http://embedding.example:11434",
                     trustedHosts = setOf("localhost"),
-                    enablementReviewed = true,
-                    retentionDisclosure = "Reviewed external Ollama retention terms.",
+                    retentionDisclosure = "External Ollama retention terms have not been verified.",
                 ),
             ),
         )
@@ -145,15 +146,36 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
-    fun `uses mock for an omitted selection when the configured Laya default is unavailable`() {
+    fun `rejects Jev as an omitted-provider deployment default`() {
+        val catalog = ProviderCatalog.safeDefaults(
+            jevSystemOneSettings = JevSystemOneSettings(apiKey = "server-side-jev-key"),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            factoryFor(
+                providerCatalog = catalog,
+                defaultSystemOneProvider = JevSystemOneSettings.PROVIDER_ID,
+            )
+        }
+    }
+
+    @Test
+    fun `uses mock when the configured Laya default is unavailable and never silently selects Jev`() {
+        val jevCatalog = ProviderCatalog.safeDefaults(
+            layaSystemOneSettings = LayaSystemOneSettings.disabled(),
+            jevSystemOneSettings = JevSystemOneSettings(apiKey = "server-side-jev-key"),
+        )
         val layaDefaultFactory = factoryFor(
-            providerCatalog = ProviderCatalog.safeDefaults(layaSystemOneSettings = LayaSystemOneSettings.disabled()),
+            providerCatalog = jevCatalog,
             defaultSystemOneProvider = LayaSystemOneSettings.PROVIDER_ID,
         )
 
         assertEquals("mock", layaDefaultFactory.from(layaDefaultFactory.parseRequest(null)).systemOne.provider)
         assertThrows(ProviderNotSelectableException::class.java) {
             layaDefaultFactory.from(RunConfigurationRequest(systemOneProvider = LayaSystemOneSettings.PROVIDER_ID))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            layaDefaultFactory.from(RunConfigurationRequest(systemOneProvider = JevSystemOneSettings.PROVIDER_ID))
         }
     }
 
@@ -166,48 +188,69 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
-    fun `enables local experimental aggregation only for selectable Laya runs`() {
+    fun `snapshots the same deterministic aggregation policy for Laya and Jev but not mock`() {
         val layaSettings = LayaSystemOneSettings(
             enabled = true,
             baseUrl = "http://127.0.0.1:8000",
             apiKey = "test-sidecar-key",
             trustedHosts = setOf("127.0.0.1"),
         )
+        val jevSettings = JevSystemOneSettings(
+            apiKey = "server-side-jev-key",
+            retentionDisclosure = "Retention and deletion terms are unknown.",
+        )
         val layaFactory = factoryFor(
             providerCatalog = ProviderCatalog.safeDefaults(layaSystemOneSettings = layaSettings),
             defaultSystemOneProvider = LayaSystemOneSettings.PROVIDER_ID,
             evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
-            localLayaAggregationEnabled = true,
+            systemOneAggregationEnabled = true,
         )
-
         val layaSnapshot = layaFactory.from(layaFactory.parseRequest(null))
-
-        assertEquals("laya", layaSnapshot.systemOne.provider)
-        assertEquals("PENDING", layaSnapshot.aggregation.executionStatus)
-        assertEquals(0.8, layaSnapshot.aggregation.thresholds?.get("directSupport"))
-        assertEquals(0.7, layaSnapshot.aggregation.thresholds?.get("partialSupport"))
-        assertEquals(0.8, layaSnapshot.aggregation.thresholds?.get("contradiction"))
-        assertEquals(0.08, layaSnapshot.aggregation.thresholds?.get("comparabilityMargin"))
-
+        val jevCatalog = ProviderCatalog.safeDefaults(jevSystemOneSettings = jevSettings)
+        val jevFactory = factoryFor(
+            providerCatalog = jevCatalog,
+            evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
+            systemOneAggregationEnabled = true,
+        )
+        val jevSnapshot = jevFactory.from(
+            RunConfigurationRequest(
+                systemOneProvider = JevSystemOneSettings.PROVIDER_ID,
+                externalProviderConsents = listOf(externalProviderConsent(
+                    jevCatalog,
+                    JevSystemOneSettings.PROVIDER_ID,
+                    listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id),
+                )),
+            ),
+        )
         val mockSnapshot = factoryFor(
             evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
-            localLayaAggregationEnabled = true,
+            systemOneAggregationEnabled = true,
         ).from(RunConfigurationRequest())
 
-        assertEquals("mock", mockSnapshot.systemOne.provider)
+        listOf(layaSnapshot, jevSnapshot).forEach { snapshot ->
+            assertEquals("PENDING", snapshot.aggregation.executionStatus)
+            assertEquals("weighted-evidence-role-scope-design-v1", snapshot.aggregation.verificationPolicyVersion)
+            assertEquals("conflict-aware-evidence-strength-v1", snapshot.aggregation.aggregationPolicyVersion)
+            assertEquals(0.8, snapshot.aggregation.thresholds?.get("directSupport"))
+            assertEquals(0.7, snapshot.aggregation.thresholds?.get("partialSupport"))
+            assertEquals(0.8, snapshot.aggregation.thresholds?.get("contradiction"))
+            assertEquals(0.08, snapshot.aggregation.thresholds?.get("comparabilityMargin"))
+        }
+        assertEquals("laya", layaSnapshot.systemOne.provider)
+        assertEquals("jev", jevSnapshot.systemOne.provider)
         assertEquals("NOT_RUN", mockSnapshot.aggregation.executionStatus)
         assertEquals(null, mockSnapshot.aggregation.thresholds)
     }
 
     @Test
-    fun `local Laya aggregation requires explicit thresholds when enabled`() {
+    fun `system one aggregation requires explicit thresholds when enabled`() {
         assertThrows(IllegalArgumentException::class.java) {
-            factoryFor(localLayaAggregationEnabled = true)
+            factoryFor(systemOneAggregationEnabled = true)
         }
     }
 
     @Test
-    fun `local Laya aggregation is disabled when its opt-in flag is false`() {
+    fun `system one aggregation is disabled when its configuration is false`() {
         val layaSettings = LayaSystemOneSettings(
             enabled = true,
             baseUrl = "http://127.0.0.1:8000",
@@ -217,6 +260,8 @@ class RunConfigurationFactoryTest {
         val layaFactory = factoryFor(
             providerCatalog = ProviderCatalog.safeDefaults(layaSystemOneSettings = layaSettings),
             defaultSystemOneProvider = LayaSystemOneSettings.PROVIDER_ID,
+            evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
+            systemOneAggregationEnabled = false,
         )
 
         val snapshot = layaFactory.from(layaFactory.parseRequest(null))
@@ -226,9 +271,23 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
-    fun `pins aggregation thresholds only when an explicit policy is supplied`() {
-        val configured = factoryFor(evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values)
-            .from(RunConfigurationRequest())
+    fun `pins aggregation thresholds for an eligible provider when the policy is enabled`() {
+        val jevSettings = JevSystemOneSettings(apiKey = "server-side-jev-key")
+        val catalog = ProviderCatalog.safeDefaults(jevSystemOneSettings = jevSettings)
+        val configured = factoryFor(
+            providerCatalog = catalog,
+            evidenceAggregationThresholds = TestEvidenceAggregationThresholds.values,
+            systemOneAggregationEnabled = true,
+        ).from(
+            RunConfigurationRequest(
+                systemOneProvider = JevSystemOneSettings.PROVIDER_ID,
+                externalProviderConsents = listOf(externalProviderConsent(
+                    catalog,
+                    JevSystemOneSettings.PROVIDER_ID,
+                    listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id),
+                )),
+            ),
+        )
 
         assertEquals("PENDING", configured.aggregation.executionStatus)
         assertEquals("weighted-evidence-role-scope-design-v1", configured.aggregation.verificationPolicyVersion)
@@ -284,26 +343,29 @@ class RunConfigurationFactoryTest {
             factory.from(RunConfigurationRequest(scholarlyMetadataProvider = "crossref"))
         }
         assertThrows(IllegalArgumentException::class.java) {
-            factoryFor().from(RunConfigurationRequest(systemOneProvider = "unreviewed-provider"))
+            factoryFor().from(RunConfigurationRequest(systemOneProvider = "unclassified-provider"))
         }
     }
 
     @Test
-    fun `external providers cannot be enabled without an explicit reviewed retention disclosure`() {
-        assertThrows(IllegalArgumentException::class.java) {
-            ProviderCatalog(listOf(
-                ProviderRegistration(
-                    CLAIM_EXTRACTOR_ROLE,
-                    "unreviewed-external",
-                    "External provider",
-                    "v1",
-                    null,
-                    ProviderTrustBoundary.EXTERNAL,
-                    true,
-                    setOf(DataCategory.CITATION_CONTEXT),
-                ),
-            ))
-        }
+    fun `external provider availability does not require terms review but requires a classifiable payload`() {
+        val external = ProviderCatalog(listOf(
+            ProviderRegistration(
+                CLAIM_EXTRACTOR_ROLE,
+                "external-with-unknown-terms",
+                "External provider",
+                "v1",
+                null,
+                ProviderTrustBoundary.EXTERNAL,
+                true,
+                setOf(DataCategory.CITATION_CONTEXT),
+            ),
+        )).requireSelectable(CLAIM_EXTRACTOR_ROLE, "external-with-unknown-terms")
+        assertEquals("EXTERNAL", external.trustBoundary.id)
+        val directoryOption = ProviderCatalog(listOf(external)).directory().providers.getValue(CLAIM_EXTRACTOR_ROLE).single()
+        assertTrue(directoryOption.retentionDisclosure!!.contains("Retention and deletion details are unknown"))
+        assertTrue(directoryOption.retentionDisclosureFingerprint!!.matches(Regex("[0-9a-f]{64}")))
+
         assertThrows(IllegalArgumentException::class.java) {
             ProviderCatalog(listOf(
                 ProviderRegistration(
@@ -323,32 +385,35 @@ class RunConfigurationFactoryTest {
     @Test
     fun `requires exact per-run provider consent for selected external payload categories`() {
         val externalFactory = factoryFor()
-        val selected = RunConfigurationRequest(claimExtractorProvider = "reviewed-llm")
+        val selected = RunConfigurationRequest(claimExtractorProvider = "configured-llm")
         assertThrows(IllegalArgumentException::class.java) { externalFactory.from(selected) }
 
         val approved = selected.copy(
-            externalProviderConsents = listOf(
-                ExternalProviderConsentSnapshot("reviewed-llm", listOf("citation_context")),
-            ),
+            externalProviderConsents = listOf(externalProviderConsent(
+                configuredExternalProviderCatalog(),
+                "configured-llm",
+                listOf("citation_context"),
+            )),
         )
         val snapshot = externalFactory.from(approved)
         assertEquals("EXTERNAL", snapshot.claimExtractor.trustBoundary)
         assertEquals(listOf("citation_context"), snapshot.externalProviderConsents.single().dataCategories)
+        assertEquals("Retention and deletion terms for this controlled test provider.", snapshot.externalProviderConsents.single().retentionDisclosure)
 
         assertThrows(IllegalArgumentException::class.java) {
-            externalFactory.from(approved.copy(externalProviderConsents = listOf(
-                ExternalProviderConsentSnapshot("reviewed-llm", listOf("atomic_claims")),
-            )))
+            externalFactory.from(approved.copy(externalProviderConsents = listOf(externalProviderConsent(
+                configuredExternalProviderCatalog(), "configured-llm", listOf("atomic_claims"),
+            ))))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            externalFactory.from(approved.copy(externalProviderConsents = listOf(externalProviderConsent(
+                configuredExternalProviderCatalog(), "configured-llm", listOf("citation_context", "citation_context"),
+            ))))
         }
         assertThrows(IllegalArgumentException::class.java) {
             externalFactory.from(approved.copy(externalProviderConsents = listOf(
-                ExternalProviderConsentSnapshot("reviewed-llm", listOf("citation_context", "citation_context")),
-            )))
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            externalFactory.from(approved.copy(externalProviderConsents = listOf(
-                ExternalProviderConsentSnapshot("mock", listOf("citation_context")),
-                ExternalProviderConsentSnapshot("reviewed-llm", listOf("citation_context")),
+                com.papertrail.api.analysis.http.ExternalProviderConsentRequest("mock", listOf("citation_context"), "a".repeat(64)),
+                externalProviderConsent(configuredExternalProviderCatalog(), "configured-llm", listOf("citation_context")),
             )))
         }
     }
@@ -363,9 +428,9 @@ class RunConfigurationFactoryTest {
         val snapshot = externalFactory.from(
             RunConfigurationRequest(
                 scholarlyMetadataProvider = "crossref",
-                externalProviderConsents = listOf(
-                    ExternalProviderConsentSnapshot("crossref", listOf("bibliographic_metadata")),
-                ),
+                externalProviderConsents = listOf(externalProviderConsent(
+                    configuredExternalProviderCatalog(), "crossref", listOf("bibliographic_metadata"),
+                )),
             ),
         )
         val metadataProvider = snapshot.referenceResolution.provider!!
@@ -378,16 +443,29 @@ class RunConfigurationFactoryTest {
     @Test
     fun `parses provider-specific consent categories and rejects unknown category identifiers`() {
         val externalFactory = factoryFor()
+        val fingerprint = externalProviderConsent(
+            configuredExternalProviderCatalog(), "configured-llm", listOf("citation_context"),
+        ).retentionDisclosureFingerprint
         val parsed = externalFactory.parseRequest(
             jacksonObjectMapper().readTree(
-                """{"claimExtractorProvider":"reviewed-llm","externalProviderConsents":[{"providerId":"reviewed-llm","dataCategories":["citation_context"]}]}""",
+                """{"claimExtractorProvider":"configured-llm","externalProviderConsents":[{"providerId":"configured-llm","dataCategories":["citation_context"],"retentionDisclosureFingerprint":"$fingerprint"}]}""",
             ),
         )
         assertEquals(listOf("citation_context"), parsed.externalProviderConsents.single().dataCategories)
-        assertEquals("reviewed-llm", externalFactory.from(parsed).claimExtractor.provider)
+        assertEquals("configured-llm", externalFactory.from(parsed).claimExtractor.provider)
+        assertThrows(IllegalArgumentException::class.java) {
+            externalFactory.from(parsed.copy(externalProviderConsents = listOf(
+                parsed.externalProviderConsents.single().copy(retentionDisclosureFingerprint = "0".repeat(64)),
+            )))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            externalFactory.parseRequest(jacksonObjectMapper().readTree(
+                """{"claimExtractorProvider":"configured-llm","externalProviderConsents":[{"providerId":"configured-llm","dataCategories":["citation_context"],"retentionDisclosure":"client text","retentionDisclosureFingerprint":"$fingerprint"}]}""",
+            ))
+        }
         val unknownCategory = externalFactory.parseRequest(
             jacksonObjectMapper().readTree(
-                """{"claimExtractorProvider":"reviewed-llm","externalProviderConsents":[{"providerId":"reviewed-llm","dataCategories":["made_up_category"]}]}""",
+                """{"claimExtractorProvider":"configured-llm","externalProviderConsents":[{"providerId":"configured-llm","dataCategories":["made_up_category"],"retentionDisclosureFingerprint":"$fingerprint"}]}""",
             ),
         )
         assertThrows(IllegalArgumentException::class.java) { externalFactory.from(unknownCategory) }
@@ -398,19 +476,19 @@ class RunConfigurationFactoryTest {
         val externalFactory = factoryFor()
         val snapshot = externalFactory.from(
             RunConfigurationRequest(
-                claimExtractorProvider = "reviewed-llm",
-                externalProviderConsents = listOf(
-                    ExternalProviderConsentSnapshot("reviewed-llm", listOf("citation_context")),
-                ),
+                claimExtractorProvider = "configured-llm",
+                externalProviderConsents = listOf(externalProviderConsent(
+                    configuredExternalProviderCatalog(), "configured-llm", listOf("citation_context"),
+                )),
             ),
         )
-        val gate = ProviderCallGate(reviewedExternalProviderCatalog())
+        val gate = ProviderCallGate(configuredExternalProviderCatalog())
         var outboundCallStarted = false
 
         assertThrows(ProviderCallRejectedException::class.java) {
             gate.call(
                 CLAIM_EXTRACTOR_ROLE,
-                "reviewed-llm",
+                "configured-llm",
                 providerCallPayload(DataCategory.CITATION_CONTEXT, DataCategory.SOURCE_DOCUMENT_TEXT),
                 snapshot,
             ) { _ -> outboundCallStarted = true }
@@ -419,7 +497,7 @@ class RunConfigurationFactoryTest {
         assertThrows(ProviderCallRejectedException::class.java) {
             gate.call(
                 CLAIM_EXTRACTOR_ROLE,
-                "reviewed-llm",
+                "configured-llm",
                 providerCallPayload(DataCategory.CITATION_CONTEXT),
                 snapshot.copy(externalProviderConsents = emptyList()),
             ) { _ -> outboundCallStarted = true }
@@ -427,7 +505,7 @@ class RunConfigurationFactoryTest {
         assertThrows(ProviderCallRejectedException::class.java) {
             gate.call(
                 CLAIM_EXTRACTOR_ROLE,
-                "reviewed-llm",
+                "configured-llm",
                 providerCallPayload(DataCategory.CITATION_CONTEXT),
                 snapshot.copy(claimExtractor = snapshot.claimExtractor.copy(dataCategories = listOf("source_document_text"))),
             ) { _ -> outboundCallStarted = true }
@@ -435,7 +513,7 @@ class RunConfigurationFactoryTest {
         assertThrows(ProviderCallRejectedException::class.java) {
             gate.call(
                 CLAIM_EXTRACTOR_ROLE,
-                "reviewed-llm",
+                "configured-llm",
                 ProviderCallPayload(emptyMap()),
                 snapshot,
             ) { _ -> outboundCallStarted = true }
@@ -444,7 +522,7 @@ class RunConfigurationFactoryTest {
 
         assertEquals("response", gate.call(
             CLAIM_EXTRACTOR_ROLE,
-            "reviewed-llm",
+            "configured-llm",
             providerCallPayload(DataCategory.CITATION_CONTEXT),
             snapshot,
         ) { payload ->
@@ -460,7 +538,7 @@ class RunConfigurationFactoryTest {
     fun `disabled and unclassified providers are rejected before an outbound action`() {
         val snapshot = factory.from(RunConfigurationRequest())
         val disabledGate = ProviderCallGate(ProviderCatalog.safeDefaults())
-        val unreviewedGate = ProviderCallGate(reviewedExternalProviderCatalog())
+        val unclassifiedProviderGate = ProviderCallGate(configuredExternalProviderCatalog())
         var outboundCallStarted = false
 
         assertThrows(ProviderCallRejectedException::class.java) {
@@ -472,9 +550,9 @@ class RunConfigurationFactoryTest {
             ) { _ -> outboundCallStarted = true }
         }
         assertThrows(ProviderCallRejectedException::class.java) {
-            unreviewedGate.call(
+            unclassifiedProviderGate.call(
                 SYSTEM_ONE_ROLE,
-                "unreviewed-provider",
+                "unclassified-provider",
                 providerCallPayload(DataCategory.ATOMIC_CLAIMS),
                 snapshot,
             ) { _ -> outboundCallStarted = true }
@@ -488,14 +566,14 @@ class RunConfigurationFactoryTest {
 
     private fun factoryFor(
         retrievalProfileId: String = "postgres-hybrid-rrf-v1",
-        vectorCandidateLimit: Int = 10,
-        lexicalCandidateLimit: Int = 10,
-        finalCandidateLimit: Int = 5,
+        vectorCandidateLimit: Int = 3,
+        lexicalCandidateLimit: Int = 3,
+        finalCandidateLimit: Int = 3,
         reciprocalRankFusionConstant: Int = 60,
         evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
-        localLayaAggregationEnabled: Boolean = false,
+        systemOneAggregationEnabled: Boolean = false,
         maxClaimCitationPairs: Int = ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
-        providerCatalog: ProviderCatalog = reviewedExternalProviderCatalog(),
+        providerCatalog: ProviderCatalog = configuredExternalProviderCatalog(),
         defaultSystemOneProvider: String = "mock",
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
@@ -518,7 +596,7 @@ class RunConfigurationFactoryTest {
         finalCandidateLimit = finalCandidateLimit,
         reciprocalRankFusionConstant = reciprocalRankFusionConstant,
         evidenceAggregationThresholds = evidenceAggregationThresholds,
-        localLayaAggregationEnabled = localLayaAggregationEnabled,
+        systemOneAggregationEnabled = systemOneAggregationEnabled,
         defaultSystemOneProvider = defaultSystemOneProvider,
     )
 
