@@ -219,6 +219,7 @@ function PipelineConfiguration({
           ]
         : stageId === "evidence"
           ? [
+              ["Cited Paper parser", providerLabel(configuration.citedPaperParser ?? configuration.sourceParser)],
               ["Embedding provider", providerLabel(configuration.embedding)],
               ["Retrieval profile", configuration.retrieval.profileId],
               ["Candidate limits", `vector ${configuration.retrieval.vectorCandidateLimit} · lexical ${configuration.retrieval.lexicalCandidateLimit} · final ${configuration.retrieval.finalCandidateLimit}`],

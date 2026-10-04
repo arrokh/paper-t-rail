@@ -8,9 +8,10 @@ export CHANGE
 .PHONY: local dev dev-stop dev-laya dev-app homepage-dev homepage-build infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-local test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
 
 DEV_SELECTABLE_SERVICES := api worker web homepage laya
+DEV_STOP_SELECTABLE_SERVICES := $(DEV_SELECTABLE_SERVICES) docling
 DEV_APP_SERVICES := api worker web homepage
 DEV_STOP_REQUESTED_SERVICES := $(if $(filter dev-stop,$(MAKECMDGOALS)),$(filter-out dev-stop,$(MAKECMDGOALS)))
-DEV_STOP_INVALID_SERVICES := $(filter-out $(DEV_SELECTABLE_SERVICES),$(DEV_STOP_REQUESTED_SERVICES))
+DEV_STOP_INVALID_SERVICES := $(filter-out $(DEV_STOP_SELECTABLE_SERVICES),$(DEV_STOP_REQUESTED_SERVICES))
 DEV_STOP_COMPOSE_PROFILE := $(if $(filter laya,$(DEV_STOP_REQUESTED_SERVICES)),--profile laya-evaluation)
 # Select container-backed services and host-run frontends after `local`.
 LOCAL_SELECTABLE_SERVICES := api worker web homepage laya
@@ -43,10 +44,10 @@ $(LOCAL_REQUESTED_SERVICES):
 else
 ifneq ($(filter dev-stop,$(MAKECMDGOALS)),)
 ifeq ($(strip $(DEV_STOP_REQUESTED_SERVICES)),)
-$(error Usage: make dev-stop <service...>. Choose from: $(DEV_SELECTABLE_SERVICES))
+$(error Usage: make dev-stop <service...>. Choose from: $(DEV_STOP_SELECTABLE_SERVICES))
 endif
 ifneq ($(strip $(DEV_STOP_INVALID_SERVICES)),)
-$(error Unsupported service(s) for `make dev-stop`: $(DEV_STOP_INVALID_SERVICES). Choose from: $(DEV_SELECTABLE_SERVICES))
+$(error Unsupported service(s) for `make dev-stop`: $(DEV_STOP_INVALID_SERVICES). Choose from: $(DEV_STOP_SELECTABLE_SERVICES))
 endif
 
 .PHONY: $(DEV_STOP_REQUESTED_SERVICES)

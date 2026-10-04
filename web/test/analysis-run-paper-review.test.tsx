@@ -58,6 +58,7 @@ const run: AnalysisRun = {
     retrieval: { profileId: "test", vectorCandidateLimit: 10, lexicalCandidateLimit: 10, finalCandidateLimit: 5, reciprocalRankFusionConstant: 60, embeddingProfileHash: "b".repeat(64) },
     systemOne: { provider: "laya", version: "v1" },
     sourceParser: { provider: "grobid", version: "v1" },
+    citedPaperParser: { provider: "docling", version: "1.30.0" },
     languageDetector: { provider: "local", version: "v1" },
   },
   createdAt: "2026-09-30T00:00:00Z",
@@ -599,6 +600,17 @@ describe("Analysis Run Paper Review", () => {
     expect(screen.getByRole("heading", { name: "Paper Review" })).toBeTruthy();
     expect(screen.queryByText("Back to top")).toBeNull();
     await waitFor(() => expect(screen.queryByRole("contentinfo")).toBeNull());
+  });
+
+  it("shows the Stage 04 Cited Paper parser separately from the Stage 01 source parser", async () => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, error: null });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=evidence`);
+
+    renderDetailPage();
+
+    expect(await screen.findByText("docling · 1.30.0")).toBeTruthy();
   });
 
   it("scrolls bibliography and filtered AI-result destinations with a top gap", async () => {

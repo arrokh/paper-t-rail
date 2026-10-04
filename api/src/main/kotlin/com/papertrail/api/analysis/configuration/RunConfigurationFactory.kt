@@ -38,6 +38,8 @@ class RunConfigurationFactory(
     private val evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
     private val localLayaAggregationEnabled: Boolean = false,
     private val defaultSystemOneProvider: String = "mock",
+    private val citedPaperParserId: String = "docling",
+    private val citedPaperParserVersion: String = "1.30.0",
 ) {
     init {
         require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
@@ -51,6 +53,9 @@ class RunConfigurationFactory(
         require(reciprocalRankFusionConstant > 0) { "Reciprocal-rank fusion constant must be positive." }
         require(limits.maxClaimCitationPairs > 0) { "The claim-citation pair limit must be positive." }
         require(defaultSystemOneProvider.isNotBlank()) { "Default System One provider must be configured." }
+        require(citedPaperParserId.isNotBlank() && citedPaperParserVersion.isNotBlank()) {
+            "The Cited Paper parser identity and version must be configured."
+        }
         require(!localLayaAggregationEnabled || evidenceAggregationThresholds != null) {
             "Local Laya aggregation requires explicitly configured thresholds."
         }
@@ -196,6 +201,7 @@ class RunConfigurationFactory(
                 thresholds = aggregationThresholds?.asMap(),
             ),
             externalProviderConsents = consentSnapshots,
+            citedPaperParser = ProviderSelection(citedPaperParserId, citedPaperParserVersion),
         )
     }
 

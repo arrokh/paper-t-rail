@@ -10,6 +10,7 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.analysis.configuration.AggregationPolicySnapshot
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
+import com.papertrail.api.analysis.configuration.ProviderSelection
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.CreatedAnalysisRunResponse
@@ -931,7 +932,7 @@ class AnalysisRunQueueIntegrationTest {
             ${MockSystemOneProvider.CONTRADICTION_FIXTURE_MARKER} Later results do not support or reproduce the method in the treatment group.
         """.trimIndent()
         val citedPaperParser = object : CitedPaperParser {
-            override fun parse(content: ByteArray, mediaType: String): ParsedScientificDocument {
+            override fun parse(content: ByteArray, mediaType: String, parserSelection: ProviderSelection): ParsedScientificDocument {
                 val text = content.toString(Charsets.UTF_8)
                 val separator = "\n\n"
                 val firstEnd = text.indexOf(separator)
@@ -1769,7 +1770,7 @@ class AnalysisRunQueueIntegrationTest {
             }
         }
         val citedPaperParser = object : CitedPaperParser {
-            override fun parse(content: ByteArray, mediaType: String): ParsedScientificDocument {
+            override fun parse(content: ByteArray, mediaType: String, parserSelection: ProviderSelection): ParsedScientificDocument {
                 val text = content.toString(Charsets.UTF_8)
                 return ParsedScientificDocument(
                     parserId = "fixture-cited-paper-parser",
@@ -2946,7 +2947,7 @@ class AnalysisRunQueueIntegrationTest {
 
     private fun citedPaperIndexingEventHandler(
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
-        parser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
+        parser: CitedPaperParser = DefaultCitedPaperParser(emptyList()),
         systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
         embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
         providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
@@ -3001,7 +3002,7 @@ class AnalysisRunQueueIntegrationTest {
             ProviderCallGate(ProviderCatalog.safeDefaults()),
         )),
         languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
-        citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
+        citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(emptyList()),
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
         embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
         systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
@@ -3033,7 +3034,7 @@ class AnalysisRunQueueIntegrationTest {
         analysisRunId: UUID,
         providerFactories: List<OpenAccessProviderFactory>,
         languageDetector: DocumentLanguageDetector,
-        citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(TestScientificDocumentParser),
+        citedPaperParser: CitedPaperParser = DefaultCitedPaperParser(emptyList()),
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
         embeddingProviders: List<EmbeddingProvider> = listOf(FeatureHashEmbeddingProvider()),
         systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
