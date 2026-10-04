@@ -1,5 +1,7 @@
 package com.papertrail.api.citation.claims.provider
 
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
@@ -152,11 +154,10 @@ class OpenAiCompatibleClaimAnalysisProvider(
         requestedContexts: List<ClaimAnalysisContextInput>,
     ): List<CitationContextClaims> {
         val content = assistantContent(response)
-        val root = try {
-            objectMapper.readTree(content)
-        } catch (exception: Exception) {
-            throw OpenAiCompatibleProviderException("The OpenAI-compatible claim-analysis response content was not valid JSON.")
-        }
+        val root = parseStrictJson(
+            content,
+            "The OpenAI-compatible claim-analysis response content was not valid JSON.",
+        )
         requireObjectFields(root, setOf("contexts"), "response")
         val outputContexts = root.get("contexts")
         if (!outputContexts.isArray) throw invalidResponse()
@@ -203,11 +204,10 @@ class OpenAiCompatibleClaimAnalysisProvider(
     }
 
     private fun assistantContent(response: String): String {
-        val root = try {
-            objectMapper.readTree(response)
-        } catch (exception: Exception) {
-            throw OpenAiCompatibleProviderException("The OpenAI-compatible claim-analysis response was not valid JSON.")
-        }
+        val root = parseStrictJson(
+            response,
+            "The OpenAI-compatible claim-analysis response was not valid JSON.",
+        )
         val choices = root?.get("choices")
         if (choices == null || !choices.isArray || choices.size() != 1) throw invalidResponse()
         val choice = choices.single()
@@ -242,6 +242,18 @@ class OpenAiCompatibleClaimAnalysisProvider(
 
     private fun invalidResponse(): OpenAiCompatibleProviderException =
         OpenAiCompatibleProviderException("The OpenAI-compatible claim-analysis response does not match the requested Citation Contexts.")
+
+    private fun parseStrictJson(content: String, invalidMessage: String): JsonNode {
+        val parsed = try {
+            objectMapper.reader()
+                .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                .with(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+                .readTree(content)
+        } catch (exception: Exception) {
+            throw OpenAiCompatibleProviderException(invalidMessage)
+        }
+        return parsed ?: throw OpenAiCompatibleProviderException(invalidMessage)
+    }
 
     private data class PreparedBatch(
         val request: ClaimAnalysisRequest,

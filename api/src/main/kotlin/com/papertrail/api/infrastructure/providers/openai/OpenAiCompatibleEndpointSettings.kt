@@ -13,7 +13,6 @@ data class OpenAiCompatibleEndpointSettings(
     val maxRequestBytes: Int = DEFAULT_MAX_REQUEST_BYTES,
     val maxResponseBytes: Int = DEFAULT_MAX_RESPONSE_BYTES,
     val requestTimeoutMillis: Long = DEFAULT_REQUEST_TIMEOUT_MILLIS,
-    val enablementReviewed: Boolean = false,
     val retentionDisclosure: String? = null,
 ) {
     val baseUri: URI? = parseBaseUri(baseUrl)
@@ -46,8 +45,7 @@ data class OpenAiCompatibleEndpointSettings(
     }
     val isSelectable: Boolean = enabled && isConfigurationValid &&
         (trustBoundary == ProviderTrustBoundary.LOCAL ||
-            (trustBoundary == ProviderTrustBoundary.EXTERNAL && baseUri?.scheme.equals("https", ignoreCase = true) &&
-                enablementReviewed && !retentionDisclosure.isNullOrBlank()))
+            (trustBoundary == ProviderTrustBoundary.EXTERNAL && baseUri?.scheme.equals("https", ignoreCase = true)))
 
     init {
         require(trustedHosts.none(String::isBlank)) { "OpenAI-compatible trusted hosts must not contain blank entries." }

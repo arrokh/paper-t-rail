@@ -5,13 +5,24 @@ import {
   consentRequirements,
   DEFAULT_PROVIDER_SELECTIONS,
   createRunConfiguration,
+  isRunConfigurationReady,
   missingConsents,
   providerSelectionsAreAvailable,
   retainRequiredApprovals,
   selectableProviderOptions,
 } from "../features/providers/provider-configuration.ts";
 
-const directory = {
+function withDisclosureFingerprints(value) {
+  return {
+    ...value,
+    providers: Object.fromEntries(Object.entries(value.providers).map(([role, options]) => [role, options.map((option) => ({
+      ...option,
+      retentionDisclosureFingerprint: option.trustBoundary === "EXTERNAL" ? "a".repeat(64) : null,
+    }))])),
+  };
+}
+
+const directory = withDisclosureFingerprints({
   providers: {
     claimExtractor: [
       {
@@ -32,7 +43,7 @@ const directory = {
         model: "model-2",
         trustBoundary: "EXTERNAL",
         dataCategories: ["citation_context"],
-        retentionDisclosure: "Provider retention terms reviewed for this deployment.",
+        retentionDisclosure: "Retention and deletion details are unknown; consult the provider's terms.",
       },
       {
         role: "claimExtractor",
@@ -84,7 +95,7 @@ const directory = {
         model: "embed-2",
         trustBoundary: "EXTERNAL",
         dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"],
-        retentionDisclosure: "Provider retention terms reviewed for this deployment.",
+        retentionDisclosure: "Retention and deletion details are unknown; consult the provider's terms.",
       },
     ],
     systemOne: [
@@ -97,6 +108,16 @@ const directory = {
         trustBoundary: "LOCAL",
         dataCategories: ["atomic_claims", "evidence_passages"],
         retentionDisclosure: null,
+      },
+      {
+        role: "systemOne",
+        providerId: "jev",
+        displayName: "Jev hosted System One",
+        version: "typesafe-system-one-v1/paper-trail-evidence-judgement-v1",
+        model: "jev-latest",
+        trustBoundary: "EXTERNAL",
+        dataCategories: ["atomic_claims", "evidence_passages"],
+        retentionDisclosure: "Retention and deletion details are unknown; consult the provider's terms.",
       },
     ],
     openAccess: [
@@ -118,7 +139,7 @@ const directory = {
         model: null,
         trustBoundary: "EXTERNAL",
         dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"],
-        retentionDisclosure: "Reviewed Unpaywall request and retention disclosure.",
+        retentionDisclosure: "Unpaywall request details are disclosed; retention and deletion details are unknown.",
       },
     ],
     scholarlyMetadata: [
@@ -145,7 +166,7 @@ const directory = {
     ],
   },
   dataCategories: [],
-};
+});
 
 const localSelections = {
   claimExtractorProvider: "heuristic",
@@ -164,7 +185,7 @@ function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
 
-test("new-run preferences default to local Ollama when exposed and feature-hash otherwise", () => {
+test("new-run preferences use trusted Ollama and Crossref/Unpaywall when available", () => {
   const directoryWithOllama = {
     ...directory,
     providers: {
@@ -180,6 +201,7 @@ test("new-run preferences default to local Ollama when exposed and feature-hash 
           trustBoundary: "LOCAL",
           dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"],
           retentionDisclosure: null,
+          retentionDisclosureFingerprint: null,
         },
       ],
     },
@@ -199,6 +221,7 @@ test("new-run preferences default to local Ollama when exposed and feature-hash 
           trustBoundary: "LOCAL",
           dataCategories: ["atomic_claims", "evidence_passages"],
           retentionDisclosure: null,
+          retentionDisclosureFingerprint: null,
         },
       ],
     },
@@ -211,6 +234,10 @@ test("new-run preferences default to local Ollama when exposed and feature-hash 
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
+  assert.equal(availableProviderSelections(directoryWithLaya, {
+    ...DEFAULT_PROVIDER_SELECTIONS,
+    embeddingProvider: "ollama",
+  }).embeddingProvider, "ollama");
   assert.deepEqual(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS), {
     ...preferredSelections,
     scholarlyMetadataProvider: "crossref",
@@ -218,7 +245,36 @@ test("new-run preferences default to local Ollama when exposed and feature-hash 
   });
 });
 
-test("an unavailable default claim provider is not silently replaced by heuristic", () => {
+test("external Ollama is not implicit but remains available after explicit selection", () => {
+  const externalOllamaDirectory = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      embedding: [
+        ...directory.providers.embedding,
+        {
+          role: "embedding",
+          providerId: "ollama",
+          displayName: "External Ollama embeddings",
+          version: "v1",
+          model: "nomic-embed-text:v1.5",
+          trustBoundary: "EXTERNAL",
+          dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"],
+          retentionDisclosure: "Ollama endpoint retention is unknown.",
+          retentionDisclosureFingerprint: "c".repeat(64),
+        },
+      ],
+    },
+  };
+
+  assert.equal(availableProviderSelections(externalOllamaDirectory, DEFAULT_PROVIDER_SELECTIONS).embeddingProvider, "local");
+  assert.equal(
+    availableProviderSelections(externalOllamaDirectory, DEFAULT_PROVIDER_SELECTIONS, { embedding: "ollama" }).embeddingProvider,
+    "ollama",
+  );
+});
+
+test("an unavailable claim analyzer is not silently replaced while other preferences use safe fallbacks", () => {
   const safeDirectory = {
     ...directory,
     providers: {
@@ -261,7 +317,7 @@ test("unavailable selections reconcile to the intended fallback instead of direc
   );
 });
 
-test("Laya is not preferred unless the selectable provider is locally executed", () => {
+test("Jev remains an explicit alternative and external calls require matching disclosure approval", () => {
   const externalLayaDirectory = {
     ...directory,
     providers: {
@@ -273,7 +329,8 @@ test("Laya is not preferred unless the selectable provider is locally executed",
           providerId: "laya",
           trustBoundary: "EXTERNAL",
           dataCategories: ["atomic_claims", "evidence_passages"],
-          retentionDisclosure: "Reviewed disclosure.",
+          retentionDisclosure: "Retention details are unknown.",
+          retentionDisclosureFingerprint: "b".repeat(64),
         },
       ],
     },
@@ -286,6 +343,26 @@ test("Laya is not preferred unless the selectable provider is locally executed",
     }).systemOneProvider,
     "mock",
   );
+  assert.deepEqual(selectableProviderOptions(directory, "systemOne").map(({ providerId }) => providerId).sort(), ["jev", "mock"]);
+  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "mock");
+  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS, { systemOne: "jev" }).systemOneProvider, "jev");
+  assert.equal(availableProviderSelections(
+    directory,
+    { ...DEFAULT_PROVIDER_SELECTIONS, systemOneProvider: "jev" },
+    { systemOne: "jev" },
+  ).systemOneProvider, "jev");
+
+  const jevSelections = selectionsWith({ systemOneProvider: "jev" });
+  const jevRequirement = consentRequirements(directory, jevSelections)[0];
+  assert.match(jevRequirement.retentionDisclosure, /details are unknown/);
+  const jevApprovals = { jev: ["atomic_claims", "evidence_passages"] };
+  const jevDisclosureFingerprints = { jev: "a".repeat(64) };
+  assert.equal(isRunConfigurationReady(directory, jevSelections, jevApprovals, jevDisclosureFingerprints), true);
+  assert.deepEqual(createRunConfiguration(directory, jevSelections, jevApprovals, jevDisclosureFingerprints).externalProviderConsents, [{
+    providerId: "jev",
+    dataCategories: ["atomic_claims", "evidence_passages"],
+    retentionDisclosureFingerprint: "a".repeat(64),
+  }]);
 });
 
 test("provider selections fall back to an available open-access provider", () => {
@@ -325,18 +402,26 @@ test("one external provider selected for multiple roles receives the deduplicate
     providerId: "hosted-ai",
     displayName: "Hosted AI",
     dataCategories: expectedCategories,
-    retentionDisclosure: "Provider retention terms reviewed for this deployment.",
+    retentionDisclosure: "Retention and deletion details are unknown; consult the provider's terms.",
+    retentionDisclosureFingerprint: "a".repeat(64),
   }]);
 
   const partialApproval = { "hosted-ai": ["citation_context"] };
-  assert.deepEqual(missingConsents(requirements, partialApproval), requirements);
-  assert.throws(() => createRunConfiguration(directory, selections, partialApproval), /Approve every disclosed data category/);
+  const fingerprints = { "hosted-ai": "a".repeat(64) };
+  assert.deepEqual(missingConsents(requirements, partialApproval, fingerprints), requirements);
+  assert.throws(() => createRunConfiguration(directory, selections, partialApproval, fingerprints), /Approve every disclosed data category/);
 
   const fullApproval = { "hosted-ai": [...expectedCategories, "not-required"] };
-  assert.deepEqual(createRunConfiguration(directory, selections, fullApproval), {
+  assert.deepEqual(missingConsents(requirements, fullApproval, fingerprints), []);
+  assert.deepEqual(createRunConfiguration(directory, selections, fullApproval, fingerprints), {
     ...selections,
-    externalProviderConsents: [{ providerId: "hosted-ai", dataCategories: expectedCategories }],
+    externalProviderConsents: [{
+      providerId: "hosted-ai",
+      dataCategories: expectedCategories,
+      retentionDisclosureFingerprint: "a".repeat(64),
+    }],
   });
+  assert.equal(isRunConfigurationReady(directory, selections, fullApproval, { "hosted-ai": "b".repeat(64) }), false);
 });
 
 test("OpenAI-compatible claim analysis requires both Citation Context and bibliography metadata consent", () => {
@@ -349,11 +434,22 @@ test("OpenAI-compatible claim analysis requires both Citation Context and biblio
     displayName: "OpenAI-compatible Chat Completions",
     dataCategories: categories,
     retentionDisclosure: "Retention terms reviewed for this deployment.",
+    retentionDisclosureFingerprint: "a".repeat(64),
   }]);
   assert.throws(() => createRunConfiguration(directory, selections, {}), /Approve every disclosed data category/);
-  assert.deepEqual(createRunConfiguration(directory, selections, { "openai-compatible-chat": categories }), {
+  assert.throws(() => createRunConfiguration(directory, selections, { "openai-compatible-chat": categories }), /Approve every disclosed data category/);
+  assert.deepEqual(createRunConfiguration(
+    directory,
+    selections,
+    { "openai-compatible-chat": categories },
+    { "openai-compatible-chat": "a".repeat(64) },
+  ), {
     ...selections,
-    externalProviderConsents: [{ providerId: "openai-compatible-chat", dataCategories: categories }],
+    externalProviderConsents: [{
+      providerId: "openai-compatible-chat",
+      dataCategories: categories,
+      retentionDisclosureFingerprint: "a".repeat(64),
+    }],
   });
 });
 
@@ -365,7 +461,8 @@ test("Open-access discovery and acquisition require consent for the actual metad
     providerId: "unpaywall",
     displayName: "Unpaywall and discovered open-access hosts",
     dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"],
-    retentionDisclosure: "Reviewed Unpaywall request and retention disclosure.",
+    retentionDisclosure: "Unpaywall request details are disclosed; retention and deletion details are unknown.",
+    retentionDisclosureFingerprint: "a".repeat(64),
   }]);
   assert.deepEqual(missingConsents(requirements, {}), requirements);
 });
@@ -374,7 +471,9 @@ test("changing selections recalculates required approvals and drops approvals no
   const externalSelections = selectionsWith({ claimExtractorProvider: "hosted-ai" });
   const priorRequirements = consentRequirements(directory, externalSelections);
   const priorApproval = { "hosted-ai": ["citation_context"] };
-  assert.deepEqual(missingConsents(priorRequirements, priorApproval), []);
+  const fingerprints = { "hosted-ai": "a".repeat(64) };
+  assert.deepEqual(missingConsents(priorRequirements, priorApproval, fingerprints), []);
+  assert.deepEqual(retainRequiredApprovals(priorRequirements, priorApproval, { "hosted-ai": "b".repeat(64) }), {});
 
   const nextRequirements = consentRequirements(directory, localSelections);
   assert.deepEqual(nextRequirements, []);
@@ -389,11 +488,21 @@ test("Crossref requires explicit per-run approval of bibliographic metadata", ()
     displayName: "Crossref REST API",
     dataCategories: ["bibliographic_metadata"],
     retentionDisclosure: "Crossref request logging and retention disclosure.",
+    retentionDisclosureFingerprint: "a".repeat(64),
   }]);
   assert.throws(() => createRunConfiguration(directory, selections, {}), /Approve every disclosed data category/);
-  assert.deepEqual(createRunConfiguration(directory, selections, { crossref: ["bibliographic_metadata"] }), {
+  assert.deepEqual(createRunConfiguration(
+    directory,
+    selections,
+    { crossref: ["bibliographic_metadata"] },
+    { crossref: "a".repeat(64) },
+  ), {
     ...selections,
-    externalProviderConsents: [{ providerId: "crossref", dataCategories: ["bibliographic_metadata"] }],
+    externalProviderConsents: [{
+      providerId: "crossref",
+      dataCategories: ["bibliographic_metadata"],
+      retentionDisclosureFingerprint: "a".repeat(64),
+    }],
   });
 });
 

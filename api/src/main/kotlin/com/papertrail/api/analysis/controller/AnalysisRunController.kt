@@ -44,7 +44,7 @@ class AnalysisRunController(
 ) {
     @Operation(
         summary = "Upload a PDF and create an Analysis Run",
-        description = "Validates and stores an English text-based PDF, then creates a new immutable run and queues it. The worker enforces the pinned claim-citation pair limit after parsing; over-limit runs fail with an explicit count and are not truncated or persisted as parsed structure.",
+        description = "Validates and stores an English text-based PDF, then creates a new immutable run and queues it. Each selected external provider requires explicit per-run consent for every declared data category and the exact server-issued disclosure fingerprint; disclosure text is snapshotted server-side and cannot be supplied by the client. The worker enforces the pinned claim-citation pair limit after parsing; over-limit runs fail with an explicit count and are not truncated or persisted as parsed structure.",
         requestBody = OpenApiRequestBody(
             required = true,
             content = [Content(
@@ -86,6 +86,7 @@ class AnalysisRunController(
 
     @Operation(
         summary = "Create a new run for a stored Source Document",
+        description = "Each selected external provider requires explicit per-run consent for every declared data category and the exact server-issued retention-disclosure fingerprint. Disclosure text is resolved and snapshotted server-side; clients cannot supply or change it.",
         requestBody = OpenApiRequestBody(
             required = false,
             content = [Content(
@@ -173,7 +174,7 @@ class AnalysisRunController(
 
     @Operation(
         summary = "Get parsed document structure, Atomic Claims, resolution status, and inferred links",
-        description = "Returns the immutable parsed structure, extracted Atomic Claims, inferred/provisional all-to-all Claim–Citation Target links scoped to each Citation Context, and current bibliography resolution status projected from separate immutable outcomes when an Analysis Run reaches PARSED. PARSED means final Claim–Paper Verification is not complete; local Laya evaluation may have recorded uncalibrated passage judgements without aggregation. All source offsets are zero-based and end-exclusive UTF-16 code-unit indexes in normalizedSourceText.",
+        description = "Returns the immutable parsed structure, extracted Atomic Claims, inferred/provisional all-to-all Claim–Citation Target links scoped to each Citation Context, and current bibliography resolution status projected from separate immutable outcomes when an Analysis Run reaches PARSED. PARSED means final Claim–Paper Verification is not complete; a selected non-mock System One provider may have recorded uncalibrated passage judgements without aggregation. All source offsets are zero-based and end-exclusive UTF-16 code-unit indexes in normalizedSourceText.",
     )
     @ApiResponses(
         value = [

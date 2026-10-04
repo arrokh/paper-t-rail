@@ -14,7 +14,6 @@ data class OllamaEmbeddingSettings(
     val apiKey: String? = null,
     val trustedHosts: Set<String> = emptySet(),
     val requestTimeoutMillis: Long = DEFAULT_REQUEST_TIMEOUT_MILLIS,
-    val enablementReviewed: Boolean = false,
     val retentionDisclosure: String? = null,
 ) {
     val baseUri: URI? = parseBaseUri(baseUrl)
@@ -36,8 +35,7 @@ data class OllamaEmbeddingSettings(
         ?.toASCIIString()
         ?.let { sha256Hex("paper-trail-ollama-endpoint-v1\n$it".toByteArray(Charsets.UTF_8)) }
     val isSelectable: Boolean = enabled && isConfigurationValid &&
-        (trustBoundary == ProviderTrustBoundary.LOCAL ||
-            (trustBoundary == ProviderTrustBoundary.EXTERNAL && enablementReviewed && !retentionDisclosure.isNullOrBlank()))
+        trustBoundary in setOf(ProviderTrustBoundary.LOCAL, ProviderTrustBoundary.EXTERNAL)
 
     init {
         require(trustedHosts.none(String::isBlank)) { "Ollama trusted hosts must not contain blank entries." }

@@ -59,6 +59,7 @@ const run: AnalysisRun = {
     retrieval: { profileId: "test", vectorCandidateLimit: 10, lexicalCandidateLimit: 10, finalCandidateLimit: 5, reciprocalRankFusionConstant: 60, embeddingProfileHash: "b".repeat(64) },
     systemOne: { provider: "laya", version: "v1" },
     sourceParser: { provider: "grobid", version: "v1" },
+    citedPaperParser: { provider: "docling", version: "1.30.0" },
     languageDetector: { provider: "local", version: "v1" },
   },
   createdAt: "2026-09-30T00:00:00Z",
@@ -372,7 +373,7 @@ describe("Analysis Run Paper Review", () => {
     }
   });
 
-  it("shows one-based labels for numerically cited entries even in a mixed citation style", () => {
+  it("shows one-based generated labels with numeric and author-year citation markers", () => {
     const mixedCitationParsedDocument: ParsedDocument = {
       ...parsedDocument,
       citationContexts: [
@@ -423,10 +424,59 @@ describe("Analysis Run Paper Review", () => {
     };
     review.rerenderReview({ parsedDocument: authorYearParsedDocument, report: authorYearReport, selectedDetailSection: "citations" });
 
-    expect(screen.getByText("b0 · 2024")).toBeTruthy();
-    expect(screen.getByText("Selected bibliography · b0")).toBeTruthy();
+    expect(screen.getByText("b1 · 2024")).toBeTruthy();
+    expect(screen.getByText("Selected bibliography · b1")).toBeTruthy();
     review.rerenderReview({ parsedDocument: null, report });
     expect(screen.getByText("b1 · 2024")).toBeTruthy();
+  });
+
+  it("keeps legacy Paper Review labels one-based using all references and preserves local-key callbacks", () => {
+    const references = [
+      { ...parsedDocument.bibliographyEntries[0], entryOrder: 1, localReferenceKey: "b1" },
+      { ...parsedDocument.bibliographyEntries[0], entryOrder: 2, localReferenceKey: "b7", title: "A second study", year: 2023 },
+    ];
+    const legacyParsedDocument: ParsedDocument = {
+      ...parsedDocument,
+      citationContexts: parsedDocument.citationContexts.map((context) => ({
+        ...context,
+        occurrences: context.occurrences.map((occurrence) => ({ ...occurrence, bibliographyReferenceKeys: ["b1"] })),
+        atomicClaims: context.atomicClaims.map((claim) => ({
+          ...claim,
+          citationTargets: claim.citationTargets.map((target) => ({ ...target, bibliographyReferenceKey: "b1" })),
+        })),
+      })),
+      bibliographyEntries: references,
+    };
+    const legacyReport: ReferenceResolutionReportResponse = {
+      ...report,
+      referenceResolution: {
+        ...report.referenceResolution,
+        summary: { ...report.referenceResolution.summary, total: 2 },
+        entries: references.map((reference, index) => ({
+          ...report.referenceResolution.entries[0],
+          ...reference,
+          title: reference.title ?? "A study of outcomes",
+          verificationOutcomes: index === 0 ? [outcome] : [],
+        })),
+      },
+    };
+    const onSelectReference = vi.fn();
+    const review = renderReview({
+      parsedDocument: legacyParsedDocument,
+      report: legacyReport,
+      selectedReferenceKey: "b1",
+      selectedDetailSection: "citations",
+      onSelectReference,
+    });
+
+    expect(screen.getByText("b1 · 2024")).toBeTruthy();
+    expect(screen.getByText("b2 · 2023")).toBeTruthy();
+    expect(screen.getByText("Selected bibliography · b1")).toBeTruthy();
+    expect(document.getElementById("review-bibliography-trigger-b1")).toBeTruthy();
+
+    review.rerenderReview({ selectedReferenceKey: null });
+    fireEvent.click(screen.getByText("b2 · 2023").closest("button")!);
+    expect(onSelectReference).toHaveBeenCalledWith("b7");
   });
 
   it("renews MinIO URLs only when Refresh PDF is explicitly selected", async () => {
@@ -634,6 +684,17 @@ describe("Analysis Run Paper Review", () => {
     expect(screen.getByRole("heading", { name: "Paper Review" })).toBeTruthy();
     expect(screen.queryByText("Back to top")).toBeNull();
     await waitFor(() => expect(screen.queryByRole("contentinfo")).toBeNull());
+  });
+
+  it("shows the Stage 04 Cited Paper parser separately from the Stage 01 source parser", async () => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, error: null });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=evidence`);
+
+    renderDetailPage();
+
+    expect(await screen.findByText("docling · 1.30.0")).toBeTruthy();
   });
 
   it("scrolls bibliography and filtered AI-result destinations with a top gap", async () => {

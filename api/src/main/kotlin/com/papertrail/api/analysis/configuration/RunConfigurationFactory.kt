@@ -2,6 +2,7 @@ package com.papertrail.api.analysis.configuration
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.DataCategory
@@ -19,6 +20,7 @@ import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
+import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 
 class RunConfigurationFactory(
@@ -31,14 +33,16 @@ class RunConfigurationFactory(
     private val referenceResolutionPolicyVersion: String = ScholarlyMetadataMatcher.POLICY_VERSION,
     private val referenceResolutionConfidenceThreshold: Double = 0.25,
     private val retrievalProfileId: String = "postgres-hybrid-rrf-v1",
-    private val vectorCandidateLimit: Int = 10,
-    private val lexicalCandidateLimit: Int = 10,
-    private val finalCandidateLimit: Int = 5,
+    private val vectorCandidateLimit: Int = 3,
+    private val lexicalCandidateLimit: Int = 3,
+    private val finalCandidateLimit: Int = 3,
     private val reciprocalRankFusionConstant: Int = 60,
     private val evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
-    private val localLayaAggregationEnabled: Boolean = false,
+    private val systemOneAggregationEnabled: Boolean = false,
     private val defaultSystemOneProvider: String = "mock",
     private val defaultClaimExtractorProvider: String = "heuristic",
+    private val citedPaperParserId: String = "docling",
+    private val citedPaperParserVersion: String = "1.30.0",
 ) {
     init {
         require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
@@ -51,10 +55,15 @@ class RunConfigurationFactory(
         }
         require(reciprocalRankFusionConstant > 0) { "Reciprocal-rank fusion constant must be positive." }
         require(limits.maxClaimCitationPairs > 0) { "The claim-citation pair limit must be positive." }
-        require(defaultSystemOneProvider.isNotBlank()) { "Default System One provider must be configured." }
+        require(defaultSystemOneProvider != JevSystemOneSettings.PROVIDER_ID) {
+            "Jev must be selected explicitly for each Analysis Run."
+        }
         require(defaultClaimExtractorProvider.isNotBlank()) { "Default claim-analysis provider must be configured." }
-        require(!localLayaAggregationEnabled || evidenceAggregationThresholds != null) {
-            "Local Laya aggregation requires explicitly configured thresholds."
+        require(citedPaperParserId.isNotBlank() && citedPaperParserVersion.isNotBlank()) {
+            "The Cited Paper parser identity and version must be configured."
+        }
+        require(!systemOneAggregationEnabled || evidenceAggregationThresholds != null) {
+            "System One aggregation requires explicitly configured thresholds."
         }
     }
 
@@ -81,8 +90,8 @@ class RunConfigurationFactory(
             consents.map { consent ->
                 require(consent.isObject) { "Each external provider consent must be an object." }
                 val consentFields = consent.fieldNames().asSequence().toSet()
-                require(consentFields == setOf("providerId", "dataCategories")) {
-                    "External provider consent must contain only providerId and dataCategories."
+                require(consentFields == setOf("providerId", "dataCategories", "retentionDisclosureFingerprint")) {
+                    "External provider consent must contain providerId, dataCategories, and retentionDisclosureFingerprint."
                 }
                 val providerId = consent.get("providerId")
                 require(providerId.isTextual && providerId.asText().isNotBlank()) {
@@ -92,7 +101,11 @@ class RunConfigurationFactory(
                 require(categories.isArray && categories.all { it.isTextual && it.asText().isNotBlank() }) {
                     "External provider consent dataCategories must be an array of non-empty strings."
                 }
-                ExternalProviderConsentSnapshot(providerId.asText(), categories.map { it.asText() })
+                val disclosureFingerprint = consent.get("retentionDisclosureFingerprint")
+                require(disclosureFingerprint.isTextual && disclosureFingerprint.asText().matches(Regex("[0-9a-f]{64}"))) {
+                    "External provider consent retentionDisclosureFingerprint must be a SHA-256 fingerprint."
+                }
+                ExternalProviderConsentRequest(providerId.asText(), categories.map { it.asText() }, disclosureFingerprint.asText())
             }
         } ?: emptyList()
         return RunConfigurationRequest(
@@ -118,7 +131,7 @@ class RunConfigurationFactory(
             ?: providerCatalog.requireSelectable(EMBEDDING_ROLE, "local")
     }
 
-    /** Omitted Laya defaults fall back only when Laya is not selectable; explicit choices fail closed. */
+    /** Omitted deployment defaults fall back only when Laya is unavailable; explicit choices fail closed. */
     private fun defaultSystemOneRegistration(requestedProvider: String?): ProviderRegistration {
         if (requestedProvider != null) return providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, requestedProvider)
 
@@ -141,9 +154,10 @@ class RunConfigurationFactory(
             providerCatalog.requireSelectable(SCHOLARLY_METADATA_ROLE, request.scholarlyMetadataProvider),
             providerCatalog.requireSelectable(OPEN_ACCESS_ROLE, request.openAccessProvider),
         )
-        val requiredConsents = selected
+        val externalRegistrations = selected
             .filter { it.trustBoundary == ProviderTrustBoundary.EXTERNAL }
             .groupBy(ProviderRegistration::providerId)
+        val requiredConsents = externalRegistrations
             .mapValues { (_, providers) -> providers.flatMap(ProviderRegistration::dataCategories).toSet() }
         val suppliedConsents = request.externalProviderConsents.associateBy { it.providerId }
         require(suppliedConsents.size == request.externalProviderConsents.size) {
@@ -167,7 +181,16 @@ class RunConfigurationFactory(
             require(suppliedCategories.toSet() == requiredCategories) {
                 "Provider '$providerId' consent must exactly match its declared payload categories."
             }
-            ExternalProviderConsentSnapshot(providerId, requiredCategories.map(DataCategory::id).sorted())
+            val registrations = externalRegistrations.getValue(providerId)
+            val disclosure = requireNotNull(registrations.first().consentDisclosure())
+            val disclosureFingerprint = requireNotNull(registrations.first().consentDisclosureFingerprint())
+            require(registrations.all { it.consentDisclosure() == disclosure && it.consentDisclosureFingerprint() == disclosureFingerprint }) {
+                "Provider '$providerId' has conflicting retention disclosures across selected roles."
+            }
+            require(consent.retentionDisclosureFingerprint == disclosureFingerprint) {
+                "Provider '$providerId' retention disclosure changed; refresh the provider directory before consenting."
+            }
+            ExternalProviderConsentSnapshot(providerId, requiredCategories.map(DataCategory::id).sorted(), disclosure)
         }.sortedBy(ExternalProviderConsentSnapshot::providerId)
         return AnalysisConfigurationSnapshot(
             claimExtractor = selected[0].toSelection(),
@@ -186,7 +209,9 @@ class RunConfigurationFactory(
             validationLimits = limits,
             openAccess = selected[4].toSelection(),
             openAccessProviderConfigurationFingerprint = selected[4].payloadConfigurationFingerprint,
-            openAccessRetentionDisclosure = selected[4].retentionDisclosure,
+            openAccessRetentionDisclosure = consentSnapshots
+                .singleOrNull { it.providerId == selected[4].providerId }
+                ?.retentionDisclosure,
             referenceResolution = ReferenceResolutionSnapshot(
                 executionStatus = "PENDING",
                 provider = selected[3].toSelection(),
@@ -201,11 +226,13 @@ class RunConfigurationFactory(
                 thresholds = aggregationThresholds?.asMap(),
             ),
             externalProviderConsents = consentSnapshots,
+            citedPaperParser = ProviderSelection(citedPaperParserId, citedPaperParserVersion),
         )
     }
 
     private fun aggregationThresholdsFor(systemOneProvider: String): EvidenceAggregationThresholds? {
-        if (localLayaAggregationEnabled && systemOneProvider != LayaSystemOneSettings.PROVIDER_ID) return null
+        if (!systemOneAggregationEnabled && systemOneProvider == "mock") return evidenceAggregationThresholds
+        if (!systemOneAggregationEnabled || systemOneProvider !in AGGREGATABLE_SYSTEM_ONE_PROVIDERS) return null
         return evidenceAggregationThresholds
     }
 
@@ -224,4 +251,11 @@ class RunConfigurationFactory(
     )
 
     fun toJson(snapshot: AnalysisConfigurationSnapshot): String = objectMapper.writeValueAsString(snapshot)
+
+    companion object {
+        private val AGGREGATABLE_SYSTEM_ONE_PROVIDERS = setOf(
+            LayaSystemOneSettings.PROVIDER_ID,
+            JevSystemOneSettings.PROVIDER_ID,
+        )
+    }
 }

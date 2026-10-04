@@ -1,0 +1,2874 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [8 0 R 10 0 R 12 0 R 14 0 R 16 0 R 18 0 R 20 0 R 22 0 R 24 0 R] /Count 9 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>
+endobj
+7 0 obj
+<< /Length 5626 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.20 Tf
+1 0 0 1 426.00 761.00 Tm
+(V1 VALIDATION WORKBOOK) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(V1 Validation Workbook) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 9.50 Tf
+1 0 0 1 48.00 676.00 Tm
+(A practical test plan for Paper T-Rail | Repository snapshot: 2026-10-04) Tj
+ET
+0.894 0.929 0.941 rg
+48.00 594.40 516.00 59.60 re f
+0.071 0.400 0.420 rg
+48.00 594.40 4.00 59.60 re f
+0.071 0.400 0.420 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 61.00 639.00 Tm
+(PURPOSE) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 626.00 Tm
+(Use this workbook to validate the documented V1 user journey and its edge cases: upload an academic) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 614.80 Tm
+(PDF, follow its Analysis Run, inspect citation-backed Atomic Claims and Claim-Paper Verifications,) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 603.60 Tm
+(record a separate Human Review, re-analyze, and delete.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.10 Tf
+1 0 0 1 48.00 582.40 Tm
+(HOW TO RUN THE CHECKS) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 571.40 m 564.00 571.40 l S
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 564.40 Tm
+(Run the end-to-end path first with recorded/local providers. For deterministic semantic outcomes, use a) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 553.00 Tm
+(controlled provider fixture in an integration test. Live Laya output is explicitly uncalibrated; do not) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 541.60 Tm
+(require it to match a gold status on each run.) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 526.20 Tm
+(For every case, mark PASS, FAIL, BLOCKED, or N/A. Record the build/commit, environment, Analysis Run ID \(when) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 514.80 Tm
+(one exists\), case ID, expected and observed behavior, and a safe evidence link. Do not copy Source Document,) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 503.40 Tm
+(claim, or Evidence Passage text into logs or issue comments.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.10 Tf
+1 0 0 1 48.00 484.00 Tm
+(V1 WORKFLOW AND COVERAGE) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 473.00 m 564.00 473.00 l S
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 466.00 Tm
+(01 Read the PDF -> 02 Resolve references -> 03 Acquire cited sources -> 04 Prepare evidence -> 05 Assess) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 454.60 Tm
+(evidence -> Evidence Coverage Report. Human Review is a separate, append-only action; it does not rewrite) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 443.20 Tm
+(machine results.) Tj
+ET
+0.894 0.929 0.941 rg
+48.00 368.20 516.00 59.60 re f
+0.071 0.400 0.420 rg
+48.00 368.20 4.00 59.60 re f
+0.071 0.400 0.420 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 61.00 412.80 Tm
+(CLAIM EXPECTATION FOOTER) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 399.80 Tm
+(Every page footer summarizes the expected claim/citation/result behavior for that page. Case-level) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 388.60 Tm
+(expectations below are the detailed oracle. A Claim-Paper Verification is an inferred triage result for) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 377.40 Tm
+(one Atomic Claim x Cited Reference, not proof that the claim is true.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.10 Tf
+1 0 0 1 48.00 356.20 Tm
+(KEEP THESE DISTINCTIONS) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 345.20 m 564.00 345.20 l S
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 338.20 Tm
+(Passage judgements \(DIRECT_SUPPORT, PARTIAL_SUPPORT, CONTRADICTS, UNRELATED, INSUFFICIENT\) are not final) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 326.80 Tm
+(statuses. Final statuses are SUPPORTED, PARTIALLY_SUPPORTED, CONTRADICTED, INSUFFICIENT_EVIDENCE,) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 315.40 Tm
+(INACCESSIBLE, UNRESOLVED, and UNSUPPORTED_REFERENCE_TYPE.) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 300.00 Tm
+(Processing failure is not INSUFFICIENT_EVIDENCE. PARSED is an intermediate state, not a completed Evidence) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 288.60 Tm
+(Coverage Report. Any Laya judgement or aggregated status must remain labeled uncalibrated.) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 273.20 Tm
+(V1 scope: English, text-based academic Source Documents; citation-backed claims; scholarly cited works;) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 261.80 Tm
+(legally accessible evidence. OCR, scanned Source Documents, non-English Source Documents, paywall bypass, and) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 250.40 Tm
+(truth certification are not supported.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.80 Tf
+1 0 0 1 48.00 72.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 72.00 Tm
+(The claim oracle on each page states the expected system behavior. It is not a certification of a research claim.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 45.00 Tm
+(01 / 09) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 45.00 Tm
+(Expected behavior is not a truth certificate. Keep model outputs labeled uncalibrated.) Tj
+ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 7 0 R >>
+endobj
+9 0 obj
+<< /Length 7470 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.20 Tf
+1 0 0 1 426.00 761.00 Tm
+(V1 VALIDATION WORKBOOK) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(01 | Upload and Source Document) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 9.50 Tf
+1 0 0 1 48.00 676.00 Tm
+(Validate PDF preflight, clear failure behavior, and safe limits.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 597.50 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 597.50 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 597.50 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 643.00 Tm
+([ ] U-01 Supported academic PDF) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 634.10 Tm
+(ACTION: Upload an English, text-based journal article or thesis with selectable text, body citations, and a) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 625.20 Tm
+(bibliography.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 616.30 Tm
+(EXPECTED: The Source Document is accepted; a new Analysis Run starts. The run pins the source hash, page count,) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 607.40 Tm
+(validation/parser provenance, and configuration.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 545.90 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 545.90 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 545.90 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 582.50 Tm
+([ ] U-02 Empty, wrong type, wrong filename, or invalid signature) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 573.60 Tm
+(ACTION: Try a zero-byte file, a non-PDF MIME type, a filename without .pdf, and non-PDF bytes renamed .pdf.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 564.70 Tm
+(EXPECTED: Each request is rejected with a clear validation error \(for example EMPTY_UPLOAD,) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 555.80 Tm
+(UNSUPPORTED_CONTENT_TYPE, PDF_FILENAME_REQUIRED, INVALID_PDF_SIGNATURE\). No partial document or run is created.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 503.20 516.00 38.70 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 503.20 516.00 38.70 re S
+0.761 0.231 0.169 rg
+48.00 503.20 3.00 38.70 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 530.90 Tm
+([ ] U-03 Corrupt or encrypted PDF) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 522.00 Tm
+(ACTION: Upload a damaged PDF and a password-protected PDF.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 513.10 Tm
+(EXPECTED: Reject with a clear parse/password error; do not queue a run or retain partial parse output.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 451.60 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 451.60 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 451.60 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 488.20 Tm
+([ ] U-04 Scanned pages and insufficient text) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 479.30 Tm
+(ACTION: Compare a scan-only PDF with a text PDF below the configured minimum extracted-text threshold.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 470.40 Tm
+(EXPECTED: The scan is rejected as SCANNED_PDF_UNSUPPORTED \(OCR is out of scope\). Other low-text PDFs fail with) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 461.50 Tm
+(PDF_HAS_INSUFFICIENT_TEXT.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 400.00 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 400.00 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 400.00 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 436.60 Tm
+([ ] U-05 Unsupported or uncertain source language) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 427.70 Tm
+(ACTION: Upload a non-English document and an English-looking document whose language confidence is below the) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 418.80 Tm
+(configured minimum.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 409.90 Tm
+(EXPECTED: Both are rejected with UNSUPPORTED_LANGUAGE. No Analysis Run is queued.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 339.50 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 339.50 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 339.50 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 385.00 Tm
+([ ] U-06 Byte, page, and extracted-text limits) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 376.10 Tm
+(ACTION: Check exactly-at and one-over boundaries for the configured byte, page, total-character, and) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 367.20 Tm
+(per-page-character limits. Defaults: 50 MiB, 500 pages, 5,000,000 total chars, 100,000 chars/page.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 358.30 Tm
+(EXPECTED: At-limit inputs are accepted when otherwise valid. Over-limit inputs fail with the corresponding error) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 349.40 Tm
+(\(UPLOAD_TOO_LARGE, PDF_TOO_MANY_PAGES, PDF_TEXT_TOO_LARGE\); no content is truncated.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 287.90 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 287.90 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 287.90 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 324.50 Tm
+([ ] U-07 Claim-Citation pair cap) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 315.60 Tm
+(ACTION: Exercise exactly 5,000 claim-to-target links, then 5,001 \(or use a lower test configuration\).) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 306.70 Tm
+(EXPECTED: The exact cap succeeds. Above the cap, the run fails with CLAIM_CITATION_PAIR_LIMIT_EXCEEDED before) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 297.80 Tm
+(parsed output is persisted; there is no partial report.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 227.40 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 227.40 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 227.40 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 272.90 Tm
+([ ] U-08 PDF geometry and text fidelity) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 264.00 Tm
+(ACTION: Use a multi-page PDF with columns, ligatures, Unicode punctuation, repeated headers/footers, and) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 255.10 Tm
+(citations near line/page breaks. Open each extracted claim with Show in PDF.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 246.20 Tm
+(EXPECTED: Displayed claim text and citation marker point to the correct source span/page. Page geometry does not) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 237.30 Tm
+(shift the highlight to neighboring citations.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.80 Tf
+1 0 0 1 48.00 72.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 72.00 Tm
+(CLAIM ORACLE: valid input creates a run; invalid input is rejected clearly; limits fail closed and never silently) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 63.00 Tm
+(truncate.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 45.00 Tm
+(02 / 09) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 45.00 Tm
+(Expected behavior is not a truth certificate. Keep model outputs labeled uncalibrated.) Tj
+ET
+endstream
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 9 0 R >>
+endobj
+11 0 obj
+<< /Length 8119 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.20 Tf
+1 0 0 1 426.00 761.00 Tm
+(V1 VALIDATION WORKBOOK) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(02 | Citation Contexts and Atomic Claims) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 9.50 Tf
+1 0 0 1 48.00 676.00 Tm
+(Check extracted claim text, source spans, context boundaries, and inferred links.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 606.40 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 606.40 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 606.40 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 643.00 Tm
+([ ] C-01 Single citation-backed proposition) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 634.10 Tm
+(ACTION: Use: 'The intervention improved mobility [1].' Inspect the claim and source offsets.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 625.20 Tm
+(EXPECTED: One Atomic Claim is extracted; the marker is not part of its claim text. Its source span maps back to) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 616.30 Tm
+(the exact proposition.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 554.80 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 554.80 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 554.80 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 591.40 Tm
+([ ] C-02 Independent coordinated predicates with a shared qualifier) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 582.50 Tm
+(ACTION: Use: 'Among older adults, treatment reduced pain and improved mobility [1, 2].') Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 573.60 Tm
+(EXPECTED: Two Atomic Claims are extracted. Both retain 'Among older adults'; each claim links to both targets in) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 564.70 Tm
+(this context. The links are labeled inferred/provisional.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 503.20 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 503.20 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 503.20 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 539.80 Tm
+([ ] C-03 Ambiguous negation) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 530.90 Tm
+(ACTION: Use: 'Treatment did not improve symptoms and reduce dropout [1].') Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 522.00 Tm
+(EXPECTED: Keep one conservative claim because splitting could change the scope of 'not'. Preserve the negation;) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 513.10 Tm
+(do not silently rewrite it.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 451.60 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 451.60 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 451.60 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 488.20 Tm
+([ ] C-04 Ambiguous trailing qualifier) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 479.30 Tm
+(ACTION: Use: 'Treatment reduced pain in older adults and improved mobility [1].') Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 470.40 Tm
+(EXPECTED: Keep the coordination together when the population qualifier could scope over only one predicate. Do) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 461.50 Tm
+(not guess which predicate it modifies.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 400.00 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 400.00 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 400.00 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 436.60 Tm
+([ ] C-05 Multiple markers in one context) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 427.70 Tm
+(ACTION: Use: 'Prior work supports this method [1] and reports similar outcomes [2].') Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 418.80 Tm
+(EXPECTED: Markers share the same Citation Context under the current conservative segmentation rule. Claims in) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 409.90 Tm
+(that context link to all its targets; the report discloses that the association is inferred.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 339.50 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 339.50 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 339.50 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 385.00 Tm
+([ ] C-06 Separate clauses and targets) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 376.10 Tm
+(ACTION: Use: 'The treatment improved symptoms [1]; however, controls found no effect [2].' Repeat with 'whereas') Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 367.20 Tm
+(or 'although'.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 358.30 Tm
+(EXPECTED: Separate citation-bearing clauses become separate Citation Contexts. The first claim links to [1]) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 349.40 Tm
+(only; the second links to [2] only.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 287.90 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 287.90 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 287.90 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 324.50 Tm
+([ ] C-07 Ambiguous clause boundary) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 315.60 Tm
+(ACTION: Use: 'Prior work supports the method [1], which remains under discussion [2].') Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 306.70 Tm
+(EXPECTED: Use the containing sentence as SENTENCE_FALLBACK when the clause boundary is not reliable. Do not) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 297.80 Tm
+(infer a narrower target assignment.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 236.30 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 236.30 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 236.30 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 272.90 Tm
+([ ] C-08 Duplicate wording and uncited text) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 264.00 Tm
+(ACTION: Repeat an identical cited sentence at two distinct source locations; include an uncited claim elsewhere.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 255.10 Tm
+(EXPECTED: The two distinct spans remain separate claims; only a duplicate with the same source span is) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 246.20 Tm
+(deduplicated within a run. The uncited proposition is not included in citation-backed verification.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 175.80 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 175.80 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 175.80 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 221.30 Tm
+([ ] C-09 Citation marker / bibliography edge cases) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 212.40 Tm
+(ACTION: Try grouped numeric citations, author-date citations, an unmatched callout, a repeated marker, and an) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 203.50 Tm
+(unused bibliography heading.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 194.60 Tm
+(EXPECTED: Persist only parser-observed occurrences and target links. Never invent a target; preserve source) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 185.70 Tm
+(spans and exclude heading-only bibliography artifacts from structured entries.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.80 Tf
+1 0 0 1 48.00 72.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 72.00 Tm
+(CLAIM ORACLE: C-02 splits into two with qualifiers; ambiguous negation/scope stays together; targets never cross) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 63.00 Tm
+(Citation Contexts.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 45.00 Tm
+(03 / 09) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 45.00 Tm
+(Expected behavior is not a truth certificate. Keep model outputs labeled uncalibrated.) Tj
+ET
+endstream
+endobj
+12 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 11 0 R >>
+endobj
+13 0 obj
+<< /Length 4310 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.20 Tf
+1 0 0 1 426.00 761.00 Tm
+(V1 VALIDATION WORKBOOK) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(03 | Reference Resolution) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 9.50 Tf
+1 0 0 1 48.00 676.00 Tm
+(Verify conservative identity matching and separate outcomes per Cited Reference.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 606.40 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 606.40 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 606.40 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 643.00 Tm
+([ ] R-01 Exact DOI match) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 634.10 Tm
+(ACTION: Resolve a bibliography entry with a valid DOI against metadata carrying that exact normalized DOI.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 625.20 Tm
+(EXPECTED: The entry resolves to that Canonical Paper. A DOI lookup returning a different DOI must not resolve) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 616.30 Tm
+(it.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 545.90 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 545.90 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 545.90 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 591.40 Tm
+([ ] R-02 Ambiguous or below-threshold metadata) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 582.50 Tm
+(ACTION: Use a title-only reference with close competing matches, missing fields, or a score below the run-pinned) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 573.60 Tm
+(threshold.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 564.70 Tm
+(EXPECTED: Record UNRESOLVED rather than selecting the highest-scoring guess. Preserve the resolution reason and) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 555.80 Tm
+(policy/threshold snapshot.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 485.40 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 485.40 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 485.40 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 530.90 Tm
+([ ] R-03 Unsupported reference type) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 522.00 Tm
+(ACTION: Cite a WEBSITE/OTHER entry \(for example, a website, standard, or news story\) with no supported scholarly) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 513.10 Tm
+(type.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 504.20 Tm
+(EXPECTED: The entry is UNSUPPORTED_REFERENCE_TYPE before metadata lookup; no cited-source acquisition or System) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 495.30 Tm
+(One work follows.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 433.80 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 433.80 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 433.80 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 470.40 Tm
+([ ] R-04 One marker with multiple targets) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 461.50 Tm
+(ACTION: Link a claim to one resolved and one unresolved Cited Reference in the same Citation Context.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 452.60 Tm
+(EXPECTED: Create a separate outcome for each Atomic Claim x Cited Reference. One resolved source does not hide,) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 443.70 Tm
+(replace, or resolve the other.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.80 Tf
+1 0 0 1 48.00 72.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 72.00 Tm
+(CLAIM ORACLE: exact DOI can resolve; mismatch or ambiguity stays UNRESOLVED; each claim-reference pair keeps its own) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 63.00 Tm
+(outcome.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 45.00 Tm
+(04 / 09) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 45.00 Tm
+(Expected behavior is not a truth certificate. Keep model outputs labeled uncalibrated.) Tj
+ET
+endstream
+endobj
+14 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 13 0 R >>
+endobj
+15 0 obj
+<< /Length 5759 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.20 Tf
+1 0 0 1 426.00 761.00 Tm
+(V1 VALIDATION WORKBOOK) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(04 | Cited-Paper Access) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 9.50 Tf
+1 0 0 1 48.00 676.00 Tm
+(Verify legal acquisition, language gating, and conservative abstention.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 606.40 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 606.40 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 606.40 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 643.00 Tm
+([ ] A-01 Legal full text and exact asset) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 634.10 Tm
+(ACTION: Acquire an allowed HTTPS PDF or text location with an explicit CC0, CC BY, or public-domain license.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 625.20 Tm
+(EXPECTED: Persist legal-location/access provenance and the acquired asset hash. Stage 04 uses that exact) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 616.30 Tm
+(run-pinned asset, parser, and language provenance.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 545.90 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 545.90 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 545.90 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 591.40 Tm
+([ ] A-02 Unsafe or unlicensed locations) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 582.50 Tm
+(ACTION: Supply an unknown/restrictive license, paywall, private host, redirect, URL credentials, query string,) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 573.60 Tm
+(or fragment.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 564.70 Tm
+(EXPECTED: Reject the location before fetching. Never infer permission from public reachability; never bypass a) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 555.80 Tm
+(paywall.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 485.40 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 485.40 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 485.40 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 530.90 Tm
+([ ] A-03 Fetch failure and location fallback) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 522.00 Tm
+(ACTION: Make the first permitted location fail, then make a later permitted location succeed; repeat with every) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 513.10 Tm
+(fetch failing.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 504.20 Tm
+(EXPECTED: Try the next legal location. If none works, preserve known metadata/abstract and expose) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 495.30 Tm
+(FULL_TEXT_ACQUISITION_FAILED; do not erase known access.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 433.80 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 433.80 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 433.80 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 470.40 Tm
+([ ] A-04 Abstract-only access) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 461.50 Tm
+(ACTION: Resolve a paper with an abstract but no legally accessible full text.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 452.60 Tm
+(EXPECTED: Final status INSUFFICIENT_EVIDENCE, scope ABSTRACT_ONLY. No embedding, retrieval, or semantic-verifier) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 443.70 Tm
+(call uses the abstract.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 382.20 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 382.20 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 382.20 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 418.80 Tm
+([ ] A-05 Metadata-only or unavailable) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 409.90 Tm
+(ACTION: Resolve a paper with metadata but no abstract/full text, then a paper with no usable access at all.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 401.00 Tm
+(EXPECTED: A resolved reference with neither legal full text nor abstract is INACCESSIBLE. Keep it distinct from) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 392.10 Tm
+(UNRESOLVED.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 330.60 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 330.60 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 330.60 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 367.20 Tm
+([ ] A-06 Accessible non-English cited full text) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 358.30 Tm
+(ACTION: Acquire a non-English Cited Paper while the Source Document remains English.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 349.40 Tm
+(EXPECTED: INSUFFICIENT_EVIDENCE with LANGUAGE_UNSUPPORTED and verification scope NONE. Do not embed or send the) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 340.50 Tm
+(text to System One.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.80 Tf
+1 0 0 1 48.00 72.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 72.00 Tm
+(CLAIM ORACLE: abstract or unsupported language -> INSUFFICIENT_EVIDENCE; no legal full text or abstract ->) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 63.00 Tm
+(INACCESSIBLE; unsafe sources are not fetched.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 45.00 Tm
+(05 / 09) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 45.00 Tm
+(Expected behavior is not a truth certificate. Keep model outputs labeled uncalibrated.) Tj
+ET
+endstream
+endobj
+16 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 15 0 R >>
+endobj
+17 0 obj
+<< /Length 8861 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.20 Tf
+1 0 0 1 426.00 761.00 Tm
+(V1 VALIDATION WORKBOOK) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(05 | Evidence and Claim-Paper Outcomes) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 9.50 Tf
+1 0 0 1 48.00 676.00 Tm
+(Separate retrieval, passage judgement, aggregation, and operational failure.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 606.40 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 606.40 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 606.40 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 643.00 Tm
+([ ] E-01 Retrieval stays inside the cited work) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 634.10 Tm
+(ACTION: Give two cited papers distinct sentinel passages; query each claim-reference pair.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 625.20 Tm
+(EXPECTED: Every Evidence Passage comes only from the exact Cited Paper Asset for that reference. No passage) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 616.30 Tm
+(leaks across references, runs, or newer assets.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 554.80 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 554.80 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 554.80 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 591.40 Tm
+([ ] E-02 Candidate passage is not a judgement) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 582.50 Tm
+(ACTION: Inspect the retrieved top passages and their ranks before and after System One runs.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 573.60 Tm
+(EXPECTED: Retrieval exposes candidates and provenance only. Ranking, similarity, or a top result does not itself) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 564.70 Tm
+(imply support or a final status.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 503.20 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 503.20 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 503.20 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 539.80 Tm
+([ ] E-03 Evidence role and source context) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 530.90 Tm
+(ACTION: Test a paper's own finding, author synthesis/review, and a secondary report of another study.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 522.00 Tm
+(EXPECTED: Expose Evidence Role and section. Do not present a secondary mention as direct evidence for the) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 513.10 Tm
+(underlying primary study's result.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 451.60 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 451.60 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 451.60 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 488.20 Tm
+([ ] E-04 Strong direct support) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 479.30 Tm
+(ACTION: Feed a controlled DIRECT_SUPPORT judgement with strong scope/directness and no comparable contradiction.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 470.40 Tm
+(EXPECTED: The deterministic aggregation policy yields SUPPORTED. Show the exact passage and uncalibrated) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 461.50 Tm
+(judgement/provenance.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 391.10 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 391.10 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 391.10 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 436.60 Tm
+([ ] E-05 Partial support or strong contradiction) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 427.70 Tm
+(ACTION: In separate controlled cases, supply partial support without stronger contradiction, then strong) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 418.80 Tm
+(contradiction without comparable support.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 409.90 Tm
+(EXPECTED: Outcomes are PARTIALLY_SUPPORTED and CONTRADICTED respectively. Material population, condition, scope,) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 401.00 Tm
+(or outcome mismatch remains visible.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 339.50 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 339.50 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 339.50 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 376.10 Tm
+([ ] E-06 Comparable support and contradiction) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 367.20 Tm
+(ACTION: Provide comparable credible passages on both sides for the same claim and Cited Reference.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 358.30 Tm
+(EXPECTED: Yield INSUFFICIENT_EVIDENCE with evidenceConflict=true and expose both sides. Do not let raw model) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 349.40 Tm
+(confidence alone decide.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 287.90 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 287.90 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 287.90 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 324.50 Tm
+([ ] E-07 No qualifying evidence / unrelated passages) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 315.60 Tm
+(ACTION: Use empty retrieval, unrelated passages, or controlled INSUFFICIENT judgements.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 306.70 Tm
+(EXPECTED: A successfully completed assessment with no qualifying support is INSUFFICIENT_EVIDENCE. UNRELATED) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 297.80 Tm
+(remains a passage judgement, not a final status.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 236.30 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 236.30 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 236.30 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 272.90 Tm
+([ ] E-08 Unresolved, unsupported, inaccessible, abstract, language) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 264.00 Tm
+(ACTION: Exercise each access/resolution outcome from pages 3 and 4.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 255.10 Tm
+(EXPECTED: Final status stays distinct: UNRESOLVED, UNSUPPORTED_REFERENCE_TYPE, INACCESSIBLE, or) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 246.20 Tm
+(INSUFFICIENT_EVIDENCE with its scope/reason. Do not collapse them into one bucket.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 175.80 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 175.80 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 175.80 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 221.30 Tm
+([ ] E-09 Provider/parser/indexing failure) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 212.40 Tm
+(ACTION: Force a transient timeout, malformed provider response, parser failure, and deterministic provider) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 203.50 Tm
+(rejection.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 194.60 Tm
+(EXPECTED: Record an incomplete/failed pair and stable reason; never fabricate a judgement or disguise a) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 185.70 Tm
+(processing failure as INSUFFICIENT_EVIDENCE. Partial success may complete with warnings.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 124.20 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 124.20 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 124.20 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 160.80 Tm
+([ ] E-10 System One context limit) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 151.90 Tm
+(ACTION: Use an over-limit passage, including one with an unfit single sentence.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 143.00 Tm
+(EXPECTED: Do not truncate. Eligible passages use diagnostic child spans under the unchanged parent;) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 134.10 Tm
+(failed/missing spans remain incomplete and cannot create a separate final verification.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.80 Tf
+1 0 0 1 48.00 72.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 72.00 Tm
+(CLAIM ORACLE: direct -> SUPPORTED; partial -> PARTIALLY_SUPPORTED; contradiction -> CONTRADICTED; comparable conflict) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 63.00 Tm
+(-> INSUFFICIENT + conflict; failures stay incomplete.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 45.00 Tm
+(06 / 09) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 45.00 Tm
+(Expected behavior is not a truth certificate. Keep model outputs labeled uncalibrated.) Tj
+ET
+endstream
+endobj
+18 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 17 0 R >>
+endobj
+19 0 obj
+<< /Length 8265 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.20 Tf
+1 0 0 1 426.00 761.00 Tm
+(V1 VALIDATION WORKBOOK) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(06 | Report, Human Review, and Lifecycle) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 9.50 Tf
+1 0 0 1 48.00 676.00 Tm
+(Validate the visible report and keep human assessment separate from machine output.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 606.40 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 606.40 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 606.40 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 643.00 Tm
+([ ] H-01 Coverage summary and drill-down) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 634.10 Tm
+(ACTION: Open a completed Analysis Run with multiple claims, references, outcomes, and one incomplete pair.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 625.20 Tm
+(EXPECTED: Summary counts use the seven domain statuses and distinguish completed/incomplete/conflict work.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 616.30 Tm
+(Drill-down traces claim -> Citation Context/Marker -> Cited Reference -> exact Evidence Passage and provenance.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 545.90 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 545.90 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 545.90 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 591.40 Tm
+([ ] H-02 Source-document highlight) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 582.50 Tm
+(ACTION: Select a claim and citation; use Show in PDF on pages with duplicate wording, columns, and nearby) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 573.60 Tm
+(unrelated markers.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 564.70 Tm
+(EXPECTED: Highlight the selected source span and marker only; page navigation and PDF search retain the correct) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 555.80 Tm
+(position.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 494.30 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 494.30 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 494.30 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 530.90 Tm
+([ ] H-03 Pipeline progress and PARSED state) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 522.00 Tm
+(ACTION: Inspect a run with final verification disabled and another with the full pipeline enabled.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 513.10 Tm
+(EXPECTED: Stage summaries match persisted work items. PARSED is not presented as a completed Evidence Coverage) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 504.20 Tm
+(Report; skipped, failed, warning, and completed states remain distinct.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 442.70 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 442.70 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 442.70 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 479.30 Tm
+([ ] H-04 Triage disclaimer and calibration language) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 470.40 Tm
+(ACTION: Inspect summary, passage judgements, final statuses, and provider details.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 461.50 Tm
+(EXPECTED: Report says triage aid, not truth certification or whole-paper grade. Laya judgements/statuses are) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 452.60 Tm
+(visibly uncalibrated; no accuracy claim is implied.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 391.10 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 391.10 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 391.10 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 427.70 Tm
+([ ] H-05 Agree and disagree review) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 418.80 Tm
+(ACTION: Record AGREE and DISAGREE for a completed machine verification without an override status.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 409.90 Tm
+(EXPECTED: Both reviews are accepted and appended. Machine finalStatus is unchanged; review action/history is) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 401.00 Tm
+(shown separately.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 330.60 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 330.60 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 330.60 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 376.10 Tm
+([ ] H-06 Override review validation) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 367.20 Tm
+(ACTION: Submit OVERRIDE with and without overrideStatus; submit AGREE/DISAGREE with an overrideStatus; test) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 358.30 Tm
+(notes at 2,000 and 2,001 characters.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 349.40 Tm
+(EXPECTED: OVERRIDE requires a valid separate status. AGREE/DISAGREE omit it. Overlong note is rejected. Only a) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 340.50 Tm
+(completed verification with a machine status can be reviewed.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 279.00 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 279.00 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 279.00 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 315.60 Tm
+([ ] H-07 Review append-only behavior) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 306.70 Tm
+(ACTION: Record a second review that disagrees with the first; reload the Analysis Run.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 297.80 Tm
+(EXPECTED: Both records remain in history in order. Neither review rewrites nor hides the machine result; reviews) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 288.90 Tm
+(are removed only by explicit document deletion.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 227.40 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 227.40 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 227.40 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 264.00 Tm
+([ ] H-08 Re-analysis creates a new run) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 255.10 Tm
+(ACTION: Re-analyze the same Source Document with a changed provider or profile.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 246.20 Tm
+(EXPECTED: A new immutable Analysis Run is created with its own pinned configuration/provenance. Earlier results) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 237.30 Tm
+(and reviews remain unchanged.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 166.90 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 166.90 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 166.90 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 212.40 Tm
+([ ] H-09 Delete document during and after processing) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 203.50 Tm
+(ACTION: Delete an idle document, then repeat while worker work is pending/in flight; inspect related runs and) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 194.60 Tm
+(data.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 185.70 Tm
+(EXPECTED: Deletion tombstones first, invalidates pending work, removes document-scoped source/derived data and) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 176.80 Tm
+(Human Reviews, and prevents workers from resurrecting it. Shared assets remain only while referenced elsewhere.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.80 Tf
+1 0 0 1 48.00 72.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 72.00 Tm
+(CLAIM ORACLE: report traces each Atomic Claim x Cited Reference; Human Review is append-only and never mutates the) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 63.00 Tm
+(machine finalStatus.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 45.00 Tm
+(07 / 09) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 45.00 Tm
+(Expected behavior is not a truth certificate. Keep model outputs labeled uncalibrated.) Tj
+ET
+endstream
+endobj
+20 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 19 0 R >>
+endobj
+21 0 obj
+<< /Length 8485 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.20 Tf
+1 0 0 1 426.00 761.00 Tm
+(V1 VALIDATION WORKBOOK) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(07 | Providers, Privacy, and Reliability) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 9.50 Tf
+1 0 0 1 48.00 676.00 Tm
+(Check consent, provenance, idempotency, safe logging, and deployment boundaries.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 597.50 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 597.50 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 597.50 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 643.00 Tm
+([ ] P-01 Provider availability is not consent) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 634.10 Tm
+(ACTION: With recorded fixtures selected, verify no remote scholarly/OA calls. Select Crossref or Unpaywall) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 625.20 Tm
+(without consent, then with exact per-run consent.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 616.30 Tm
+(EXPECTED: No unconsented external call occurs. Consent is provider- and run-specific and names the actual data) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 607.40 Tm
+(categories; enabling a provider alone is not consent.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 545.90 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 545.90 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 545.90 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 582.50 Tm
+([ ] P-02 Minimum payload and category boundary) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 573.60 Tm
+(ACTION: Inspect a safe test transport for Crossref, Unpaywall, external Ollama, or System One calls.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 564.70 Tm
+(EXPECTED: Send only documented minimum categories. Never send the full Source Document unless a reviewed) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 555.80 Tm
+(provider operation explicitly requires it; never put credentials in the browser or run snapshot.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 494.30 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 494.30 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 494.30 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 530.90 Tm
+([ ] P-03 Retention/deletion disclosure) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 522.00 Tm
+(ACTION: Review consent UI and deletion copy for each selected external provider.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 513.10 Tm
+(EXPECTED: Show provider-specific categories and retention/deletion limits. Explain that local deletion cannot) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 504.20 Tm
+(retract content already sent to an external provider.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 424.90 516.00 65.40 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 424.90 516.00 65.40 re S
+0.761 0.231 0.169 rg
+48.00 424.90 3.00 65.40 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 479.30 Tm
+([ ] P-04 Run-pinned provenance) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 470.40 Tm
+(ACTION: Inspect the Analysis Run snapshot and verification for source hash/parser, extraction and resolution) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 461.50 Tm
+(policy, provider selections, retrieval/embedding profile, exact cited asset hash/parser, and language detector) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 452.60 Tm
+(when used.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 443.70 Tm
+(EXPECTED: The run records the configuration actually executed, with non-secret fingerprints. Later configuration) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 434.80 Tm
+(changes do not rewrite this snapshot.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 373.30 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 373.30 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 373.30 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 409.90 Tm
+([ ] P-05 Provider failure does not silently fall back) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 401.00 Tm
+(ACTION: Make a selected provider fail or become unavailable after run creation.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 392.10 Tm
+(EXPECTED: The run exposes the failure/incomplete work. It does not silently switch to a different provider or) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 383.20 Tm
+(model and misstate provenance.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 321.70 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 321.70 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 321.70 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 358.30 Tm
+([ ] P-06 Duplicate delivery and worker restart) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 349.40 Tm
+(ACTION: Deliver one pipeline event twice and restart a worker with pending stream work.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 340.50 Tm
+(EXPECTED: Idempotent persistence prevents duplicate/corrupt outcomes; pending work is reclaimed and acknowledged) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 331.60 Tm
+(only after its durable transaction succeeds.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 261.20 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 261.20 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 261.20 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 306.70 Tm
+([ ] P-07 Outbox and shared acquisition/indexing) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 297.80 Tm
+(ACTION: Exercise a database commit/message-publish failure and concurrent runs needing the same Cited Paper) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 288.90 Tm
+(asset.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 280.00 Tm
+(EXPECTED: The transactional outbox prevents committed work from disappearing. Locks reduce duplicate expensive) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 271.10 Tm
+(work; exact asset/profile boundaries remain intact.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 200.70 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 200.70 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 200.70 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 246.20 Tm
+([ ] P-08 Safe observability) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 237.30 Tm
+(ACTION: Cause representative request, provider, parser, and worker errors; inspect API, worker, and sidecar) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 228.40 Tm
+(logs.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 219.50 Tm
+(EXPECTED: Do not log Source Document, claim, or evidence text, request bodies, query strings, credentials, or) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 210.60 Tm
+(access tokens. Log safe request/status/error metadata only.) Tj
+ET
+1.000 0.992 0.965 rg
+48.00 149.10 516.00 47.60 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 149.10 516.00 47.60 re S
+0.761 0.231 0.169 rg
+48.00 149.10 3.00 47.60 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 185.70 Tm
+([ ] P-09 Network exposure) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 176.80 Tm
+(ACTION: Inspect Compose bindings and deployment listener addresses for the unauthenticated workspace/API.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 167.90 Tm
+(EXPECTED: Keep services on loopback or a trusted private network. Do not expose the V1 unauthenticated) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 159.00 Tm
+(workspace/API to an untrusted network.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.80 Tf
+1 0 0 1 48.00 72.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 72.00 Tm
+(CLAIM ORACLE: external calls require fresh provider/run consent; historical runs keep their pins; deletion cannot) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 63.00 Tm
+(retract data already sent externally.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 45.00 Tm
+(08 / 09) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 45.00 Tm
+(Expected behavior is not a truth certificate. Keep model outputs labeled uncalibrated.) Tj
+ET
+endstream
+endobj
+22 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 21 0 R >>
+endobj
+23 0 obj
+<< /Length 6768 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.20 Tf
+1 0 0 1 426.00 761.00 Tm
+(V1 VALIDATION WORKBOOK) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(08 | Boundaries, Sign-off, and Known) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 23.00 Tf
+1 0 0 1 48.00 679.00 Tm
+(Gaps) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 9.50 Tf
+1 0 0 1 48.00 649.00 Tm
+(Use this page to separate a V1 failure from an explicit non-goal or open verification gap.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.10 Tf
+1 0 0 1 48.00 623.00 Tm
+(V1 BOUNDARIES \(NOT DEFECTS BY THEMSELVES\)) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 612.00 m 564.00 612.00 l S
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 605.00 Tm
+(Not supported: OCR/scanned Source Documents; non-English Source Documents; books, websites, standards, and) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 593.60 Tm
+(other non-scholarly Cited References as evidence sources; manual Cited Paper upload; paywall bypass; generic) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 582.20 Tm
+(web crawling; automated rewriting/grading; authentication/multi-user workflows.) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 566.80 Tm
+(Optional provider availability is not a feature guarantee. LLM-based claim extraction, Semantic Scholar) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 555.40 Tm
+(enrichment, Google embeddings, and hosted Jev integrations are not implemented in this repository snapshot.) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 544.00 Tm
+(The runtime uses heuristic claim extraction, Crossref/recorded metadata options, local Ollama/feature-hash) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 532.60 Tm
+(embeddings, and mock/Laya System One.) Tj
+ET
+0.894 0.929 0.941 rg
+48.00 446.40 516.00 70.80 re f
+0.071 0.400 0.420 rg
+48.00 446.40 4.00 70.80 re f
+0.071 0.400 0.420 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 61.00 502.20 Tm
+(SPEC / IMPLEMENTATION TENSION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 489.20 Tm
+(The tech design excludes books as verifiable V1 sources, while the current) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 478.00 Tm
+(ConservativeReferenceResolver lists BOOK among accepted metadata-resolution types. Use WEBSITE/OTHER to) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 466.80 Tm
+(test UNSUPPORTED_REFERENCE_TYPE. Confirm the intended end-to-end book behavior with the product owner) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 455.60 Tm
+(before using it as a release oracle.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.10 Tf
+1 0 0 1 48.00 434.40 Tm
+(KNOWN VERIFICATION GAPS IN THE REPOSITORY DOCUMENTATION) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 423.40 m 564.00 423.40 l S
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 416.40 Tm
+(The Pipeline Implementation and Feature Traceability Matrix dated 2026-10-03 identifies issue #55 \(full web) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 405.00 Tm
+(upload -> queued processing -> report\) and issue #56 \(PDF page-count boundary\) as open verification gaps at) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 393.60 Tm
+(that snapshot. Check current GitHub issue state before treating these as current; run and record the checks) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 382.20 Tm
+(rather than inferring coverage from source tests.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.10 Tf
+1 0 0 1 48.00 362.80 Tm
+(RELEASE EVIDENCE RECORD) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 351.80 m 564.00 351.80 l S
+1.000 0.992 0.965 rg
+48.00 288.30 516.00 56.50 re f
+0.824 0.780 0.682 RG
+0.55 w 48.00 288.30 516.00 56.50 re S
+0.761 0.231 0.169 rg
+48.00 288.30 3.00 56.50 re f
+0.082 0.231 0.384 rg
+BT
+/F2 8.20 Tf
+1 0 0 1 59.00 333.80 Tm
+([ ] SIGN-OFF Record one result per test case) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 324.90 Tm
+(ACTION: For each case, record: case ID; build/commit; environment and provider selections; Analysis Run ID;) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 316.00 Tm
+(PASS/FAIL/BLOCKED/N/A; expected vs observed result; safe evidence path; linked issue for any failure.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 307.10 Tm
+(EXPECTED: All in-scope cases have an observed result. Every blocked or unrun case has a named dependency/owner.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F1 7.40 Tf
+1 0 0 1 59.00 298.20 Tm
+(No unverified assumption is labeled PASS.) Tj
+ET
+0.894 0.929 0.941 rg
+48.00 213.50 516.00 70.80 re f
+0.071 0.400 0.420 rg
+48.00 213.50 4.00 70.80 re f
+0.071 0.400 0.420 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 61.00 269.30 Tm
+(CLAIM STATUS QUICK REFERENCE) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 256.30 Tm
+(SUPPORTED = strong direct full-text support; PARTIALLY_SUPPORTED = only part/narrower scope;) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 245.10 Tm
+(CONTRADICTED = material conflict; INSUFFICIENT_EVIDENCE = no qualifying assessed support \(also) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 233.90 Tm
+(abstract-only/unsupported language\); INACCESSIBLE = resolved but no legal full text or abstract;) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.20 Tf
+1 0 0 1 61.00 222.70 Tm
+(UNRESOLVED = identity not confidently matched; UNSUPPORTED_REFERENCE_TYPE = outside V1 source types.) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 205.50 Tm
+(Basis: CONTEXT.md; docs/paper-t-rail-tech-design.md; docs/adr/0001-0009; docs/pipeline-feature-matrix.md;) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 194.10 Tm
+(docs/benchmarks/v1-runtime-matrix.md; docs/agents/provider-matrix.md. This checklist covers documented V1) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 182.70 Tm
+(product behavior, not every mathematically possible PDF or every scholarly domain.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.80 Tf
+1 0 0 1 48.00 72.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 72.00 Tm
+(CLAIM ORACLE: test documented V1 behavior; mark non-goals N/A; record every failed or unverified outcome instead of) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 146.00 63.00 Tm
+(assuming it passed.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 45.00 Tm
+(09 / 09) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 45.00 Tm
+(Expected behavior is not a truth certificate. Keep model outputs labeled uncalibrated.) Tj
+ET
+endstream
+endobj
+24 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 23 0 R >>
+endobj
+25 0 obj
+<< /Title (Paper T-Rail V1 Validation Workbook) /Author (Paper T-Rail) /Subject (Manual and system QA checklist with claim expectations) >>
+endobj
+xref
+0 26
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000177 00000 n 
+0000000274 00000 n 
+0000000376 00000 n 
+0000000474 00000 n 
+0000000569 00000 n 
+0000006246 00000 n 
+0000006402 00000 n 
+0000013923 00000 n 
+0000014080 00000 n 
+0000022251 00000 n 
+0000022409 00000 n 
+0000026771 00000 n 
+0000026929 00000 n 
+0000032740 00000 n 
+0000032898 00000 n 
+0000041811 00000 n 
+0000041969 00000 n 
+0000050286 00000 n 
+0000050444 00000 n 
+0000058981 00000 n 
+0000059139 00000 n 
+0000065959 00000 n 
+0000066117 00000 n 
+trailer
+<< /Size 26 /Root 1 0 R /Info 25 0 R >>
+startxref
+66273
+%%EOF

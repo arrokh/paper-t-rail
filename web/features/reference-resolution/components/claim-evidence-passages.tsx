@@ -1,14 +1,21 @@
+import { ChevronDown } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
+import type {
+  ClaimReferenceVerificationOutcome,
+  EvidencePassageSpanDiagnostic,
+  EvidenceRetrievalProfile,
+  ReferenceResolutionReportResponse,
+} from "@/features/analysis-runs/types";
+import { EvidencePassageCard, type EvidencePresentation } from "@/features/reference-resolution/components/evidence-passage-card";
 import { HumanReviewPanel } from "@/features/reference-resolution/components/human-review-panel";
-import { EvidencePassageSpanDiagnostics } from "@/features/reference-resolution/components/evidence-passage-span-diagnostics";
 
-type VerificationOutcome = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["verificationOutcomes"][number];
+type VerificationOutcome = ClaimReferenceVerificationOutcome;
 type IndexingStatus = NonNullable<ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["citedPaperAccess"]>["evidenceIndexing"] extends infer Indexing
   ? Indexing extends { status: infer Status } ? Status : never
   : never;
+type EvidencePassage = VerificationOutcome["evidencePassages"][number];
 
 function statusLabel(outcome: VerificationOutcome): string {
   if (outcome.processingStatus === "INCOMPLETE") return "Machine result unavailable · incomplete pair";
@@ -36,18 +43,163 @@ function noJudgementMessage(reason: string | null): string {
   return "No System One Evidence Judgement was recorded for this Claim–Reference pair.";
 }
 
+function resultExplanation(outcome: VerificationOutcome, hasJudgements: boolean): string {
+  if (outcome.processingStatus === "PENDING") return "No result yet. This pair is waiting for a saved machine assessment.";
+  if (outcome.processingStatus === "INCOMPLETE") return "Verification did not finish, so no final machine result was assigned.";
+  if (!outcome.finalStatus) return "No final machine result is available for this pair.";
+  if (outcome.finalStatus === "INACCESSIBLE") return "No usable cited-paper evidence was available to assess this claim.";
+  if (outcome.finalStatus === "UNRESOLVED") return "The cited reference was not resolved to a paper, so no evidence assessment was produced.";
+  if (outcome.finalStatus === "UNSUPPORTED_REFERENCE_TYPE") return "This reference type is outside the evidence-verification flow supported by this run.";
+  if (!hasJudgements) return "A machine result is saved, but no passage-level judgement is available to explain it.";
+
+  switch (outcome.finalStatus) {
+    case "SUPPORTED":
+      return "The strongest supporting passage outweighs any conflicting evidence under this run's rules.";
+    case "PARTIALLY_SUPPORTED":
+      return "Some evidence supports part of the claim, but not enough to support it fully; no stronger conflict changed the result.";
+    case "CONTRADICTED":
+      return "The strongest conflicting evidence outweighs any support under this run's rules.";
+    case "INSUFFICIENT_EVIDENCE":
+      return outcome.evidenceConflict
+        ? "Supporting and conflicting evidence are similarly strong, so this run could not choose one."
+        : "The available evidence was not strong enough to support or contradict the claim decisively.";
+  }
+}
+
+function distinctValues<T>(values: T[], key: (value: T) => string): T[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const valueKey = key(value);
+    if (seen.has(valueKey)) return false;
+    seen.add(valueKey);
+    return true;
+  });
+}
+
+type JudgementProvider = { providerId: string; modelId: string | null; providerVersion: string };
+
+function judgementProviders(outcome: VerificationOutcome): JudgementProvider[] {
+  return distinctValues(outcome.evidencePassages.flatMap((passage) => [
+    ...(passage.evidenceJudgement ? [passage.evidenceJudgement] : []),
+    ...passage.diagnosticSpans.map(({ providerId, modelId, providerVersion }) => ({ providerId, modelId, providerVersion })),
+  ]), (provider) => `${provider.providerId}\u0000${provider.modelId ?? ""}\u0000${provider.providerVersion}`);
+}
+
+function judgementProviderLabels(outcome: VerificationOutcome): string[] {
+  return judgementProviders(outcome).map((provider) =>
+    `${provider.providerId} · ${provider.modelId ?? "model not recorded"} · ${provider.providerVersion}`,
+  );
+}
+
+function spanRubricVersions(outcome: VerificationOutcome): string[] {
+  return [...new Set(outcome.evidencePassages.flatMap((passage) =>
+    passage.diagnosticSpans.map((span: EvidencePassageSpanDiagnostic) => span.judgementRubricVersion),
+  ))];
+}
+
+function retrievalProfiles(outcome: VerificationOutcome): EvidenceRetrievalProfile[] {
+  return distinctValues(outcome.evidencePassages.map((passage) => passage.retrievalProfile), (profile) =>
+    [profile.profileId, profile.vectorCandidateLimit, profile.lexicalCandidateLimit, profile.finalCandidateLimit,
+      profile.reciprocalRankFusionConstant, profile.embeddingProvider, profile.embeddingModel,
+      profile.embeddingVersion, profile.embeddingDimension, profile.embeddingProfileHash].join("\u0000"),
+  );
+}
+
+function retrievalProfileLabel(profile: EvidenceRetrievalProfile): string {
+  return `${profile.profileId} · vector top ${profile.vectorCandidateLimit} · lexical top ${profile.lexicalCandidateLimit} · final ${profile.finalCandidateLimit} · RRF ${profile.reciprocalRankFusionConstant}`;
+}
+
+function embeddingProfileLabel(profile: EvidenceRetrievalProfile): string {
+  return `${profile.embeddingProvider} · ${profile.embeddingModel} · ${profile.embeddingVersion} · ${profile.embeddingDimension} dimensions`;
+}
+
+function hasProviderAndRetrievalDetails(outcome: VerificationOutcome): boolean {
+  return judgementProviders(outcome).length > 0
+    || outcome.aggregatorVersion !== null
+    || spanRubricVersions(outcome).length > 0
+    || retrievalProfiles(outcome).length > 0;
+}
+
+function ProviderAndRetrievalDetails({ outcome }: { outcome: VerificationOutcome }) {
+  const providers = judgementProviderLabels(outcome);
+  const profiles = retrievalProfiles(outcome);
+  const rubricVersions = spanRubricVersions(outcome);
+
+  return (
+    <Collapsible className="group/provenance rounded-md border border-border">
+      <CollapsibleTrigger className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+        Provider and retrieval details
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[open]/provenance:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t border-border p-3">
+        <dl className="grid gap-3 text-xs sm:grid-cols-2">
+          <div className="min-w-0 space-y-1">
+            <dt className="font-mono uppercase text-muted-foreground">Judgement provider · model · version</dt>
+            <dd className="m-0 break-words">{providers.length > 0 ? providers.join("; ") : "Not recorded"}</dd>
+          </div>
+          {outcome.aggregatorVersion && (
+            <div className="min-w-0 space-y-1">
+              <dt className="font-mono uppercase text-muted-foreground">Aggregation policy</dt>
+              <dd className="m-0 break-words">{outcome.aggregatorVersion}</dd>
+            </div>
+          )}
+          {rubricVersions.length > 0 && (
+            <div className="min-w-0 space-y-1">
+              <dt className="font-mono uppercase text-muted-foreground">Diagnostic rubric</dt>
+              <dd className="m-0 break-words">{rubricVersions.join("; ")}</dd>
+            </div>
+          )}
+          {profiles.map((profile) => (
+            <div key={`${profile.profileId}-${profile.embeddingProfileHash}`} className="min-w-0 space-y-1">
+              <dt className="font-mono uppercase text-muted-foreground">Retrieval profile</dt>
+              <dd className="m-0 break-words">{retrievalProfileLabel(profile)}</dd>
+              <dt className="mt-2 font-mono uppercase text-muted-foreground">Embedding profile</dt>
+              <dd className="m-0 break-words">{embeddingProfileLabel(profile)}</dd>
+              <dt className="mt-2 font-mono uppercase text-muted-foreground">Embedding profile SHA-256</dt>
+              <dd className="m-0 break-all font-mono">{profile.embeddingProfileHash}</dd>
+            </div>
+          ))}
+        </dl>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function ClaimPairSourceDetails({ outcome }: { outcome: VerificationOutcome }) {
+  return (
+    <Collapsible className="group/source-details rounded-md border border-border">
+      <CollapsibleTrigger className="flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-xs font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+        Claim-to-reference source details
+        <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[open]/source-details:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t border-border p-3">
+        <dl className="grid gap-3 text-xs sm:grid-cols-2">
+          <div className="space-y-1">
+            <dt className="font-mono uppercase text-muted-foreground">Claim source span (0-based)</dt>
+            <dd className="m-0 font-mono">{outcome.claimSourceStartOffset}–{outcome.claimSourceEndOffset}</dd>
+          </div>
+          <div className="space-y-1 sm:col-span-2">
+            <dt className="font-mono uppercase text-muted-foreground">Claim-to-reference association</dt>
+            <dd className="m-0">{outcome.associationKind.replaceAll("_", " ").toLowerCase()} — inferred, not author-confirmed</dd>
+          </div>
+        </dl>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function ClaimEvidencePassages({
   analysisRunId,
   outcome,
   indexingStatus,
+  presentation = "pipeline",
 }: {
   analysisRunId: string;
   outcome: VerificationOutcome;
   indexingStatus: IndexingStatus | null;
+  presentation?: EvidencePresentation;
 }) {
-  const judgedPassages = outcome.evidencePassages.flatMap((passage) =>
-    passage.evidenceJudgement ? [{ passage, judgement: passage.evidenceJudgement }] : [],
-  );
+  const judgedPassages = outcome.evidencePassages.filter((passage) => passage.evidenceJudgement !== null);
 
   return (
     <li className="space-y-3 rounded-lg border border-border bg-card p-3">
@@ -68,22 +220,15 @@ export function ClaimEvidencePassages({
       <p className="m-0 break-words text-sm leading-relaxed text-foreground"><strong>Atomic Claim:</strong> {outcome.claimText}</p>
       <dl className="grid gap-3 rounded-md bg-muted/30 p-3 text-xs sm:grid-cols-2">
         <div className="min-w-0 space-y-1 sm:col-span-2">
-          <dt className="font-mono uppercase text-muted-foreground">Source Citation Context</dt>
+          <dt className="font-mono uppercase text-muted-foreground">Source citation context</dt>
           <dd className="m-0 break-words leading-relaxed">{outcome.citationContextText}</dd>
         </div>
         <div className="space-y-1">
-          <dt className="font-mono uppercase text-muted-foreground">Citation Marker(s)</dt>
+          <dt className="font-mono uppercase text-muted-foreground">Citation marker(s)</dt>
           <dd className="m-0 break-words">{outcome.citationMarkers.length > 0 ? outcome.citationMarkers.join(", ") : "No marker recorded"}</dd>
         </div>
-        <div className="space-y-1">
-          <dt className="font-mono uppercase text-muted-foreground">Claim source span</dt>
-          <dd className="m-0 font-mono">{outcome.claimSourceStartOffset}–{outcome.claimSourceEndOffset}</dd>
-        </div>
-        <div className="space-y-1 sm:col-span-2">
-          <dt className="font-mono uppercase text-muted-foreground">Claim-to-reference association</dt>
-          <dd className="m-0">{outcome.associationKind.replaceAll("_", " ").toLowerCase()} — inferred, not author-confirmed</dd>
-        </div>
       </dl>
+      {presentation === "paper-review" && <ClaimPairSourceDetails outcome={outcome} />}
       {outcome.terminalReason && <p className="m-0 text-xs text-muted-foreground">Terminal reason: {outcome.terminalReason.replaceAll("_", " ").toLowerCase()}</p>}
       {outcome.processingFailureReason && (
         <Alert variant="destructive">
@@ -91,141 +236,44 @@ export function ClaimEvidencePassages({
           <AlertDescription>{failureDescription(outcome.processingFailureReason)}</AlertDescription>
         </Alert>
       )}
-      <section aria-labelledby={`system-one-results-${outcome.id}`} className="space-y-2 border-t border-border pt-3">
-        <h4 id={`system-one-results-${outcome.id}`} className="font-mono text-xs tracking-wide text-muted-foreground uppercase">System One results</h4>
-        {judgedPassages.length > 0 ? (
-          <ul className="space-y-2">
-            {judgedPassages.map(({ passage, judgement }) => (
-              <li key={passage.id} className="rounded-md border border-border/80 bg-muted/10 p-3">
-                <p className="m-0 text-xs font-medium">Evidence Passage · fused rank {passage.fusedRank}</p>
-                <div className="my-2 flex flex-wrap gap-2">
-                  <Badge variant="outline">{judgement.judgement.replaceAll("_", " ").toLowerCase()}</Badge>
-                  <Badge variant="secondary">role: {judgement.evidenceRole.replaceAll("_", " ").toLowerCase()}</Badge>
-                </div>
-                <p className="m-0 text-xs text-muted-foreground">Provider {judgement.providerId} · model {judgement.modelId ?? "not recorded"} · version {judgement.providerVersion}</p>
-                <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <dt className="font-mono text-muted-foreground">Provisional rubric strength</dt>
-                    <dd className="m-0 font-mono">{judgement.calibratedStrength.toFixed(3)}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-mono text-muted-foreground">Judgement confidence</dt>
-                    <dd className="m-0 font-mono">{judgement.confidence.toFixed(3)}</dd>
-                  </div>
-                </dl>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="m-0 text-sm text-muted-foreground">{noJudgementMessage(outcome.processingFailureReason)}</p>
+      <section aria-labelledby={`why-result-${outcome.id}`} className="space-y-2 border-t border-border pt-3">
+        <h4 id={`why-result-${outcome.id}`} className="m-0 text-sm font-semibold">Why this result</h4>
+        <p className="m-0 text-sm leading-relaxed text-muted-foreground">{resultExplanation(outcome, judgedPassages.length > 0)}</p>
+        {outcome.processingStatus === "COMPLETED" && outcome.evidencePassages.length > 0 && judgedPassages.length === 0 && (
+          <p className="m-0 text-xs text-muted-foreground">{noJudgementMessage(outcome.processingFailureReason)}</p>
         )}
       </section>
-      {outcome.aggregatorVersion && <p className="m-0 text-xs text-muted-foreground">Deterministic aggregation policy: {outcome.aggregatorVersion}</p>}
+      {presentation === "paper-review" && hasProviderAndRetrievalDetails(outcome) && <ProviderAndRetrievalDetails outcome={outcome} />}
+      <section aria-labelledby={`evidence-passages-${outcome.id}`} className="space-y-2 border-t border-border pt-3">
+        <h4 id={`evidence-passages-${outcome.id}`} className="m-0 text-sm font-semibold">Evidence passages</h4>
+        {outcome.evidencePassages.length > 0 ? (
+          <ol className="m-0 list-none space-y-2 p-0" aria-label={`Evidence Passages for Atomic Claim ${outcome.atomicClaimId}`}>
+            {outcome.evidencePassages.map((passage: EvidencePassage) => (
+              <EvidencePassageCard key={passage.id} passage={passage} presentation={presentation} />
+            ))}
+          </ol>
+        ) : (
+          <p className="m-0 text-sm text-muted-foreground">
+            {outcome.processingStatus === "INCOMPLETE"
+              ? "Processing stopped before this Claim–Reference Verification completed."
+              : outcome.verificationScope !== "FULL_TEXT"
+                ? "Evidence retrieval was not run for this verification scope."
+                : indexingStatus === "PENDING"
+                  ? "Evidence Passage retrieval is pending."
+                  : indexingStatus === "FAILED"
+                    ? "Evidence Passage indexing failed; this pair has no fabricated domain status."
+                    : indexingStatus === "COMPLETED"
+                      ? "No ranked passages matched this Atomic Claim in this Cited Paper."
+                      : "No Evidence Passages were retrieved for this Cited Paper."}
+          </p>
+        )}
+      </section>
       <HumanReviewPanel
         analysisRunId={analysisRunId}
         verificationId={outcome.id}
         machineStatus={outcome.finalStatus}
         reviews={outcome.humanReviews}
       />
-      {outcome.evidencePassages.length > 0 ? (
-        <ol className="space-y-2" aria-label={`Evidence Passages for Atomic Claim ${outcome.atomicClaimId}`}>
-          {outcome.evidencePassages.map((passage) => (
-            <li key={passage.id} className="rounded-md border border-border/80 bg-muted/10">
-              <Collapsible className="group/passage">
-                <CollapsibleTrigger className="flex min-h-11 w-full flex-wrap items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
-                  <span className="font-medium">Evidence Passage · fused rank {passage.fusedRank}</span>
-                  <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    {passage.evidenceJudgement
-                      ? `${passage.evidenceJudgement.judgement.replaceAll("_", " ").toLowerCase()} · ${passage.evidenceJudgement.evidenceRole.replaceAll("_", " ").toLowerCase()}`
-                      : passage.diagnosticSpans.length > 0 ? "span diagnostics only · no parent judgement" : "not semantically assessed"}
-                    <span>Vector {passage.vectorRank ?? "—"} · lexical {passage.lexicalRank ?? "—"}</span>
-                  </span>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-3 border-t border-border/70 p-3">
-                  <blockquote className="m-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">{passage.text}</blockquote>
-                  {passage.evidenceJudgement && (
-                    <div className="space-y-2 rounded-md border border-border bg-card p-3">
-                      <p className="m-0 text-sm font-medium">Evidence Judgement · {passage.evidenceJudgement.providerId} {passage.evidenceJudgement.modelId ?? ""} {passage.evidenceJudgement.providerVersion}</p>
-                      <p className="m-0 text-xs text-muted-foreground">{passage.evidenceJudgement.judgement.replaceAll("_", " ").toLowerCase()} · role: {passage.evidenceJudgement.evidenceRole.replaceAll("_", " ").toLowerCase()} · provisional rubric strength {passage.evidenceJudgement.calibratedStrength.toFixed(3)}</p>
-                      <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
-                        {([
-                          ["Judgement confidence", passage.evidenceJudgement.confidence],
-                          ["Directness", passage.evidenceJudgement.directness],
-                          ["Claim-scope match", passage.evidenceJudgement.claimScopeMatch],
-                          ["Study-design quality", passage.evidenceJudgement.studyDesignQuality],
-                          ["Relevance", passage.evidenceJudgement.relevance],
-                        ] as const).map(([label, value]) => (
-                          <div key={label}>
-                            <dt className="font-mono text-muted-foreground">{label}</dt>
-                            <dd className="m-0 font-mono">{value.toFixed(3)}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </div>
-                  )}
-                  <EvidencePassageSpanDiagnostics passageId={passage.id} spans={passage.diagnosticSpans} />
-                  <dl className="grid gap-3 text-xs sm:grid-cols-2">
-                    <div className="min-w-0 space-y-1">
-                      <dt className="font-mono uppercase text-muted-foreground">Section</dt>
-                      <dd className="m-0 break-words">Section {passage.sectionOrder + 1} · {passage.sectionHeading ?? "No heading in parser output"}</dd>
-                    </div>
-                    <div className="space-y-1">
-                      <dt className="font-mono uppercase text-muted-foreground">Paragraph range</dt>
-                      <dd className="m-0">{passage.paragraphStart}–{passage.paragraphEnd}{passage.pageNumber ? ` · page ${passage.pageNumber}` : ""}</dd>
-                    </div>
-                    <div className="min-w-0 space-y-1">
-                      <dt className="font-mono uppercase text-muted-foreground">Source asset</dt>
-                      <dd className="m-0 break-all font-mono">{passage.sourceAssetId}</dd>
-                    </div>
-                    <div className="min-w-0 space-y-1">
-                      <dt className="font-mono uppercase text-muted-foreground">Asset SHA-256</dt>
-                      <dd className="m-0 break-all font-mono">{passage.contentSha256}</dd>
-                    </div>
-                    <div className="space-y-1">
-                      <dt className="font-mono uppercase text-muted-foreground">Parser provenance</dt>
-                      <dd className="m-0 break-words">{passage.parserProvider} · {passage.parserVersion}</dd>
-                    </div>
-                    <div className="space-y-1">
-                      <dt className="font-mono uppercase text-muted-foreground">Language detection</dt>
-                      <dd className="m-0 break-words">{passage.language} · {passage.languageDetectorVersion}</dd>
-                    </div>
-                    <div className="space-y-1">
-                      <dt className="font-mono uppercase text-muted-foreground">Retrieval profile</dt>
-                      <dd className="m-0 break-words">{passage.retrievalProfile.profileId} · vector top {passage.retrievalProfile.vectorCandidateLimit} · lexical top {passage.retrievalProfile.lexicalCandidateLimit} · final {passage.retrievalProfile.finalCandidateLimit} · RRF {passage.retrievalProfile.reciprocalRankFusionConstant}</dd>
-                    </div>
-                    <div className="space-y-1">
-                      <dt className="font-mono uppercase text-muted-foreground">Embedding profile</dt>
-                      <dd className="m-0 break-words">{passage.retrievalProfile.embeddingProvider} · {passage.retrievalProfile.embeddingModel} · {passage.retrievalProfile.embeddingVersion} · {passage.retrievalProfile.embeddingDimension} dimensions</dd>
-                    </div>
-                    <div className="min-w-0 space-y-1 sm:col-span-2">
-                      <dt className="font-mono uppercase text-muted-foreground">Embedding profile SHA-256</dt>
-                      <dd className="m-0 break-all font-mono">{passage.retrievalProfile.embeddingProfileHash}</dd>
-                    </div>
-                    <div className="space-y-1">
-                      <dt className="font-mono uppercase text-muted-foreground">Reciprocal-rank fusion score</dt>
-                      <dd className="m-0 font-mono">{passage.fusionScore.toFixed(6)}</dd>
-                    </div>
-                  </dl>
-                </CollapsibleContent>
-              </Collapsible>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="m-0 text-xs text-muted-foreground">
-          {outcome.processingStatus === "INCOMPLETE"
-            ? "Processing stopped before this Claim–Reference Verification completed."
-            : outcome.verificationScope !== "FULL_TEXT"
-              ? "Evidence retrieval was not run for this verification scope."
-              : indexingStatus === "PENDING"
-                ? "Evidence Passage retrieval is pending."
-                : indexingStatus === "FAILED"
-                  ? "Evidence Passage indexing failed; this pair has no fabricated domain status."
-                  : indexingStatus === "COMPLETED"
-                    ? "No ranked passages matched this Atomic Claim in this Cited Paper."
-                    : "No Evidence Passages were retrieved for this Cited Paper."}
-        </p>
-      )}
     </li>
   );
 }

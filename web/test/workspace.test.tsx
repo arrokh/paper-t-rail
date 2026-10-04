@@ -17,20 +17,20 @@ vi.mock("next/navigation", () => {
 const providerDirectory = {
   providers: {
     claimExtractor: [
-      { role: "claimExtractor", providerId: "heuristic", displayName: "Heuristic", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["citation_context"], retentionDisclosure: null },
-      { role: "claimExtractor", providerId: "openai-compatible-chat", displayName: "OpenAI-compatible Chat Completions", version: "v1", model: "microsoft/phi-4-mini-reasoning", trustBoundary: "LOCAL", dataCategories: ["citation_context", "bibliographic_metadata"], retentionDisclosure: null },
-      { role: "claimExtractor", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "model-2", trustBoundary: "EXTERNAL", dataCategories: ["citation_context"], retentionDisclosure: "Provider retention terms reviewed for this deployment." },
-      { role: "claimExtractor", providerId: "unclassified-ai", displayName: "Unclassified AI", version: "v1", model: null, trustBoundary: "UNREVIEWED", dataCategories: ["citation_context"], retentionDisclosure: null },
+      { role: "claimExtractor", providerId: "heuristic", displayName: "Heuristic", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["citation_context"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
+      { role: "claimExtractor", providerId: "openai-compatible-chat", displayName: "OpenAI-compatible Chat Completions", version: "v1", model: "google/gemma-4-e2b", trustBoundary: "LOCAL", dataCategories: ["citation_context", "bibliographic_metadata"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
+      { role: "claimExtractor", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "model-2", trustBoundary: "EXTERNAL", dataCategories: ["citation_context"], retentionDisclosure: "Retention and deletion details are unknown; consult the provider's terms.", retentionDisclosureFingerprint: "a".repeat(64) },
+      { role: "claimExtractor", providerId: "unclassified-ai", displayName: "Unclassified AI", version: "v1", model: null, trustBoundary: "UNREVIEWED", dataCategories: ["citation_context"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
     ],
     embedding: [
-      { role: "embedding", providerId: "local", displayName: "Local", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null },
-      { role: "embedding", providerId: "ollama", displayName: "Ollama embeddings (nomic-embed-text:v1.5)", version: "v1", model: "nomic-embed-text:v1.5", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null },
-      { role: "embedding", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "embed-2", trustBoundary: "EXTERNAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: "Provider retention terms reviewed for this deployment." },
+      { role: "embedding", providerId: "local", displayName: "Local", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
+      { role: "embedding", providerId: "ollama", displayName: "Ollama embeddings (nomic-embed-text:v1.5)", version: "v1", model: "nomic-embed-text:v1.5", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
+      { role: "embedding", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "embed-2", trustBoundary: "EXTERNAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: "Retention and deletion details are unknown; consult the provider's terms.", retentionDisclosureFingerprint: "a".repeat(64) },
     ],
-    systemOne: [{ role: "systemOne", providerId: "mock", displayName: "Mock", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null }],
-    scholarlyMetadata: [{ role: "scholarlyMetadata", providerId: "recorded-fixtures", displayName: "Recorded fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: null }],
+    systemOne: [{ role: "systemOne", providerId: "mock", displayName: "Mock", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null, retentionDisclosureFingerprint: null }],
+    scholarlyMetadata: [{ role: "scholarlyMetadata", providerId: "recorded-fixtures", displayName: "Recorded fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: null, retentionDisclosureFingerprint: null }],
     openAccess: [
-      { role: "openAccess", providerId: "recorded-fixtures", displayName: "Recorded OA fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata", "cited_paper_location"], retentionDisclosure: null },
+      { role: "openAccess", providerId: "recorded-fixtures", displayName: "Recorded OA fixtures", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["bibliographic_metadata", "cited_paper_location"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
     ],
   },
   dataCategories: [
@@ -58,7 +58,7 @@ const unpaywallOnlyProviderDirectory = {
     ...providerDirectory.providers,
     openAccess: [
       ...providerDirectory.providers.openAccess,
-      { role: "openAccess", providerId: "unpaywall", displayName: "Unpaywall and discovered open-access hosts", version: "v2", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"], retentionDisclosure: "Reviewed Unpaywall request and retention disclosure." },
+      { role: "openAccess", providerId: "unpaywall", displayName: "Unpaywall and discovered open-access hosts", version: "v2", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"], retentionDisclosure: "Unpaywall request details are disclosed; retention and deletion details are unknown.", retentionDisclosureFingerprint: "a".repeat(64) },
     ],
   },
 };
@@ -69,11 +69,12 @@ const preferredProviderDirectory = {
     ...unpaywallOnlyProviderDirectory.providers,
     systemOne: [
       ...providerDirectory.providers.systemOne,
-      { role: "systemOne", providerId: "laya", displayName: "Laya System One (local evaluation)", version: "laya-serve-0.3.20@23a17522aa4942da6cce53a995a275760320b691/pt-ej-v1", model: "convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null },
+      { role: "systemOne", providerId: "laya", displayName: "Laya System One (local evaluation)", version: "laya-serve-0.3.20@23a17522aa4942da6cce53a995a275760320b691/pt-ej-v1", model: "convaiinnovations/laya-typed-decisions@1a793eb568e6718f15941d08f85432581df534e3", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
+      { role: "systemOne", providerId: "jev", displayName: "Jev hosted System One", version: "typesafe-system-one-v1/paper-trail-evidence-judgement-v1", model: "jev-latest", trustBoundary: "EXTERNAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: "Retention and deletion details are unknown; consult the provider's terms.", retentionDisclosureFingerprint: "b".repeat(64) },
     ],
     scholarlyMetadata: [
       ...providerDirectory.providers.scholarlyMetadata,
-      { role: "scholarlyMetadata", providerId: "crossref", displayName: "Crossref REST API", version: "v1", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: "Reviewed Crossref request and retention disclosure." },
+      { role: "scholarlyMetadata", providerId: "crossref", displayName: "Crossref REST API", version: "v1", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: "Reviewed Crossref request and retention disclosure.", retentionDisclosureFingerprint: "a".repeat(64) },
     ],
   },
 };
@@ -197,7 +198,7 @@ describe("interactive workspace remote state", () => {
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
   });
 
-  it("selects preferred providers when available without treating defaults as consent", async () => {
+  it("preselects Crossref and Unpaywall but requires explicit per-run consent fingerprints", async () => {
     let submittedConfiguration: Record<string, unknown> | null = null;
     const runs: ReturnType<typeof analysisRun>[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
@@ -211,7 +212,7 @@ describe("interactive workspace remote state", () => {
         const form = options.body as FormData;
         submittedConfiguration = JSON.parse(String(form.get("configuration"))) as Record<string, unknown>;
         const savedRun = analysisRun("run-preferred", "The preferred-provider Analysis Run is selected.");
-        savedRun.configuration.systemOne.provider = "laya";
+        savedRun.configuration.systemOne.provider = "jev";
         savedRun.configuration.openAccess.provider = "unpaywall";
         savedRun.configuration.referenceResolution!.provider!.provider = "crossref";
         runs.push(savedRun);
@@ -234,18 +235,20 @@ describe("interactive workspace remote state", () => {
     expect(evidenceAssessment.value).toBe("laya");
     expect((screen.getByLabelText("Bibliography resolution") as HTMLSelectElement).value).toBe("crossref");
     expect((screen.getByLabelText("Cited full-text access") as HTMLSelectElement).value).toBe("unpaywall");
+    fireEvent.change(evidenceAssessment, { target: { value: "jev" } });
     await continueToConsentStep();
+    await screen.findByText("Jev hosted System One data access");
     await screen.findByText("Crossref REST API data access");
 
     const externalApprovals = screen.getAllByRole("checkbox");
-    expect(externalApprovals).toHaveLength(4);
+    expect(externalApprovals).toHaveLength(6);
     expect(externalApprovals.every((approval) => approval.getAttribute("aria-checked") === "false")).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Approve all 4 categories across external providers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve all 6 categories across external providers" }));
     expect(externalApprovals.every((approval) => approval.getAttribute("aria-checked") === "true")).toBe(true);
-    expect(screen.getByText("4 of 4 categories approved")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Clear approvals for all 4 categories across external providers" }));
+    expect(screen.getByText("6 of 6 categories approved")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear approvals for all 6 categories across external providers" }));
     expect(externalApprovals.every((approval) => approval.getAttribute("aria-checked") === "false")).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Approve all 4 categories across external providers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve all 6 categories across external providers" }));
     await clickContinue();
     await screen.findByRole("heading", { name: "Select your PDF" });
 
@@ -257,12 +260,13 @@ describe("interactive workspace remote state", () => {
 
     expect(await screen.findByRole("link", { name: "Open Analysis Run for source.pdf" })).toBeTruthy();
     expect(submittedConfiguration).toMatchObject({
-      systemOneProvider: "laya",
+      systemOneProvider: "jev",
       scholarlyMetadataProvider: "crossref",
       openAccessProvider: "unpaywall",
       externalProviderConsents: [
-        { providerId: "crossref", dataCategories: ["bibliographic_metadata"] },
-        { providerId: "unpaywall", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"] },
+        { providerId: "crossref", dataCategories: ["bibliographic_metadata"], retentionDisclosureFingerprint: "a".repeat(64) },
+        { providerId: "jev", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosureFingerprint: "b".repeat(64) },
+        { providerId: "unpaywall", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"], retentionDisclosureFingerprint: "a".repeat(64) },
       ],
     });
   });
@@ -356,7 +360,7 @@ describe("interactive workspace remote state", () => {
   });
 
   it("recalculates provider consent on selection changes and requires fresh consent for each Analysis Run", async () => {
-    const submittedConfigurations: Array<{ claimExtractorProvider: string; externalProviderConsents: Array<{ providerId: string; dataCategories: string[] }> }> = [];
+    const submittedConfigurations: Array<{ claimExtractorProvider: string; externalProviderConsents: Array<{ providerId: string; dataCategories: string[]; retentionDisclosureFingerprint: string }> }> = [];
     let runs: ReturnType<typeof analysisRun>[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
       const path = String(url);
@@ -419,6 +423,7 @@ describe("interactive workspace remote state", () => {
     expect(submittedConfigurations[0].externalProviderConsents).toEqual([{
       providerId: "hosted-ai",
       dataCategories: ["citation_context"],
+      retentionDisclosureFingerprint: "a".repeat(64),
     }]);
     fireEvent.click(screen.getByRole("button", { name: "New Analysis Run" }));
     await screen.findByRole("heading", { name: "Choose your services" });
@@ -458,6 +463,9 @@ describe("interactive workspace remote state", () => {
     }));
 
     renderWorkspace();
+    await screen.findByRole("heading", { name: "Choose your services" });
+    await waitForProviderDirectory();
+    fireEvent.change(screen.getByLabelText("Cited full-text access"), { target: { value: "unpaywall" } });
     await continueToConsentStep();
     await screen.findByText("Unpaywall and discovered open-access hosts data access");
 
@@ -488,6 +496,7 @@ describe("interactive workspace remote state", () => {
       externalProviderConsents: [{
         providerId: "unpaywall",
         dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"],
+        retentionDisclosureFingerprint: "a".repeat(64),
       }],
     });
     expect(requests.every(({ url }) => url.startsWith("/api/v1/"))).toBe(true);

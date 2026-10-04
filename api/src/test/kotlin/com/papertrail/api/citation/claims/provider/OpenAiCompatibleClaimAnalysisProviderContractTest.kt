@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
+import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
@@ -180,16 +180,23 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
                 enabled = true,
                 baseUrl = "https://model.example.test/v1",
                 trustedHosts = setOf("localhost"),
-                enablementReviewed = true,
-                retentionDisclosure = "The deployment reviewed this provider's retention terms.",
+                retentionDisclosure = "Retention and deletion details are unknown; consult the provider's terms.",
             ),
             modelId = "reviewed-model",
         )
         val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
         val categories = listOf(DataCategory.CITATION_CONTEXT.id, DataCategory.BIBLIOGRAPHIC_METADATA.id)
+        val disclosureFingerprint = requireNotNull(
+            catalog.requireSelectable(CLAIM_EXTRACTOR_ROLE, OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID)
+                .consentDisclosureFingerprint(),
+        )
         val configuration = configuration(
             catalog,
-            listOf(ExternalProviderConsentSnapshot(OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID, categories)),
+            listOf(ExternalProviderConsentRequest(
+                OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID,
+                categories,
+                disclosureFingerprint,
+            )),
         )
         val payload = OpenAiCompatibleClaimAnalysisPayloadFactory(objectMapper)
             .create(requestFactory().from(documentWithOneContextAndTwoTargets()))
@@ -265,6 +272,39 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
                 }
 
                 assertFalse(failure.message.orEmpty().contains("provider-private-response"))
+            }
+        }
+    }
+
+    @Test
+    fun `rejects duplicate JSON fields and trailing content in provider responses`() {
+        val request = requestFactory().from(documentWithOneContextAndTwoTargets())
+        val context = request.contexts.single()
+        val validContent = objectMapper.writeValueAsString(
+            mapOf(
+                "contexts" to listOf(
+                    mapOf(
+                        "contextStartOffset" to context.contextStartOffset,
+                        "contextEndOffset" to context.contextEndOffset,
+                        "claims" to emptyList<Any>(),
+                    ),
+                ),
+            ),
+        )
+        val duplicateFieldContent = validContent.replaceFirst(
+            "\"contextStartOffset\":${context.contextStartOffset},",
+            "\"contextStartOffset\":${context.contextStartOffset},\"contextStartOffset\":${context.contextStartOffset},",
+        )
+
+        listOf("$validContent trailing content", duplicateFieldContent).forEach { invalidContent ->
+            withServer(response = chatResponse(invalidContent)) { server, _ ->
+                val settings = localSettings(server)
+                val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+                val failure = assertThrows(OpenAiCompatibleProviderException::class.java) {
+                    provider(settings, catalog).analyze(request, configuration(catalog))
+                }
+
+                assertFalse(failure.message.orEmpty().contains("trailing content"))
             }
         }
     }
@@ -359,7 +399,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
 
     private fun configuration(
         catalog: ProviderCatalog,
-        consents: List<ExternalProviderConsentSnapshot> = emptyList(),
+        consents: List<ExternalProviderConsentRequest> = emptyList(),
     ) = RunConfigurationFactory(
         objectMapper = objectMapper,
         providerCatalog = catalog,

@@ -1,6 +1,7 @@
 package com.papertrail.api.evidence.report
 
 import com.papertrail.api.review.domain.HumanReview
+import io.swagger.v3.oas.annotations.media.Schema
 import java.util.UUID
 
 data class CitedReferenceVerificationOutcome(
@@ -13,6 +14,7 @@ data class CitedReferenceVerificationOutcome(
     val citationMarkers: List<String>,
     val associationKind: String,
     val processingStatus: String,
+    @field:Schema(description = "Sanitized content-free failure code for an incomplete pair. Jev HTTP failures use SYSTEM_ONE_HTTP_<status>; response validation failures use specific SYSTEM_ONE_RESPONSE_* codes. This value never contains provider response bodies or claim/evidence content.")
     val processingFailureReason: String?,
     val finalStatus: String?,
     val verificationScope: String,

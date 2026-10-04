@@ -116,7 +116,7 @@ class EvidenceJudgementRepository(
                 analysisRunId,
                 bibliographyEntryId,
                 providerId,
-                modelId,
+                judgement.providerReportedModelId ?: modelId,
                 providerVersion,
                 judgement.judgement.name,
                 judgement.evidenceRole.name,

@@ -1,9 +1,8 @@
 package com.papertrail.api.analysis.http
 
-import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import io.swagger.v3.oas.annotations.media.Schema
 
-@Schema(description = "Provider selections and explicit per-run external-provider consent.")
+@Schema(description = "Provider selections and explicit per-run external-provider consent. Consent must identify the exact data categories and the server-issued fingerprint for the disclosure displayed to the user; the server resolves and snapshots disclosure text.")
 data class RunConfigurationRequest(
     @field:Schema(
         description = "Claim-analysis provider. If omitted, use the deployment-configured default; heuristic remains selectable.",
@@ -23,6 +22,6 @@ data class RunConfigurationRequest(
     val scholarlyMetadataProvider: String = "recorded-fixtures",
     @field:Schema(description = "Provider used to discover and acquire legal cited full text.", defaultValue = "recorded-fixtures", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val openAccessProvider: String = "recorded-fixtures",
-    @field:Schema(description = "Provider-specific data categories explicitly approved for this run.", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
-    val externalProviderConsents: List<ExternalProviderConsentSnapshot> = emptyList(),
+    @field:Schema(description = "Client confirmations of the server-issued disclosure fingerprints and exact provider data categories approved for this run. Disclosure text is resolved and snapshotted by the server.", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+    val externalProviderConsents: List<ExternalProviderConsentRequest> = emptyList(),
 )

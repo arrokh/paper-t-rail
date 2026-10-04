@@ -171,6 +171,7 @@ export type AnalysisRun = {
     };
     systemOne: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     sourceParser: { provider: string; version: string };
+    citedPaperParser?: { provider: string; version: string } | null;
     openAccess?: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     referenceResolution?: {
       executionStatus: string;
@@ -186,7 +187,7 @@ export type AnalysisRun = {
       thresholds: Record<string, number> | null;
     };
     languageDetector: { provider: string; version: string };
-    externalProviderConsents?: { providerId: string; dataCategories: string[] }[];
+    externalProviderConsents?: { providerId: string; dataCategories: string[]; retentionDisclosure?: string | null }[];
   };
   createdAt: string;
   startedAt: string | null;
@@ -355,5 +356,9 @@ export type AnalysisRunConfiguration = {
   systemOneProvider: string;
   scholarlyMetadataProvider: string;
   openAccessProvider: string;
-  externalProviderConsents: Array<{ providerId: string; dataCategories: string[] }>;
+  externalProviderConsents: Array<{
+    providerId: string;
+    dataCategories: string[];
+    retentionDisclosureFingerprint: string;
+  }>;
 };

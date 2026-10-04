@@ -10,6 +10,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = REPO_ROOT / ".env"
 EXAMPLE_PATH = REPO_ROOT / ".env.example"
+LEGACY_SYSTEM_ONE_AGGREGATION_SETTINGS = {
+    "SYSTEM_ONE_AGGREGATION_ENABLED": "LOCAL_LAYA_AGGREGATION_ENABLED",
+    "SYSTEM_ONE_AGGREGATION_DIRECT_SUPPORT_THRESHOLD": "LOCAL_LAYA_AGGREGATION_DIRECT_SUPPORT_THRESHOLD",
+    "SYSTEM_ONE_AGGREGATION_PARTIAL_SUPPORT_THRESHOLD": "LOCAL_LAYA_AGGREGATION_PARTIAL_SUPPORT_THRESHOLD",
+    "SYSTEM_ONE_AGGREGATION_CONTRADICTION_THRESHOLD": "LOCAL_LAYA_AGGREGATION_CONTRADICTION_THRESHOLD",
+    "SYSTEM_ONE_AGGREGATION_COMPARABILITY_MARGIN": "LOCAL_LAYA_AGGREGATION_COMPARABILITY_MARGIN",
+}
 
 
 def parse_values(lines: list[str]) -> dict[str, str]:
@@ -46,9 +53,14 @@ def configure_local_laya(env_path: Path = ENV_PATH, example_path: Path = EXAMPLE
     if "LAYA_ENABLED" not in values:
         lines = set_value(lines, "LAYA_ENABLED", "true")
         values["LAYA_ENABLED"] = "true"
-    if "LOCAL_LAYA_AGGREGATION_ENABLED" not in values:
-        lines = set_value(lines, "LOCAL_LAYA_AGGREGATION_ENABLED", "true")
-        values["LOCAL_LAYA_AGGREGATION_ENABLED"] = "true"
+    for current_name, legacy_name in LEGACY_SYSTEM_ONE_AGGREGATION_SETTINGS.items():
+        if current_name not in values and legacy_name in values:
+            value = values[legacy_name]
+            lines = set_value(lines, current_name, value)
+            values[current_name] = value
+    if "SYSTEM_ONE_AGGREGATION_ENABLED" not in values:
+        lines = set_value(lines, "SYSTEM_ONE_AGGREGATION_ENABLED", "true")
+        values["SYSTEM_ONE_AGGREGATION_ENABLED"] = "true"
 
     enabled = values["LAYA_ENABLED"].lower() == "true"
     default_provider = values.get("SYSTEM_ONE_DEFAULT_PROVIDER", "").strip()

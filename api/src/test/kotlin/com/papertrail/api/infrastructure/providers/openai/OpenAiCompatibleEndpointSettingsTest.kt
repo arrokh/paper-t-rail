@@ -35,7 +35,7 @@ class OpenAiCompatibleEndpointSettingsTest {
     }
 
     @Test
-    fun `external endpoints require HTTPS review and a retention disclosure`() {
+    fun `external endpoints require HTTPS but unknown retention terms do not block selection`() {
         val external = OpenAiCompatibleEndpointSettings(
             enabled = true,
             baseUrl = "https://api.example.test/v1",
@@ -43,16 +43,13 @@ class OpenAiCompatibleEndpointSettingsTest {
         )
 
         assertEquals(ProviderTrustBoundary.EXTERNAL, external.trustBoundary)
-        assertFalse(external.isSelectable)
-        assertFalse(external.copy(enablementReviewed = true).isSelectable)
+        assertTrue(external.isSelectable)
         assertTrue(external.copy(
-            enablementReviewed = true,
-            retentionDisclosure = "The deployment has reviewed the provider retention terms.",
+            retentionDisclosure = "Retention and deletion details are unknown; consult the provider's terms.",
         ).isSelectable)
         assertFalse(external.copy(
             baseUrl = "http://api.example.test/v1",
-            enablementReviewed = true,
-            retentionDisclosure = "Reviewed terms.",
+            retentionDisclosure = "Retention terms are disclosed.",
         ).isSelectable)
     }
 

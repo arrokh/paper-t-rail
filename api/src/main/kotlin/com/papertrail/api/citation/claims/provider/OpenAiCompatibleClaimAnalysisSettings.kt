@@ -18,7 +18,6 @@ data class OpenAiCompatibleClaimAnalysisSettings(
         maxCompletionTokens in 1 until contextWindowTokens
     val isSelectable: Boolean = endpoint.isSelectable && isConfigurationValid
     val trustBoundary: ProviderTrustBoundary = endpoint.trustBoundary
-    val enablementReviewed: Boolean = endpoint.enablementReviewed
     val retentionDisclosure: String? = endpoint.retentionDisclosure
     // Keep this v1 fingerprint stable so queued Analysis Runs created before the shared-transport refactor remain processable.
     val configurationFingerprint: String? = endpoint.baseUri?.toASCIIString()?.let { endpointUri ->
@@ -47,7 +46,7 @@ data class OpenAiCompatibleClaimAnalysisSettings(
     companion object {
         const val PROVIDER_ID = OpenAiCompatibleEndpointSettings.PROVIDER_ID
         const val VERSION = OpenAiCompatibleEndpointSettings.VERSION
-        const val DEFAULT_CONTEXT_WINDOW_TOKENS = 32_768
+        const val DEFAULT_CONTEXT_WINDOW_TOKENS = 131_072
         const val DEFAULT_MAX_COMPLETION_TOKENS = 2_048
         const val MAX_CONTEXT_WINDOW_TOKENS = 2_000_000
 

@@ -3,6 +3,7 @@ package com.papertrail.api.infrastructure.providers
 import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
+import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.infrastructure.messaging.NonRetryablePipelineException
 import com.papertrail.api.citation.claims.domain.ClaimAnalysisVersions
@@ -16,6 +17,14 @@ const val EMBEDDING_ROLE = "embedding"
 const val SYSTEM_ONE_ROLE = "systemOne"
 const val SCHOLARLY_METADATA_ROLE = "scholarlyMetadata"
 const val OPEN_ACCESS_ROLE = "openAccess"
+
+private const val UNKNOWN_RETENTION_DISCLOSURE =
+    "Paper T-Rail has not verified this provider's data-retention or deletion terms. Retention and deletion details are unknown; consult the provider's terms."
+
+private fun sha256Fingerprint(value: String): String = MessageDigest
+    .getInstance("SHA-256")
+    .digest(value.toByteArray(Charsets.UTF_8))
+    .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
 private val EMBEDDING_DATA_CATEGORIES = setOf(
     DataCategory.CITED_PAPER_CHUNKS,
@@ -55,14 +64,23 @@ data class ProviderRegistration(
     val enabled: Boolean,
     val dataCategories: Set<DataCategory>,
     val retentionDisclosure: String? = null,
-    val enablementReviewed: Boolean = false,
     val payloadConfigurationFingerprint: String? = null,
     val configurationFingerprint: String? = null,
     val embeddingDimension: Int? = null,
     val targetSelectionPolicyVersion: String? = null,
     val promptVersion: String? = null,
     val outputMappingVersion: String? = null,
-)
+) {
+    fun consentDisclosure(): String? = if (trustBoundary == ProviderTrustBoundary.EXTERNAL) {
+        retentionDisclosure?.takeIf(String::isNotBlank) ?: UNKNOWN_RETENTION_DISCLOSURE
+    } else {
+        retentionDisclosure
+    }
+
+    fun consentDisclosureFingerprint(): String? = consentDisclosure()?.let { disclosure ->
+        sha256Fingerprint("paper-trail-provider-disclosure-v1\n$providerId\n$disclosure")
+    }
+}
 
 @Schema(description = "One enabled and classified provider option available for selection.")
 data class ProviderOption(
@@ -76,12 +94,14 @@ data class ProviderOption(
     val version: String,
     @field:Schema(description = "Model identifier when this provider uses a model.")
     val model: String?,
-    @field:Schema(description = "Provider trust boundary. Unreviewed providers are not listed.", allowableValues = ["LOCAL", "EXTERNAL"])
+    @field:Schema(description = "Provider trust boundary. Providers with an unclassified technical boundary are not listed.", allowableValues = ["LOCAL", "EXTERNAL"])
     val trustBoundary: String,
     @field:Schema(description = "Stable data-category IDs that may be sent to this provider.")
     val dataCategories: List<String>,
-    @field:Schema(description = "Configured retention disclosure, when applicable.")
+    @field:Schema(description = "Retention and deletion disclosure shown before per-run consent. Unknown terms are stated explicitly.")
     val retentionDisclosure: String?,
+    @field:Schema(description = "Opaque fingerprint the server validates to ensure consent matches the disclosure returned by this directory.")
+    val retentionDisclosureFingerprint: String?,
 )
 
 @Schema(description = "Stable data category and its user-facing disclosure.")
@@ -118,13 +138,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
             "Configured embedding dimensions must be positive."
         }
         require(registrations.none { it.enabled && it.trustBoundary == ProviderTrustBoundary.UNREVIEWED }) {
-            "Unreviewed providers cannot be enabled."
-        }
-        require(registrations.none {
-            it.enabled && it.trustBoundary == ProviderTrustBoundary.EXTERNAL &&
-                (!it.enablementReviewed || it.retentionDisclosure.isNullOrBlank())
-        }) {
-            "External providers require a reviewed enablement decision and retention disclosure before they can be enabled."
+            "Technically unclassified providers cannot be enabled."
         }
         require(registrations.filter { it.trustBoundary == ProviderTrustBoundary.EXTERNAL }.all { it.dataCategories.isNotEmpty() }) {
             "External providers must declare their data categories."
@@ -147,7 +161,8 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                         model = registration.model,
                         trustBoundary = registration.trustBoundary.id,
                         dataCategories = registration.dataCategories.sortedBy { it.id }.map { it.id },
-                        retentionDisclosure = registration.retentionDisclosure,
+                        retentionDisclosure = registration.consentDisclosure(),
+                        retentionDisclosureFingerprint = registration.consentDisclosureFingerprint(),
                     )
                 }
             },
@@ -167,23 +182,17 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
     }
 
     companion object {
-        private fun sha256Fingerprint(value: String): String = MessageDigest
-            .getInstance("SHA-256")
-            .digest(value.toByteArray(Charsets.UTF_8))
-            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
-
         fun safeDefaults(
             crossrefEnabled: Boolean = false,
-            crossrefEnablementReviewed: Boolean = false,
             crossrefRetentionDisclosure: String? = null,
             crossrefContactEmail: String? = null,
             unpaywallEnabled: Boolean = false,
-            unpaywallEnablementReviewed: Boolean = false,
             unpaywallRetentionDisclosure: String? = null,
             unpaywallContactEmail: String? = null,
             ollamaEmbeddingSettings: OllamaEmbeddingSettings = OllamaEmbeddingSettings.disabled(),
             layaSystemOneSettings: LayaSystemOneSettings = LayaSystemOneSettings.disabled(),
             openAiCompatibleClaimAnalysisSettings: OpenAiCompatibleClaimAnalysisSettings = OpenAiCompatibleClaimAnalysisSettings.disabled(),
+            jevSystemOneSettings: JevSystemOneSettings = JevSystemOneSettings.disabled(),
         ): ProviderCatalog {
             require(!unpaywallEnabled || !unpaywallContactEmail.isNullOrBlank()) {
                 "Unpaywall requires a configured provider contact email before it can be enabled."
@@ -214,7 +223,6 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                         DataCategory.PROVIDER_CONTACT_EMAIL.takeIf { !unpaywallContactEmail.isNullOrBlank() },
                     ),
                     retentionDisclosure = unpaywallRetentionDisclosure,
-                    enablementReviewed = unpaywallEnablementReviewed,
                     payloadConfigurationFingerprint = unpaywallContactEmail
                         ?.takeIf(String::isNotBlank)
                         ?.let(::sha256Fingerprint),
@@ -242,7 +250,6 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                         DataCategory.PROVIDER_CONTACT_EMAIL.takeIf { !crossrefContactEmail.isNullOrBlank() },
                     ),
                     retentionDisclosure = crossrefRetentionDisclosure,
-                    enablementReviewed = crossrefEnablementReviewed,
                     payloadConfigurationFingerprint = crossrefContactEmail
                         ?.takeIf(String::isNotBlank)
                         ?.let(::sha256Fingerprint),
@@ -279,7 +286,6 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     enabled = openAiCompatibleClaimAnalysisSettings.isSelectable,
                     dataCategories = setOf(DataCategory.CITATION_CONTEXT, DataCategory.BIBLIOGRAPHIC_METADATA),
                     retentionDisclosure = openAiCompatibleClaimAnalysisSettings.retentionDisclosure,
-                    enablementReviewed = openAiCompatibleClaimAnalysisSettings.enablementReviewed,
                     configurationFingerprint = openAiCompatibleClaimAnalysisSettings.configurationFingerprint,
                     targetSelectionPolicyVersion = ClaimAnalysisVersions.MODEL_TARGET_SELECTION_POLICY,
                     promptVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_PROMPT,
@@ -317,7 +323,6 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     enabled = ollamaEmbeddingSettings.isSelectable,
                     dataCategories = EMBEDDING_DATA_CATEGORIES,
                     retentionDisclosure = ollamaEmbeddingSettings.retentionDisclosure,
-                    enablementReviewed = ollamaEmbeddingSettings.enablementReviewed,
                     configurationFingerprint = ollamaEmbeddingSettings.configurationFingerprint
                         .takeIf { ollamaEmbeddingSettings.isConfigurationValid },
                     embeddingDimension = ollamaEmbeddingSettings.dimension
@@ -348,11 +353,13 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     role = SYSTEM_ONE_ROLE,
                     providerId = "jev",
                     displayName = "Jev hosted System One",
-                    version = "configured-model",
-                    model = null,
+                    version = JevSystemOneSettings.PROVIDER_VERSION,
+                    model = jevSystemOneSettings.modelId,
                     trustBoundary = ProviderTrustBoundary.EXTERNAL,
-                    enabled = false,
+                    enabled = jevSystemOneSettings.isSelectable,
                     dataCategories = setOf(DataCategory.ATOMIC_CLAIMS, DataCategory.EVIDENCE_PASSAGES),
+                    retentionDisclosure = jevSystemOneSettings.retentionDisclosure,
+                    configurationFingerprint = jevSystemOneSettings.configurationFingerprint,
                 ),
                 ),
             )
@@ -386,7 +393,7 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
             throw ProviderCallRejectedException("External provider '$providerId' request has no classified payload categories.")
         }
         if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
-            requireConsent(providerId, actualPayloadCategories, configuration)
+            requireConsent(role, registration, actualPayloadCategories, configuration)
         }
         return sendRequest(payload)
     }
@@ -400,7 +407,7 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
     ): T {
         val registration = requireMatchingSelection(role, providerId, configuration)
         if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
-            requireConsent(providerId, registration.dataCategories, configuration)
+            requireConsent(role, registration, registration.dataCategories, configuration)
         }
         return checkAvailability()
     }
@@ -428,10 +435,8 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
         }
         val scholarlyConfigurationChanged = role == SCHOLARLY_METADATA_ROLE &&
             configuration.referenceResolution.providerConfigurationFingerprint != registration.payloadConfigurationFingerprint
-        val openAccessConfigurationChanged = role == OPEN_ACCESS_ROLE && (
-            configuration.openAccessProviderConfigurationFingerprint != registration.payloadConfigurationFingerprint ||
-                configuration.openAccessRetentionDisclosure != registration.retentionDisclosure
-            )
+        val openAccessConfigurationChanged = role == OPEN_ACCESS_ROLE &&
+            configuration.openAccessProviderConfigurationFingerprint != registration.payloadConfigurationFingerprint
         val embeddingDimensionChanged = role == EMBEDDING_ROLE &&
             selected.embeddingDimension != registration.embeddingDimension &&
             !(selected.provider == "local" && selected.embeddingDimension == null)
@@ -461,20 +466,27 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
     }
 
     private fun requireConsent(
-        providerId: String,
+        role: String,
+        registration: ProviderRegistration,
         requiredCategories: Set<DataCategory>,
         configuration: AnalysisConfigurationSnapshot,
     ) {
-        val consented = configuration.externalProviderConsents
-            .firstOrNull { it.providerId == providerId }
-            ?.dataCategories
-            ?.mapNotNull(DataCategory::fromId)
-            ?.toSet()
-            .orEmpty()
+        val providerId = registration.providerId
+        if (requiredCategories.isEmpty()) {
+            throw ProviderCallRejectedException("External provider '$providerId' request has no classified payload categories.")
+        }
+        val consent = configuration.externalProviderConsents.firstOrNull { it.providerId == providerId }
+            ?: throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent.")
+        val consented = consent.dataCategories.mapNotNull(DataCategory::fromId).toSet()
         val missingConsent = requiredCategories - consented
         if (missingConsent.isNotEmpty()) {
             val categories = missingConsent.map { it.id }.sorted().joinToString(", ")
             throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent for: $categories.")
+        }
+        val snapshottedDisclosure = consent.retentionDisclosure
+            ?: configuration.openAccessRetentionDisclosure.takeIf { role == OPEN_ACCESS_ROLE }
+        if (snapshottedDisclosure != null && snapshottedDisclosure != registration.consentDisclosure()) {
+            throw ProviderCallRejectedException("Provider '$providerId' retention disclosure changed after this Analysis Run was created.")
         }
     }
 }

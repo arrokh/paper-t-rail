@@ -1,6 +1,6 @@
 # Implementation Plan: OpenAI-Compatible Claim Analysis
 
-**Status:** Implemented; local Spring and Compose defaults select `openai-compatible-chat` with model `microsoft/phi-4-mini-reasoning`. Fresh runs probe the configured `/v1/models` endpoint before reading or parsing the Source Document. Contract tests use local HTTP fixtures; no live endpoint or model-accuracy claim is included. See [implementation and verification status](#implementation-and-verification-status).
+**Status:** Implemented; local Spring and Compose defaults select `openai-compatible-chat` with model `google/gemma-4-e2b` and a 131072-token context window. Fresh runs probe the configured `/v1/models` endpoint before reading or parsing the Source Document. Contract tests use local HTTP fixtures; they do not establish model accuracy. See [implementation and verification status](#implementation-and-verification-status).
 
 ## Goal
 
@@ -43,7 +43,7 @@ Add an optional OpenAI-compatible chat provider to Pipeline 01 that processes on
 - `OpenAiCompatibleEndpointSettings` owns the shared connection/trust profile; `OpenAiCompatibleChatClient` depends only on that generic profile and accepts the model and completion budget from its caller. It implements JSON-mode non-streaming Chat Completions, server-side bearer authentication, no redirects, explicit timeout, bounded request/response bytes, and sanitized retryable/permanent errors. Structured transport logs report only provider/operation, status or error type, byte counts, retryability, and duration; the claim adapter logs model and batch/result counts, never payload text. The client does not know claim-analysis settings or prompts.
 - Whole Citation Contexts are packed deterministically under configured token/byte budgets. A context that cannot fit fails before any provider call; batches are all validated before persistence.
 - `ParsedDocumentRepository` maps only validated selected target keys to same-context target IDs. `ClaimCitationPairCounter` counts selected links; claims with no selected target remain persisted and create no Claim–Paper Verification.
-- Provider selection, endpoint fingerprint, target-selection policy, prompt/output-mapping versions, trust boundary, and retention disclosure are pinned in the Analysis Run snapshot. External endpoints require reviewed enablement, an explicit retention disclosure, and exact per-run consent for `citation_context` and `bibliographic_metadata`.
+- Provider selection, endpoint fingerprint, target-selection policy, prompt/output-mapping versions, trust boundary, and retention disclosure are pinned in the Analysis Run snapshot. External endpoints disclose known or unknown retention and require exact per-run consent for `citation_context` and `bibliographic_metadata`; provider-terms review is not an enablement prerequisite.
 - The existing provider directory and upload configuration UI expose the provider, select the configured local default when available, and require its declared consent categories for external endpoints. The UI keeps unlinked claims visible as “No Citation Targets”; they are not converted into unresolved references or verification outcomes.
 - Invalid configuration, consent, or response-contract failures are non-retryable and dead-letter immediately. Timeouts, network failures, HTTP 408/429, and 5xx remain retryable. Neither path silently substitutes the heuristic.
 - Before retrieving or parsing a fresh run's Source Document, the worker sends a content-free `GET /v1/models` request through the provider-call gate. A 2xx response confirms endpoint availability; the response body is discarded. Network failures, timeouts, 408/429, and 5xx retry; other non-2xx responses fail without switching providers.
@@ -65,8 +65,8 @@ Future SystemOneProvider adapter
 
 - Evolve the claim-analysis boundary to accept all structured Citation Context inputs for one Analysis Run and return context-grouped claims plus selected target keys. The exact type names may follow repository conventions, but do not add a separate LLM call for target linking.
 - The heuristic adapter maps its existing extraction results to all GROBID target keys in each Citation Context, preserving its established heuristic behavior.
-- `OpenAiCompatibleEndpointSettings` owns one deployment-level endpoint profile: base URL, server-side credentials, trust hosts, review/retention metadata, request timeout, and byte ceilings. `OpenAiCompatibleChatClient` depends only on this generic profile; its HTTP/protocol implementation is shared by composed adapters, not inherited by them.
-- `OpenAiCompatibleClaimAnalysisSettings` owns only the claim-extractor model and context/completion budgets. It accepts any compatible model ID supported by the selected endpoint (for example `google/gemma-4-e2b`); the current local default remains `microsoft/phi-4-mini-reasoning`. `OpenAiCompatibleClaimAnalysisProvider` owns the claim prompt, JSON response mapping, source-span checks, target-key validation, and `ClaimAnalysisProvider` contract.
+- `OpenAiCompatibleEndpointSettings` owns one deployment-level endpoint profile: base URL, server-side credentials, trust hosts, retention disclosure, request timeout, and byte ceilings. `OpenAiCompatibleChatClient` depends only on this generic profile; its HTTP/protocol implementation is shared by composed adapters, not inherited by them.
+- `OpenAiCompatibleClaimAnalysisSettings` owns only the claim-extractor model and context/completion budgets. It accepts any compatible model ID supported by the selected endpoint; the local default is `google/gemma-4-e2b` with a 131072-token context window. `OpenAiCompatibleClaimAnalysisProvider` owns the claim prompt, JSON response mapping, source-span checks, target-key validation, and `ClaimAnalysisProvider` contract.
 - Keep the base URL and credentials in server-side endpoint configuration and the model profile under its provider role; do not accept endpoint settings from the browser or store secrets in run snapshots. Only the `claimExtractor` role is registered by this plan. A future System One adapter may compose the same transport while implementing `SystemOneProvider` with an independent model/output contract.
 
 ## Document request and response contract
@@ -108,7 +108,7 @@ Use Chat Completions (`POST /v1/chat/completions`) with JSON mode for the initia
 
 - The shared transport is unavailable unless the deployment endpoint profile is selectable; each role-specific adapter is unavailable unless its model profile is valid. The API key is server-side only.
 - Classify the configured endpoint as `LOCAL` only when it is within the trusted deployment boundary; otherwise classify it as `EXTERNAL`. OpenAI compatibility does not determine trust.
-- For external endpoints, require reviewed enablement and a deployment-specific retention disclosure. The request sends Citation Context text and minimum referenced-entry metadata, so it declares `citation_context` and `bibliographic_metadata` and requires exact per-provider, per-run consent for both before sending.
+- For external endpoints, require HTTPS classification and disclosure of known or unknown retention. The claim request sends Citation Context text and minimum referenced-entry metadata, so it declares `citation_context` and `bibliographic_metadata` and requires exact per-provider, per-run consent for both before the request and availability probe.
 - Route outbound requests through `ProviderCallGate`. Extend the claim-extraction path so external calls cannot bypass provider selection, trust classification, configuration-fingerprint checks, payload-category checks, or consent.
 - Pin the selected provider ID/version/model, target-selection policy version, prompt/output-mapping version, trust boundary, and non-secret endpoint fingerprint in the run snapshot. Do not persist API keys or log contexts, bibliography payloads, prompts, or model responses.
 - Keep the provider configurable: local defaults select the OpenAI-compatible analyzer, while heuristic remains an explicit selectable option. An unavailable configured provider fails closed and never silently falls back.
@@ -166,7 +166,7 @@ Use Chat Completions (`POST /v1/chat/completions`) with JSON mode for the initia
 - One document request can be large; context-boundary batching bounds the request without allowing claims or targets to cross Citation Contexts. A single oversized context fails rather than being silently split.
 - Model-selected links can omit a relevant Citation Target. Keep links visibly inferred/provisional and retain the heuristic provider as an explicit alternative.
 - A generic compatible endpoint may differ in optional features. Contract tests must target the configured compatibility baseline and reject unsupported or malformed responses rather than guessing.
-- External consent does not establish provider suitability or retract already transmitted content. Deployment-specific terms and retention disclosures remain required.
+- External consent does not establish provider suitability or retract already transmitted content. Disclose known or unknown provider retention terms; terms review is not an enablement prerequisite.
 - This plan does not add a Stage 05 implementation or enable final evidence aggregation for a new model.
 
 ## Implementation and verification status
@@ -188,8 +188,8 @@ Use Chat Completions (`POST /v1/chat/completions`) with JSON mode for the initia
 - [ADR 0002: version-pinned analysis provenance](./adr/0002-version-pinned-analysis-provenance.md)
 - [ADR 0003: provider consent and deletion](./adr/0003-explicit-provider-consent-and-data-retention.md)
 - [ADR 0004: run-scoped parsed structure](./adr/0004-run-scoped-parsed-document-structure.md)
-- [ADR 0009: selected claim-to-target associations](./adr/0009-select-citation-targets-per-claim.md)
 - [ADR 0010: configured local default and availability preflight](./adr/0010-default-local-claim-analysis-provider-and-preflight.md)
 - [ADR 0011: shared OpenAI-compatible transport](./adr/0011-shared-openai-compatible-chat-transport.md)
+- [ADR 0012: selected claim-to-target associations](./adr/0012-select-citation-targets-per-claim.md)
 - [OpenAI Chat Completions API reference](https://platform.openai.com/docs/api-reference/chat/create)
 - [OpenAI structured model outputs](https://developers.openai.com/api/docs/guides/structured-outputs)

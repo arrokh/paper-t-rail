@@ -9,7 +9,6 @@ import com.papertrail.api.document.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.service.isSourceDocumentDeleted
 import com.papertrail.api.document.service.requireActiveSourceDocument
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
@@ -200,13 +199,12 @@ class AnalysisRunProcessingService(
         val verificationConfigured = jdbc.queryForObject(
             """
             SELECT analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot)
-                OR (configuration_snapshot #>> '{systemOne,provider}' = ?
+                OR (configuration_snapshot #>> '{systemOne,provider}' <> 'mock'
                     AND configuration_snapshot #>> '{aggregation,executionStatus}' IN ('NOT_RUN', 'PENDING'))
               FROM analysis_runs
              WHERE id = ?
             """.trimIndent(),
             Boolean::class.java,
-            LayaSystemOneSettings.PROVIDER_ID,
             event.analysisRunId,
         ) == true
         transactionTemplate.executeWithoutResult {
