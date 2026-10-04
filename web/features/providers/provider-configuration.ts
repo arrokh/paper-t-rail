@@ -13,7 +13,7 @@ export type ProviderSelections = {
 
 export const DEFAULT_PROVIDER_SELECTIONS: ProviderSelections = {
   claimExtractorProvider: "heuristic",
-  embeddingProvider: "local",
+  embeddingProvider: "ollama",
   systemOneProvider: "laya",
   scholarlyMetadataProvider: "crossref",
   openAccessProvider: "unpaywall",
@@ -111,11 +111,15 @@ export function availableProviderSelections(
   const selectAvailable = (role: ProviderRole, field: keyof ProviderSelections) => {
     const options = selectableProviderOptions(directory, role);
     const preferredProviderId = explicitSelections[role] ?? selections[field];
-    // The API directory gates availability; Laya is retained only as a local selectable provider.
-    const preferred = options.find((provider) =>
-      provider.providerId === preferredProviderId
-      && (role !== "systemOne" || provider.providerId !== "laya" || provider.trustBoundary === "LOCAL"),
-    );
+    // The API directory gates availability; Laya and implicit Ollama preferences must be local.
+    const preferred = options.find((provider) => {
+      if (provider.providerId !== preferredProviderId) return false;
+      if (role === "systemOne" && provider.providerId === "laya" && provider.trustBoundary !== "LOCAL") return false;
+      const implicitOllamaPreference = role === "embedding"
+        && explicitSelections.embedding === undefined
+        && provider.providerId === "ollama";
+      return !implicitOllamaPreference || provider.trustBoundary === "LOCAL";
+    });
     const safeFallback = options.find((provider) =>
       provider.providerId === SAFE_FALLBACK_PROVIDER_SELECTIONS[field],
     );

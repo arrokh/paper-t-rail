@@ -169,7 +169,7 @@ function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
 
-test("new-run preferences use local embeddings and Crossref/Unpaywall when configured, with safe fallbacks", () => {
+test("new-run preferences use trusted Ollama and Crossref/Unpaywall when available", () => {
   const directoryWithOllama = {
     ...directory,
     providers: {
@@ -213,6 +213,7 @@ test("new-run preferences use local embeddings and Crossref/Unpaywall when confi
 
   assert.deepEqual(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS), {
     ...localSelections,
+    embeddingProvider: "ollama",
     systemOneProvider: "laya",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
@@ -226,6 +227,35 @@ test("new-run preferences use local embeddings and Crossref/Unpaywall when confi
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
+});
+
+test("external Ollama is not implicit but remains available after explicit selection", () => {
+  const externalOllamaDirectory = {
+    ...directory,
+    providers: {
+      ...directory.providers,
+      embedding: [
+        ...directory.providers.embedding,
+        {
+          role: "embedding",
+          providerId: "ollama",
+          displayName: "External Ollama embeddings",
+          version: "v1",
+          model: "nomic-embed-text:v1.5",
+          trustBoundary: "EXTERNAL",
+          dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"],
+          retentionDisclosure: "Ollama endpoint retention is unknown.",
+          retentionDisclosureFingerprint: "c".repeat(64),
+        },
+      ],
+    },
+  };
+
+  assert.equal(availableProviderSelections(externalOllamaDirectory, DEFAULT_PROVIDER_SELECTIONS).embeddingProvider, "local");
+  assert.equal(
+    availableProviderSelections(externalOllamaDirectory, DEFAULT_PROVIDER_SELECTIONS, { embedding: "ollama" }).embeddingProvider,
+    "ollama",
+  );
 });
 
 test("new-run preferences explicitly fall back to safe providers when preferred providers are unavailable", () => {
