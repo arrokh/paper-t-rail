@@ -276,7 +276,7 @@ afterEach(() => {
 });
 
 describe("Analysis Run Paper Review", () => {
-  it("loads the uploaded Source Document from its short-lived MinIO URL", async () => {
+  it("loads the uploaded Source Document from its short-lived S3 presigned URL", async () => {
     installSourcePdfResponse();
     renderReview();
 
@@ -444,7 +444,7 @@ describe("Analysis Run Paper Review", () => {
     expect(onSelectReference).toHaveBeenCalledWith("b7");
   });
 
-  it("renews MinIO URLs only when Refresh PDF is explicitly selected", async () => {
+  it("renews S3 presigned URLs only when Refresh PDF is explicitly selected", async () => {
     installPdfJsDocument();
     let issue = 0;
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {

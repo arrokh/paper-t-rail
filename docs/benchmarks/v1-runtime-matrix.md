@@ -2,6 +2,8 @@
 
 **Measured:** 2026-09-27. **Purpose:** record the Issue #12 representative article/dissertation processing results and the runtime/provider versions used to select the initial configurable processing caps. These are observations from four local ARM64 runs, not service-level guarantees.
 
+**Historical storage note:** these measurements used the prior S3 client and local object-storage image. The current stack uses a different client/image combination; these benchmark results do not measure it.
+
 ## Reproduce the benchmark
 
 From the repository root, run:
@@ -25,7 +27,7 @@ The script samples `docker stats` about every 0.5 seconds. Memory columns below 
 | JVM/toolchain | OpenJDK 21.0.2+13; Gradle Wrapper 8.14.3 |
 | API/worker build and runtime | [`api/Dockerfile`](../../api/Dockerfile): Gradle 8.14.3 / JDK 21 Alpine build stage; Eclipse Temurin `21.0.2_13-jre-jammy` runtime; Spring Boot 3.5.3; Kotlin 2.1.21 |
 | PDF/language preflight | Apache PDFBox `3.0.5`; Optimaize language detector `0.6` |
-| S3 client | MinIO Java client `8.5.17` |
+| S3 client | Prior S3-compatible client (historical run only) |
 
 ## Representative results
 
@@ -55,7 +57,7 @@ The Compose service tags are exact release tags (no `latest`). OCI digests below
 | PostgreSQL + pgvector | `pgvector/pgvector:0.8.0-pg17`; PostgreSQL 17.6, pgvector 0.8.0; ARM64 digest `sha256:40b404964359299eefdd5f8518facf1886c562848cf4de13b6eaf91cb70c2b87` |
 | Redis Streams | `redis:7.4.2-alpine` (Redis 7.4.2; satisfies the Redis 6.2+ requirement); ARM64 digest `sha256:02419de7eddf55aa5bcf49efb74e88fa8d931b4d77c07eff8a6b2144472b6952` |
 | GROBID | `grobid/grobid:0.9.1-crf`; parser version recorded as `0.9.1-crf`; ARM64 digest `sha256:223957791ac2bbe48609dcc58a689b16b60baeae13a8734ef440ae6bfb38f4cd` |
-| Object store | `quay.io/minio/minio:RELEASE.2025-02-07T23-21-09Z`; ARM64 digest observed as `sha256:640c22768ed5dbc92eacc14502a1b06a1c708fa60431345c78dfc22917062e93` |
+| Object store | Prior local S3-compatible image (historical run only) |
 | Optional Ollama service | `ollama/ollama:0.34.4`; ARM64 digest `sha256:8262851b2846b87c649eddf3e76beb270c52f4d1bc94559f47efde16b0841551`. Ollama was disabled during these measurements. |
 | Optional Ollama embedding model | [`nomic-embed-text:v1.5`](https://ollama.com/library/nomic-embed-text/tags), 768 dimensions, Apache-2.0; Ollama library manifest digest `0a109f422b47`. The benchmark disables model initialization and makes no embedding-provider calls. |
 | Schema migration | `sqitch/sqitch:v1.6.1.3`; ARM64 digest `sha256:f247ab0e0b66e9c2d09a400864f7314358893f5cf209cddcc4f213f7d5bfe4d3` |

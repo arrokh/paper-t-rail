@@ -76,7 +76,7 @@ class EvidenceRetrievalServiceTest {
             override fun put(objectKey: String, content: ByteArray, contentType: String) = Unit
             override fun get(objectKey: String): ByteArray = bytes
             override fun stat(objectKey: String) = SourceObjectMetadata(bytes.size.toLong(), null)
-            override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int) = "http://minio.test/$objectKey"
+            override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int) = "http://s3.test/$objectKey"
             override fun delete(objectKey: String) = Unit
         }
         var observedParserSelection: ProviderSelection? = null

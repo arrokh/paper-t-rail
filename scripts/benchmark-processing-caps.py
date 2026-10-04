@@ -236,7 +236,7 @@ def benchmark_document(path: Path, api_url: str, project: str, environment: dict
 
 
 def main() -> None:
-    ports = available_host_ports(5)
+    ports = available_host_ports(4)
     environment = os.environ.copy()
     environment.update(
         {
@@ -247,7 +247,6 @@ def main() -> None:
             "POSTGRES_PASSWORD": "benchmark-local-only",
             "REDIS_HOST_PORT": str(ports[2]),
             "S3_HOST_PORT": str(ports[3]),
-            "S3_CONSOLE_HOST_PORT": str(ports[4]),
             "REDIS_PASSWORD": "benchmark-local-only",
             "S3_ACCESS_KEY": "benchmark-local-only",
             "S3_SECRET_KEY": "benchmark-local-only-secret",
