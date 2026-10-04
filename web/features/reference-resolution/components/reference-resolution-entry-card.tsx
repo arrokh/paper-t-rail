@@ -6,12 +6,14 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
 import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
+import { displayReferenceKey } from "@/lib/display-reference-key";
 
 type ReferenceResolutionEntry = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number];
 
 export function ReferenceResolutionEntryCard({
   analysisRunId,
   entry,
+  references,
   anchorId,
   parsedEntryHref,
   parsedEntryAvailable,
@@ -19,6 +21,7 @@ export function ReferenceResolutionEntryCard({
 }: {
   analysisRunId: string;
   entry: ReferenceResolutionEntry;
+  references: readonly ReferenceResolutionEntry[];
   anchorId: string;
   parsedEntryHref: string;
   parsedEntryAvailable: boolean;
@@ -26,6 +29,7 @@ export function ReferenceResolutionEntryCard({
 }) {
   const sourcePreviewRef = useRef<HTMLParagraphElement>(null);
   const [hasLongSourceReference, setHasLongSourceReference] = useState(false);
+  const displayKey = displayReferenceKey(entry, references);
 
   useEffect(() => {
     if (hasLongSourceReference) return;
@@ -47,10 +51,10 @@ export function ReferenceResolutionEntryCard({
         <header className="flex flex-col gap-3 bg-muted/20 p-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 space-y-2">
             <p className="break-words font-mono text-xs tracking-wide text-muted-foreground">
-              {entry.localReferenceKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}
+              {displayKey} · {entry.referenceType.toLowerCase().replaceAll("_", " ")}{entry.year ? ` · ${entry.year}` : ""}
             </p>
             <h4 className="break-words font-heading text-base font-semibold leading-relaxed">
-              {entry.title || entry.localReferenceKey}
+              {entry.title || displayKey}
             </h4>
             {entry.authors.length > 0 && (
               <p className="break-words text-sm text-muted-foreground">{entry.authors.join(", ")}</p>
@@ -98,7 +102,7 @@ export function ReferenceResolutionEntryCard({
           )}
         </div>
 
-        <section className="space-y-2 border-t border-border p-4" aria-label={`Original bibliography entry ${entry.localReferenceKey}`}>
+        <section className="space-y-2 border-t border-border p-4" aria-label={`Original bibliography entry ${displayKey}`}>
           <h5 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Original bibliography entry</h5>
           {hasLongSourceReference ? (
             <Collapsible className="group/reference space-y-2">
@@ -118,7 +122,7 @@ export function ReferenceResolutionEntryCard({
         </section>
 
         {entry.canonicalPaper && (
-          <section className="space-y-2 border-t border-border bg-success p-4" aria-label={`Matched Canonical Paper for ${entry.localReferenceKey}`}>
+          <section className="space-y-2 border-t border-border bg-success p-4" aria-label={`Matched Canonical Paper for ${displayKey}`}>
             <p className="font-mono text-[0.65rem] tracking-wide text-success-foreground uppercase">Matched Canonical Paper</p>
             <h5 className="break-words font-medium leading-relaxed text-foreground">{entry.canonicalPaper.title}</h5>
             {entry.canonicalPaper.authors.length > 0 && (
@@ -143,7 +147,7 @@ export function ReferenceResolutionEntryCard({
 
         <CitedPaperAccessSummary access={entry.citedPaperAccess} />
 
-        <section className="space-y-3 border-t border-border p-4" aria-label={`Claim–Reference Verifications for ${entry.localReferenceKey}`}>
+        <section className="space-y-3 border-t border-border p-4" aria-label={`Claim–Reference Verifications for ${displayKey}`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h5 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Atomic Claim × Cited Reference verifications</h5>
             <span className="font-mono text-xs text-muted-foreground">{entry.verificationOutcomes.length}</span>
@@ -158,6 +162,7 @@ export function ReferenceResolutionEntryCard({
                   analysisRunId={analysisRunId}
                   outcome={outcome}
                   indexingStatus={entry.citedPaperAccess?.evidenceIndexing?.status ?? null}
+                  presentation="pipeline"
                 />
               ))}
             </ul>

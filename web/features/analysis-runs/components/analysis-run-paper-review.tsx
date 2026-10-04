@@ -13,7 +13,7 @@ import { SourceDocumentPdfViewer } from "@/features/analysis-runs/components/sou
 import { usePipelineResultFilter } from "@/features/analysis-runs/hooks/use-pipeline-result-filter";
 import { scrollToPaperReviewCard } from "@/features/analysis-runs/scroll-to-paper-review-card";
 import { scrollToReviewItem } from "@/features/analysis-runs/scroll-to-review-item";
-import { displayReferenceKey, getNumericCitationReferenceKeys } from "@/features/analysis-runs/reference-label";
+import { displayReferenceKey } from "@/lib/display-reference-key";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
 import type {
@@ -124,8 +124,7 @@ export function AnalysisRunPaperReview({
   const entries = report?.referenceResolution.entries ?? EMPTY_REFERENCE_ENTRIES;
   const outcomeGroups = useMemo(() => buildOutcomeGroups(entries), [entries]);
   const references = useMemo(() => sourceReferences(parsedDocument, report), [parsedDocument, report]);
-  const numericReferenceKeys = useMemo(() => getNumericCitationReferenceKeys(parsedDocument, report), [parsedDocument, report]);
-  const referenceLabel: ReferenceLabel = (reference) => displayReferenceKey(reference, numericReferenceKeys);
+  const referenceLabel: ReferenceLabel = (reference) => displayReferenceKey(reference, references);
   const allOutcomes = useMemo(() => entries.flatMap((entry) => entry.verificationOutcomes.map((outcome) => ({ entry, outcome }))), [entries]);
   const selectedReference = references.find((reference) => reference.localReferenceKey === selectedReferenceKey) ?? null;
   const selectedQuickAccessKey = selectedDetailSection === "results" && selectedOutcomeId
@@ -502,6 +501,7 @@ function SelectedPairQuickAccess({
             analysisRunId={run.id}
             outcome={outcome}
             indexingStatus={entry.citedPaperAccess?.evidenceIndexing?.status ?? null}
+            presentation="paper-review"
           />
         </ol>
       </section>

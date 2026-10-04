@@ -5,6 +5,53 @@ import { ClaimEvidencePassages } from "@/features/reference-resolution/component
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 
 type Verification = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["verificationOutcomes"][number];
+type Passage = Verification["evidencePassages"][number];
+
+const passage: Passage = {
+  id: "passage-1",
+  text: "The intervention group showed a sustained improvement in the measured outcome.",
+  sectionOrder: 0,
+  sectionHeading: "Results",
+  paragraphStart: 3,
+  paragraphEnd: 4,
+  pageNumber: null,
+  vectorRank: 2,
+  lexicalRank: 1,
+  fusedRank: 1,
+  fusionScore: 0.032522,
+  sourceAssetId: "asset-1234",
+  contentSha256: "a".repeat(64),
+  parserProvider: "grobid",
+  parserVersion: "0.9.1-crf",
+  language: "en",
+  languageDetectorVersion: "0.6",
+  evidenceJudgement: {
+    providerId: "mock",
+    modelId: "mock-v1",
+    providerVersion: "v1",
+    judgement: "DIRECT_SUPPORT",
+    evidenceRole: "PRIMARY_FINDING",
+    confidence: 0.9,
+    directness: 0.9,
+    claimScopeMatch: 0.9,
+    studyDesignQuality: 0.8,
+    relevance: 0.9,
+    calibratedStrength: 0.88,
+  },
+  diagnosticSpans: [],
+  retrievalProfile: {
+    profileId: "postgres-hybrid-rrf-v1",
+    vectorCandidateLimit: 10,
+    lexicalCandidateLimit: 10,
+    finalCandidateLimit: 5,
+    reciprocalRankFusionConstant: 60,
+    embeddingProvider: "local",
+    embeddingModel: "feature-hash-384-v1",
+    embeddingVersion: "v1",
+    embeddingDimension: 384,
+    embeddingProfileHash: "b".repeat(64),
+  },
+};
 
 const outcome: Verification = {
   id: "verification-1234",
@@ -23,124 +70,115 @@ const outcome: Verification = {
   evidenceConflict: false,
   aggregatorVersion: "conflict-aware-evidence-strength-v1",
   humanReviews: [],
-  evidencePassages: [{
-    id: "passage-1",
-    text: "The intervention group showed a sustained improvement in the measured outcome.",
-    sectionOrder: 0,
-    sectionHeading: "Results",
-    paragraphStart: 3,
-    paragraphEnd: 4,
-    pageNumber: null,
-    vectorRank: 2,
-    lexicalRank: 1,
-    fusedRank: 1,
-    fusionScore: 0.032522,
-    sourceAssetId: "asset-1234",
-    contentSha256: "a".repeat(64),
-    parserProvider: "grobid",
-    parserVersion: "0.9.1-crf",
-    language: "en",
-    languageDetectorVersion: "0.6",
-    evidenceJudgement: {
-      providerId: "mock",
-      modelId: "mock-v1",
-      providerVersion: "v1",
-      judgement: "DIRECT_SUPPORT",
-      evidenceRole: "PRIMARY_FINDING",
-      confidence: 0.9,
-      directness: 0.9,
-      claimScopeMatch: 0.9,
-      studyDesignQuality: 0.8,
-      relevance: 0.9,
-      calibratedStrength: 0.88,
-    },
-    diagnosticSpans: [],
-    retrievalProfile: {
-      profileId: "postgres-hybrid-rrf-v1",
-      vectorCandidateLimit: 10,
-      lexicalCandidateLimit: 10,
-      finalCandidateLimit: 5,
-      reciprocalRankFusionConstant: 60,
-      embeddingProvider: "local",
-      embeddingModel: "feature-hash-384-v1",
-      embeddingVersion: "v1",
-      embeddingDimension: 384,
-      embeddingProfileHash: "b".repeat(64),
-    },
-  }],
+  evidencePassages: [passage],
 };
 
-function renderPassages(outcome: Verification) {
+function renderPassages(
+  verification: Verification,
+  presentation: "pipeline" | "paper-review" = "pipeline",
+) {
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <ul>
-        <ClaimEvidencePassages analysisRunId="run-123" outcome={outcome} indexingStatus="COMPLETED" />
+        <ClaimEvidencePassages
+          analysisRunId="run-123"
+          outcome={verification}
+          indexingStatus="COMPLETED"
+          presentation={presentation}
+        />
       </ul>
     </QueryClientProvider>,
   );
 }
 
 describe("Claim Evidence Passages", () => {
-  it("drills from an Atomic Claim and its citation to a ranked, judged passage and retrieval provenance", () => {
-    renderPassages(outcome);
+  it("explains the saved result and shows readable excerpts before full passage text", () => {
+    const longText = `${passage.text} ${"Additional source context remains available in the full passage. ".repeat(8)}TAIL-END-MARKER`;
+    renderPassages({ ...outcome, evidencePassages: [{ ...passage, text: longText }] });
 
     expect(screen.getByText(outcome.claimText)).toBeTruthy();
     expect(screen.getByText("Machine result: supported")).toBeTruthy();
-    const systemOneResults = screen.getByRole("region", { name: "System One results" });
-    expect(within(systemOneResults).getByText("direct support")).toBeTruthy();
-    expect(within(systemOneResults).getByText("Provider mock · model mock-v1 · version v1")).toBeTruthy();
-    expect(within(systemOneResults).getByText("Provisional rubric strength")).toBeTruthy();
-    expect(screen.getByText("Human review history")).toBeTruthy();
-    expect(screen.getByText("No human reviews recorded.")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Why this result" })).toBeTruthy();
+    expect(screen.getByText(/strongest supporting passage outweighs any conflicting evidence/)).toBeTruthy();
     expect(screen.getByText(outcome.citationContextText)).toBeTruthy();
     expect(screen.getByText("[1]")).toBeTruthy();
-    expect(screen.getByText(/inferred provisional — inferred, not author-confirmed/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Evidence Passage · fused rank 1/ })).toBeTruthy();
-    expect(screen.queryByText(outcome.evidencePassages[0].text)).toBeNull();
+    expect(screen.queryByText("Provisional rubric strength")).toBeNull();
+    expect(screen.queryByText("Judgement confidence")).toBeNull();
+    expect(screen.queryByText("Provider mock · model mock-v1 · version v1")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /Evidence Passage · fused rank 1/ }));
+    const passageTrigger = screen.getByRole("button", { name: /Evidence Passage · fused rank 1/ });
+    expect(within(passageTrigger).getByText(/The intervention group showed a sustained improvement/)).toBeTruthy();
+    expect(within(passageTrigger).queryByText(/TAIL-END-MARKER/)).toBeNull();
+    expect(screen.queryByText(longText)).toBeNull();
 
-    expect(screen.getByText(outcome.evidencePassages[0].text)).toBeTruthy();
-    expect(screen.getByText("direct support · role: primary finding · provisional rubric strength 0.880")).toBeTruthy();
-    expect(screen.getByText("Section 1 · Results")).toBeTruthy();
-    expect(screen.getByText("3–4")).toBeTruthy();
-    expect(screen.getByText("grobid · 0.9.1-crf")).toBeTruthy();
-    expect(screen.getByText(/postgres-hybrid-rrf-v1 · vector top 10 · lexical top 10 · final 5 · RRF 60/)).toBeTruthy();
-    expect(screen.getByText("b".repeat(64))).toBeTruthy();
+    fireEvent.click(passageTrigger);
+    expect(screen.getByText(longText)).toBeTruthy();
+    expect(screen.getByText("Section 1 · Results · paragraphs 3–4")).toBeTruthy();
   });
 
-  it("explains when a Claim–Reference pair has no System One judgement", () => {
-    const notJudged: Verification = {
-      ...outcome,
-      processingStatus: "PENDING",
-      finalStatus: null,
-      aggregatorVersion: null,
-      evidencePassages: [{ ...outcome.evidencePassages[0], evidenceJudgement: null }],
+  it("keeps Paper Review provenance available once while leaving per-passage scores out", () => {
+    const secondPassage: Passage = {
+      ...passage,
+      id: "passage-2",
+      fusedRank: 2,
+      vectorRank: 3,
+      evidenceJudgement: { ...passage.evidenceJudgement!, judgement: "PARTIAL_SUPPORT" },
     };
+    renderPassages({ ...outcome, evidencePassages: [passage, secondPassage] }, "paper-review");
 
-    renderPassages(notJudged);
+    expect(screen.queryByRole("region", { name: "System One results" })).toBeNull();
+    const provenanceTrigger = screen.getByRole("button", { name: /Provider and retrieval details/ });
+    expect(screen.queryByText("mock · mock-v1 · v1")).toBeNull();
+    fireEvent.click(provenanceTrigger);
 
-    const systemOneResults = screen.getByRole("region", { name: "System One results" });
-    expect(within(systemOneResults).getByText("No System One Evidence Judgement was recorded for this Claim–Reference pair.")).toBeTruthy();
+    expect(screen.getAllByText("mock · mock-v1 · v1")).toHaveLength(1);
+    expect(screen.getByText(/postgres-hybrid-rrf-v1 · vector top 10 · lexical top 10 · final 5 · RRF 60/)).toBeTruthy();
+    expect(screen.getByText(/local · feature-hash-384-v1 · v1 · 384 dimensions/)).toBeTruthy();
+    expect(screen.queryByText("Judgement confidence")).toBeNull();
+    expect(screen.queryByText("Provisional rubric strength")).toBeNull();
+
+    const evidenceList = screen.getByRole("list", { name: /Evidence Passages for Atomic Claim/ });
+    expect(within(evidenceList).getByRole("button", { name: /fused rank 1/ })).toBeTruthy();
+    expect(within(evidenceList).getByRole("button", { name: /fused rank 2/ })).toBeTruthy();
+    fireEvent.click(within(evidenceList).getByRole("button", { name: /fused rank 2/ }));
+    expect(screen.getByRole("button", { name: /Passage retrieval details/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Passage retrieval details/ }));
+    expect(screen.getByText("Vector 3 · lexical 1 · fused 2")).toBeTruthy();
+    expect(screen.getAllByText("mock · mock-v1 · v1")).toHaveLength(1);
   });
 
-  it("keeps comparably strong support and contradiction passages visible together", () => {
+  it("keeps human review after the evidence list and separate from the machine explanation", () => {
+    renderPassages(outcome);
+
+    const evidenceList = screen.getByRole("list", { name: /Evidence Passages for Atomic Claim/ });
+    const humanReview = screen.getByRole("region", { name: "Human review history" });
+    expect(evidenceList.compareDocumentPosition(humanReview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText(/Human assessments are separate and do not change it/)).toBeTruthy();
+    expect(screen.getByText("No human reviews recorded.")).toBeTruthy();
+  });
+
+  it("explains partial support and contradiction in plain language", () => {
+    const partial = renderPassages({ ...outcome, finalStatus: "PARTIALLY_SUPPORTED" });
+    expect(screen.getByText(/Some evidence supports part of the claim/)).toBeTruthy();
+    partial.unmount();
+
+    renderPassages({ ...outcome, finalStatus: "CONTRADICTED" });
+    expect(screen.getByText(/strongest conflicting evidence outweighs any support/)).toBeTruthy();
+  });
+
+  it("explains comparable conflict and keeps support and contradiction passages ordered", () => {
     const conflict: Verification = {
       ...outcome,
       finalStatus: "INSUFFICIENT_EVIDENCE",
       evidenceConflict: true,
       evidencePassages: [
-        outcome.evidencePassages[0],
+        passage,
         {
-          ...outcome.evidencePassages[0],
+          ...passage,
           id: "passage-2",
           text: "The later study found no improvement in the measured outcome.",
           fusedRank: 2,
-          evidenceJudgement: {
-            ...outcome.evidencePassages[0].evidenceJudgement!,
-            judgement: "CONTRADICTS",
-            calibratedStrength: 0.87,
-          },
+          evidenceJudgement: { ...passage.evidenceJudgement!, judgement: "CONTRADICTS" },
         },
       ],
     };
@@ -148,172 +186,154 @@ describe("Claim Evidence Passages", () => {
     renderPassages(conflict);
 
     expect(screen.getByText("Support and contradiction are comparably strong")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Evidence Passage · fused rank 1/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Evidence Passage · fused rank 2/ })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: /Evidence Passage · fused rank 1/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Evidence Passage · fused rank 2/ }));
-
-    expect(screen.getByText(outcome.evidencePassages[0].text)).toBeTruthy();
-    expect(screen.getByText("The later study found no improvement in the measured outcome.")).toBeTruthy();
+    expect(screen.getByText(/Supporting and conflicting evidence are similarly strong/)).toBeTruthy();
+    const evidenceList = screen.getByRole("list", { name: /Evidence Passages for Atomic Claim/ });
+    const buttons = within(evidenceList).getAllByRole("button");
+    expect(buttons[0].textContent).toContain("fused rank 1");
+    expect(buttons[1].textContent).toContain("fused rank 2");
   });
 
-  it("keeps mixed span judgements as diagnostics under the original passage without a parent result", () => {
-    const parentPassage = outcome.evidencePassages[0];
-    const diagnosticOnly: Verification = {
+  it("highlights only exact persisted span offsets in the parent passage", () => {
+    const span = {
+      id: "span-1",
+      spanIndex: 0,
+      coreStartOffset: 13,
+      coreEndOffset: 20,
+      contextStartOffset: 13,
+      contextEndOffset: 20,
+      coreText: "Anchor.",
+      contextText: "Anchor.",
+      tokenCounts: [900, 910, 920, 930, 940, 950],
+      status: "COMPLETED" as const,
+      failureReason: null,
+      providerId: "mock",
+      modelId: "mock-v1",
+      providerVersion: "v1",
+      judgementRubricVersion: "rubric-v1",
+      splittingPolicyVersion: "sentence-v1",
+      evidenceJudgement: null,
+    };
+    const repeatedText = "Anchor. Gap. Anchor.";
+    const repeated = renderPassages({
+      ...outcome,
+      evidencePassages: [{ ...passage, text: repeatedText, evidenceJudgement: null, diagnosticSpans: [span] }],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /span diagnostics · no parent judgement/ }));
+    const repeatedMark = repeated.container.querySelector("mark");
+    expect(repeatedMark?.textContent).toBe("Anchor.");
+    expect(repeatedMark?.previousSibling?.textContent).toBe("Anchor. Gap. ");
+    repeated.unmount();
+
+    const mismatched = renderPassages({
+      ...outcome,
+      evidencePassages: [{
+        ...passage,
+        text: "Anchor. Gap.",
+        evidenceJudgement: null,
+        diagnosticSpans: [{
+          ...span,
+          coreStartOffset: 0,
+          coreEndOffset: 4,
+          contextStartOffset: 0,
+          contextEndOffset: 4,
+          coreText: "Gap.",
+          contextText: "Gap.",
+        }],
+      }],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /span diagnostics · no parent judgement/ }));
+    expect(mismatched.container.querySelector("mark")).toBeNull();
+  });
+
+  it("keeps diagnostic spans distinct and highlights only exact persisted source spans", () => {
+    const diagnosticSpan = {
+      id: "span-1",
+      spanIndex: 0,
+      coreStartOffset: 0,
+      coreEndOffset: 16,
+      contextStartOffset: 0,
+      contextEndOffset: 16,
+      coreText: "The intervention",
+      contextText: "The intervention",
+      tokenCounts: [900, 910, 920, 930, 940, 950],
+      status: "COMPLETED" as const,
+      failureReason: null,
+      providerId: "mock",
+      modelId: "mock-v1",
+      providerVersion: "v1",
+      judgementRubricVersion: "weighted-evidence-role-scope-design-v1",
+      splittingPolicyVersion: "sentence-v1",
+      evidenceJudgement: passage.evidenceJudgement,
+    };
+    const diagnostic: Verification = {
       ...outcome,
       processingStatus: "INCOMPLETE",
       processingFailureReason: "SYSTEM_ONE_INCOMPLETE",
       finalStatus: null,
       aggregatorVersion: null,
-      evidencePassages: [{
-        ...parentPassage,
-        evidenceJudgement: null,
-        diagnosticSpans: [
-          {
-            id: "span-1",
-            spanIndex: 0,
-            coreStartOffset: 0,
-            coreEndOffset: 15,
-            contextStartOffset: 0,
-            contextEndOffset: 15,
-            coreText: "The intervention",
-            contextText: "The intervention",
-            tokenCounts: [900, 910, 920, 930, 940, 950],
-            status: "COMPLETED",
-            failureReason: null,
-            providerId: "laya",
-            modelId: "typed-decisions@pinned",
-            providerVersion: "runtime/mapping",
-            judgementRubricVersion: "weighted-evidence-role-scope-design-v1",
-            splittingPolicyVersion: "laya-sentence-greedy-context-v1",
-            evidenceJudgement: parentPassage.evidenceJudgement,
-          },
-          {
-            id: "span-2",
-            spanIndex: 1,
-            coreStartOffset: 16,
-            coreEndOffset: 30,
-            contextStartOffset: 0,
-            contextEndOffset: 30,
-            coreText: "improved the outcome",
-            contextText: "The intervention improved the outcome",
-            tokenCounts: [901, 911, 921, 931, 941, 951],
-            status: "COMPLETED",
-            failureReason: null,
-            providerId: "laya",
-            modelId: "typed-decisions@pinned",
-            providerVersion: "runtime/mapping",
-            judgementRubricVersion: "weighted-evidence-role-scope-design-v1",
-            splittingPolicyVersion: "laya-sentence-greedy-context-v1",
-            evidenceJudgement: {
-              ...parentPassage.evidenceJudgement!,
-              judgement: "CONTRADICTS",
-            },
-          },
-        ],
-      }],
+      evidencePassages: [{ ...passage, evidenceJudgement: null, diagnosticSpans: [diagnosticSpan] }],
     };
 
-    renderPassages(diagnosticOnly);
+    const { container } = renderPassages(diagnostic);
     expect(screen.getByText("Machine result unavailable · incomplete pair")).toBeTruthy();
-    expect(screen.queryByText("Machine result: supported")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /span diagnostics only · no parent judgement/ }));
+    expect(screen.getByText(/Verification did not finish, so no final machine result was assigned/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /span diagnostics · no parent judgement/ }));
 
+    const marks = container.querySelectorAll("mark");
+    expect([...marks].map((mark) => mark.textContent)).toContain("The intervention");
     const diagnostics = screen.getByRole("region", { name: /Diagnostic sentence spans for Evidence Passage passage-1/ });
-    expect(within(diagnostics).getByText("direct support")).toBeTruthy();
-    expect(within(diagnostics).getByText("contradicts")).toBeTruthy();
-    expect(within(diagnostics).getByText(/never combined into a parent Evidence Judgement or final Claim–Paper status/)).toBeTruthy();
-    expect(within(diagnostics).getAllByText("Core source offsets (0-based, end-exclusive):").map((label) => label.parentElement?.textContent)).toEqual(
-      expect.arrayContaining(["Core source offsets (0-based, end-exclusive): 0–15 · The intervention"]),
-    );
-    expect(within(diagnostics).getAllByText("Judged source window (0-based, end-exclusive):").map((label) => label.parentElement?.textContent)).toEqual(
-      expect.arrayContaining(["Judged source window (0-based, end-exclusive): 0–30 · The intervention improved the outcome"]),
-    );
+    expect(within(diagnostics).getByText(/not combined into a parent Evidence Judgement or final Claim–Paper status/)).toBeTruthy();
+    fireEvent.click(within(diagnostics).getByRole("button", { name: "View diagnostic span details" }));
+    expect(within(diagnostics).getByText("The intervention")).toBeTruthy();
+    expect(within(diagnostics).queryByText(/provisional rubric strength/i)).toBeNull();
+    expect(within(diagnostics).queryByText(/token counts/i)).toBeNull();
   });
 
-  it("shows failed required spans as incomplete even while another span is still pending", () => {
-    const parentPassage = outcome.evidencePassages[0];
-    const incomplete: Verification = {
+  it("explains an unjudged retrieved passage when a completed pair has no passage judgement", () => {
+    renderPassages({
       ...outcome,
-      processingStatus: "INCOMPLETE",
-      processingFailureReason: "SYSTEM_ONE_INCOMPLETE",
-      finalStatus: null,
+      finalStatus: "INSUFFICIENT_EVIDENCE",
+      evidencePassages: [{ ...passage, evidenceJudgement: null }],
+    });
+
+    expect(screen.getByText("A machine result is saved, but no passage-level judgement is available to explain it.")).toBeTruthy();
+    expect(screen.getByText("No System One Evidence Judgement was recorded for this Claim–Reference pair.")).toBeTruthy();
+  });
+
+  it("explains inaccessible results without claiming a passage judgement exists", () => {
+    const inaccessible: Verification = {
+      ...outcome,
+      finalStatus: "INACCESSIBLE",
       aggregatorVersion: null,
-      evidencePassages: [{
-        ...parentPassage,
-        evidenceJudgement: null,
-        diagnosticSpans: [
-          {
-            id: "span-failed",
-            spanIndex: 0,
-            coreStartOffset: 0,
-            coreEndOffset: 15,
-            contextStartOffset: 0,
-            contextEndOffset: 15,
-            coreText: "The intervention",
-            contextText: "The intervention",
-            tokenCounts: [900, 910, 920, 930, 940, 950],
-            status: "FAILED",
-            failureReason: "SINGLE_SENTENCE_EXCEEDS_CONTEXT_LIMIT",
-            providerId: "laya",
-            modelId: "typed-decisions@pinned",
-            providerVersion: "runtime/mapping",
-            judgementRubricVersion: "weighted-evidence-role-scope-design-v1",
-            splittingPolicyVersion: "laya-sentence-greedy-context-v1",
-            evidenceJudgement: null,
-          },
-          {
-            id: "span-pending",
-            spanIndex: 1,
-            coreStartOffset: 16,
-            coreEndOffset: 30,
-            contextStartOffset: 0,
-            contextEndOffset: 30,
-            coreText: "improved the outcome",
-            contextText: "The intervention improved the outcome",
-            tokenCounts: [900, 910, 920, 930, 940, 950],
-            status: "PENDING",
-            failureReason: null,
-            providerId: "laya",
-            modelId: "typed-decisions@pinned",
-            providerVersion: "runtime/mapping",
-            judgementRubricVersion: "weighted-evidence-role-scope-design-v1",
-            splittingPolicyVersion: "laya-sentence-greedy-context-v1",
-            evidenceJudgement: null,
-          },
-        ],
-      }],
-    };
-
-    renderPassages(incomplete);
-    fireEvent.click(screen.getByRole("button", { name: /span diagnostics only · no parent judgement/ }));
-
-    const diagnostics = screen.getByRole("region", { name: /Diagnostic sentence spans for Evidence Passage passage-1/ });
-    expect(within(diagnostics).getByText("incomplete")).toBeTruthy();
-    expect(within(diagnostics).getByText(/One or more required spans are missing or incomplete/)).toBeTruthy();
-    expect(within(diagnostics).getByText("Incomplete reason: single sentence exceeds context limit")).toBeTruthy();
-  });
-
-  it("shows processing failure as an incomplete pair with no fabricated domain status", () => {
-    const incomplete: Verification = {
-      ...outcome,
-      processingStatus: "INCOMPLETE",
-      processingFailureReason: "EVIDENCE_VERIFICATION_RETRIES_EXHAUSTED",
-      finalStatus: null,
       evidencePassages: [],
     };
 
-    renderPassages(incomplete);
+    renderPassages(inaccessible, "paper-review");
 
-    expect(screen.getByText(/incomplete pair/)).toBeTruthy();
-    expect(screen.getByText("evidence verification retries exhausted")).toBeTruthy();
-    expect(screen.queryByText("supported")).toBeNull();
-    expect(screen.getByText("Processing stopped before this Claim–Reference Verification completed.")).toBeTruthy();
+    expect(screen.getByText("No usable cited-paper evidence was available to assess this claim.")).toBeTruthy();
+    expect(screen.queryByText("No System One Evidence Judgement was recorded for this Claim–Reference pair.")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Provider and retrieval details/ })).toBeNull();
   });
 
-  it("explains a terminal Laya context-limit rejection without implying truncation", () => {
-    const overLimit: Verification = {
+  it("explains pending pairs without repeating the missing-judgement message", () => {
+    const pending: Verification = {
+      ...outcome,
+      processingStatus: "PENDING",
+      finalStatus: null,
+      aggregatorVersion: null,
+      evidencePassages: [{ ...passage, evidenceJudgement: null }],
+    };
+
+    renderPassages(pending);
+
+    expect(screen.getByText("No result yet. This pair is waiting for a saved machine assessment.")).toBeTruthy();
+    expect(screen.queryByText("No System One Evidence Judgement was recorded for this Claim–Reference pair.")).toBeNull();
+  });
+
+  it("explains an incomplete provider failure without inventing a final status", () => {
+    const incomplete: Verification = {
       ...outcome,
       processingStatus: "INCOMPLETE",
       processingFailureReason: "SYSTEM_ONE_CONTEXT_LIMIT_EXCEEDED",
@@ -321,10 +341,11 @@ describe("Claim Evidence Passages", () => {
       evidencePassages: [],
     };
 
-    renderPassages(overLimit);
+    renderPassages(incomplete);
 
-    expect(screen.getByText("The complete Laya request exceeded the 1,024-token context limit. The evidence was not truncated, and no complete judgement set was stored for this pair.")).toBeTruthy();
-    const systemOneResults = screen.getByRole("region", { name: "System One results" });
-    expect(within(systemOneResults).getByText(/request exceeded Laya's 1,024-token context limit/)).toBeTruthy();
+    expect(screen.getByText("Machine result unavailable · incomplete pair")).toBeTruthy();
+    expect(screen.getByText("Verification did not finish, so no final machine result was assigned.")).toBeTruthy();
+    expect(screen.getByText(/The complete Laya request exceeded the 1,024-token context limit/)).toBeTruthy();
+    expect(screen.queryByText("supported")).toBeNull();
   });
 });
