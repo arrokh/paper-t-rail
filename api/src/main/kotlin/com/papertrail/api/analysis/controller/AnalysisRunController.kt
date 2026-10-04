@@ -147,7 +147,7 @@ class AnalysisRunController(
 
     @Operation(
         summary = "Get short-lived original Source Document PDF URLs for an Analysis Run",
-        description = "Returns short-lived, read-only MinIO URLs for viewing and downloading the exact uploaded PDF pinned to this Analysis Run, including while worker processing is in progress. The URL is valid for six hours and must be treated as a bearer credential.",
+        description = "Returns short-lived, read-only S3-compatible presigned URLs for viewing and downloading the exact uploaded PDF pinned to this Analysis Run, including while worker processing is in progress. The URL is valid for six hours and must be treated as a bearer credential.",
     )
     @ApiResponses(
         value = [

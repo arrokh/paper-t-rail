@@ -203,7 +203,7 @@ dev-laya: migrate
 	fi
 
 infra-up:
-	$(COMPOSE) up -d postgres redis minio
+	$(COMPOSE) up -d postgres redis object-storage
 
 migrate: infra-up
 	set -a; if [ -f .env ]; then . ./.env; fi; set +a; $(COMPOSE) --profile migration run --rm sqitch deploy "db:pg://$${POSTGRES_USER:-papertrail}:$${POSTGRES_PASSWORD:-local-only-change-me}@postgres:5432/$${POSTGRES_DB:-papertrail}"
@@ -234,7 +234,7 @@ verify-db:
 infra-down:
 	$(COMPOSE) --profile laya-evaluation down
 
-# Destructive: removes all local documents, runs, queue state, and stored objects.
+# Destructive: removes active Compose volumes; pre-migration object data is left untouched.
 clean:
 	$(COMPOSE) --profile laya-evaluation down --volumes --remove-orphans
 

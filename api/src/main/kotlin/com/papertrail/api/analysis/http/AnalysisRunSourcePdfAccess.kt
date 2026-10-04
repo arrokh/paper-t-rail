@@ -7,9 +7,9 @@ import java.time.Instant
 data class AnalysisRunSourcePdfAccess(
     @Schema(description = "Original upload filename.")
     val filename: String,
-    @Schema(description = "Read-only MinIO bearer URL for inline PDF viewing; valid until expiresAt.", format = "uri")
+    @Schema(description = "Read-only S3-compatible presigned bearer URL for inline PDF viewing; valid until expiresAt.", format = "uri")
     val viewUrl: String,
-    @Schema(description = "Read-only MinIO bearer URL that downloads the PDF as an attachment; valid until expiresAt.", format = "uri")
+    @Schema(description = "Read-only S3-compatible presigned bearer URL that downloads the PDF as an attachment; valid until expiresAt.", format = "uri")
     val downloadUrl: String,
     @Schema(description = "Time when both signed URLs expire.", format = "date-time")
     val expiresAt: Instant,

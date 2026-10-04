@@ -34,7 +34,7 @@ dependencies {
         exclude(group = "commons-logging", module = "commons-logging")
     }
     implementation("com.optimaize.languagedetector:language-detector:0.6")
-    implementation("io.minio:minio:8.5.17")
+    implementation("software.amazon.awssdk:s3:2.31.78")
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
