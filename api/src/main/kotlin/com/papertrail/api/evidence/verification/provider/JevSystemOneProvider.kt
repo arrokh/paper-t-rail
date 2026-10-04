@@ -176,6 +176,7 @@ class JevSystemOneProvider(
                 passage = passage,
                 failureReasonCode = providerException.failureReasonCode ?: JevSystemOneProviderException.PROVIDER_ERROR,
                 diagnosticField = providerException.diagnosticField,
+                diagnosticReasonCode = providerException.diagnosticReasonCode,
                 httpStatus = response.statusCode(),
                 responseBodyBytes = responseBodyBytes,
                 errorType = failure.javaClass.simpleName,
@@ -194,6 +195,7 @@ class JevSystemOneProvider(
         errorType: String,
         startedAtNanos: Long,
         diagnosticField: String? = null,
+        diagnosticReasonCode: String? = null,
         httpStatus: Int? = null,
         responseBodyBytes: Int? = null,
         eventMessage: String = "System One provider call failed",
@@ -208,6 +210,7 @@ class JevSystemOneProvider(
             .addKeyValue("errorType", errorType)
             .addKeyValue("durationMillis", elapsedMillis(startedAtNanos))
         diagnosticField?.let { log.addKeyValue("diagnosticField", it) }
+        diagnosticReasonCode?.let { log.addKeyValue("diagnosticReasonCode", it) }
         httpStatus?.let { log.addKeyValue("httpStatus", it) }
         responseBodyBytes?.let { log.addKeyValue("responseBodyBytes", it) }
         log.log(eventMessage)
@@ -360,34 +363,67 @@ class JevSystemOneProvider(
     }
 
     private fun normalizedScore(answer: JsonNode?, questionId: String, levels: List<String>): Double {
-        val expectedKeys = levels.indices.map(Int::toString).toSet()
-        if (answer == null || !answer.isObject || answer.path("type").asText() != "score" ||
-            !answer.path("score").isNumber
-        ) {
+        val answerField = "answers.$questionId"
+        if (answer == null || !answer.isObject) {
             throw invalidResponse(
                 "Jev System One returned an unsupported $questionId score answer.",
                 JevSystemOneProviderException.SCORE_INVALID,
-                "answers.$questionId",
+                answerField,
+                JevSystemOneProviderException.SCORE_ANSWER_INVALID,
+            )
+        }
+        if (answer.path("type").asText() != "score") {
+            throw invalidResponse(
+                "Jev System One returned an unsupported $questionId score answer.",
+                JevSystemOneProviderException.SCORE_INVALID,
+                "$answerField.type",
+                JevSystemOneProviderException.SCORE_TYPE_INVALID,
+            )
+        }
+        val scoreNode = answer.get("score")
+        if (scoreNode == null || !scoreNode.isNumber) {
+            throw invalidResponse(
+                "Jev System One returned a non-numeric $questionId score.",
+                JevSystemOneProviderException.SCORE_INVALID,
+                "$answerField.score",
+                JevSystemOneProviderException.SCORE_VALUE_NOT_NUMERIC,
             )
         }
         if (!legendMatches(answer.get("legend"), levels)) {
             throw invalidResponse(
                 "Jev System One returned an unsupported $questionId score legend.",
                 JevSystemOneProviderException.SCORE_LEGEND_INVALID,
-                "answers.$questionId.legend",
+                "$answerField.legend",
             )
         }
+        val expectedKeys = levels.indices.map(Int::toString).toSet()
         val probabilities = validateProbabilities(answer.get("probabilities"), expectedKeys, questionId)
         validateConfidence(answer, questionId)
-        val score = answer.path("score").doubleValue()
-        val expectedScore = probabilities.withIndex().sumOf { (index, probability) -> index * probability }
-        if (!score.isFinite() || score !in 0.0..levels.lastIndex.toDouble() ||
-            abs(score - expectedScore) > SCORE_VALUE_TOLERANCE
-        ) {
+        val score = scoreNode.doubleValue()
+        if (!score.isFinite()) {
             throw invalidResponse(
-                "Jev System One returned a score outside the supported weighted range.",
+                "Jev System One returned a non-finite $questionId score.",
                 JevSystemOneProviderException.SCORE_INVALID,
-                "answers.$questionId.score",
+                "$answerField.score",
+                JevSystemOneProviderException.SCORE_VALUE_NOT_FINITE,
+            )
+        }
+        if (score !in 0.0..levels.lastIndex.toDouble()) {
+            throw invalidResponse(
+                "Jev System One returned a $questionId score outside the supported range.",
+                JevSystemOneProviderException.SCORE_INVALID,
+                "$answerField.score",
+                JevSystemOneProviderException.SCORE_VALUE_OUT_OF_RANGE,
+            )
+        }
+        val expectedScore = probabilities.withIndex().sumOf { (index, probability) -> index * probability }
+        val scoreTolerance = twoDecimalRoundingTolerance(levels.size) + FLOATING_POINT_EPSILON
+        if (abs(score - expectedScore) > scoreTolerance) {
+            throw invalidResponse(
+                "Jev System One returned a $questionId score inconsistent with its probabilities.",
+                JevSystemOneProviderException.SCORE_INVALID,
+                "$answerField.score",
+                JevSystemOneProviderException.SCORE_WEIGHTED_MEAN_MISMATCH,
             )
         }
         return score / levels.lastIndex
@@ -428,7 +464,9 @@ class JevSystemOneProvider(
             }
             value.doubleValue()
         }
-        if (abs(values.sum() - 1.0) > SystemOneEvidenceJudgementContract.PROBABILITY_SUM_TOLERANCE) {
+        if (abs(values.sum() - 1.0) >
+            SystemOneEvidenceJudgementContract.PROBABILITY_SUM_TOLERANCE + FLOATING_POINT_EPSILON
+        ) {
             throw invalidResponse(
                 "Jev System One returned an unnormalized probability distribution.",
                 JevSystemOneProviderException.PROBABILITIES_INVALID,
@@ -458,8 +496,9 @@ class JevSystemOneProvider(
         message: String,
         failureReasonCode: String = JevSystemOneProviderException.INVALID_RESPONSE,
         diagnosticField: String? = null,
+        diagnosticReasonCode: String? = null,
     ): JevSystemOneProviderException =
-        JevSystemOneProviderException(message, failureReasonCode, diagnosticField)
+        JevSystemOneProviderException(message, failureReasonCode, diagnosticField, diagnosticReasonCode)
 
     private fun providerFailure(
         message: String,
@@ -469,7 +508,12 @@ class JevSystemOneProvider(
     companion object {
         private const val CONNECT_TIMEOUT_SECONDS = 5L
         private const val MAX_REPORTED_MODEL_LENGTH = 160
-        private const val SCORE_VALUE_TOLERANCE = 0.02
+        private const val TWO_DECIMAL_HALF_STEP = 0.005
+        private const val FLOATING_POINT_EPSILON = 1e-9
         private const val NANOS_PER_MILLI = 1_000_000L
+
+        // Bound independently rounded two-decimal scores and probability-weighted level indices.
+        private fun twoDecimalRoundingTolerance(levelCount: Int): Double =
+            TWO_DECIMAL_HALF_STEP * (1 + (0 until levelCount).sum())
     }
 }

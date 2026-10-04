@@ -1383,9 +1383,10 @@ class AnalysisRunQueueIntegrationTest {
             override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult {
                 jevCalls.incrementAndGet()
                 throw JevSystemOneProviderException(
-                    "Jev System One returned unsupported usage metadata.",
-                    JevSystemOneProviderException.USAGE_INVALID,
-                    "usage",
+                    "Jev System One returned an inconsistent weighted score.",
+                    JevSystemOneProviderException.SCORE_INVALID,
+                    "answers.directness.score",
+                    JevSystemOneProviderException.SCORE_WEIGHTED_MEAN_MISMATCH,
                 )
             }
         }
@@ -1436,13 +1437,17 @@ class AnalysisRunQueueIntegrationTest {
         val failureLog = appender.list.first { it.message == "System One provider request failed" }
         val logFields = failureLog.keyValuePairs.associate { it.key to it.value.toString() }
         assertEquals(
-            setOf("analysisRunId", "bibliographyEntryId", "verificationId", "providerId", "failureReasonCode", "exceptionType", "evidencePassageCount", "diagnosticField", "atomicClaimId", "evidencePassageIds"),
+            setOf("analysisRunId", "bibliographyEntryId", "verificationId", "providerId", "failureReasonCode", "exceptionType", "evidencePassageCount", "diagnosticField", "diagnosticReasonCode", "atomicClaimId", "evidencePassageIds"),
             logFields.keys,
         )
         assertEquals(created.analysisRunId.toString(), logFields["analysisRunId"])
         assertEquals("jev", logFields["providerId"])
-        assertEquals(JevSystemOneProviderException.USAGE_INVALID, logFields["failureReasonCode"])
-        assertEquals("usage", logFields["diagnosticField"])
+        assertEquals(JevSystemOneProviderException.SCORE_INVALID, logFields["failureReasonCode"])
+        assertEquals("answers.directness.score", logFields["diagnosticField"])
+        assertEquals(
+            JevSystemOneProviderException.SCORE_WEIGHTED_MEAN_MISMATCH,
+            logFields["diagnosticReasonCode"],
+        )
         assertFalse(failureLog.formattedMessage.contains("private claim"))
         assertFalse(failureLog.formattedMessage.contains("server-side-test-key"))
         val stageSummary = stageAppender.list.first { it.message == "Analysis Run processing stage completed" }
@@ -1451,13 +1456,15 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("COMPLETED_WITH_WARNINGS", stageFields["runStatus"])
         assertEquals("jev", stageFields["systemOneProviderId"])
         assertEquals("0", stageFields["evidenceJudgementCount"])
+        assertEquals("2", stageFields["failedEvaluationPairCount"])
+        assertEquals("2", stageFields["failedSystemOneEvaluationCount"])
         assertTrue(stageFields.getValue("incompleteVerificationCount").toInt() > 0)
         assertFalse(stageSummary.formattedMessage.contains("private claim"))
         assertEquals("COMPLETED_WITH_WARNINGS", report.runStatus)
         assertEquals("COMPLETED_WITH_WARNINGS", report.evidenceCoverage.executionStatus)
         assertTrue(outcomes.filter { it.verificationScope == "FULL_TEXT" }.all {
             it.processingStatus == "INCOMPLETE" &&
-                it.processingFailureReason == JevSystemOneProviderException.USAGE_INVALID &&
+                it.processingFailureReason == JevSystemOneProviderException.SCORE_INVALID &&
                 it.finalStatus == null
         })
         assertEquals(0L, jdbc.queryForObject(

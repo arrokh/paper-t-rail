@@ -246,6 +246,9 @@ class EvidenceVerificationService(
         (exception as? JevSystemOneProviderException)
             ?.diagnosticField
             ?.let { log.addKeyValue("diagnosticField", it) }
+        (exception as? JevSystemOneProviderException)
+            ?.diagnosticReasonCode
+            ?.let { log.addKeyValue("diagnosticReasonCode", it) }
         evidencePassageSpanId?.let { log.addKeyValue("evidencePassageSpanId", it) }
         log.log("System One provider request failed")
     }

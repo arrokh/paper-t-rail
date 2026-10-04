@@ -4,8 +4,10 @@ class JevSystemOneProviderException(
     message: String,
     failureReasonCode: String = PROVIDER_ERROR,
     diagnosticField: String? = null,
+    diagnosticReasonCode: String? = null,
 ) : SystemOneProviderException(message, failureReasonCode) {
     val diagnosticField: String? = diagnosticField?.takeIf(SAFE_DIAGNOSTIC_FIELDS::contains)
+    val diagnosticReasonCode: String? = diagnosticReasonCode?.takeIf(SAFE_DIAGNOSTIC_REASON_CODES::contains)
 
     companion object {
         const val PROVIDER_ERROR = "SYSTEM_ONE_PROVIDER_ERROR"
@@ -27,6 +29,21 @@ class JevSystemOneProviderException(
         const val CONFIDENCE_INVALID = "SYSTEM_ONE_RESPONSE_CONFIDENCE_INVALID"
         const val SCORE_LEGEND_INVALID = "SYSTEM_ONE_RESPONSE_SCORE_LEGEND_INVALID"
         const val SCORE_INVALID = "SYSTEM_ONE_RESPONSE_SCORE_INVALID"
+        const val SCORE_ANSWER_INVALID = "SCORE_ANSWER_INVALID"
+        const val SCORE_TYPE_INVALID = "SCORE_TYPE_INVALID"
+        const val SCORE_VALUE_NOT_NUMERIC = "SCORE_VALUE_NOT_NUMERIC"
+        const val SCORE_VALUE_NOT_FINITE = "SCORE_VALUE_NOT_FINITE"
+        const val SCORE_VALUE_OUT_OF_RANGE = "SCORE_VALUE_OUT_OF_RANGE"
+        const val SCORE_WEIGHTED_MEAN_MISMATCH = "SCORE_WEIGHTED_MEAN_MISMATCH"
+
+        private val SAFE_DIAGNOSTIC_REASON_CODES = setOf(
+            SCORE_ANSWER_INVALID,
+            SCORE_TYPE_INVALID,
+            SCORE_VALUE_NOT_NUMERIC,
+            SCORE_VALUE_NOT_FINITE,
+            SCORE_VALUE_OUT_OF_RANGE,
+            SCORE_WEIGHTED_MEAN_MISMATCH,
+        )
 
         private val SAFE_DIAGNOSTIC_FIELDS = setOf("response", "model", "usage", "answers") +
             SystemOneEvidenceJudgementContract.EXPECTED_ANSWER_IDS.flatMap { questionId ->

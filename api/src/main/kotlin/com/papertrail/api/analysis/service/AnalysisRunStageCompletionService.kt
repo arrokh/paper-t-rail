@@ -192,7 +192,7 @@ class AnalysisRunStageCompletionService(
             },
             analysisRunId,
         ) ?: VerificationCounts(0, 0, 0, 0, 0)
-        val evaluationFailureCounts = if (systemOneEvaluationOnly) {
+        val evaluationFailureCounts = if (systemOneEvaluationOnly || systemOneAggregation) {
             jdbc.queryForObject(
                 """
                 SELECT count(*) FILTER (WHERE processing_status = 'FAILED') AS failed_pair_count,

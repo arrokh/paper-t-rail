@@ -1,5 +1,6 @@
 package com.papertrail.api.evidence.verification.provider
 
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.evidence.verification.domain.AtomicClaimForJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
@@ -80,6 +81,47 @@ class JevSystemOneProviderContractTest {
     }
 
     @Test
+    fun `accepts scores whose displayed probabilities and score are independently rounded to two decimals`() {
+        // Rounding a valid five-level response independently can move its displayed weighted mean by 0.03.
+        val response = objectMapper.readTree(validResponse())
+        val directness = response.path("answers").path("directness") as ObjectNode
+        directness.put("score", 1.51)
+        val probabilities = directness.path("probabilities") as ObjectNode
+        probabilities.put("0", 0.41)
+        probabilities.put("1", 0.05)
+        probabilities.put("2", 0.19)
+        probabilities.put("3", 0.31)
+        probabilities.put("4", 0.03)
+
+        TestServer(responseBody = objectMapper.writeValueAsString(response)).use { server ->
+            val result = provider(server.baseUrl).evaluate(request())
+
+            assertEquals(0.3775, result.evidenceJudgements.single().directness)
+            assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test
+    fun `accepts two-decimal probability totals at the tolerance boundary`() {
+        val response = objectMapper.readTree(validResponse())
+        val directness = response.path("answers").path("directness") as ObjectNode
+        directness.put("score", 3.96)
+        val probabilities = directness.path("probabilities") as ObjectNode
+        probabilities.put("0", 0.0)
+        probabilities.put("1", 0.0)
+        probabilities.put("2", 0.0)
+        probabilities.put("3", 0.0)
+        probabilities.put("4", 0.98)
+
+        TestServer(responseBody = objectMapper.writeValueAsString(response)).use { server ->
+            val result = provider(server.baseUrl).evaluate(request())
+
+            assertEquals(0.99, result.evidenceJudgements.single().directness)
+            assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test
     fun `rejects malformed unsupported or unsuccessful Jev responses without retrying`() {
         val valid = validResponse()
         data class InvalidResponse(
@@ -87,6 +129,7 @@ class JevSystemOneProviderContractTest {
             val body: String,
             val failureReasonCode: String,
             val diagnosticField: String? = null,
+            val diagnosticReasonCode: String? = null,
         )
         val invalidResponses = listOf(
             InvalidResponse(401, valid, "SYSTEM_ONE_HTTP_401"),
@@ -97,8 +140,16 @@ class JevSystemOneProviderContractTest {
             InvalidResponse(200, valid.replace("\"confidence\":0.85", "\"confidence\":1.1"), "SYSTEM_ONE_RESPONSE_CONFIDENCE_INVALID", "answers.judgement.confidence"),
             InvalidResponse(200, valid.replace("\"DIRECT_SUPPORT\":0.85", "\"DIRECT_SUPPORT\":0.2"), "SYSTEM_ONE_RESPONSE_PROBABILITIES_INVALID", "answers.judgement.probabilities"),
             InvalidResponse(200, valid.replace("\"usage\":{\"input_tokens\":100,\"output_tokens\":30}", "\"usage\":{\"input_tokens\":\"100\",\"output_tokens\":30}"), "SYSTEM_ONE_RESPONSE_USAGE_INVALID", "usage"),
+            InvalidResponse(200, valid.replace("\"directness\":{\"type\":\"score\",\"score\":3.5", "\"directness\":{\"type\":\"score\",\"score\":\"3.5\""), "SYSTEM_ONE_RESPONSE_SCORE_INVALID", "answers.directness.score", JevSystemOneProviderException.SCORE_VALUE_NOT_NUMERIC),
+            InvalidResponse(200, valid.replace("\"directness\":{\"type\":\"score\",\"score\":3.5", "\"directness\":{\"type\":\"score\",\"score\":4.5"), "SYSTEM_ONE_RESPONSE_SCORE_INVALID", "answers.directness.score", JevSystemOneProviderException.SCORE_VALUE_OUT_OF_RANGE),
             InvalidResponse(200, valid.replace("\"legend\":{\"0\":\"No evidence addresses the claim.\"", "\"legend\":{\"0\":\"wrong\""), "SYSTEM_ONE_RESPONSE_SCORE_LEGEND_INVALID", "answers.directness.legend"),
-            InvalidResponse(200, valid.replace("\"directness\":{\"type\":\"score\",\"score\":3.5", "\"directness\":{\"type\":\"score\",\"score\":2.0"), "SYSTEM_ONE_RESPONSE_SCORE_INVALID", "answers.directness.score"),
+            InvalidResponse(
+                200,
+                valid.replace("\"directness\":{\"type\":\"score\",\"score\":3.5", "\"directness\":{\"type\":\"score\",\"score\":2.0"),
+                "SYSTEM_ONE_RESPONSE_SCORE_INVALID",
+                "answers.directness.score",
+                JevSystemOneProviderException.SCORE_WEIGHTED_MEAN_MISMATCH,
+            ),
         )
 
         invalidResponses.forEach { invalid ->
@@ -108,6 +159,7 @@ class JevSystemOneProviderContractTest {
                 }
                 assertEquals(invalid.failureReasonCode, failure.failureReasonCode)
                 assertEquals(invalid.diagnosticField, failure.diagnosticField)
+                assertEquals(invalid.diagnosticReasonCode, failure.diagnosticReasonCode)
                 assertEquals(1, server.requestCount)
                 assertFalse(failure.message.orEmpty().contains("private claim"))
                 assertFalse(failure.message.orEmpty().contains("jev-server-secret"))
@@ -141,6 +193,13 @@ class JevSystemOneProviderContractTest {
             )).use { server ->
                 assertThrows<JevSystemOneProviderException> { provider(server.baseUrl).evaluate(request()) }
             }
+
+            val invalidScoreResponse = objectMapper.readTree(validResponse())
+            val directness = invalidScoreResponse.path("answers").path("directness") as ObjectNode
+            directness.put("score", 2.0)
+            TestServer(responseBody = objectMapper.writeValueAsString(invalidScoreResponse)).use { server ->
+                assertThrows<JevSystemOneProviderException> { provider(server.baseUrl).evaluate(request()) }
+            }
         } finally {
             providerLogger.detachAppender(appender)
             appender.stop()
@@ -157,6 +216,20 @@ class JevSystemOneProviderContractTest {
         assertEquals("SYSTEM_ONE_RESPONSE_USAGE_INVALID", rejectedFields["failureReasonCode"])
         assertEquals("usage", rejectedFields["diagnosticField"])
         assertEquals("200", rejectedFields["httpStatus"])
+        val scoreRejected = appender.list.first { event ->
+            event.message == "System One provider response rejected" &&
+                event.keyValuePairs.any { field ->
+                    field.key == "failureReasonCode" &&
+                        field.value.toString() == JevSystemOneProviderException.SCORE_INVALID
+                }
+        }
+        val scoreRejectedFields = scoreRejected.keyValuePairs.associate { it.key to it.value.toString() }
+        assertEquals("answers.directness.score", scoreRejectedFields["diagnosticField"])
+        assertEquals(
+            JevSystemOneProviderException.SCORE_WEIGHTED_MEAN_MISMATCH,
+            scoreRejectedFields["diagnosticReasonCode"],
+        )
+        assertFalse(scoreRejected.keyValuePairs.any { it.key in setOf("score", "probabilities", "responseBody") })
         assertFalse(appender.list.any { event ->
             event.formattedMessage.contains("private claim text") ||
                 event.formattedMessage.contains("private evidence text") ||
