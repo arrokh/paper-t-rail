@@ -57,6 +57,24 @@ services:
       start_period: 60s
     networks: [paper-trail]
 
+  docling:
+    image: ${DOCLING_IMAGE:-ghcr.io/docling-project/docling-serve-cpu:v1.30.0}
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "${DOCLING_SERVE_ENABLE_UI:-true}"
+      DOCLING_SERVE_ENABLE_API_DOCS: "${DOCLING_SERVE_ENABLE_API_DOCS:-true}"
+      DOCLING_SERVE_MAX_SYNC_WAIT: ${DOCLING_MAX_SYNC_WAIT_SECONDS:-600}
+      DOCLING_SERVE_MAX_NUM_PAGES: ${PAPER_MAX_PAGES:-500}
+      DOCLING_SERVE_MAX_FILE_SIZE: ${PAPER_MAX_CITED_PAPER_BYTES:-52428800}
+    expose:
+      - "5001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/ready', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 180s
+    networks: [paper-trail]
+
   ollama:
     image: ${OLLAMA_IMAGE:-ollama/ollama:0.34.4}
     restart: unless-stopped
@@ -193,6 +211,13 @@ services:
       PAPER_MAX_EXTRACTED_CHARACTERS_PER_PAGE: ${PAPER_MAX_EXTRACTED_CHARACTERS_PER_PAGE:-100000}
       PAPER_MAX_GROBID_RESPONSE_BYTES: ${PAPER_MAX_GROBID_RESPONSE_BYTES:-67108864}
       GROBID_PARSER_VERSION: ${GROBID_PARSER_VERSION:-0.9.1-crf}
+      CITED_PAPER_PARSER_ID: ${CITED_PAPER_PARSER_ID:-docling}
+      CITED_PAPER_PARSER_VERSION: ${CITED_PAPER_PARSER_VERSION:-1.30.0}
+      DOCLING_BASE_URL: ${DOCLING_BASE_URL:-http://docling:5001}
+      PAPER_MAX_DOCLING_RESPONSE_BYTES: ${PAPER_MAX_DOCLING_RESPONSE_BYTES:-67108864}
+      PAPER_MAX_CITED_PAPER_BYTES: ${PAPER_MAX_CITED_PAPER_BYTES:-52428800}
+      PAPER_MAX_CITED_PAPER_EXTRACTED_CHARACTERS: ${PAPER_MAX_CITED_PAPER_EXTRACTED_CHARACTERS:-5000000}
+      DOCLING_REQUEST_TIMEOUT_MILLIS: ${DOCLING_REQUEST_TIMEOUT_MILLIS:-600000}
       PAPER_MIN_EXTRACTED_CHARACTERS: ${PAPER_MIN_EXTRACTED_CHARACTERS:-100}
       PAPER_MIN_LANGUAGE_CONFIDENCE: ${PAPER_MIN_LANGUAGE_CONFIDENCE:-0.65}
       PAPER_MAX_REQUEST_SIZE: ${PAPER_MAX_REQUEST_SIZE:-51MB}
@@ -265,6 +290,7 @@ services:
       redis: { condition: service_healthy }
       minio: { condition: service_started }
       grobid: { condition: service_healthy }
+      docling: { condition: service_healthy }
       ollama-model-init: { condition: service_started }
     networks:
       paper-trail:

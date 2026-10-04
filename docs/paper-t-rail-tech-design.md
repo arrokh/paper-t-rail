@@ -1490,7 +1490,7 @@ Keep V1 chunking simple and provenance-preserving.
 
 Recommended strategy:
 
-- use GROBID section/paragraph structure,
+- use the run-pinned Docling section/paragraph structure for new Stage 04 Cited Paper PDFs (GROBID remains the Stage 01 source-document parser),
 - combine adjacent short paragraphs,
 - target approximately 500–900 tokens,
 - small overlap if needed,
@@ -1804,6 +1804,13 @@ providers:
       consolidateHeader: "0"
       consolidateCitations: "0"
 
+  cited-paper-parser:
+    default: docling
+    docling:
+      enabled: true
+      base-url: http://docling:5001
+      version: 1.30.0
+
   system-one:
     default: mock
     mock:
@@ -1823,8 +1830,7 @@ providers:
       retention-disclosure: ${JEV_RETENTION_DISCLOSURE:}  # informational; blank is disclosed as unknown
 ```
 
-In this conservative deployment profile, the scholarly-metadata and open-access `recorded-fixtures` providers use checked-in data and make no remote requests. The pipeline resolves references, records fixture-backed access provenance/language outcomes, and runs deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. The current `feature-hash-384-v1` vectorizer is lexical, not a trained semantic model. Local Compose starts the pinned Ollama service and pulls `nomic-embed-text:v1.5` (768 dimensions, Ollama manifest digest `0a109f422b47`) into a persistent volume; API requests that omit an embedding choice prefer trusted Ollama when selectable, while the web new-run form defaults to local feature-hash. Non-Compose deployments must configure a valid endpoint/model/dimension and trust boundary explicitly. The pinned Laya CPU sidecar is in the `laya-evaluation` Compose profile; `make dev` enables that profile by default unless `LAYA_ENABLED=false`. It prepares `.env`, generates the private API key when absent, verifies/downloads the pinned model on first use into a persistent volume, and starts the sidecar before API/worker/web. `make laya-up` remains available for separate startup/recreation. Outside Compose, the API key defaults to empty and the System One preference defaults to Laya; omitted selections resolve to mock while Laya is unselectable. The production Spring profile defaults Laya enabled/selected and experimental aggregation enabled per #45; these defaults do not establish calibration. Calibration and deployment-specific approval are not product requirements. Keep Laya outputs visibly uncalibrated and make no accuracy claim. Keep GROBID self-hosted inside the trusted network; use recorded parser outputs where a local GROBID service is unavailable. In the conservative profile below, System One, graph enrichment, semantic Evidence Judgements, and final verification remain unexecuted. When a local run explicitly selects Laya or configured Jev, it produces raw uncalibrated judgements for eligible passages. `.env.example`, base Spring configuration, and Compose enable experimental aggregation by default; setting `SYSTEM_ONE_AGGREGATION_ENABLED=false` leaves final semantic statuses `NOT_RUN` while retaining judgement-only results. Progress and reports identify all non-mock judgements and aggregated outcomes as uncalibrated. Calibration is not a product requirement; outputs remain uncalibrated and this is not evidence of model accuracy.
-
+In this conservative deployment profile, the scholarly-metadata and open-access `recorded-fixtures` providers use checked-in data and make no remote requests. The pipeline resolves references, records fixture-backed access provenance/language outcomes, and runs deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. Stage 01 uses self-hosted GROBID with external consolidation explicitly disabled; new Stage 04 runs use the separately pinned self-hosted Docling parser, while historical runs without a Cited Paper parser selection retain their pinned source parser for retry compatibility. The current `feature-hash-384-v1` vectorizer is lexical, not a trained semantic model. Local Compose starts the pinned Ollama service and pulls `nomic-embed-text:v1.5` (768 dimensions, Ollama manifest digest `0a109f422b47`) into a persistent volume; new runs prefer trusted Ollama when selectable, while feature-hash is the safe fallback. Non-Compose deployments must configure a valid endpoint/model/dimension and trust boundary explicitly. The pinned Laya CPU sidecar is in the `laya-evaluation` Compose profile; `make dev` enables that profile by default unless `LAYA_ENABLED=false`. It prepares `.env`, generates the private API key when absent, verifies/downloads the pinned model on first use into a persistent volume, and starts the sidecar before API/worker/web. `make laya-up` remains available for separate startup/recreation. Outside Compose, the API key defaults to empty and the System One preference defaults to Laya; omitted selections resolve to mock while Laya is unselectable. The production Spring profile defaults Laya enabled/selected and shared experimental System One aggregation enabled per #45; these defaults do not establish calibration. Jev remains a configured, external, explicit alternative and is never selected implicitly or used as a fallback. When a local run selects Laya or Jev, eligible passages produce raw uncalibrated judgements; `SYSTEM_ONE_AGGREGATION_ENABLED=false` leaves final semantic statuses `NOT_RUN` while retaining judgement-only results. Keep all non-mock judgements and aggregate outcomes visibly uncalibrated; calibration and deployment-specific approval are not product or release requirements, and no accuracy claim follows from this implementation.
 Rules:
 
 - disabled providers cannot be selected,
@@ -2926,11 +2932,12 @@ TanStack Query owns all browser remote-data reads and mutation refresh. Do not f
 
 # 42. GROBID Data Handling
 
-Store raw parser output in object storage for debugging. GROBID output is immutable per Analysis Run; include the run ID and a content-hash suffix so retries cannot overwrite a different response:
+This section covers Stage 01 Source Document parsing only; Stage 04 Cited Paper PDF parsing uses the separate Docling adapter described in [ADR 0009](./adr/0009-use-docling-for-stage-04-cited-paper-parsing.md).
+
+Store raw GROBID TEI in object storage for debugging. GROBID output is immutable per Analysis Run; include the run ID and a content-hash suffix so retries cannot overwrite a different response:
 
 ```text
 source/{documentId}/analysis-runs/{analysisRunId}/grobid-{sha256}.xml
-papers/{paperId}/grobid.xml
 ```
 
 Persist the run-scoped object key and normalized domain records in PostgreSQL.
@@ -3305,8 +3312,8 @@ V1 is single-user/no-auth, but still:
 - never trust PDF paths,
 - store generated object keys instead of using user filenames as paths,
 - enforce configurable upload-byte, page-count, and claim-citation-pair limits; reject over-limit pair counts before persisting parsed output, never silently truncate, and retain the selected limits in each run snapshot,
-- limit parsed document size; GROBID TEI responses are byte-capped (64 MiB by default) while being read, before XML parsing, and oversized responses are rejected,
-- set timeouts for GROBID and external APIs,
+- limit parsed document size; GROBID TEI and Docling JSON/Markdown responses are byte-capped (64 MiB by default) while being read, before parsing, and oversized responses are rejected,
+- set timeouts for GROBID, Docling, and external APIs,
 - limit downloaded cited-paper size,
 - block non-HTTP(S) external locations,
 - do not bypass publisher authentication/paywalls,
@@ -3385,8 +3392,7 @@ enabled: false
 
 # 55. Local Development Defaults
 
-The following describes local defaults for the current pipeline (see [the provider matrix](./agents/provider-matrix.md) and the conservative deployment example in [section 29](#29-provider-enablement-configuration)). The runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing with external consolidation explicitly disabled, version-pinned local heuristic claim extraction with context-scoped target linking, conservative bibliography resolution through recorded metadata fixtures, and deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. Its `feature-hash-384-v1` fallback vectors are lexical features, not a trained semantic embedding model. API requests that omit an embedding choice prefer trusted Ollama when selectable, falling back to feature-hash when unavailable; the web new-run form defaults to local feature-hash. `make dev` configures and starts the Laya sidecar after verifying/downloading the model unless `LAYA_ENABLED=false`; `make laya-up` can start it separately. When Laya is selectable, Compose prefers it for new runs, while missing configuration resolves an omitted choice to mock. The application default preference is Laya; omitted selections resolve to mock if Laya is unselectable. Runs selecting Laya record raw, uncalibrated judgements for eligible passages. If a complete request exceeds the pinned 1,024-token context, the API preflights each of the six complete question sequences with the sidecar's pinned tokenizer, then splits only that retrieved passage at deterministic sentence boundaries. Span results are persisted idempotently and remain diagnostics only; they never roll up into a parent Evidence Judgement or final Claim–Paper status. The original Evidence Passage is retained, and an unfit sentence remains intact with an incomplete reason. `.env.example`, base Spring configuration, and Compose default `SYSTEM_ONE_AGGREGATION_ENABLED=true`; set it to `false` to leave eligible Laya and Jev runs at `NOT_RUN` for final aggregation while retaining judgement-only outputs. All runs that aggregate snapshot the four documented threshold variables and policy versions, and their judgements and statuses remain uncalibrated. The owner-approved production Spring defaults are Laya enabled/selected and experimental aggregation enabled; this is not calibration evidence. Calibration and deployment-specific approval are not product or release requirements; issue #45 is closed as not planned. All Laya outputs remain explicitly uncalibrated.
-
+The following describes local defaults for the current pipeline (see [the provider matrix](./agents/provider-matrix.md) and the conservative deployment example in [section 29](#29-provider-enablement-configuration)). The runtime performs PDFBox preflight validation, source-hash verification, self-hosted GROBID parsing for Stage 01 with external consolidation explicitly disabled, version-pinned local heuristic claim extraction with context-scoped target linking, conservative bibliography resolution through recorded metadata fixtures, and deterministic local hybrid Evidence Passage retrieval for eligible English Cited Papers. New Stage 04 Analysis Runs use the self-hosted Docling parser (`docling` `1.30.0`) pinned separately in the run snapshot; historical runs without a Cited Paper parser selection continue using their pinned source parser for retry compatibility. Its `feature-hash-384-v1` fallback vectors are lexical features, not a trained semantic embedding model. Local Compose prefers trusted Ollama for new runs when selectable, falling back to feature-hash when unavailable; the web new-run form defaults to local feature-hash. `make dev` configures and starts the Laya sidecar after verifying/downloading the model unless `LAYA_ENABLED=false`; `make laya-up` can start it separately. When Laya is selectable, Compose prefers it for new runs, while missing configuration resolves an omitted choice to mock. Jev is an external, configured alternative that must be explicitly selected and consented to for the individual run; it is never a default or fallback. Runs selecting Laya or Jev record raw, uncalibrated judgements for eligible passages. If a complete Laya request exceeds the pinned 1,024-token context, the API preflights each of the six complete question sequences with the sidecar's pinned tokenizer, then splits only that retrieved passage at deterministic sentence boundaries. Span results are persisted idempotently and remain diagnostics only; they never roll up into a parent Evidence Judgement or final Claim–Paper status. The original Evidence Passage is retained, and an unfit sentence remains intact with an incomplete reason. `.env.example`, base Spring configuration, and Compose default `SYSTEM_ONE_AGGREGATION_ENABLED=true`; set it to `false` to leave Laya and Jev runs at `NOT_RUN` for final aggregation while retaining judgement-only outputs. Runs that aggregate snapshot the four documented threshold variables and policy versions. All non-mock judgements and aggregate statuses remain uncalibrated; these settings are not calibration evidence. Calibration and deployment-specific approval are not product or release requirements; issue #45 is closed as not planned.
 ```text
 claim extractor:
 heuristic
@@ -3398,7 +3404,10 @@ system one:
 local Compose and the Spring provider default: Laya (`typed-decisions`) when selectable, otherwise mock; Jev is an optional external provider available only with server-side credentials and explicit per-run selection/consent; conservative target-specific opt-out: mock
 
 GROBID:
-self-hosted parser; consolidateHeader=0, consolidateCitations=0
+self-hosted Stage 01 source parser; consolidateHeader=0, consolidateCitations=0
+
+Docling:
+self-hosted Stage 04 Cited Paper PDF parser; `docling` version `1.30.0` is pinned separately in each new Analysis Run
 
 retrieval:
 postgres hybrid

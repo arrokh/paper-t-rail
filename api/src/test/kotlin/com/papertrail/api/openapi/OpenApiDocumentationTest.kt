@@ -208,6 +208,8 @@ class OpenApiDocumentationTest {
         assertTrue(consentSnapshotProperties.has("providerId"))
         assertTrue(consentSnapshotProperties.has("dataCategories"))
         assertTrue(consentSnapshotProperties.has("retentionDisclosure"))
+        assertTrue(snapshotProperties.has("sourceParser"))
+        assertTrue(snapshotProperties.has("citedPaperParser"))
         assertTrue(snapshotProperties.has("validationLimits"))
         val limitsSchemaName = snapshotProperties.path("validationLimits").path("${'$'}ref").asText().substringAfterLast('/')
         val limitsProperties = document.path("components").path("schemas").path(limitsSchemaName).path("properties")

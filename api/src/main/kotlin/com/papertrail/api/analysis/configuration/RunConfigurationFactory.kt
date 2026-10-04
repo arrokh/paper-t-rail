@@ -40,6 +40,8 @@ class RunConfigurationFactory(
     private val evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
     private val systemOneAggregationEnabled: Boolean = false,
     private val defaultSystemOneProvider: String = "mock",
+    private val citedPaperParserId: String = "docling",
+    private val citedPaperParserVersion: String = "1.30.0",
 ) {
     init {
         require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
@@ -55,6 +57,9 @@ class RunConfigurationFactory(
         require(defaultSystemOneProvider.isNotBlank()) { "Default System One provider must be configured." }
         require(defaultSystemOneProvider != JevSystemOneSettings.PROVIDER_ID) {
             "Jev must be selected explicitly for each Analysis Run."
+        }
+        require(citedPaperParserId.isNotBlank() && citedPaperParserVersion.isNotBlank()) {
+            "The Cited Paper parser identity and version must be configured."
         }
         require(!systemOneAggregationEnabled || evidenceAggregationThresholds != null) {
             "System One aggregation requires explicitly configured thresholds."
@@ -217,6 +222,7 @@ class RunConfigurationFactory(
                 thresholds = aggregationThresholds?.asMap(),
             ),
             externalProviderConsents = consentSnapshots,
+            citedPaperParser = ProviderSelection(citedPaperParserId, citedPaperParserVersion),
         )
     }
 
