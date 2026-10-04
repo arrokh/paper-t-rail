@@ -1650,7 +1650,7 @@ verification:
   contradiction-threshold: 0.80
 ```
 
-Keep aggregation thresholds and the policy version in each immutable Analysis Run snapshot. When aggregation is disabled, runs pin aggregation as `NOT_RUN` with no thresholds or policy version; eligible configured non-mock System One providers may still produce judgement-only outputs. `.env.example`, base `application.yml`, and Compose default experimental aggregation to `true`; set `SYSTEM_ONE_AGGREGATION_ENABLED=false` to disable it for both Laya and Jev. Both use the same deterministic policy and thresholds. All resulting judgements and statuses remain uncalibrated. Per issue #45, the production Spring profile defaults Laya enabled/selected and experimental aggregation enabled. Human calibration and deployment-specific approval are not product or release requirements. Outputs remain uncalibrated and must not be presented as validated accuracy. The exact variable names and defaults are listed in the repository-root `.env.example` and [Laya evaluation guide](./laya-evaluation.md#aggregation-default). Changing the environment affects new runs only.
+Keep aggregation thresholds and the policy version in each immutable Analysis Run snapshot. When aggregation is disabled, runs pin aggregation as `NOT_RUN` with no thresholds or policy version; eligible configured non-mock System One providers may still produce judgement-only outputs. `.env.example`, base `application.yml`, and Compose default experimental aggregation to `true`; set `SYSTEM_ONE_AGGREGATION_ENABLED=false` to disable it for both Laya and Jev. Both use the same deterministic policy and thresholds. All resulting judgements and statuses remain uncalibrated. Per issue #45, the production Spring profile defaults Laya enabled/selected and experimental aggregation enabled. Human calibration and deployment-specific approval are not product or release requirements. Outputs remain uncalibrated and must not be presented as validated accuracy. The exact variable names and defaults are listed in the repository-root `.env.example` and [Laya evaluation guide](./laya-evaluation.md#aggregation-default). Hybrid retrieval uses configurable `PAPER_RETRIEVAL_VECTOR_CANDIDATES` and `PAPER_RETRIEVAL_LEXICAL_CANDIDATES` pools (both default to 3), then applies the independently configurable `PAPER_RETRIEVAL_FINAL_CANDIDATES` cap (default 3) after rank fusion. Changing the environment affects new runs only; each run pins the selected retrieval values.
 
 The System One comparison thresholds are `SYSTEM_ONE_AGGREGATION_DIRECT_SUPPORT_THRESHOLD=0.80`, `SYSTEM_ONE_AGGREGATION_PARTIAL_SUPPORT_THRESHOLD=0.70`, `SYSTEM_ONE_AGGREGATION_CONTRADICTION_THRESHOLD=0.80`, and `SYSTEM_ONE_AGGREGATION_COMPARABILITY_MARGIN=0.08`. These values exercise the deterministic aggregation path only; they do not imply human calibration. The current V1 harness exercises aggregation over fixture-supplied judgements and does not call Laya or Jev or establish model judgement accuracy/calibration. Calibration is not required for product use or release; label non-mock System One judgements and aggregated statuses uncalibrated. The [Laya evaluation report](./laya-evaluation.md#current-pipeline-trial-and-evidence-status) records existing evidence and limitations. Reference matching uses the same principle: its confidence threshold is configurable and snapshotted, with below-threshold or ambiguous matches remaining `UNRESOLVED` rather than being guessed.
 
@@ -1681,9 +1681,9 @@ Example shape (symbolic placeholders must be replaced with the actual run values
   },
   "retrieval": {
     "profileId": "postgres-hybrid-rrf-v1",
-    "vectorCandidateLimit": 10,
-    "lexicalCandidateLimit": 10,
-    "finalCandidateLimit": 5,
+    "vectorCandidateLimit": 3,
+    "lexicalCandidateLimit": 3,
+    "finalCandidateLimit": 3,
     "reciprocalRankFusionConstant": 60,
     "embeddingProfileHash": "<pinned-sha256>"
   },

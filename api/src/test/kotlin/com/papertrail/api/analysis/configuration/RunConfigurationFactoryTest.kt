@@ -49,9 +49,9 @@ class RunConfigurationFactoryTest {
         assertEquals("feature-hash-384-v1", snapshot.embedding.model)
         assertEquals(listOf("atomic_claims", "cited_paper_chunks", "embedding_input"), snapshot.embedding.dataCategories)
         assertEquals("postgres-hybrid-rrf-v1", snapshot.retrieval.profileId)
-        assertEquals(10, snapshot.retrieval.vectorCandidateLimit)
-        assertEquals(10, snapshot.retrieval.lexicalCandidateLimit)
-        assertEquals(5, snapshot.retrieval.finalCandidateLimit)
+        assertEquals(3, snapshot.retrieval.vectorCandidateLimit)
+        assertEquals(3, snapshot.retrieval.lexicalCandidateLimit)
+        assertEquals(3, snapshot.retrieval.finalCandidateLimit)
         assertEquals(60, snapshot.retrieval.reciprocalRankFusionConstant)
         assertTrue(snapshot.retrieval.embeddingProfileHash.matches(Regex("[0-9a-f]{64}")))
         assertEquals("mock", snapshot.systemOne.provider)
@@ -566,9 +566,9 @@ class RunConfigurationFactoryTest {
 
     private fun factoryFor(
         retrievalProfileId: String = "postgres-hybrid-rrf-v1",
-        vectorCandidateLimit: Int = 10,
-        lexicalCandidateLimit: Int = 10,
-        finalCandidateLimit: Int = 5,
+        vectorCandidateLimit: Int = 3,
+        lexicalCandidateLimit: Int = 3,
+        finalCandidateLimit: Int = 3,
         reciprocalRankFusionConstant: Int = 60,
         evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
         systemOneAggregationEnabled: Boolean = false,

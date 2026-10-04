@@ -36,6 +36,30 @@ class ProductionProviderDefaultsTest {
     }
 
     @Test
+    fun `retrieval candidate pools default to three and accept deployment overrides`() {
+        ApplicationContextRunner()
+            .withInitializer(ConfigDataApplicationContextInitializer())
+            .run { context ->
+                assertEquals("3", context.environment.getProperty("paper-trail.analysis.retrieval.vector-candidates"))
+                assertEquals("3", context.environment.getProperty("paper-trail.analysis.retrieval.lexical-candidates"))
+                assertEquals("3", context.environment.getProperty("paper-trail.analysis.retrieval.final-candidates"))
+            }
+
+        ApplicationContextRunner()
+            .withInitializer(ConfigDataApplicationContextInitializer())
+            .withPropertyValues(
+                "PAPER_RETRIEVAL_VECTOR_CANDIDATES=7",
+                "PAPER_RETRIEVAL_LEXICAL_CANDIDATES=4",
+                "PAPER_RETRIEVAL_FINAL_CANDIDATES=6",
+            )
+            .run { context ->
+                assertEquals("7", context.environment.getProperty("paper-trail.analysis.retrieval.vector-candidates"))
+                assertEquals("4", context.environment.getProperty("paper-trail.analysis.retrieval.lexical-candidates"))
+                assertEquals("6", context.environment.getProperty("paper-trail.analysis.retrieval.final-candidates"))
+            }
+    }
+
+    @Test
     fun `local default remains Laya with System One aggregation enabled`() {
         ApplicationContextRunner()
             .withInitializer(ConfigDataApplicationContextInitializer())

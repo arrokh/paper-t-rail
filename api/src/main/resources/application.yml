@@ -69,9 +69,9 @@ paper-trail:
     reference-resolution-confidence-threshold: ${PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD:0.25}
     retrieval:
       profile-id: ${PAPER_RETRIEVAL_PROFILE_ID:postgres-hybrid-rrf-v1}
-      vector-candidates: ${PAPER_RETRIEVAL_VECTOR_CANDIDATES:10}
-      lexical-candidates: ${PAPER_RETRIEVAL_LEXICAL_CANDIDATES:10}
-      final-candidates: ${PAPER_RETRIEVAL_FINAL_CANDIDATES:5}
+      vector-candidates: ${PAPER_RETRIEVAL_VECTOR_CANDIDATES:3}
+      lexical-candidates: ${PAPER_RETRIEVAL_LEXICAL_CANDIDATES:3}
+      final-candidates: ${PAPER_RETRIEVAL_FINAL_CANDIDATES:3}
       rrf-constant: ${PAPER_RETRIEVAL_RRF_CONSTANT:60}
     # Experimental aggregation applies to eligible Laya and Jev judgements; outputs remain uncalibrated.
     system-one-aggregation:
