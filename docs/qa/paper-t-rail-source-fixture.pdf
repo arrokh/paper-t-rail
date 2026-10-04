@@ -1,0 +1,630 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [8 0 R 10 0 R 12 0 R 14 0 R] /Count 4 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>
+endobj
+7 0 obj
+<< /Length 3264 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 408.00 761.00 Tm
+(SYNTHETIC QA SOURCE DOCUMENT) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 20.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(A Controlled Test of Traceable Citation) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 20.00 Tf
+1 0 0 1 48.00 682.00 Tm
+(Evidence) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 8.40 Tf
+1 0 0 1 48.00 650.00 Tm
+(Paper T-Rail QA Fixture Team | Synthetic manuscript for local validation) Tj
+ET
+0.984 0.929 0.902 rg
+48.00 582.00 516.00 47.00 re f
+0.761 0.231 0.169 rg
+48.00 582.00 4.00 47.00 re f
+0.031 0.157 0.231 rg
+BT
+/F1 8.00 Tf
+1 0 0 1 60.00 614.00 Tm
+(TEST DOCUMENT - The scenarios below are synthetic. Use this Source Document only in a local/test) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.00 Tf
+1 0 0 1 60.00 603.00 Tm
+(environment. Footer text is the visible QA oracle, not manuscript content.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 571.00 Tm
+(ABSTRACT) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 560.00 m 564.00 560.00 l S
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 550.00 Tm
+(This synthetic manuscript exercises citation parsing, claim boundaries, reference matching, and) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 536.80 Tm
+(source-span tracing. It includes one exact match for the repository's recorded local scholarly-work) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 523.60 Tm
+(fixture, one deliberately unmatched journal reference, and one website reference.) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 501.40 Tm
+(1. INTRODUCTION) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 490.40 m 564.00 490.40 l S
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 480.40 Tm
+(SCENARIO C-01 | SIMPLE CITED PROPOSITION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 467.40 Tm
+(Conservative reference resolution prevents ambiguous bibliography entries from being assigned an) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 454.20 Tm
+(unsupported paper identity [1].) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 434.00 Tm
+(The final Evidence Coverage Report is a triage aid, not a truth certificate. This sentence is) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 420.80 Tm
+(intentionally uncited and should not create a claim verification.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.60 Tf
+1 0 0 1 48.00 73.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 6.80 Tf
+1 0 0 1 146.00 73.00 Tm
+(C-01: one Atomic Claim; R1 matches the checked-in DOI/full-text fixture. Final semantic) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 6.80 Tf
+1 0 0 1 146.00 65.00 Tm
+(status depends on provider selection; this PDF is not model-accuracy evidence.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 44.00 Tm
+(01 / 04) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 44.00 Tm
+(QA oracle only | semantic model outcomes remain uncalibrated) Tj
+ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 7 0 R >>
+endobj
+9 0 obj
+<< /Length 2623 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 408.00 761.00 Tm
+(SYNTHETIC QA SOURCE DOCUMENT) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 20.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(2. Claim Boundaries and Qualifiers) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 672.00 Tm
+(2.1 SHARED POPULATION QUALIFIER) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 661.00 m 564.00 661.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 651.00 Tm
+(SCENARIO C-02 | COORDINATED PREDICATES) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 638.00 Tm
+(Among older adults, treatment reduced pain and improved mobility [1, 2].) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 615.80 Tm
+(2.2 AMBIGUOUS NEGATION) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 604.80 m 564.00 604.80 l S
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 594.80 Tm
+(SCENARIO C-03 | DO NOT GUESS NEGATION SCOPE) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 581.80 Tm
+(Treatment did not improve symptoms and reduce dropout [1].) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 559.60 Tm
+(2.3 AMBIGUOUS TRAILING QUALIFIER) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 548.60 m 564.00 548.60 l S
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 538.60 Tm
+(SCENARIO C-04 | PRESERVE UNCERTAIN QUALIFIER SCOPE) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 525.60 Tm
+(Treatment reduced pain in older adults and improved mobility [1].) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 505.40 Tm
+(The examples are fixtures for claim-shape behavior; they are not empirical findings about the cited) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 492.20 Tm
+(paper.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.60 Tf
+1 0 0 1 48.00 73.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 6.80 Tf
+1 0 0 1 146.00 73.00 Tm
+(C-02: two claims with the shared qualifier and both targets; C-03/C-04: one conservative) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 6.80 Tf
+1 0 0 1 146.00 65.00 Tm
+(claim each, with negation and scope preserved.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 44.00 Tm
+(02 / 04) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 44.00 Tm
+(QA oracle only | semantic model outcomes remain uncalibrated) Tj
+ET
+endstream
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 9 0 R >>
+endobj
+11 0 obj
+<< /Length 3556 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 408.00 761.00 Tm
+(SYNTHETIC QA SOURCE DOCUMENT) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 20.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(3. Citation Contexts and Source Spans) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 672.00 Tm
+(3.1 MULTIPLE MARKERS IN ONE CONTEXT) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 661.00 m 564.00 661.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 651.00 Tm
+(SCENARIO C-05 | TWO MARKERS, ONE CONTEXT) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 638.00 Tm
+(Prior work supports this method [1] and reports similar outcomes [2].) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 615.80 Tm
+(3.2 CITATION-BEARING CLAUSES) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 604.80 m 564.00 604.80 l S
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 594.80 Tm
+(SCENARIO C-06 | SEPARATE CLAUSES) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 581.80 Tm
+(The treatment improved symptoms [1]; however, controls found no effect [2].) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 559.60 Tm
+(3.3 UNCERTAIN BOUNDARY AND DUPLICATE WORDING) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 548.60 m 564.00 548.60 l S
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 538.60 Tm
+(SCENARIO C-07 | SENTENCE FALLBACK) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 525.60 Tm
+(Prior work supports the method [1], which remains under discussion [2].) Tj
+ET
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 505.40 Tm
+(SCENARIO C-08 | SAME WORDING, DIFFERENT LOCATIONS) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 492.40 Tm
+(The intervention improved mobility [1].) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 472.20 Tm
+(The intervention improved mobility [1].) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 450.00 Tm
+(3.4 UNCITED AND AUTHOR-DATE EXAMPLES) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 439.00 m 564.00 439.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 429.00 Tm
+(SCENARIO C-09 | NO CITATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 416.00 Tm
+(A proposition without a citation appears here and should not be verified.) Tj
+ET
+0.761 0.231 0.169 rg
+BT
+/F4 7.40 Tf
+1 0 0 1 48.00 395.80 Tm
+(SCENARIO C-10 | AUTHOR-DATE MARKER) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 9.40 Tf
+1 0 0 1 48.00 382.80 Tm
+(The study describes a conservative reference-resolution method \(Example & Researcher, 2024\).) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.761 0.231 0.169 rg
+BT
+/F4 6.60 Tf
+1 0 0 1 48.00 73.00 Tm
+(CLAIM EXPECTATION) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 6.80 Tf
+1 0 0 1 146.00 73.00 Tm
+(C-05 shared targets; C-06 separate clauses; C-07 fallback; C-08 distinct spans; C-09) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 6.80 Tf
+1 0 0 1 146.00 65.00 Tm
+(uncited; C-10 author-date if parsed. R1 exact DOI -> RESOLVED; R2 unmatched -> UNRESOLVED;) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 6.80 Tf
+1 0 0 1 146.00 57.00 Tm
+(inspect R3 type before unsupported outcome.) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 44.00 Tm
+(03 / 04) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 44.00 Tm
+(QA oracle only | semantic model outcomes remain uncalibrated) Tj
+ET
+endstream
+endobj
+12 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 11 0 R >>
+endobj
+13 0 obj
+<< /Length 1886 >>
+stream
+0.992 0.980 0.941 rg
+0.00 0.00 612.00 792.00 re f
+0.082 0.231 0.384 rg
+0.00 742.00 612.00 50.00 re f
+0.761 0.231 0.169 rg
+48.00 761.00 7.00 7.00 re f
+0.941 0.773 0.463 rg
+58.00 761.00 7.00 7.00 re f
+0.804 0.855 0.863 RG
+1.20 w 48.00 756.00 m 65.00 756.00 l S
+1.000 0.992 0.965 rg
+BT
+/F2 9.00 Tf
+1 0 0 1 73.00 761.00 Tm
+(PAPER T-RAIL) Tj
+ET
+0.875 0.910 0.914 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 408.00 761.00 Tm
+(SYNTHETIC QA SOURCE DOCUMENT) Tj
+ET
+0.082 0.231 0.384 rg
+BT
+/F3 20.00 Tf
+1 0 0 1 48.00 706.00 Tm
+(References) Tj
+ET
+0.071 0.400 0.420 rg
+BT
+/F2 10.40 Tf
+1 0 0 1 48.00 672.00 Tm
+(REFERENCES) Tj
+ET
+0.824 0.780 0.682 RG
+0.55 w 48.00 661.00 m 564.00 661.00 l S
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 651.00 Tm
+([1] Example, Riley, and Jordan Researcher. 2024. A fixture study of conservative scholarly reference) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 639.00 Tm
+(resolution. Journal of Reference Resolution 1 \(1\): 1-2. DOI:) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 627.00 Tm
+(10.5555/papertrail.fixture.reference-resolution.2024.) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 606.00 Tm
+([2] Sample, Morgan. 2026. Unmatched test reference for QA. Journal of Validation Cases 4 \(2\): 12-19. DOI:) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 594.00 Tm
+(10.5555/papertrail.qa.missing.2026.) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 573.00 Tm
+([3] Test Automation Office. 2025. User Manual for the Synthetic Validation Toolkit. Web page:) Tj
+ET
+0.031 0.157 0.231 rg
+BT
+/F1 8.80 Tf
+1 0 0 1 48.00 561.00 Tm
+(https://qa.example.test/manual.) Tj
+ET
+0.824 0.780 0.682 RG
+0.80 w 48.00 86.00 m 564.00 86.00 l S
+0.322 0.380 0.416 rg
+BT
+/F4 7.00 Tf
+1 0 0 1 519.00 44.00 Tm
+(04 / 04) Tj
+ET
+0.322 0.380 0.416 rg
+BT
+/F1 7.00 Tf
+1 0 0 1 48.00 44.00 Tm
+(QA oracle only | semantic model outcomes remain uncalibrated) Tj
+ET
+endstream
+endobj
+14 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> /Contents 13 0 R >>
+endobj
+15 0 obj
+<< /Title (Paper T-Rail synthetic source document QA fixture) /Author (Paper T-Rail) /Subject (English academic-style PDF fixture with citation and claim parser cases) >>
+endobj
+xref
+0 16
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000142 00000 n 
+0000000239 00000 n 
+0000000341 00000 n 
+0000000439 00000 n 
+0000000534 00000 n 
+0000003849 00000 n 
+0000004005 00000 n 
+0000006679 00000 n 
+0000006836 00000 n 
+0000010444 00000 n 
+0000010602 00000 n 
+0000012540 00000 n 
+0000012698 00000 n 
+trailer
+<< /Size 16 /Root 1 0 R /Info 15 0 R >>
+startxref
+12885
+%%EOF
