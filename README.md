@@ -43,7 +43,13 @@ make local
 | API health | <http://127.0.0.1:8080/api/v1/health> |
 | Swagger UI | <http://127.0.0.1:8080/swagger-ui/index.html> |
 | Scalar API reference | <http://127.0.0.1:8080/scalar> |
-| MinIO Console | <http://127.0.0.1:9001> (credentials are `S3_ACCESS_KEY` and `S3_SECRET_KEY` from `.env`) |
+| S3-compatible object storage | <http://127.0.0.1:9000> |
+
+The local `object-storage` Compose service stores data in the `object_storage_data` volume and provisions `S3_BUCKET` at startup. For another S3-compatible service, provision that bucket before startup and configure `S3_ENDPOINT` for API/worker access and, when needed, `S3_PUBLIC_ENDPOINT` for browser-fetched presigned URLs, plus the region, credentials, and path-style setting it requires. Compose derives the default public endpoint from `S3_ENDPOINT` or `S3_HOST_PORT` when `S3_PUBLIC_ENDPOINT` is unset. If an existing `.env` explicitly sets that value, update or remove it when changing the endpoint or host port.
+
+The API currently uses static access/secret credentials; other provider-specific identity modes are not configured. Application credentials do not need bucket-list or bucket-create permissions. A compatible service must support SigV4 presigned GETs with response-header overrides, user metadata, object stat/HEAD, and delete.
+
+Any pre-migration object-storage volume is left untouched and is not imported automatically because the on-disk formats differ. `make clean` removes the active Compose volumes but leaves that legacy volume in place for deliberate migration or cleanup.
 
 The default local setup enables Ollama and Laya. First startup downloads the Ollama embedding model and about 1.7 GB of pinned Laya model artifacts. To skip Laya, set `LAYA_ENABLED=false` in `.env`. See [Laya evaluation](docs/laya-evaluation.md) for its configuration and limits.
 
@@ -58,7 +64,7 @@ make dev                      # full application in Compose
 make dev-stop web homepage    # stop selected containers, if present
 ```
 
-The host-run frontends stop when you press Ctrl+C. `make dev-stop` stops containers but preserves data. `make infra-down` stops the Compose stack and also preserves data. `make clean` deletes the local Compose volumes, including uploaded papers and analysis data.
+The host-run frontends stop when you press Ctrl+C. `make dev-stop` stops containers but preserves data. `make infra-down` stops the Compose stack and also preserves data. `make clean` deletes the active Compose volumes, including uploaded papers and analysis data.
 
 ## Architecture
 
@@ -71,7 +77,7 @@ flowchart LR
     PDF[English academic PDF] --> Workspace
     Workspace --> API[Kotlin / Spring Boot API]
     API --> DB[(PostgreSQL + pgvector)]
-    API --> Objects[(MinIO object storage)]
+    API --> Objects[(S3-compatible object storage)]
     API --> Outbox[Transactional outbox]
     Outbox --> Redis[Redis Streams]
     Redis --> Worker[Kotlin worker]

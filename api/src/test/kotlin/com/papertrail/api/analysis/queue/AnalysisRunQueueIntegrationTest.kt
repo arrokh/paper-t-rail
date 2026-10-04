@@ -3770,7 +3770,7 @@ class AnalysisRunQueueIntegrationTest {
             return SourceObjectMetadata(size = value.size.toLong(), sha256 = checksums[objectKey])
         }
         override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int): String =
-            "http://minio.test/source-documents/$objectKey?disposition=$responseContentDisposition&expires=$expirySeconds"
+            "http://s3.test/source-documents/$objectKey?disposition=$responseContentDisposition&expires=$expirySeconds"
         override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey); checksums.remove(objectKey) }
         fun contentType(objectKey: String): String? = contentTypes[objectKey]
         fun contains(objectKey: String): Boolean = objectKey in content

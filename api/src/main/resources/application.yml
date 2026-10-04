@@ -36,11 +36,12 @@ paper-trail:
     minimum-extracted-characters: ${PAPER_MIN_EXTRACTED_CHARACTERS:100}
     minimum-language-confidence: ${PAPER_MIN_LANGUAGE_CONFIDENCE:0.65}
   storage:
-    endpoint: ${S3_ENDPOINT:http://127.0.0.1:9000}
-    public-endpoint: ${S3_PUBLIC_ENDPOINT:${S3_ENDPOINT:http://127.0.0.1:9000}}
+    endpoint: ${S3_ENDPOINT:http://127.0.0.1:${S3_HOST_PORT:9000}}
+    public-endpoint: ${S3_PUBLIC_ENDPOINT:${S3_ENDPOINT:http://127.0.0.1:${S3_HOST_PORT:9000}}}
     region: ${S3_REGION:us-east-1}
-    access-key: ${S3_ACCESS_KEY:local-minio-access}
-    secret-key: ${S3_SECRET_KEY:local-minio-secret}
+    path-style-access: ${S3_PATH_STYLE_ACCESS:true}
+    access-key: ${S3_ACCESS_KEY:local-s3-access}
+    secret-key: ${S3_SECRET_KEY:local-s3-secret}
     bucket: ${S3_BUCKET:source-documents}
   queue:
     stream: ${REDIS_STREAM:ae:pipeline}

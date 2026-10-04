@@ -29,7 +29,7 @@ The system is described technically as an **Academic Evidence Engine**; **Paper 
 **Async backbone:** Redis Streams  
 **Primary data store:** PostgreSQL + pgvector  
 **Database migrations:** Sqitch  
-**Object storage:** MinIO locally, S3-compatible in production  
+**Object storage:** S3-compatible object storage with configurable endpoints; the local Compose image is pinned in `infra/docker-compose.yml`<br>
 **Scientific PDF parsing:** GROBID  
 
 ---
@@ -416,7 +416,7 @@ flowchart TB
 
     PG[("PostgreSQL<br/>metadata + FTS + pgvector")]
     REDIS[("Redis<br/>Streams + Locks + Cache")]
-    OBJ[("Object Storage<br/>MinIO / S3")]
+    OBJ[("Object Storage<br/>S3-compatible")]
 
     GROBID["GROBID"]
 
@@ -544,7 +544,7 @@ flowchart TB
 
     PG[("postgres + pgvector")]
     REDIS[("redis")]
-    MINIO[("minio")]
+    OBJECT_STORE[("object-storage<br/>S3-compatible")]
     GROBID["grobid"]
 
     LAYA["laya runtime<br/>optional/enabled"]
@@ -558,11 +558,11 @@ flowchart TB
 
     API --> PG
     API --> REDIS
-    API --> MINIO
+    API --> OBJECT_STORE
 
     WORKER --> PG
     WORKER --> REDIS
-    WORKER --> MINIO
+    WORKER --> OBJECT_STORE
     WORKER --> GROBID
     WORKER --> LAYA
     WORKER --> JEV
@@ -589,7 +589,7 @@ sequenceDiagram
     participant Web as Next.js
     participant API as Spring API
     participant DB as PostgreSQL
-    participant Obj as MinIO/S3
+    participant Obj as S3-compatible object storage
     participant Redis as Redis Streams
     participant Worker as Spring Worker
     participant GROBID as GROBID
@@ -2648,7 +2648,6 @@ paper-t-rail/
 │   ├── docker-compose.yml
 │   ├── postgres/
 │   ├── redis/
-│   ├── minio/
 │   └── grobid/
 │
 ├── docs/
@@ -2796,9 +2795,9 @@ The detail response includes persisted stage and work-item execution progress, p
 GET /api/v1/analysis-runs/{id}/source-document
 ```
 
-Returns JSON with short-lived, read-only MinIO URLs for viewing and downloading the exact PDF uploaded for the Analysis Run, including before worker processing completes. Before signing, the service verifies that the Source Document and Analysis Run hashes agree, the object key matches the content-addressed document path, and the stored checksum metadata matches the run. Legacy objects without checksum metadata are fetched and hashed before signing. The response is `Cache-Control: no-store`; the PDF URLs expire after six hours and must be treated as bearer credentials. MinIO sets the PDF content type and inline/attachment disposition on the object response. A deleted or missing run/document returns `404`, an integrity mismatch returns `409`, and temporary object storage failures return `503`.
+Returns JSON with short-lived, read-only S3-compatible presigned URLs for viewing and downloading the exact PDF uploaded for the Analysis Run, including before worker processing completes. Before signing, the service verifies that the Source Document and Analysis Run hashes agree, the object key matches the content-addressed document path, and the stored checksum metadata matches the run. Legacy objects without checksum metadata are fetched and hashed before signing. The response is `Cache-Control: no-store`; the PDF URLs expire after six hours and must be treated as bearer credentials. The signed GET request overrides the object response with the PDF content type, inline/attachment disposition, and `no-store` cache control. A deleted or missing run/document returns `404`, an integrity mismatch returns `409`, and temporary object storage failures return `503`.
 
-Configure `S3_PUBLIC_ENDPOINT` to an address the user's browser can reach for signed PDF URLs. The API and worker continue to use the private `S3_ENDPOINT` for storage operations; in the local Compose setup, the public endpoint defaults to `http://127.0.0.1:9000`.
+Configure `S3_PUBLIC_ENDPOINT` to an address the user's browser can reach for signed PDF URLs. The API and worker continue to use the private `S3_ENDPOINT` for storage operations; in the local Compose setup, the public endpoint follows `S3_ENDPOINT` when overridden or `S3_HOST_PORT` otherwise (9000 by default). Configure `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, and `S3_PATH_STYLE_ACCESS` for the chosen service. Compose provisions the local bucket at startup; an external bucket must exist before the app starts, so API credentials do not need bucket-list or bucket-create permission. The API currently uses static access/secret credentials; other provider-specific identity modes are outside this adapter's configuration. The provider must support SigV4 presigned GETs, user metadata, stat/head, deletion, and signed response-header overrides. Compose selects the local server image behind its generic `object-storage` service. Any pre-migration object-storage volume is left untouched and is neither declared nor mounted by the new Compose service because its on-disk format is incompatible; existing objects require an explicit S3-level migration and are not copied automatically.
 
 ### Parsed document structure
 
@@ -3355,7 +3354,7 @@ api
 worker
 postgres
 redis
-minio
+object-storage
 grobid
 ```
 
@@ -3410,7 +3409,7 @@ graph and OA providers:
 API requests that omit a provider use recorded fixtures; the web new-run form initially prefers Unpaywall when listed, and any external discovery/access request requires matching per-run consent
 
 storage:
-minio
+S3-compatible object storage (local image selected in Compose)
 ```
 
 Fixture mode must use recorded provider responses, parser outputs, and representative source/cited-paper assets without making remote calls; it is intended to remain usable when no external provider is configured or explicitly selected. The production Spring profile defaults Laya enabled/selected per #45, but this configuration default does not constitute calibration. Calibration and deployment-specific production approval are not product or release requirements; Laya outputs remain explicitly uncalibrated. `make dev` starts the Laya sidecar by default; set `LAYA_ENABLED=false` to skip it. `make laya-up` remains available for separate startup. When Laya is explicitly selected or configured Jev is explicitly selected with per-run consent, the provider persists raw, uncalibrated Evidence Judgements. `.env.example`, base Spring configuration, and Compose enable shared experimental aggregation by default; setting `SYSTEM_ONE_AGGREGATION_ENABLED=false` leaves final statuses `NOT_RUN` while retaining judgement-only results. All non-mock judgements and aggregated outcomes are marked uncalibrated in progress/UI. Production-profile aggregation and Laya are enabled by default per #45, but this does not establish calibration. Calibration and deployment-specific approval are not product or release requirements; all judgements and statuses remain uncalibrated.
@@ -3461,7 +3460,7 @@ Use Testcontainers where practical:
 ```text
 PostgreSQL + pgvector
 Redis
-MinIO
+S3-compatible object storage
 ```
 
 Important scenarios:
@@ -3502,7 +3501,7 @@ For test-first implementation, agree on public behavior seams and work in vertic
 A coding agent should consider V1 usable when all of the following work:
 
 1. User can upload an English text-based PDF.
-2. PDF is stored in MinIO/S3.
+2. PDF is stored in S3-compatible object storage.
 3. Document metadata is stored in PostgreSQL.
 4. User can create an immutable Analysis Run.
 5. Worker receives work asynchronously through Redis Streams.
@@ -3568,7 +3567,7 @@ Bring up:
 ```text
 Postgres + pgvector
 Redis
-MinIO
+S3-compatible object storage
 GROBID
 ```
 
@@ -3832,7 +3831,7 @@ Prefer:
 ```text
 Postgres
 Redis
-MinIO
+S3-compatible object storage
 GROBID
 one backend codebase
 ```
