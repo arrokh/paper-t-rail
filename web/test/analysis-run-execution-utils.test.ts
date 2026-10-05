@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   filterExecutionSpans,
   formatExecutionDuration,
+  getExecutionAncestorContext,
+  MAX_SELECTED_SPAN_ANCESTORS,
   getExecutionTimeline,
 } from "@/features/analysis-runs/execution/execution-trace-utils";
 import type { ExecutionSpan, ExecutionSummary } from "@/features/analysis-runs/execution/execution-types";
@@ -39,6 +41,26 @@ describe("execution trace timeline and filtering", () => {
     expect(timeline.rows[2].leftPercent).toBeCloseTo(16.67, 1);
     expect(timeline.rows[2].widthPercent).toBeCloseTo(83.33, 1);
     expect(formatExecutionDuration(12_000)).toBe("12 sec");
+  });
+
+  it("loads only bounded missing ancestor context for a selected deep link", () => {
+    const deepSpan: ExecutionSpan = { ...spans[2], id: "deep-selected", parentSpanId: "parent-not-loaded" };
+    const context = getExecutionAncestorContext(deepSpan, [spans[0]], () => undefined);
+    expect(context.spans).toEqual([]);
+    expect(context.missingAncestorSpanId).toBe("parent-not-loaded");
+
+    const chain = Array.from({ length: MAX_SELECTED_SPAN_ANCESTORS + 5 }, (_, index) => ({
+      ...spans[0],
+      id: `ancestor-${index}`,
+      parentSpanId: index === MAX_SELECTED_SPAN_ANCESTORS + 4 ? null : `ancestor-${index + 1}`,
+    }));
+    const bounded = getExecutionAncestorContext(
+      { ...deepSpan, parentSpanId: chain[0].id },
+      chain,
+      () => undefined,
+    );
+    expect(bounded.spans).toHaveLength(MAX_SELECTED_SPAN_ANCESTORS);
+    expect(bounded.missingAncestorSpanId).toBeNull();
   });
 
   it("retains each matching span's ancestors while filtering unrelated operations", () => {

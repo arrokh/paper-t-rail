@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronRight, Copy, LoaderCircle, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PIPELINE_STAGES } from "@/features/analysis-runs/pipeline";
 import {
+  executionSpanQueryKey,
+  executionSpanQueryOptions,
   useExecutionArtifact,
   useExecutionSpan,
   useExecutionSpans,
@@ -23,6 +26,7 @@ import {
 import {
   executionStatusLabel,
   filterExecutionSpans,
+  getExecutionAncestorContext,
   formatExecutionDuration,
   isActiveExecutionSpan,
   getExecutionTimeline,
@@ -230,17 +234,19 @@ function ExecutionSpanTreeRow({
               {isOpen ? <ChevronDown className="size-4" aria-hidden="true" /> : <ChevronRight className="size-4" aria-hidden="true" />}
             </Button>
           ) : <span className="inline-block size-7 shrink-0" aria-hidden="true" />}
-          <button
+          <Button
             type="button"
-            className="flex min-h-10 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            variant="ghost"
+            size="sm"
+            className="min-h-10 h-auto min-w-0 flex-1 flex-wrap justify-start gap-x-2 gap-y-1 rounded-sm px-1 py-1 text-left whitespace-normal"
             aria-label={`${name}, ${executionStatusLabel(span.status)}, ${isRunning ? `Running, ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}`}
-            aria-current={selectedSpanId === span.id ? "true" : undefined}
+            aria-pressed={selectedSpanId === span.id}
             onClick={() => onSelect(span.id)}
           >
             <span className="min-w-0 break-words text-sm font-medium text-foreground">{name}</span>
             <SpanStatus status={span.status} />
             {span.attempt > 1 && <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[0.65rem]">Attempt {span.attempt}</Badge>}
-          </button>
+          </Button>
         </div>
         <span className="text-right font-mono text-xs text-muted-foreground" aria-label={`Duration ${isRunning ? `Running, ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}`}>
           {isRunning ? `Running · ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}
@@ -293,7 +299,8 @@ function ArtifactCapture({
   onRemove: (artifactId: string) => void;
   removing: boolean;
 }) {
-  const artifactQuery = useExecutionArtifact(analysisRunId, descriptor.id);
+  const artifactQuery = useExecutionArtifact(analysisRunId, descriptor.id, spanId, descriptor.role);
+  const hasArtifactId = descriptor.id !== null;
   const artifact = artifactQuery.data;
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -320,17 +327,17 @@ function ArtifactCapture({
   }
 
   function confirmRemoval() {
-    const approved = window.confirm("Remove this artifact body from every span association in this Analysis Run? The analysis result will not change.");
-    if (approved) onRemove(descriptor.id);
+    const approved = window.confirm("Remove this deduplicated artifact body from all linked spans in this Analysis Run? The analysis result will not change.");
+    if (approved && descriptor.id !== null) onRemove(descriptor.id);
   }
 
   return (
-    <section className="space-y-2 border-b border-border/60 py-3 last:border-b-0" aria-label={`${descriptor.role} artifact`}>
+    <section className="space-y-2 border-b border-border/60 py-3 last:border-b-0" aria-label={`${descriptor.role.toLowerCase()} artifact`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="font-medium capitalize">{(artifactMatchesRequest ? artifact?.role : null) ?? descriptor.role}</span>
+          <span className="font-medium capitalize">{((artifactMatchesRequest ? artifact?.role : null) ?? descriptor.role).toLowerCase()}</span>
           <Badge variant="outline" className="text-[0.65rem]">{fidelityLabel(fidelity)}</Badge>
-          <span className="font-mono text-[0.65rem] text-muted-foreground">{mediaType} · {sizeBytes} bytes</span>
+          <span className="font-mono text-[0.65rem] text-muted-foreground">{mediaType ?? "Media type unknown"} · {sizeBytes ?? "Unknown size"} bytes</span>
         </div>
         {typeof content === "string" && (
           <Button type="button" variant="outline" size="sm" className="min-h-10" onClick={copySanitizedContent}>
@@ -339,20 +346,20 @@ function ArtifactCapture({
           </Button>
         )}
       </div>
-      {reason && <p className="m-0 text-sm text-muted-foreground">{reason}</p>}
+      {reason && (typeof content === "string" || artifactQuery.isPending || artifactQuery.isError || removed) && <p className="m-0 text-sm text-muted-foreground">{reason}</p>}
       {copyFailed && <p className="m-0 text-sm text-destructive" role="alert">Could not copy this sanitized artifact to the clipboard.</p>}
-      {artifactQuery.isPending && <Skeleton className="h-24 w-full" aria-label="Loading captured artifact" />}
-      {artifactQuery.isError && <Alert variant="destructive"><AlertTitle>Artifact unavailable</AlertTitle><AlertDescription>{permissionError(artifactQuery.error)}</AlertDescription></Alert>}
-      {!artifactQuery.isPending && !artifactQuery.isError && (removed || content == null) && (
+      {hasArtifactId && artifactQuery.isPending && <Skeleton className="h-24 w-full" aria-label="Loading captured artifact" />}
+      {hasArtifactId && artifactQuery.isError && <Alert variant="destructive"><AlertTitle>Artifact unavailable</AlertTitle><AlertDescription>{permissionError(artifactQuery.error)}</AlertDescription></Alert>}
+      {(!hasArtifactId || (!artifactQuery.isPending && !artifactQuery.isError)) && (removed || content == null) && (
         <p className="m-0 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-          {removed ? "This artifact was removed. Its captured content is no longer available." : artifact?.reason ?? descriptor.reason ?? "No artifact content was captured for this operation."}
+          {removed ? "This artifact was removed. Its captured content is no longer available." : reason ?? "No artifact content was captured for this operation."}
         </p>
       )}
       {typeof content === "string" && !artifactQuery.isError && (
         <pre className="max-h-80 overflow-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">{content}</pre>
       )}
       {artifact && artifactMatchesRequest && <p className="m-0 break-words font-mono text-[0.65rem] text-muted-foreground">Schema {artifact.schemaVersion ?? "unknown"} · Capture {artifact.captureVersion ?? "unknown"} · Sanitizer {artifact.sanitizerVersion ?? "unknown"}</p>}
-      {fidelity !== "removed" && typeof content === "string" && (
+      {hasArtifactId && fidelity !== "removed" && typeof content === "string" && (
         <Button type="button" variant="ghost" size="sm" className="min-h-10" disabled={removing} onClick={confirmRemoval}>
           <Trash2 className="size-3.5" aria-hidden="true" /> Remove artifact body
         </Button>
@@ -395,11 +402,11 @@ function InspectorArtifacts({
   removing: boolean;
 }) {
   const roleSet: ExecutionArtifactRole[] = tab === "input"
-    ? ["input", "request"]
+    ? ["INPUT", "REQUEST"]
     : tab === "response"
-      ? ["response"]
-      : ["result"];
-  const descriptors = detail.artifactDescriptors.filter((descriptor) => roleSet.includes(descriptor.role));
+      ? ["RESPONSE"]
+      : ["RESULT"];
+  const descriptors = detail.artifactRoles.filter((descriptor) => roleSet.includes(descriptor.role));
   if (!descriptors.length) {
     return <p className="m-0 rounded-md border border-border bg-muted/30 p-4 text-sm text-muted-foreground">No {tab === "input" ? "input or request" : tab} artifact was recorded for this operation.</p>;
   }
@@ -407,7 +414,7 @@ function InspectorArtifacts({
     <div className="divide-y divide-border/60">
       {descriptors.map((descriptor) => (
         <ArtifactCapture
-          key={descriptor.id}
+          key={`${descriptor.role}:${descriptor.id ?? descriptor.fidelity}`}
           analysisRunId={analysisRunId}
           spanId={detail.id}
           descriptor={descriptor}
@@ -521,12 +528,38 @@ export function AnalysisRunExecution({
   const summaryQuery = useExecutionSummary(analysisRunId, true, terminalRun);
   const summary = summaryQuery.data;
   const recording = summary?.recordingState === "RECORDING";
-  const spansQuery = useExecutionSpans(analysisRunId, Boolean(summary && summary.recordingState !== "NOT_RECORDED"), terminalRun, recording);
+  const spansQuery = useExecutionSpans(
+    analysisRunId,
+    Boolean(summary && summary.recordingState !== "NOT_RECORDED" && summary.completeness !== "NOT_RECORDED"),
+    terminalRun,
+    recording,
+  );
+  const selectedSpanQuery = useExecutionSpan(analysisRunId, selectedSpanId);
+  const selectedSpanDetail = selectedSpanQuery.data?.id === selectedSpanId ? selectedSpanQuery.data : null;
   const [filters, setFilters] = useState<ExecutionSpanFilters>({ query: "", status: "all", kind: "all" });
   const [expandedAll, setExpandedAll] = useState(true);
   const [openOverrides, setOpenOverrides] = useState<Record<string, boolean>>({});
   const pages = spansQuery.data?.pages;
-  const spans = useMemo(() => pages?.flatMap((page) => page.items) ?? [], [pages]);
+  const pageSpans = useMemo(() => pages?.flatMap((page) => page.items) ?? [], [pages]);
+  const queryClient = useQueryClient();
+  const ancestorContext = useMemo(() => getExecutionAncestorContext(
+    selectedSpanDetail,
+    pageSpans,
+    (spanId) => queryClient.getQueryData<ExecutionSpan>(executionSpanQueryKey(analysisRunId, spanId)),
+  ), [selectedSpanDetail, pageSpans, queryClient, analysisRunId]);
+  const ancestorQuery = useQueries({
+    queries: [executionSpanQueryOptions(analysisRunId, ancestorContext.missingAncestorSpanId ?? "")],
+  })[0];
+  const ancestorContextSpan = ancestorQuery.data?.id === ancestorContext.missingAncestorSpanId
+    ? ancestorQuery.data
+    : null;
+  const spans = useMemo(() => {
+    const byId = new Map(pageSpans.map((span) => [span.id, span]));
+    ancestorContext.spans.forEach((span) => byId.set(span.id, span));
+    if (ancestorContextSpan) byId.set(ancestorContextSpan.id, ancestorContextSpan);
+    if (selectedSpanDetail) byId.set(selectedSpanDetail.id, selectedSpanDetail);
+    return [...byId.values()];
+  }, [pageSpans, ancestorContext.spans, ancestorContextSpan, selectedSpanDetail]);
   const filteredIds = useMemo(() => filterExecutionSpans(spans, filters), [spans, filters]);
   const executionNow = Math.max(summaryQuery.dataUpdatedAt ?? 0, spansQuery.dataUpdatedAt ?? 0);
   const timelineStartedAt = summary?.startedAt ?? null;
@@ -583,15 +616,12 @@ export function AnalysisRunExecution({
   }
 
   if (summary.recordingState === "NOT_RECORDED" || summary.completeness === "NOT_RECORDED") {
-    const captureWasDisabled = !summary.captureEnabled;
     return (
       <section className="space-y-4" aria-labelledby="execution-heading">
         <header className="space-y-1"><h2 id="execution-heading" className="m-0 text-lg font-semibold">Execution</h2><p className="m-0 text-sm text-muted-foreground">Processing steps, timings, and service calls</p></header>
         <Alert>
-          <AlertTitle>{captureWasDisabled ? "Execution capture disabled" : "Historical execution unavailable"}</AlertTitle>
-          <AlertDescription>{captureWasDisabled
-            ? "Execution capture was disabled for this Analysis Run, so no execution timeline or payload artifacts were recorded."
-            : "This Analysis Run predates execution recording. Its execution history was not recorded, so no timeline can be reconstructed."}</AlertDescription>
+          <AlertTitle>Historical execution unavailable</AlertTitle>
+          <AlertDescription>This Analysis Run predates execution recording. Its execution history was not recorded, so no timeline can be reconstructed.</AlertDescription>
         </Alert>
       </section>
     );

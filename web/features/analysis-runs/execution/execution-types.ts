@@ -1,7 +1,7 @@
 export type ExecutionRecordingState = "RECORDING" | "STOPPED" | "NOT_RECORDED";
 export type ExecutionCompleteness = "COMPLETE" | "INCOMPLETE" | "RECORDING" | "NOT_RECORDED";
-export type ExecutionArtifactRole = "input" | "request" | "response" | "result";
-export type ExecutionArtifactFidelity = "COMPLETE" | "SANITIZED" | "PARTIAL" | "OMITTED" | "REMOVED" | "UNAVAILABLE" | string;
+export type ExecutionArtifactRole = "INPUT" | "REQUEST" | "RESPONSE" | "RESULT";
+export type ExecutionArtifactFidelity = "COMPLETE" | "SANITIZED" | "PARTIAL" | "OMITTED" | "REMOVED" | "UNAVAILABLE";
 
 export type ExecutionSummary = {
   analysisRunId: string;
@@ -17,7 +17,7 @@ export type ExecutionSpan = {
   id: string;
   parentSpanId: string | null;
   operationId: string;
-  stageId: string | null;
+  stageId: string;
   kind: string;
   name: string;
   startedAt: string;
@@ -30,7 +30,7 @@ export type ExecutionSpan = {
   httpStatus: number | null;
   safeErrorCode: string | null;
   attributes: Record<string, unknown>;
-  artifactRoles: ExecutionArtifactRole[];
+  artifactRoles: ExecutionArtifactDescriptor[];
 };
 
 export type ExecutionSpanPage = {
@@ -39,16 +39,15 @@ export type ExecutionSpanPage = {
 };
 
 export type ExecutionArtifactDescriptor = {
-  id: string;
+  id: string | null;
   role: ExecutionArtifactRole;
   fidelity: ExecutionArtifactFidelity;
   reason: string | null;
-  mediaType: string;
-  sizeBytes: number;
+  mediaType: string | null;
+  sizeBytes: number | null;
 };
 
 export type ExecutionSpanDetail = ExecutionSpan & {
-  artifactDescriptors: ExecutionArtifactDescriptor[];
   domainLinks?: Array<{ label: string; href: string }>;
 };
 
@@ -58,12 +57,12 @@ export type ExecutionArtifact = {
   role: ExecutionArtifactRole;
   fidelity: ExecutionArtifactFidelity;
   reason: string | null;
-  mediaType: string;
-  content?: string | null;
+  mediaType: string | null;
+  content: string | null;
   schemaVersion: string | null;
   captureVersion: string | null;
   sanitizerVersion: string | null;
-  sizeBytes: number;
+  sizeBytes: number | null;
 };
 
 export type ExecutionSpanFilters = {

@@ -22,6 +22,7 @@ import type {
 } from "../types.ts";
 import type {
   ExecutionArtifact,
+  ExecutionArtifactRole,
   ExecutionSpanDetail,
   ExecutionSpanPage,
   ExecutionSummary,
@@ -327,8 +328,13 @@ export function executionSpanQueryKey(analysisRunId: string, spanId: string) {
   return [...EXECUTION_QUERY_KEY, analysisRunId, "span", spanId] as const;
 }
 
-export function executionArtifactQueryKey(analysisRunId: string, artifactId: string) {
-  return [...EXECUTION_QUERY_KEY, analysisRunId, "artifact", artifactId] as const;
+export function executionArtifactQueryKey(
+  analysisRunId: string,
+  artifactId: string,
+  spanId: string | null = null,
+  role: ExecutionArtifactRole | null = null,
+) {
+  return [...EXECUTION_QUERY_KEY, analysisRunId, "artifact", artifactId, spanId, role] as const;
 }
 
 export function executionSummaryQueryOptions(analysisRunId: string, terminalRun = false) {
@@ -391,11 +397,11 @@ export function useExecutionSpans(analysisRunId: string, enabled: boolean, termi
   });
 }
 
-export function useExecutionSpan(analysisRunId: string, spanId: string | null) {
-  return useQuery({
-    queryKey: executionSpanQueryKey(analysisRunId, spanId ?? ""),
+export function executionSpanQueryOptions(analysisRunId: string, spanId: string) {
+  return queryOptions({
+    queryKey: executionSpanQueryKey(analysisRunId, spanId),
     queryFn: async ({ signal }): Promise<ExecutionSpanDetail> => {
-      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/spans/${encodeURIComponent(spanId ?? "")}`, {
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/spans/${encodeURIComponent(spanId)}`, {
         cache: "no-store",
         signal,
       });
@@ -407,20 +413,44 @@ export function useExecutionSpan(analysisRunId: string, spanId: string | null) {
   });
 }
 
-export function useExecutionArtifact(analysisRunId: string, artifactId: string | null) {
+export function useExecutionSpan(analysisRunId: string, spanId: string | null) {
   return useQuery({
-    queryKey: executionArtifactQueryKey(analysisRunId, artifactId ?? ""),
+    ...executionSpanQueryOptions(analysisRunId, spanId ?? ""),
+  });
+}
+
+export function executionArtifactQueryOptions(
+  analysisRunId: string,
+  artifactId: string | null,
+  spanId: string | null,
+  role: ExecutionArtifactRole | null,
+) {
+  return queryOptions({
+    queryKey: executionArtifactQueryKey(analysisRunId, artifactId ?? "", spanId, role),
     queryFn: async ({ signal }): Promise<ExecutionArtifact> => {
-      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/artifacts/${encodeURIComponent(artifactId ?? "")}`, {
+      const params = new URLSearchParams();
+      if (spanId) params.set("spanId", spanId);
+      if (role) params.set("role", role);
+      const query = params.size ? `?${params.toString()}` : "";
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/artifacts/${encodeURIComponent(artifactId ?? "")}${query}`, {
         cache: "no-store",
         signal,
       });
       if (!response.ok) throw new Error(await readApiError(response));
       return (await response.json()) as ExecutionArtifact;
     },
-    enabled: Boolean(analysisRunId && artifactId),
+    enabled: Boolean(analysisRunId && artifactId && spanId && role),
     retry: false,
   });
+}
+
+export function useExecutionArtifact(
+  analysisRunId: string,
+  artifactId: string | null,
+  spanId: string | null,
+  role: ExecutionArtifactRole | null,
+) {
+  return useQuery(executionArtifactQueryOptions(analysisRunId, artifactId, spanId, role));
 }
 
 export function useStopExecutionCapture(analysisRunId: string) {
@@ -453,7 +483,9 @@ export function useRemoveExecutionArtifact(analysisRunId: string) {
       if (!response.ok) throw new Error(await readApiError(response));
     },
     onSuccess: async (_data, artifactId) => {
-      queryClient.removeQueries({ queryKey: executionArtifactQueryKey(analysisRunId, artifactId), exact: true });
+      queryClient.removeQueries({
+        queryKey: [...EXECUTION_QUERY_KEY, analysisRunId, "artifact", artifactId],
+      });
       await queryClient.invalidateQueries({ queryKey: [...EXECUTION_QUERY_KEY, analysisRunId, "span"] });
       await queryClient.invalidateQueries({ queryKey: executionSummaryQueryKey(analysisRunId) });
     },

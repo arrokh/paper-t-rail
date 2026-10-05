@@ -1,5 +1,7 @@
 import type { ExecutionSpan, ExecutionSpanFilters } from "./execution-types";
 
+export const MAX_SELECTED_SPAN_ANCESTORS = 12;
+
 export type ExecutionTimelineRow = {
   span: ExecutionSpan;
   leftPercent: number;
@@ -81,6 +83,33 @@ export function formatExecutionDuration(durationMillis: number | null): string {
   const seconds = durationMillis / 1_000;
   const formatted = Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1).replace(/\.0$/, "");
   return `${formatted} sec`;
+}
+
+export function getExecutionAncestorContext(
+  selectedSpan: ExecutionSpan | null,
+  spans: ExecutionSpan[],
+  getCachedSpan: (spanId: string) => ExecutionSpan | undefined,
+): { spans: ExecutionSpan[]; missingAncestorSpanId: string | null } {
+  if (!selectedSpan) return { spans: [], missingAncestorSpanId: null };
+
+  const spansById = new Map(spans.map((span) => [span.id, span]));
+  const visited = new Set([selectedSpan.id]);
+  const ancestors: ExecutionSpan[] = [];
+  let current = selectedSpan;
+
+  for (let depth = 0; depth < MAX_SELECTED_SPAN_ANCESTORS; depth += 1) {
+    const parentId = current.parentSpanId;
+    if (!parentId || visited.has(parentId)) return { spans: ancestors, missingAncestorSpanId: null };
+    visited.add(parentId);
+
+    const parent = spansById.get(parentId) ?? getCachedSpan(parentId);
+    if (!parent || parent.id !== parentId) return { spans: ancestors, missingAncestorSpanId: parentId };
+    spansById.set(parent.id, parent);
+    ancestors.push(parent);
+    current = parent;
+  }
+
+  return { spans: ancestors, missingAncestorSpanId: null };
 }
 
 export function filterExecutionSpans(spans: ExecutionSpan[], filters: ExecutionSpanFilters): Set<string> {
