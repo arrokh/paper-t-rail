@@ -8,6 +8,7 @@ import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationTh
 import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
+import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
@@ -20,6 +21,7 @@ import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
 import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -45,6 +47,9 @@ class RunConfigurationFactoryTest {
         assertEquals("v1", snapshot.claimExtractor.version)
         assertEquals("LOCAL", snapshot.claimExtractor.trustBoundary)
         assertEquals(listOf("citation_context"), snapshot.claimExtractor.dataCategories)
+        assertEquals("heuristic-all-context-targets-v1", snapshot.claimExtractor.targetSelectionPolicyVersion)
+        assertEquals("heuristic-claim-analysis-v1", snapshot.claimExtractor.outputMappingVersion)
+        assertEquals(null, snapshot.claimExtractor.promptVersion)
         assertEquals("local", snapshot.embedding.provider)
         assertEquals("feature-hash-384-v1", snapshot.embedding.model)
         assertEquals(listOf("atomic_claims", "cited_paper_chunks", "embedding_input"), snapshot.embedding.dataCategories)
@@ -80,6 +85,63 @@ class RunConfigurationFactoryTest {
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
         assertEquals(0.25, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"]["thresholds"].isNull)
+    }
+
+    @Test
+    fun `pins explicit OpenAI-compatible claim-analysis provenance without storing endpoint or credentials`() {
+        val settings = OpenAiCompatibleClaimAnalysisSettings(
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:9090/v1",
+                apiKey = "server-side-secret",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
+            modelId = "fixture-model",
+        )
+        val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val configuredFactory = factoryFor(providerCatalog = catalog)
+
+        val selected = configuredFactory.from(
+            RunConfigurationRequest(claimExtractorProvider = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID),
+        ).claimExtractor
+        val default = configuredFactory.from(RunConfigurationRequest()).claimExtractor
+        val serialized = jacksonObjectMapper().writeValueAsString(selected)
+
+        assertEquals(OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID, selected.provider)
+        assertEquals("fixture-model", selected.model)
+        assertEquals("LOCAL", selected.trustBoundary)
+        assertEquals("model-selected-schema-constrained-same-context-targets-v2", selected.targetSelectionPolicyVersion)
+        assertEquals("document-claim-analysis-single-context-v4", selected.promptVersion)
+        assertEquals("chat-completions-claim-analysis-claims-array-v3", selected.outputMappingVersion)
+        assertTrue(selected.configurationFingerprint!!.matches(Regex("[0-9a-f]{64}")))
+        assertEquals("heuristic", default.provider)
+        assertFalse(serialized.contains("server-side-secret"))
+        assertFalse(serialized.contains("127.0.0.1"))
+    }
+
+    @Test
+    fun `uses the configured default claim analyzer when omitted and keeps heuristic explicitly selectable`() {
+        val settings = OpenAiCompatibleClaimAnalysisSettings(
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:1234",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
+            modelId = "google/gemma-4-e2b",
+            contextWindowTokens = 131_072,
+        )
+        val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val configuredFactory = factoryFor(
+            providerCatalog = catalog,
+            defaultClaimExtractorProvider = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID,
+        )
+
+        val default = configuredFactory.from(configuredFactory.parseRequest(null)).claimExtractor
+        val heuristic = configuredFactory.from(RunConfigurationRequest(claimExtractorProvider = "heuristic")).claimExtractor
+
+        assertEquals(OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID, default.provider)
+        assertEquals("google/gemma-4-e2b", default.model)
+        assertEquals("heuristic", heuristic.provider)
     }
 
     @Test
@@ -146,36 +208,42 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
-    fun `rejects Jev as an omitted-provider deployment default`() {
+    fun `Jev is the configured omitted-provider default only when this run has explicit consent`() {
         val catalog = ProviderCatalog.safeDefaults(
             jevSystemOneSettings = JevSystemOneSettings(apiKey = "server-side-jev-key"),
         )
+        val jevFactory = factoryFor(
+            providerCatalog = catalog,
+            defaultSystemOneProvider = JevSystemOneSettings.PROVIDER_ID,
+        )
+        val omittedProviderRequest = jevFactory.parseRequest(jacksonObjectMapper().readTree("{}"))
 
-        assertThrows(IllegalArgumentException::class.java) {
-            factoryFor(
-                providerCatalog = catalog,
-                defaultSystemOneProvider = JevSystemOneSettings.PROVIDER_ID,
-            )
-        }
+        assertThrows(IllegalArgumentException::class.java) { jevFactory.from(omittedProviderRequest) }
+        val approvedRequest = omittedProviderRequest.copy(
+            externalProviderConsents = listOf(externalProviderConsent(
+                catalog,
+                JevSystemOneSettings.PROVIDER_ID,
+                listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id),
+            )),
+        )
+
+        assertEquals("jev", jevFactory.from(approvedRequest).systemOne.provider)
     }
 
     @Test
-    fun `uses mock when the configured Laya default is unavailable and never silently selects Jev`() {
-        val jevCatalog = ProviderCatalog.safeDefaults(
+    fun `uses mock when the configured Jev default is unavailable`() {
+        val unavailableJevCatalog = ProviderCatalog.safeDefaults(
             layaSystemOneSettings = LayaSystemOneSettings.disabled(),
-            jevSystemOneSettings = JevSystemOneSettings(apiKey = "server-side-jev-key"),
+            jevSystemOneSettings = JevSystemOneSettings(apiKey = ""),
         )
-        val layaDefaultFactory = factoryFor(
-            providerCatalog = jevCatalog,
-            defaultSystemOneProvider = LayaSystemOneSettings.PROVIDER_ID,
+        val jevDefaultFactory = factoryFor(
+            providerCatalog = unavailableJevCatalog,
+            defaultSystemOneProvider = JevSystemOneSettings.PROVIDER_ID,
         )
 
-        assertEquals("mock", layaDefaultFactory.from(layaDefaultFactory.parseRequest(null)).systemOne.provider)
+        assertEquals("mock", jevDefaultFactory.from(jevDefaultFactory.parseRequest(null)).systemOne.provider)
         assertThrows(ProviderNotSelectableException::class.java) {
-            layaDefaultFactory.from(RunConfigurationRequest(systemOneProvider = LayaSystemOneSettings.PROVIDER_ID))
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            layaDefaultFactory.from(RunConfigurationRequest(systemOneProvider = JevSystemOneSettings.PROVIDER_ID))
+            jevDefaultFactory.from(RunConfigurationRequest(systemOneProvider = JevSystemOneSettings.PROVIDER_ID))
         }
     }
 
@@ -532,6 +600,25 @@ class RunConfigurationFactoryTest {
             "response"
         })
         assertTrue(outboundCallStarted)
+
+        outboundCallStarted = false
+        assertThrows(ProviderCallRejectedException::class.java) {
+            gate.callAvailabilityCheck(
+                CLAIM_EXTRACTOR_ROLE,
+                "configured-llm",
+                snapshot.copy(externalProviderConsents = emptyList()),
+            ) { outboundCallStarted = true }
+        }
+        assertFalse(outboundCallStarted)
+        assertEquals("available", gate.callAvailabilityCheck(
+            CLAIM_EXTRACTOR_ROLE,
+            "configured-llm",
+            snapshot,
+        ) {
+            outboundCallStarted = true
+            "available"
+        })
+        assertTrue(outboundCallStarted)
     }
 
     @Test
@@ -575,6 +662,7 @@ class RunConfigurationFactoryTest {
         maxClaimCitationPairs: Int = ValidationLimitsSnapshot.DEFAULT_MAX_CLAIM_CITATION_PAIRS,
         providerCatalog: ProviderCatalog = configuredExternalProviderCatalog(),
         defaultSystemOneProvider: String = "mock",
+        defaultClaimExtractorProvider: String = "heuristic",
     ): RunConfigurationFactory = RunConfigurationFactory(
         objectMapper = jacksonObjectMapper(),
         providerCatalog = providerCatalog,
@@ -598,6 +686,7 @@ class RunConfigurationFactoryTest {
         evidenceAggregationThresholds = evidenceAggregationThresholds,
         systemOneAggregationEnabled = systemOneAggregationEnabled,
         defaultSystemOneProvider = defaultSystemOneProvider,
+        defaultClaimExtractorProvider = defaultClaimExtractorProvider,
     )
 
     @Test

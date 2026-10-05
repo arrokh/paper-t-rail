@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnalysisRunDetailPage } from "@/features/analysis-runs/components/analysis-run-detail-page";
 import { AnalysisRunPaperReview } from "@/features/analysis-runs/components/analysis-run-paper-review";
+import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
 import { WorkspaceShell } from "@/features/workspace/components/workspace-shell";
 import type { AnalysisRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 
@@ -276,6 +277,40 @@ afterEach(() => {
 });
 
 describe("Analysis Run Paper Review", () => {
+  it("keeps an unlinked Atomic Claim visible without presenting it as an unresolved verification", () => {
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const unlinkedDocument: ParsedDocument = {
+      ...parsedDocument,
+      citationContexts: parsedDocument.citationContexts.map((context) => ({
+        ...context,
+        atomicClaims: context.atomicClaims.map((claim) => ({ ...claim, citationTargets: [] })),
+      })),
+    };
+
+    render(
+      <AnalysisRunStageResults
+        run={run}
+        selectedStage="source"
+        backHref="/"
+        parsedDocument={unlinkedDocument}
+        report={null}
+        parsedLoading={false}
+        reportLoading={false}
+        parsedError={null}
+        reportError={null}
+        onSelectStage={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("The intervention improved the measured outcome.")).toBeTruthy();
+    expect(screen.getByText("No Citation Targets")).toBeTruthy();
+    expect(screen.queryByText("UNRESOLVED")).toBeNull();
+  });
+
   it("loads the uploaded Source Document from its short-lived S3 presigned URL", async () => {
     installSourcePdfResponse();
     renderReview();

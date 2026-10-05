@@ -122,7 +122,7 @@ class JevSystemOneProviderContractTest {
     }
 
     @Test
-    fun `rejects malformed unsupported or unsuccessful Jev responses without retrying`() {
+    fun `classifies transient Jev transport failures for worker retry and rejects permanent responses`() {
         val valid = validResponse()
         data class InvalidResponse(
             val status: Int,
@@ -130,10 +130,12 @@ class JevSystemOneProviderContractTest {
             val failureReasonCode: String,
             val diagnosticField: String? = null,
             val diagnosticReasonCode: String? = null,
+            val retryable: Boolean = false,
         )
         val invalidResponses = listOf(
             InvalidResponse(401, valid, "SYSTEM_ONE_HTTP_401"),
-            InvalidResponse(429, valid, "SYSTEM_ONE_HTTP_429"),
+            InvalidResponse(429, valid, "SYSTEM_ONE_HTTP_429", retryable = true),
+            InvalidResponse(503, valid, "SYSTEM_ONE_HTTP_503", retryable = true),
             InvalidResponse(200, "not-json", "SYSTEM_ONE_RESPONSE_MALFORMED_JSON", "response"),
             InvalidResponse(200, valid.replace("\"model\":\"jev-1.13.0\",", ""), "SYSTEM_ONE_RESPONSE_MODEL_INVALID", "model"),
             InvalidResponse(200, valid.replace("\"relevance\":", "\"unknown_relevance\":"), "SYSTEM_ONE_RESPONSE_ANSWER_SET_INVALID", "answers"),
@@ -160,6 +162,7 @@ class JevSystemOneProviderContractTest {
                 assertEquals(invalid.failureReasonCode, failure.failureReasonCode)
                 assertEquals(invalid.diagnosticField, failure.diagnosticField)
                 assertEquals(invalid.diagnosticReasonCode, failure.diagnosticReasonCode)
+                assertEquals(invalid.retryable, failure.retryable)
                 assertEquals(1, server.requestCount)
                 assertFalse(failure.message.orEmpty().contains("private claim"))
                 assertFalse(failure.message.orEmpty().contains("jev-server-secret"))

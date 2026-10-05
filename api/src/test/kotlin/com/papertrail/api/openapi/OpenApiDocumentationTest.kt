@@ -304,10 +304,15 @@ class OpenApiDocumentationTest {
         val configSchemaName = reanalysisSchema.path("${'$'}ref").asText().substringAfterLast('/')
         val configProperties = document.path("components").path("schemas").path(configSchemaName).path("properties")
         assertTrue(configProperties.has("claimExtractorProvider"))
+        assertEquals("openai-compatible-chat", configProperties.path("claimExtractorProvider").path("default").asText())
+        assertTrue(configProperties.path("claimExtractorProvider").path("description").asText().contains("deployment-configured default"))
         assertTrue(configProperties.has("embeddingProvider"))
         assertEquals("ollama", configProperties.path("embeddingProvider").path("default").asText())
         assertTrue(configProperties.path("embeddingProvider").path("description").asText().contains("local Ollama"))
         assertTrue(configProperties.has("systemOneProvider"))
+        val systemOneDescription = configProperties.path("systemOneProvider").path("description").asText()
+        assertTrue(systemOneDescription.contains("Jev by default"))
+        assertTrue(systemOneDescription.contains("per-Analysis-Run consent"))
         assertTrue(configProperties.has("scholarlyMetadataProvider"))
         assertTrue(configProperties.has("openAccessProvider"))
         assertTrue(configProperties.has("externalProviderConsents"))
@@ -493,13 +498,20 @@ class OpenApiDocumentationTest {
         val scholarlyMetadataOptions = providers.path("scholarlyMetadata")
         val openAccessOptions = providers.path("openAccess")
         assertEquals(setOf("claimExtractor", "embedding", "systemOne", "scholarlyMetadata", "openAccess"), providers.fieldNames().asSequence().toSet())
-        assertEquals(1, claimExtractorOptions.size())
+        assertEquals(2, claimExtractorOptions.size())
+        assertEquals(
+            setOf("heuristic", "openai-compatible-chat"),
+            claimExtractorOptions.map { it.path("providerId").asText() }.toSet(),
+        )
+        val localClaimAnalyzer = claimExtractorOptions.first { it.path("providerId").asText() == "openai-compatible-chat" }
+        assertEquals("google/gemma-4-e2b", localClaimAnalyzer.path("model").asText())
+        assertEquals("LOCAL", localClaimAnalyzer.path("trustBoundary").asText())
         assertEquals(1, embeddingOptions.size())
         assertEquals(1, systemOneOptions.size())
         assertEquals(2, scholarlyMetadataOptions.size())
         assertEquals(2, openAccessOptions.size())
         val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions, scholarlyMetadataOptions, openAccessOptions).flatMap { it.toList() }
-        assertEquals(7, providerOptions.size)
+        assertEquals(8, providerOptions.size)
         assertEquals(setOf("recorded-fixtures", "crossref"), scholarlyMetadataOptions.map { it.path("providerId").asText() }.toSet())
         assertEquals(setOf("recorded-fixtures", "unpaywall"), openAccessOptions.map { it.path("providerId").asText() }.toSet())
         val crossref = scholarlyMetadataOptions.first { it.path("providerId").asText() == "crossref" }

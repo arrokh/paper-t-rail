@@ -51,7 +51,7 @@ The API currently uses static access/secret credentials; other provider-specific
 
 Any pre-migration object-storage volume is left untouched and is not imported automatically because the on-disk formats differ. `make clean` removes the active Compose volumes but leaves that legacy volume in place for deliberate migration or cleanup.
 
-The default local setup enables Ollama and Laya. First startup downloads the Ollama embedding model and about 1.7 GB of pinned Laya model artifacts. To skip Laya, set `LAYA_ENABLED=false` in `.env`. See [Laya evaluation](docs/laya-evaluation.md) for its configuration and limits.
+The default local setup runs Ollama and the optional Laya sidecar. First startup downloads the Ollama embedding model and about 1.7 GB of pinned Laya model artifacts. New runs prefer Jev only when its server-side key is configured; every Jev run still requires explicit per-run consent, and an unavailable Jev default resolves to mock. Laya remains an explicit local alternative. To skip Laya, set `LAYA_ENABLED=false` in `.env`. See [Laya evaluation](docs/laya-evaluation.md) for its configuration and limits.
 
 ### Choose services
 

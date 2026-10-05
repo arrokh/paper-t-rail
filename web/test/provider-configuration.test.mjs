@@ -7,6 +7,7 @@ import {
   createRunConfiguration,
   isRunConfigurationReady,
   missingConsents,
+  providerSelectionsAreAvailable,
   retainRequiredApprovals,
   selectableProviderOptions,
 } from "../features/providers/provider-configuration.ts";
@@ -43,6 +44,16 @@ const directory = withDisclosureFingerprints({
         trustBoundary: "EXTERNAL",
         dataCategories: ["citation_context"],
         retentionDisclosure: "Retention and deletion details are unknown; consult the provider's terms.",
+      },
+      {
+        role: "claimExtractor",
+        providerId: "openai-compatible-chat",
+        displayName: "OpenAI-compatible Chat Completions",
+        version: "v1",
+        model: "claim-model",
+        trustBoundary: "EXTERNAL",
+        dataCategories: ["citation_context", "bibliographic_metadata"],
+        retentionDisclosure: "Retention terms reviewed for this deployment.",
       },
       {
         role: "claimExtractor",
@@ -165,11 +176,17 @@ const localSelections = {
   openAccessProvider: "recorded-fixtures",
 };
 
+const preferredSelections = {
+  ...localSelections,
+  claimExtractorProvider: "openai-compatible-chat",
+  systemOneProvider: "jev",
+};
+
 function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
 
-test("new-run preferences use trusted Ollama and Crossref/Unpaywall when available", () => {
+test("new-run preferences use Jev when configured and trusted Ollama/Crossref/Unpaywall when available", () => {
   const directoryWithOllama = {
     ...directory,
     providers: {
@@ -212,9 +229,9 @@ test("new-run preferences use trusted Ollama and Crossref/Unpaywall when availab
   };
 
   assert.deepEqual(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS), {
-    ...localSelections,
+    ...preferredSelections,
     embeddingProvider: "ollama",
-    systemOneProvider: "laya",
+    systemOneProvider: "jev",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
@@ -223,7 +240,8 @@ test("new-run preferences use trusted Ollama and Crossref/Unpaywall when availab
     embeddingProvider: "ollama",
   }).embeddingProvider, "ollama");
   assert.deepEqual(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS), {
-    ...localSelections,
+    ...preferredSelections,
+    systemOneProvider: "jev",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
@@ -258,18 +276,20 @@ test("external Ollama is not implicit but remains available after explicit selec
   );
 });
 
-test("new-run preferences explicitly fall back to safe providers when preferred providers are unavailable", () => {
+test("an unavailable claim analyzer is not silently replaced while other preferences use safe fallbacks", () => {
   const safeDirectory = {
     ...directory,
     providers: {
       ...directory.providers,
+      claimExtractor: directory.providers.claimExtractor.filter(({ providerId }) => providerId !== "openai-compatible-chat"),
       scholarlyMetadata: directory.providers.scholarlyMetadata.filter(({ providerId }) => providerId !== "crossref"),
       openAccess: directory.providers.openAccess.filter(({ providerId }) => providerId !== "unpaywall"),
     },
   };
   const selections = availableProviderSelections(safeDirectory, DEFAULT_PROVIDER_SELECTIONS);
 
-  assert.deepEqual(selections, localSelections);
+  assert.deepEqual(selections, preferredSelections);
+  assert.equal(providerSelectionsAreAvailable(safeDirectory, selections), false);
 });
 
 test("unavailable selections reconcile to the intended fallback instead of directory ordering", () => {
@@ -292,11 +312,11 @@ test("unavailable selections reconcile to the intended fallback instead of direc
 
   assert.deepEqual(
     availableProviderSelections(reorderedDirectory, DEFAULT_PROVIDER_SELECTIONS),
-    localSelections,
+    preferredSelections,
   );
 });
 
-test("Jev remains an explicit alternative and external calls require matching disclosure approval", () => {
+test("Jev is the default preference but external calls still require matching disclosure approval", () => {
   const externalLayaDirectory = {
     ...directory,
     providers: {
@@ -323,13 +343,17 @@ test("Jev remains an explicit alternative and external calls require matching di
     "mock",
   );
   assert.deepEqual(selectableProviderOptions(directory, "systemOne").map(({ providerId }) => providerId).sort(), ["jev", "mock"]);
-  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "mock");
+  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "jev");
   assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS, { systemOne: "jev" }).systemOneProvider, "jev");
   assert.equal(availableProviderSelections(
     directory,
     { ...DEFAULT_PROVIDER_SELECTIONS, systemOneProvider: "jev" },
     { systemOne: "jev" },
   ).systemOneProvider, "jev");
+
+  const defaultSelections = availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS);
+  assert.equal(defaultSelections.systemOneProvider, "jev");
+  assert.equal(isRunConfigurationReady(directory, defaultSelections, {}, {}), false);
 
   const jevSelections = selectionsWith({ systemOneProvider: "jev" });
   const jevRequirement = consentRequirements(directory, jevSelections)[0];
@@ -360,15 +384,14 @@ test("local defaults produce a valid configuration without external consent", ()
   });
 });
 
-test("default reconciliation and available choices exclude unclassified or incomplete providers", () => {
+test("available choices exclude unclassified providers without silently changing the selected claim analyzer", () => {
   assert.deepEqual(
     selectableProviderOptions(directory, "claimExtractor").map(({ providerId }) => providerId),
-    ["heuristic", "hosted-ai"],
+    ["heuristic", "hosted-ai", "openai-compatible-chat"],
   );
-  assert.deepEqual(
-    availableProviderSelections(directory, selectionsWith({ claimExtractorProvider: "unclassified-ai" })),
-    localSelections,
-  );
+  const selections = availableProviderSelections(directory, selectionsWith({ claimExtractorProvider: "unclassified-ai" }));
+  assert.equal(selections.claimExtractorProvider, "unclassified-ai");
+  assert.equal(providerSelectionsAreAvailable(directory, selections), false);
 });
 
 test("one external provider selected for multiple roles receives the deduplicated category union", () => {
@@ -402,6 +425,35 @@ test("one external provider selected for multiple roles receives the deduplicate
     }],
   });
   assert.equal(isRunConfigurationReady(directory, selections, fullApproval, { "hosted-ai": "b".repeat(64) }), false);
+});
+
+test("OpenAI-compatible claim analysis requires both Citation Context and bibliography metadata consent", () => {
+  const selections = selectionsWith({ claimExtractorProvider: "openai-compatible-chat" });
+  const requirements = consentRequirements(directory, selections);
+  const categories = ["bibliographic_metadata", "citation_context"];
+
+  assert.deepEqual(requirements, [{
+    providerId: "openai-compatible-chat",
+    displayName: "OpenAI-compatible Chat Completions",
+    dataCategories: categories,
+    retentionDisclosure: "Retention terms reviewed for this deployment.",
+    retentionDisclosureFingerprint: "a".repeat(64),
+  }]);
+  assert.throws(() => createRunConfiguration(directory, selections, {}), /Approve every disclosed data category/);
+  assert.throws(() => createRunConfiguration(directory, selections, { "openai-compatible-chat": categories }), /Approve every disclosed data category/);
+  assert.deepEqual(createRunConfiguration(
+    directory,
+    selections,
+    { "openai-compatible-chat": categories },
+    { "openai-compatible-chat": "a".repeat(64) },
+  ), {
+    ...selections,
+    externalProviderConsents: [{
+      providerId: "openai-compatible-chat",
+      dataCategories: categories,
+      retentionDisclosureFingerprint: "a".repeat(64),
+    }],
+  });
 });
 
 test("Open-access discovery and acquisition require consent for the actual metadata, contact email, and content location", () => {

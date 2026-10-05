@@ -5,6 +5,7 @@ class JevSystemOneProviderException(
     failureReasonCode: String = PROVIDER_ERROR,
     diagnosticField: String? = null,
     diagnosticReasonCode: String? = null,
+    val retryable: Boolean = false,
 ) : SystemOneProviderException(message, failureReasonCode) {
     val diagnosticField: String? = diagnosticField?.takeIf(SAFE_DIAGNOSTIC_FIELDS::contains)
     val diagnosticReasonCode: String? = diagnosticReasonCode?.takeIf(SAFE_DIAGNOSTIC_REASON_CODES::contains)

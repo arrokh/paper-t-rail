@@ -16,6 +16,7 @@ import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequeste
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.infrastructure.messaging.NonRetryablePipelineException
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedPayload
 import jakarta.annotation.PostConstruct
@@ -245,15 +246,18 @@ class RedisStreamWorker(
             logger.info("Pipeline event processed")
         } catch (exception: Exception) {
             val attempts = deliveryCount(record.id.value)
-            if (attempts >= maxAttempts) {
+            val nonRetryable = exception as? NonRetryablePipelineException
+            if (nonRetryable != null || attempts >= maxAttempts) {
                 logger.atWarn()
                     .addKeyValue("attempt", attempts)
                     .addKeyValue("errorType", exception.javaClass.simpleName)
-                    .log("Pipeline event failed on its final attempt")
-                val reason = "The worker could not complete $workDescription after $maxAttempts attempts. The event was moved to the dead-letter queue."
+                    .log(if (nonRetryable == null) "Pipeline event failed on its final attempt" else "Pipeline event failed without retry")
+                val reason = nonRetryable?.message?.takeIf(String::isNotBlank)
+                    ?: "The worker could not complete $workDescription after $maxAttempts attempts. The event was moved to the dead-letter queue."
+                val failureCode = if (nonRetryable == null) "HANDLER_RETRIES_EXHAUSTED" else "HANDLER_NON_RETRYABLE"
                 try {
                     markFailed(reason)
-                    deadLetter(record, "HANDLER_RETRIES_EXHAUSTED", reason, attempts)
+                    deadLetter(record, failureCode, reason, attempts)
                 } catch (failureException: Exception) {
                     logger.atError()
                         .addKeyValue("streamMessageId", record.id.value)

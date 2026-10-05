@@ -10,4 +10,8 @@ data class ProviderSelection(
     val dataCategories: List<String> = emptyList(),
     val configurationFingerprint: String? = null,
     val embeddingDimension: Int? = null,
+    val retentionDisclosure: String? = null,
+    val targetSelectionPolicyVersion: String? = null,
+    val promptVersion: String? = null,
+    val outputMappingVersion: String? = null,
 )

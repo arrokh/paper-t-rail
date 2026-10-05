@@ -8,6 +8,8 @@ import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import org.springframework.beans.factory.annotation.Value
@@ -53,6 +55,27 @@ class RunConfigurationFactoryConfiguration {
     )
 
     @Bean
+    fun openAiCompatibleEndpointSettings(
+        @Value("\${paper-trail.providers.openai-compatible-chat.enabled}") enabled: Boolean,
+        @Value("\${paper-trail.providers.openai-compatible-chat.base-url}") baseUrl: String,
+        @Value("\${paper-trail.providers.openai-compatible-chat.api-key}") apiKey: String,
+        @Value("\${paper-trail.providers.openai-compatible-chat.trusted-hosts}") trustedHosts: String,
+        @Value("\${paper-trail.providers.openai-compatible-chat.max-request-bytes}") maxRequestBytes: Int,
+        @Value("\${paper-trail.providers.openai-compatible-chat.max-response-bytes}") maxResponseBytes: Int,
+        @Value("\${paper-trail.providers.openai-compatible-chat.request-timeout-millis}") requestTimeoutMillis: Long,
+        @Value("\${paper-trail.providers.openai-compatible-chat.external-retention-disclosure}") retentionDisclosure: String,
+    ): OpenAiCompatibleEndpointSettings = OpenAiCompatibleEndpointSettings(
+        enabled = enabled,
+        baseUrl = baseUrl,
+        apiKey = apiKey.trim().takeIf(String::isNotEmpty),
+        trustedHosts = trustedHosts.split(',').map(String::trim).filter(String::isNotEmpty).toSet(),
+        maxRequestBytes = maxRequestBytes,
+        maxResponseBytes = maxResponseBytes,
+        requestTimeoutMillis = requestTimeoutMillis,
+        retentionDisclosure = retentionDisclosure.takeIf(String::isNotBlank),
+    )
+
+    @Bean
     fun jevSystemOneSettings(
         @Value("\${paper-trail.providers.jev.api-key}") apiKey: String,
         @Value("\${paper-trail.providers.jev.model}") modelId: String,
@@ -68,8 +91,22 @@ class RunConfigurationFactoryConfiguration {
     )
 
     @Bean
+    fun openAiCompatibleClaimAnalysisSettings(
+        endpointSettings: OpenAiCompatibleEndpointSettings,
+        @Value("\${paper-trail.providers.claim-extractor.openai-compatible-chat.model}") model: String,
+        @Value("\${paper-trail.providers.claim-extractor.openai-compatible-chat.context-window-tokens}") contextWindowTokens: Int,
+        @Value("\${paper-trail.providers.claim-extractor.openai-compatible-chat.max-completion-tokens}") maxCompletionTokens: Int,
+    ): OpenAiCompatibleClaimAnalysisSettings = OpenAiCompatibleClaimAnalysisSettings(
+        endpoint = endpointSettings,
+        modelId = model,
+        contextWindowTokens = contextWindowTokens,
+        maxCompletionTokens = maxCompletionTokens,
+    )
+
+    @Bean
     fun providerCatalog(
         ollamaEmbeddingSettings: OllamaEmbeddingSettings,
+        openAiCompatibleClaimAnalysisSettings: OpenAiCompatibleClaimAnalysisSettings,
         layaSystemOneSettings: LayaSystemOneSettings,
         jevSystemOneSettings: JevSystemOneSettings,
         @Value("\${paper-trail.providers.crossref.enabled}") crossrefEnabled: Boolean,
@@ -87,6 +124,7 @@ class RunConfigurationFactoryConfiguration {
         unpaywallContactEmail = unpaywallContactEmail.takeIf(String::isNotBlank),
         ollamaEmbeddingSettings = ollamaEmbeddingSettings,
         layaSystemOneSettings = layaSystemOneSettings,
+        openAiCompatibleClaimAnalysisSettings = openAiCompatibleClaimAnalysisSettings,
         jevSystemOneSettings = jevSystemOneSettings,
     )
 
@@ -110,6 +148,7 @@ class RunConfigurationFactoryConfiguration {
         @Value("\${paper-trail.analysis.retrieval.final-candidates}") finalCandidateLimit: Int,
         @Value("\${paper-trail.analysis.retrieval.rrf-constant}") reciprocalRankFusionConstant: Int,
         @Value("\${paper-trail.upload.max-claim-citation-pairs}") maxClaimCitationPairs: Int,
+        @Value("\${paper-trail.providers.claim-extractor.default-provider}") defaultClaimExtractorProvider: String,
         @Value("\${paper-trail.providers.system-one.default-provider}") defaultSystemOneProvider: String,
         @Value("\${paper-trail.analysis.system-one-aggregation.enabled}") systemOneAggregationEnabled: Boolean,
         @Value("\${paper-trail.analysis.system-one-aggregation.direct-support-threshold}") directSupportThreshold: Double,
@@ -149,6 +188,7 @@ class RunConfigurationFactoryConfiguration {
             evidenceAggregationThresholds = aggregationThresholds.takeIf { systemOneAggregationEnabled },
             systemOneAggregationEnabled = systemOneAggregationEnabled,
             defaultSystemOneProvider = defaultSystemOneProvider,
+            defaultClaimExtractorProvider = defaultClaimExtractorProvider,
         )
     }
 }

@@ -18,6 +18,12 @@ import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.analysis.service.AnalysisRunProcessingService
 import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
+import com.papertrail.api.citation.claims.domain.AnalyzedAtomicClaim
+import com.papertrail.api.citation.claims.domain.AtomicClaimCandidate
+import com.papertrail.api.citation.claims.domain.ClaimAnalysisRequest
+import com.papertrail.api.citation.claims.domain.ClaimAnalysisVersions
+import com.papertrail.api.citation.claims.domain.CitationContextClaims
+import com.papertrail.api.citation.claims.domain.CitationTargetKey
 import com.papertrail.api.infrastructure.cache.RedisProviderCacheStore
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
@@ -84,8 +90,15 @@ import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequeste
 import com.papertrail.api.document.validation.DocumentLanguageDetector
 import com.papertrail.api.document.validation.LanguageDetection
 import com.papertrail.api.document.validation.OptimaizeDocumentLanguageDetector
-import com.papertrail.api.citation.claims.service.ClaimExtractionService
+import com.papertrail.api.citation.claims.service.ClaimAnalysisService
+import com.papertrail.api.citation.claims.service.ClaimAnalysisRequestFactory
+import com.papertrail.api.citation.claims.provider.ClaimAnalysisProvider
+import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleProviderException
+import com.papertrail.api.infrastructure.providers.openai.RetryableOpenAiCompatibleProviderException
 import com.papertrail.api.citation.claims.service.HeuristicClaimExtractor
+import com.papertrail.api.citation.claims.service.HeuristicClaimAnalysisProvider
 import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.citation.parsing.ParsedBibliographyEntry
 import com.papertrail.api.citation.parsing.ParsedCitationContext
@@ -733,6 +746,134 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `persists only selected Citation Targets and creates no verification for an unlinked claim`() {
+        val settings = OpenAiCompatibleClaimAnalysisSettings(
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:9123/v1",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
+            modelId = "fixture-model",
+        )
+        val providerCatalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val configuration = configurationFactory(providerCatalog = providerCatalog).from(
+            RunConfigurationRequest(claimExtractorProvider = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID),
+        )
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        val selectiveProvider = object : ClaimAnalysisProvider {
+            override val providerId = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID
+            override val version = OpenAiCompatibleClaimAnalysisSettings.VERSION
+            override val modelId: String? = "fixture-model"
+            override val targetSelectionPolicyVersion = ClaimAnalysisVersions.MODEL_TARGET_SELECTION_POLICY
+            override val promptVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_PROMPT
+            override val outputMappingVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_OUTPUT_MAPPING
+
+            override fun analyze(
+                request: ClaimAnalysisRequest,
+                configuration: AnalysisConfigurationSnapshot,
+            ): List<CitationContextClaims> = request.contexts.mapIndexed { index, context ->
+                val claimText = context.contextText.substringBefore(" [")
+                CitationContextClaims(
+                    context.contextStartOffset,
+                    context.contextEndOffset,
+                    listOf(
+                        AnalyzedAtomicClaim(
+                            AtomicClaimCandidate(
+                                claimText,
+                                context.contextStartOffset,
+                                context.contextStartOffset + claimText.length,
+                            ),
+                            if (index == 0) listOf(CitationTargetKey(0, "ref1")) else emptyList(),
+                        ),
+                    ),
+                )
+            }
+        }
+
+        eventHandler(
+            claimAnalysisProviders = listOf(selectiveProvider),
+            providerCatalog = providerCatalog,
+        ).handle(event)
+
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM atomic_claims WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM atomic_claim_citation_targets WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+        assertEquals(setOf("ref1"), jdbc.query(
+            """
+            SELECT entry.local_reference_key
+              FROM atomic_claim_citation_targets link
+              JOIN citation_targets target ON target.analysis_run_id = link.analysis_run_id AND target.id = link.citation_target_id
+              JOIN bibliography_entries entry ON entry.analysis_run_id = target.analysis_run_id AND entry.id = target.bibliography_entry_id
+             WHERE link.analysis_run_id = ?
+            """.trimIndent(),
+            { rs, _ -> rs.getString("local_reference_key") },
+            created.analysisRunId,
+        ).toSet())
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM claim_paper_verifications WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+    }
+
+    @Test
+    fun `selected claim provider availability is checked before the source PDF is retrieved`() {
+        val settings = OpenAiCompatibleClaimAnalysisSettings(
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:9123",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
+            modelId = "microsoft/phi-4-mini-reasoning",
+        )
+        val providerCatalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val configuration = configurationFactory(providerCatalog).from(
+            RunConfigurationRequest(claimExtractorProvider = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID),
+        )
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        val unavailableProvider = object : ClaimAnalysisProvider {
+            override val providerId = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID
+            override val version = OpenAiCompatibleClaimAnalysisSettings.VERSION
+            override val modelId: String? = settings.modelId
+            override val targetSelectionPolicyVersion = ClaimAnalysisVersions.MODEL_TARGET_SELECTION_POLICY
+            override val promptVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_PROMPT
+            override val outputMappingVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_OUTPUT_MAPPING
+
+            override fun validateAvailability(configuration: AnalysisConfigurationSnapshot) {
+                throw RetryableOpenAiCompatibleProviderException("The claim-analysis endpoint is unavailable.")
+            }
+
+            override fun analyze(
+                request: ClaimAnalysisRequest,
+                configuration: AnalysisConfigurationSnapshot,
+            ): List<CitationContextClaims> = error("Analysis must not begin before the endpoint preflight succeeds.")
+        }
+
+        assertThrows(RetryableOpenAiCompatibleProviderException::class.java) {
+            eventHandler(
+                claimAnalysisProviders = listOf(unavailableProvider),
+                providerCatalog = providerCatalog,
+            ).handle(event)
+        }
+
+        assertEquals(0, objectStore.getCalls())
+        assertEquals("QUEUED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT count(*) FROM parsed_document_parses WHERE analysis_run_id = ?",
+            Int::class.java,
+            created.analysisRunId,
+        ))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = ?", Int::class.java, created.eventId))
+    }
+
+    @Test
     fun `over-limit claim-citation pairs fail the run before parsed output is persisted`() {
         val configuration = configurationFactory(maxClaimCitationPairs = 4)
             .from(RunConfigurationRequest())
@@ -1356,6 +1497,88 @@ class AnalysisRunQueueIntegrationTest {
             String::class.java,
             created.analysisRunId,
         )!!.contains("Jev aggregation completed"))
+    }
+
+    @Test
+    fun `retries transient Jev failures through the indexing queue without marking verification failed`() {
+        val jevSettings = JevSystemOneSettings(apiKey = "server-side-test-key")
+        val catalog = ProviderCatalog.safeDefaults(jevSystemOneSettings = jevSettings)
+        val configuration = configurationFactory(
+            providerCatalog = catalog,
+            systemOneAggregationEnabled = true,
+        ).from(
+            RunConfigurationRequest(
+                systemOneProvider = JevSystemOneSettings.PROVIDER_ID,
+                externalProviderConsents = listOf(externalProviderConsent(
+                    catalog,
+                    JevSystemOneSettings.PROVIDER_ID,
+                    listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id),
+                )),
+            ),
+        )
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val jevCalls = AtomicInteger()
+        val recoveringJevProvider = object : SystemOneProvider {
+            override val providerId = JevSystemOneSettings.PROVIDER_ID
+            override val version = JevSystemOneSettings.PROVIDER_VERSION
+            override val modelId = JevSystemOneSettings.DEFAULT_MODEL_ID
+
+            override fun evaluate(request: SemanticJudgementRequest): SemanticJudgementResult {
+                if (jevCalls.getAndIncrement() == 0) {
+                    throw JevSystemOneProviderException(
+                        message = "Temporary test provider failure.",
+                        failureReasonCode = JevSystemOneProviderException.TIMEOUT,
+                        retryable = true,
+                    )
+                }
+                return SemanticJudgementResult(request.evidencePassages.map { passage ->
+                    EvidenceJudgement(
+                        evidenceCandidateId = passage.id,
+                        judgement = EvidenceJudgementKind.DIRECT_SUPPORT,
+                        evidenceRole = EvidenceRole.PRIMARY_FINDING,
+                        confidence = 0.9,
+                        directness = 0.9,
+                        claimScopeMatch = 0.9,
+                        studyDesignQuality = 0.9,
+                        relevance = 0.9,
+                        providerReportedModelId = "jev-1.13.0",
+                    )
+                })
+            }
+        }
+        val resolutionService = referenceResolutionService()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler(resolutionService = resolutionService).handle(documentEvent)
+
+        processReferenceResolutionEvents(
+            analysisRunId = created.analysisRunId,
+            providerFactories = listOf(RecordedFixtureOpenAccessProviderFactory(
+                objectMapper,
+                ProviderCallGate(ProviderCatalog.safeDefaults()),
+            )),
+            resolutionService = resolutionService,
+            systemOneProvider = recoveringJevProvider,
+            providerCatalog = catalog,
+            retryIndexingOnce = true,
+        )
+
+        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
+        assertEquals(3, jevCalls.get())
+        assertEquals("COMPLETED", report.runStatus)
+        assertEquals("COMPLETED", report.evidenceCoverage.executionStatus)
+        assertTrue(outcomes.filter { it.verificationScope == "FULL_TEXT" }
+            .all { it.processingStatus == "COMPLETED" && it.finalStatus == "SUPPORTED" })
+        assertTrue(jdbc.queryForObject(
+            "SELECT count(*) FROM evidence_judgements WHERE analysis_run_id = ? AND system_one_provider = 'jev'",
+            Long::class.java,
+            created.analysisRunId,
+        )!! > 0)
     }
 
     @Test
@@ -2841,6 +3064,83 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `dead-letters permanent claim-analysis contract failures without retrying`() {
+        val settings = OpenAiCompatibleClaimAnalysisSettings(
+            endpoint = OpenAiCompatibleEndpointSettings(
+                enabled = true,
+                baseUrl = "http://127.0.0.1:9123/v1",
+                trustedHosts = setOf("127.0.0.1"),
+            ),
+            modelId = "fixture-model",
+        )
+        val providerCatalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val configuration = configurationFactory(providerCatalog = providerCatalog).from(
+            RunConfigurationRequest(claimExtractorProvider = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID),
+        )
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        val stream = "ae:test:${UUID.randomUUID()}"
+        val group = "group-${UUID.randomUUID()}"
+        val operations = redis.opsForStream<String, String>()
+        operations.add(stream, mapOf("bootstrap" to "1"))
+        operations.createGroup(stream, ReadOffset.from("$"), group)
+        OutboxPublisher(jdbc, redis, stream).publishPending()
+        var providerCalls = 0
+        val failingProvider = object : ClaimAnalysisProvider {
+            override val providerId = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID
+            override val version = OpenAiCompatibleClaimAnalysisSettings.VERSION
+            override val modelId: String? = settings.modelId
+            override val targetSelectionPolicyVersion = ClaimAnalysisVersions.MODEL_TARGET_SELECTION_POLICY
+            override val promptVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_PROMPT
+            override val outputMappingVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_OUTPUT_MAPPING
+
+            override fun analyze(
+                request: ClaimAnalysisRequest,
+                configuration: AnalysisConfigurationSnapshot,
+            ): List<CitationContextClaims> {
+                providerCalls++
+                throw OpenAiCompatibleProviderException("The selected provider returned an invalid claim-analysis response.")
+            }
+        }
+        val worker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(
+                claimAnalysisProviders = listOf(failingProvider),
+                providerCatalog = providerCatalog,
+            ),
+            referenceResolutionHandler = referenceResolutionEventHandler(),
+            objectMapper = objectMapper,
+            stream = stream,
+            group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
+            consumerName = "non-retryable-claim-analysis-worker",
+            reclaimDelayMs = 0,
+            batchSize = 10,
+            maxAttempts = 3,
+            retryBackoffMs = "0,0,0",
+        )
+
+        try {
+            worker.createConsumerGroup()
+            worker.poll()
+
+            assertEquals(1, providerCalls)
+            assertEquals("FAILED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
+            assertEquals(
+                "The selected provider returned an invalid claim-analysis response.",
+                jdbc.queryForObject("SELECT failure_reason FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId),
+            )
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM parsed_document_parses WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
+            val deadLetter = operations.range("ae:dlq", Range.unbounded<String>()).orEmpty().single().value
+            assertEquals("HANDLER_NON_RETRYABLE", deadLetter["errorCode"])
+            assertEquals("1", deadLetter["attempts"])
+            assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
+        } finally {
+            worker.shutdownLeaseHeartbeat()
+        }
+    }
+
+    @Test
     fun `dead-letters malformed event envelopes instead of leaving them pending`() {
         val stream = "ae:test:${UUID.randomUUID()}"
         val group = "group-${UUID.randomUUID()}"
@@ -3381,6 +3681,9 @@ class AnalysisRunQueueIntegrationTest {
     private fun issueSevenConfigurationJson(): String {
         val configuration = objectMapper.readTree(objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest()))) as ObjectNode
         configuration.remove(listOf("openAccess", "openAccessProviderConfigurationFingerprint", "openAccessRetentionDisclosure"))
+        (configuration.get("claimExtractor") as ObjectNode).remove(
+            listOf("targetSelectionPolicyVersion", "promptVersion", "outputMappingVersion", "retentionDisclosure"),
+        )
         return configuration.toString()
     }
 
@@ -3399,6 +3702,8 @@ class AnalysisRunQueueIntegrationTest {
         parser: ScientificDocumentParser = TestScientificDocumentParser,
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
         transactionTemplate: TransactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        claimAnalysisProviders: List<ClaimAnalysisProvider> = listOf(HeuristicClaimAnalysisProvider(HeuristicClaimExtractor())),
+        providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
     ): DocumentAnalysisRequestedHandler {
         val processingService = AnalysisRunProcessingService(
             jdbc,
@@ -3407,7 +3712,11 @@ class AnalysisRunQueueIntegrationTest {
             objectStore,
             parser,
             ParsedDocumentRepository(jdbc, objectMapper),
-            ClaimExtractionService(ProviderCatalog.safeDefaults(), listOf(HeuristicClaimExtractor())),
+            ClaimAnalysisService(
+                providerCatalog,
+                claimAnalysisProviders,
+                ClaimAnalysisRequestFactory(),
+            ),
             claimReferenceVerificationRepository(),
             resolutionService,
             stageCompletionService(resolutionService),
@@ -3443,6 +3752,7 @@ class AnalysisRunQueueIntegrationTest {
         private val content = mutableMapOf<String, ByteArray>()
         private val contentTypes = mutableMapOf<String, String>()
         private val checksums = mutableMapOf<String, String>()
+        private val reads = AtomicInteger()
         override fun put(objectKey: String, content: ByteArray, contentType: String) {
             this.content[objectKey] = content.copyOf()
             contentTypes[objectKey] = contentType
@@ -3450,7 +3760,11 @@ class AnalysisRunQueueIntegrationTest {
                 .digest(content)
                 .joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }
-        override fun get(objectKey: String): ByteArray = content[objectKey]?.copyOf() ?: error("Source object missing")
+        override fun get(objectKey: String): ByteArray {
+            reads.incrementAndGet()
+            return content[objectKey]?.copyOf() ?: error("Source object missing")
+        }
+        fun getCalls(): Int = reads.get()
         override fun stat(objectKey: String): SourceObjectMetadata {
             val value = content[objectKey] ?: error("Source object missing")
             return SourceObjectMetadata(size = value.size.toLong(), sha256 = checksums[objectKey])
@@ -3460,7 +3774,7 @@ class AnalysisRunQueueIntegrationTest {
         override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey); checksums.remove(objectKey) }
         fun contentType(objectKey: String): String? = contentTypes[objectKey]
         fun contains(objectKey: String): Boolean = objectKey in content
-        fun clear() { content.clear(); contentTypes.clear(); checksums.clear() }
+        fun clear() { content.clear(); contentTypes.clear(); checksums.clear(); reads.set(0) }
     }
 
     @BeforeEach

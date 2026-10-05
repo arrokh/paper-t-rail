@@ -148,7 +148,18 @@ export type AnalysisRun = {
     }>;
   } | null;
   configuration: {
-    claimExtractor: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
+    claimExtractor: {
+      provider: string;
+      model?: string;
+      version: string;
+      trustBoundary?: string;
+      dataCategories?: string[];
+      configurationFingerprint?: string | null;
+      retentionDisclosure?: string | null;
+      targetSelectionPolicyVersion?: string | null;
+      promptVersion?: string | null;
+      outputMappingVersion?: string | null;
+    };
     embedding: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] };
     retrieval: {
       profileId: string;

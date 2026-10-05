@@ -5,6 +5,10 @@ import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
 import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.infrastructure.messaging.NonRetryablePipelineException
+import com.papertrail.api.citation.claims.domain.ClaimAnalysisVersions
+import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
+import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
 import io.swagger.v3.oas.annotations.media.Schema
 import java.security.MessageDigest
 
@@ -37,7 +41,7 @@ enum class ProviderTrustBoundary(val id: String) {
 enum class DataCategory(val id: String, val label: String, val description: String) {
     SOURCE_DOCUMENT_TEXT("source_document_text", "Source Document text", "Text extracted from the uploaded document."),
     BIBLIOGRAPHIC_METADATA("bibliographic_metadata", "Bibliographic metadata", "DOIs and the minimum title, author, year, or reference fields used for lookup."),
-    CITATION_CONTEXT("citation_context", "Citation Context", "The citation-bearing clause or sentence submitted for claim extraction."),
+    CITATION_CONTEXT("citation_context", "Citation Context", "The citation-bearing clause or sentence submitted for Atomic Claim extraction and Citation Target selection."),
     CITED_PAPER_CHUNKS("cited_paper_chunks", "Cited Paper chunks", "Text chunks from an acquired Cited Paper."),
     ATOMIC_CLAIMS("atomic_claims", "Atomic Claims", "Individual propositions submitted for assessment."),
     EVIDENCE_PASSAGES("evidence_passages", "Evidence Passages", "Passages from a Cited Paper submitted for assessment."),
@@ -63,6 +67,9 @@ data class ProviderRegistration(
     val payloadConfigurationFingerprint: String? = null,
     val configurationFingerprint: String? = null,
     val embeddingDimension: Int? = null,
+    val targetSelectionPolicyVersion: String? = null,
+    val promptVersion: String? = null,
+    val outputMappingVersion: String? = null,
 ) {
     fun consentDisclosure(): String? = if (trustBoundary == ProviderTrustBoundary.EXTERNAL) {
         retentionDisclosure?.takeIf(String::isNotBlank) ?: UNKNOWN_RETENTION_DISCLOSURE
@@ -184,6 +191,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
             unpaywallContactEmail: String? = null,
             ollamaEmbeddingSettings: OllamaEmbeddingSettings = OllamaEmbeddingSettings.disabled(),
             layaSystemOneSettings: LayaSystemOneSettings = LayaSystemOneSettings.disabled(),
+            openAiCompatibleClaimAnalysisSettings: OpenAiCompatibleClaimAnalysisSettings = OpenAiCompatibleClaimAnalysisSettings.disabled(),
             jevSystemOneSettings: JevSystemOneSettings = JevSystemOneSettings.disabled(),
         ): ProviderCatalog {
             require(!unpaywallEnabled || !unpaywallContactEmail.isNullOrBlank()) {
@@ -255,6 +263,8 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     trustBoundary = ProviderTrustBoundary.LOCAL,
                     enabled = true,
                     dataCategories = setOf(DataCategory.CITATION_CONTEXT),
+                    targetSelectionPolicyVersion = ClaimAnalysisVersions.HEURISTIC_TARGET_SELECTION_POLICY,
+                    outputMappingVersion = ClaimAnalysisVersions.HEURISTIC_OUTPUT_MAPPING,
                 ),
                 ProviderRegistration(
                     role = CLAIM_EXTRACTOR_ROLE,
@@ -265,6 +275,21 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     trustBoundary = ProviderTrustBoundary.EXTERNAL,
                     enabled = false,
                     dataCategories = setOf(DataCategory.CITATION_CONTEXT),
+                ),
+                ProviderRegistration(
+                    role = CLAIM_EXTRACTOR_ROLE,
+                    providerId = OpenAiCompatibleEndpointSettings.PROVIDER_ID,
+                    displayName = "OpenAI-compatible Chat Completions",
+                    version = OpenAiCompatibleEndpointSettings.VERSION,
+                    model = openAiCompatibleClaimAnalysisSettings.modelId.takeIf(String::isNotBlank),
+                    trustBoundary = openAiCompatibleClaimAnalysisSettings.trustBoundary,
+                    enabled = openAiCompatibleClaimAnalysisSettings.isSelectable,
+                    dataCategories = setOf(DataCategory.CITATION_CONTEXT, DataCategory.BIBLIOGRAPHIC_METADATA),
+                    retentionDisclosure = openAiCompatibleClaimAnalysisSettings.retentionDisclosure,
+                    configurationFingerprint = openAiCompatibleClaimAnalysisSettings.configurationFingerprint,
+                    targetSelectionPolicyVersion = ClaimAnalysisVersions.MODEL_TARGET_SELECTION_POLICY,
+                    promptVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_PROMPT,
+                    outputMappingVersion = ClaimAnalysisVersions.OPENAI_COMPATIBLE_OUTPUT_MAPPING,
                 ),
                 ProviderRegistration(
                     role = EMBEDDING_ROLE,
@@ -342,7 +367,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
     }
 }
 
-class ProviderCallRejectedException(message: String) : IllegalStateException(message)
+class ProviderCallRejectedException(message: String) : NonRetryablePipelineException(message)
 
 /** Provider-bound content grouped by the stable category used to disclose and authorize it. */
 class ProviderCallPayload(contentByCategory: Map<DataCategory, JsonNode>) {
@@ -359,6 +384,39 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
         configuration: AnalysisConfigurationSnapshot,
         sendRequest: (ProviderCallPayload) -> T,
     ): T {
+        val registration = requireMatchingSelection(role, providerId, configuration)
+        val actualPayloadCategories = payload.dataCategories
+        if (actualPayloadCategories.any { it !in registration.dataCategories }) {
+            throw ProviderCallRejectedException("Provider '$providerId' request contains an unclassified data category.")
+        }
+        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL && actualPayloadCategories.isEmpty()) {
+            throw ProviderCallRejectedException("External provider '$providerId' request has no classified payload categories.")
+        }
+        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
+            requireConsent(role, registration, actualPayloadCategories, configuration)
+        }
+        return sendRequest(payload)
+    }
+
+    /** Authorizes a content-free availability probe while preserving run selection and external consent checks. */
+    fun <T> callAvailabilityCheck(
+        role: String,
+        providerId: String,
+        configuration: AnalysisConfigurationSnapshot,
+        checkAvailability: () -> T,
+    ): T {
+        val registration = requireMatchingSelection(role, providerId, configuration)
+        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
+            requireConsent(role, registration, registration.dataCategories, configuration)
+        }
+        return checkAvailability()
+    }
+
+    private fun requireMatchingSelection(
+        role: String,
+        providerId: String,
+        configuration: AnalysisConfigurationSnapshot,
+    ): ProviderRegistration {
         val registration = try {
             catalog.requireSelectable(role, providerId)
         } catch (exception: ProviderNotSelectableException) {
@@ -386,35 +444,49 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
             (selected.configurationFingerprint != registration.configurationFingerprint || embeddingDimensionChanged)
         val systemOneConfigurationChanged = role == SYSTEM_ONE_ROLE &&
             selected.configurationFingerprint != registration.configurationFingerprint
+        val legacyHeuristicSnapshot = role == CLAIM_EXTRACTOR_ROLE && selected.provider == "heuristic" &&
+            selected.version == "v1" && selected.targetSelectionPolicyVersion == null &&
+            selected.promptVersion == null && selected.outputMappingVersion == null
+        val claimAnalysisConfigurationChanged = role == CLAIM_EXTRACTOR_ROLE && !legacyHeuristicSnapshot && (
+            selected.configurationFingerprint != registration.configurationFingerprint ||
+                selected.retentionDisclosure != registration.retentionDisclosure ||
+                selected.targetSelectionPolicyVersion != registration.targetSelectionPolicyVersion ||
+                selected.promptVersion != registration.promptVersion ||
+                selected.outputMappingVersion != registration.outputMappingVersion
+            )
         if (selected.version != registration.version || selected.model != registration.model ||
             selected.trustBoundary != registration.trustBoundary.id ||
             selected.dataCategories.toSet() != registration.dataCategories.map(DataCategory::id).toSet() ||
             scholarlyConfigurationChanged || openAccessConfigurationChanged || embeddingConfigurationChanged ||
-            systemOneConfigurationChanged
+            systemOneConfigurationChanged || claimAnalysisConfigurationChanged
         ) {
             throw ProviderCallRejectedException("Provider '$providerId' configuration or payload mapping changed after this Analysis Run was created.")
         }
-        val actualPayloadCategories = payload.dataCategories
-        if (actualPayloadCategories.any { it !in registration.dataCategories }) {
-            throw ProviderCallRejectedException("Provider '$providerId' request contains an unclassified data category.")
-        }
-        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL && actualPayloadCategories.isEmpty()) {
+        return registration
+    }
+
+    private fun requireConsent(
+        role: String,
+        registration: ProviderRegistration,
+        requiredCategories: Set<DataCategory>,
+        configuration: AnalysisConfigurationSnapshot,
+    ) {
+        val providerId = registration.providerId
+        if (requiredCategories.isEmpty()) {
             throw ProviderCallRejectedException("External provider '$providerId' request has no classified payload categories.")
         }
-        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
-            val consent = configuration.externalProviderConsents.firstOrNull { it.providerId == providerId }
-            val consented = consent?.dataCategories?.mapNotNull(DataCategory::fromId)?.toSet().orEmpty()
-            val missingConsent = actualPayloadCategories - consented
-            if (missingConsent.isNotEmpty()) {
-                val categories = missingConsent.map { it.id }.sorted().joinToString(", ")
-                throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent for: $categories.")
-            }
-            val snapshottedDisclosure = consent?.retentionDisclosure
-                ?: configuration.openAccessRetentionDisclosure.takeIf { role == OPEN_ACCESS_ROLE }
-            if (snapshottedDisclosure != null && snapshottedDisclosure != registration.consentDisclosure()) {
-                throw ProviderCallRejectedException("Provider '$providerId' retention disclosure changed after this Analysis Run was created.")
-            }
+        val consent = configuration.externalProviderConsents.firstOrNull { it.providerId == providerId }
+            ?: throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent.")
+        val consented = consent.dataCategories.mapNotNull(DataCategory::fromId).toSet()
+        val missingConsent = requiredCategories - consented
+        if (missingConsent.isNotEmpty()) {
+            val categories = missingConsent.map { it.id }.sorted().joinToString(", ")
+            throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent for: $categories.")
         }
-        return sendRequest(payload)
+        val snapshottedDisclosure = consent.retentionDisclosure
+            ?: configuration.openAccessRetentionDisclosure.takeIf { role == OPEN_ACCESS_ROLE }
+        if (snapshottedDisclosure != null && snapshottedDisclosure != registration.consentDisclosure()) {
+            throw ProviderCallRejectedException("Provider '$providerId' retention disclosure changed after this Analysis Run was created.")
+        }
     }
 }

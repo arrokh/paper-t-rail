@@ -90,7 +90,7 @@ class JevSystemOneProvider(
                 BoundedHttpRequestException.Reason.INTERRUPTED ->
                     "Jev System One request was interrupted." to JevSystemOneProviderException.INTERRUPTED
             }
-            val providerException = providerFailure(message, failureReasonCode)
+            val providerException = providerFailure(message, failureReasonCode, retryable = true)
             logProviderCallFailure(
                 providerCallId = providerCallId,
                 atomicClaimId = atomicClaimId,
@@ -141,6 +141,7 @@ class JevSystemOneProvider(
             )
         }
         if (response.statusCode() !in 200..299) {
+            val retryable = isRetryableHttpStatus(response.statusCode())
             val failureReasonCode = JevSystemOneProviderException.httpFailureReasonCode(response.statusCode())
             logProviderCallFailure(
                 providerCallId = providerCallId,
@@ -155,6 +156,7 @@ class JevSystemOneProvider(
             throw providerFailure(
                 "Jev System One returned HTTP ${response.statusCode()}.",
                 failureReasonCode,
+                retryable,
             )
         }
         return try {
@@ -503,7 +505,12 @@ class JevSystemOneProvider(
     private fun providerFailure(
         message: String,
         failureReasonCode: String = JevSystemOneProviderException.PROVIDER_ERROR,
-    ): JevSystemOneProviderException = JevSystemOneProviderException(message, failureReasonCode)
+        retryable: Boolean = false,
+    ): JevSystemOneProviderException = JevSystemOneProviderException(
+        message = message,
+        failureReasonCode = failureReasonCode,
+        retryable = retryable,
+    )
 
     companion object {
         private const val CONNECT_TIMEOUT_SECONDS = 5L
@@ -511,6 +518,9 @@ class JevSystemOneProvider(
         private const val TWO_DECIMAL_HALF_STEP = 0.005
         private const val FLOATING_POINT_EPSILON = 1e-9
         private const val NANOS_PER_MILLI = 1_000_000L
+
+        private fun isRetryableHttpStatus(statusCode: Int): Boolean =
+            statusCode == 408 || statusCode == 429 || statusCode in 500..599
 
         // Bound independently rounded two-decimal scores and probability-weighted level indices.
         private fun twoDecimalRoundingTolerance(levelCount: Int): Double =

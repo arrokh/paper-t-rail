@@ -121,6 +121,7 @@ class EvidenceVerificationService(
                 try {
                     evaluateThroughProviderGate(provider, configuration, pending.request)
                 } catch (exception: SystemOneProviderException) {
+                    if ((exception as? JevSystemOneProviderException)?.retryable == true) throw exception
                     val failureReasonCode = exception.failureReasonCode ?: throw exception
                     logProviderFailure(
                         analysisRunId = analysisRunId,

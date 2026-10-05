@@ -85,6 +85,23 @@ paper-trail:
     cited-paper-max-extracted-characters: ${PAPER_MAX_CITED_PAPER_EXTRACTED_CHARACTERS:5000000}
   # Local consent-flow/acquisition defaults. Terms are informational, not enablement gates; external calls still require per-run consent. Replace test contact values for deployments.
   providers:
+    # Shared endpoint, credentials, trust policy, and HTTP limits for compatible chat adapters.
+    openai-compatible-chat:
+      enabled: ${OPENAI_COMPATIBLE_ENABLED:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_ENABLED:true}}
+      base-url: ${OPENAI_COMPATIBLE_BASE_URL:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_BASE_URL:http://127.0.0.1:1234}}
+      api-key: ${OPENAI_COMPATIBLE_API_KEY:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_API_KEY:}}
+      trusted-hosts: ${OPENAI_COMPATIBLE_TRUSTED_HOSTS:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_TRUSTED_HOSTS:localhost,127.0.0.1}}
+      max-request-bytes: ${OPENAI_COMPATIBLE_MAX_REQUEST_BYTES:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_REQUEST_BYTES:1048576}}
+      max-response-bytes: ${OPENAI_COMPATIBLE_MAX_RESPONSE_BYTES:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_RESPONSE_BYTES:1048576}}
+      request-timeout-millis: ${OPENAI_COMPATIBLE_REQUEST_TIMEOUT_MILLIS:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_REQUEST_TIMEOUT_MILLIS:60000}}
+      external-retention-disclosure: "${OPENAI_COMPATIBLE_EXTERNAL_RETENTION_DISCLOSURE:${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_EXTERNAL_RETENTION_DISCLOSURE:}}"
+    # Claim-analysis model and budgets belong to this use-case role, not the shared transport.
+    claim-extractor:
+      default-provider: ${CLAIM_ANALYSIS_DEFAULT_PROVIDER:openai-compatible-chat}
+      openai-compatible-chat:
+        model: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MODEL:google/gemma-4-e2b}
+        context-window-tokens: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_CONTEXT_WINDOW_TOKENS:131072}
+        max-completion-tokens: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_COMPLETION_TOKENS:2048}
     crossref:
       enabled: ${CROSSREF_ENABLED:true}
       retention-disclosure: "${CROSSREF_RETENTION_DISCLOSURE:Crossref mencatat IP peminta dan isi permintaan. Email polite pool dipakai untuk pemecahan masalah, dan Crossref menyatakan log dihapus setelah tiga bulan.}"
@@ -109,9 +126,9 @@ paper-trail:
       request-timeout-millis: ${OLLAMA_REQUEST_TIMEOUT_MILLIS:60000}
       external-retention-disclosure: "${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:}"
     system-one:
-      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:laya}
+      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:jev}
     laya:
-      # Enabled as the default local provider when authenticated settings are valid.
+      # Keep the authenticated local candidate available; Jev is preferred when configured.
       enabled: ${LAYA_ENABLED:true}
       base-url: ${LAYA_BASE_URL:http://laya:8000}
       api-key: ${LAYA_API_KEY:}
@@ -150,14 +167,14 @@ spring:
     activate:
       on-profile: production
 
-# Production defaults select Laya and enable experimental aggregation per the owner decision.
-# Outputs remain uncalibrated; this configuration default does not establish accuracy or approval.
+# Production defaults prefer Jev when configured and enable experimental aggregation per the owner decision.
+# Jev remains consent-gated per Analysis Run; outputs remain uncalibrated.
 paper-trail:
   analysis:
     system-one-aggregation:
       enabled: ${SYSTEM_ONE_AGGREGATION_ENABLED:true}
   providers:
     system-one:
-      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:laya}
+      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:jev}
     laya:
       enabled: ${LAYA_ENABLED:true}

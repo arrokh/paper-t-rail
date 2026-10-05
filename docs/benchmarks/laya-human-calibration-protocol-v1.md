@@ -59,7 +59,7 @@ Apply each pre-registered aggregation candidate to the frozen Laya outputs, then
 
 ## 5. Optional deployment context
 
-If the project voluntarily undertakes this research, reviewers may document artifact/license and provenance, network boundary, retention/deletion, failure semantics, and rollback as contextual observations. This review is optional and is not a condition for product use or release. The production Spring profile defaults Laya enabled/selected and experimental aggregation enabled per the owner configuration choice recorded in issue #45; this profile default and any local experimental results do not establish accuracy or calibration.
+If the project voluntarily undertakes this research, reviewers may document artifact/license and provenance, network boundary, retention/deletion, failure semantics, and rollback as contextual observations. This review is optional and is not a condition for product use or release. The production Spring profile keeps Laya enabled and experimental aggregation enabled per the owner configuration choice recorded in issue #45; ADR 0015 makes configured Jev the System One default preference with per-run consent. Neither configuration nor local experimental results establish accuracy or calibration.
 
 ## Current status
 
