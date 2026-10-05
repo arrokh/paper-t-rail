@@ -19,6 +19,7 @@ Related decisions: [ADR 0016](adr/0016-inspectable-analysis-run-execution.md), [
 - `api/.../analysis/service/AnalysisRunProcessingService.kt` coordinates source processing; `AnalysisRunStageCompletionService.kt` owns stage completion.
 - Feature queue handlers under `analysis/queue`, `scholarly/references/queue`, `scholarly/acquisition/queue`, and `evidence/queue` are async entry points. Trace context must survive event/outbox/Redis transitions and worker attempts.
 - `api/.../infrastructure/providers/openai/OpenAiCompatibleChatClient.kt` is the shared chat transport, not a universal pipeline contract. Capture actual transport bodies there while role adapters own interpreted output snapshots. Other provider clients require their own transport capture seams.
+- The API describes itself as local and unauthenticated. `NetworkBindingGuard` restricts where it may bind; current run routes have no per-user ownership or ACL. Execution artifact access follows the same trusted-workspace boundary as existing run inspection. Do not invent an owner identity or claim owner-only payload authorization; revisit if account access is added.
 - Extend existing analysis-run query hooks and same-origin proxy behavior. Keep execution feature code within the analysis capability rather than a generic framework.
 
 ## UI specification
@@ -85,7 +86,7 @@ The approved policy permits processing content in protected execution artifacts.
 
 Capture actual serialized application request/response bodies where permitted, not reconstructed requests. Store safe interpreted snapshots separately. Streaming records the assembled response, first-chunk latency, total duration and complete/interrupted state, not every chunk. Capture failure or unsupported safety policy produces an explicit omitted artifact, not a raw fallback. No payloads in application logs, OpenTelemetry attributes/events, metric labels, or external backends.
 
-Access inherits authorized run access for metadata. Owners can inspect bodies; sharing a report does not implicitly grant body access. Inspect the actual current access model before implementing: do not claim owner permissions exist if the workspace has no identity model. For a local-only deployment, restrict access to the existing trusted workspace boundary; don't introduce a full identity platform as part of tracing. Shared/multi-user deployment needs a concrete ownership/payload-access seam before exposing bodies. No dedicated access-view audit system in this feature.
+The current API is local and unauthenticated, and the workspace has no user/owner identity or per-run ACL. NetworkBindingGuard limits the API's binding boundary. Artifact routes therefore use the same trusted-workspace boundary as existing run and report routes; do not add a pretend owner permission check or a new identity system. This means anyone already able to access this trusted workspace can inspect recorded artifacts. Document this boundary in the capture disclosure. If account-level or shared public access is introduced, add explicit payload authorization before retaining this access model. No dedicated access-view audit system.
 
 Initial implementation defaults **to validate**, not settled requirements: 1 MiB sanitized artifact maximum, 100 spans per list page, 3-second active polling. Keep limits configurable; show explicit partial/omitted states. Select final values with representative fixtures before shipping.
 
@@ -99,7 +100,13 @@ Persist span start before long operations when storage is available, then finish
 
 ## Planned API surface
 
-Proposals below are not separately maintained OpenAPI specifications. Implement through existing controller/service conventions and generated Springdoc contracts.
+Proposals below are not separately maintained OpenAPI specifications. Implement through existing controller/service conventions and generated Springdoc contracts. The JSON contract below keeps the UI/API seam fixed:
+
+- Execution summary: `{ analysisRunId, captureEnabled, recordingState, completeness, startedAt, finishedAt, totalDurationMillis }`. `recordingState` is `RECORDING`, `STOPPED`, or `NOT_RECORDED`; completeness is `COMPLETE`, `INCOMPLETE`, `RECORDING`, or `NOT_RECORDED`. A legacy run returns `NOT_RECORDED` with null timing, never fabricated history.
+- Span page: `{ items, nextCursor }`, sorted by start time then ID ascending. A span includes `{ id, parentSpanId, operationId, stageId, kind, name, startedAt, endedAt, durationMillis, status, attempt, providerId, modelId, httpStatus, safeErrorCode, attributes, artifactRoles }`. Parent/operation IDs connect pages. Bound page size and return opaque `nextCursor`.
+- Span detail: one span with safe metadata and artifact descriptors `{ id, role, fidelity, reason, mediaType, sizeBytes }`. Artifact content is fetched only on explicit selection.
+- Artifact response: `{ id, spanId, role, fidelity, reason, mediaType, content, schemaVersion, captureVersion, sanitizerVersion, sizeBytes }`. `content` is sanitized text/JSON; deleted or unavailable bodies have no content and a truthful state.
+- New-run `captureExecution` defaults to true when omitted. Capture stop applies to future operations only.
 
 - `GET /api/v1/analysis-runs/{id}/execution`: recording/capture state, completeness, elapsed/interval summary.
 - `GET /api/v1/analysis-runs/{id}/execution/spans`: bounded cursor page with parent/context loading and safe metadata.
@@ -133,4 +140,4 @@ Each slice includes its API annotations, behavior verification and usable UI; th
 
 ## Implementation checkpoints, not another interview
 
-Before coding capture bodies, resolve the actual authorization seam, per-operation sanitization policies and configurable size limits from the existing code and representative fixtures. If a body cannot be safely captured, ship an honest omitted state rather than claiming complete visibility. These are concrete implementation checks, not reasons to add a generic privacy platform.
+Before capturing a body, use the existing trusted-workspace boundary, per-operation sanitization policy and bounded size limit. If a body cannot be safely captured, ship an honest omitted state rather than claiming complete visibility. These are concrete implementation checks, not reasons to add a generic privacy platform.
