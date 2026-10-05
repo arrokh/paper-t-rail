@@ -121,11 +121,12 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             providerId = OpenAiCompatibleEndpointSettings.PROVIDER_ID,
             modelId = settings.modelId,
             operationId = childOperationId,
+            attributes = mapOf("httpRoute" to "/v1/chat/completions"),
         )
         val childHandle = ExecutionSpanHandle(
             UUID.randomUUID(), runId, childOperationId, Instant.now(), System.nanoTime(), "source", 1, null,
         )
-        Mockito.`when`(repository.startSpan(runId, childSpec, "{}")).thenReturn(childHandle)
+        Mockito.`when`(repository.startSpan(runId, childSpec, """{"httpRoute":"/v1/chat/completions"}""")).thenReturn(childHandle)
         val provider = provider(settings, catalog, execution)
         val request = requestFactory().from(documentWithOneContextAndTwoTargets())
         val configuration = configuration(catalog)

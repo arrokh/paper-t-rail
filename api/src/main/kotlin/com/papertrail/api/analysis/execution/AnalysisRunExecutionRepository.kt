@@ -7,6 +7,7 @@ import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
 import java.sql.ResultSet
 import java.sql.Timestamp
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
@@ -48,6 +49,19 @@ class AnalysisRunExecutionRepository(
         )
     }
 
+    fun causalParentSpanId(analysisRunId: UUID, causationEventId: UUID): UUID? = jdbc.query(
+        """
+        SELECT id
+          FROM analysis_run_execution_spans
+         WHERE analysis_run_id = ? AND event_id = ? AND parent_span_id IS NULL
+         ORDER BY attempt DESC, started_at DESC, id DESC
+         LIMIT 1
+        """.trimIndent(),
+        { rs, _ -> rs.getObject("id", UUID::class.java) },
+        analysisRunId,
+        causationEventId,
+    ).firstOrNull()
+
     fun startSpan(analysisRunId: UUID, spec: ExecutionSpanSpec, safeAttributes: String): ExecutionSpanHandle? {
         val id = UUID.randomUUID()
         val operationId = spec.operationId ?: UUID.randomUUID()
@@ -87,6 +101,44 @@ class AnalysisRunExecutionRepository(
             stageId = spec.stageId,
             attempt = spec.attempt,
             eventId = spec.eventId,
+        )
+    }
+
+    fun recordInterval(
+        analysisRunId: UUID,
+        spec: ExecutionSpanSpec,
+        safeAttributes: String,
+        startedAt: Instant,
+        endedAt: Instant,
+    ) {
+        val operationId = spec.operationId ?: spec.eventId ?: UUID.randomUUID()
+        val parentSpanId = spec.parentSpanId ?: spec.causationEventId?.let { causalParentSpanId(analysisRunId, it) }
+        val durationMillis = Duration.between(startedAt, endedAt).toMillis().coerceAtLeast(0)
+        jdbc.update(
+            """
+            INSERT INTO analysis_run_execution_spans (
+                id, analysis_run_id, parent_span_id, operation_id, event_id, stage_id, kind, name,
+                started_at, ended_at, duration_millis, status, attempt, provider_id, model_id, attributes
+            )
+            SELECT ?, execution.analysis_run_id, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCEEDED', ?, ?, ?, ?::jsonb
+              FROM analysis_run_execution execution
+             WHERE execution.analysis_run_id = ? AND execution.recording_state = 'RECORDING'
+            """.trimIndent(),
+            UUID.randomUUID(),
+            parentSpanId,
+            operationId,
+            spec.eventId,
+            spec.stageId,
+            spec.kind,
+            spec.name,
+            Timestamp.from(startedAt),
+            Timestamp.from(endedAt),
+            durationMillis,
+            spec.attempt,
+            spec.providerId,
+            spec.modelId,
+            safeAttributes,
+            analysisRunId,
         )
     }
 
@@ -223,7 +275,7 @@ class AnalysisRunExecutionRepository(
                 completeness = rs.getString("completeness"),
                 startedAt = started,
                 finishedAt = finished,
-                totalDurationMillis = java.time.Duration.between(started, finished ?: Instant.now()).toMillis().coerceAtLeast(0),
+                totalDurationMillis = Duration.between(started, finished ?: Instant.now()).toMillis().coerceAtLeast(0),
             )
         },
         analysisRunId,
@@ -252,8 +304,12 @@ class AnalysisRunExecutionRepository(
         )
         val hasMore = rows.size > limit
         val selected = rows.take(limit)
-        val descriptors = descriptors(analysisRunId, selected.map(ExecutionSpanRow::id))
-        val items = selected.map { it.toResponse(objectMapper.readTree(it.attributes), descriptors[it.id].orEmpty()) }
+        val selectedIds = selected.map(ExecutionSpanRow::id)
+        val descriptors = descriptors(analysisRunId, selectedIds)
+        val links = domainLinks(analysisRunId, selectedIds)
+        val items = selected.map {
+            it.toResponse(objectMapper.readTree(it.attributes), descriptors[it.id].orEmpty(), links[it.id].orEmpty())
+        }
         val last = selected.lastOrNull()
         return ExecutionSpanPage(
             items = items,
@@ -274,10 +330,19 @@ class AnalysisRunExecutionRepository(
             analysisRunId,
             spanId,
         ).firstOrNull() ?: return null
-        return row.toResponse(objectMapper.readTree(row.attributes), descriptors(analysisRunId, listOf(spanId))[spanId].orEmpty())
+        return row.toResponse(
+            objectMapper.readTree(row.attributes),
+            descriptors(analysisRunId, listOf(spanId))[spanId].orEmpty(),
+            domainLinks(analysisRunId, listOf(spanId))[spanId].orEmpty(),
+        )
     }
 
-    fun artifact(analysisRunId: UUID, artifactId: UUID): ExecutionArtifactResponse? = jdbc.query(
+    fun artifact(
+        analysisRunId: UUID,
+        artifactId: UUID,
+        spanId: UUID? = null,
+        role: String? = null,
+    ): ExecutionArtifactResponse? = jdbc.query(
         """
         SELECT link.span_id, link.role, link.fidelity, link.reason, link.media_type, link.size_bytes,
                link.schema_version, artifact.content, artifact.capture_version, artifact.sanitizer_version
@@ -287,6 +352,8 @@ class AnalysisRunExecutionRepository(
           JOIN analysis_run_execution_spans span
             ON span.analysis_run_id = link.analysis_run_id AND span.id = link.span_id
          WHERE link.analysis_run_id = ? AND link.artifact_id = ?
+           AND (CAST(? AS UUID) IS NULL OR link.span_id = CAST(? AS UUID))
+           AND (CAST(? AS VARCHAR) IS NULL OR link.role = CAST(? AS VARCHAR))
          ORDER BY span.started_at, span.id, link.role
          LIMIT 1
         """.trimIndent(),
@@ -309,6 +376,10 @@ class AnalysisRunExecutionRepository(
         },
         analysisRunId,
         artifactId,
+        spanId,
+        spanId,
+        role,
+        role,
     ).firstOrNull()
 
     fun stopCapture(analysisRunId: UUID): Boolean = jdbc.update(
@@ -388,6 +459,40 @@ class AnalysisRunExecutionRepository(
         }
     }
 
+    private fun domainLinks(analysisRunId: UUID, spanIds: List<UUID>): Map<UUID, List<ExecutionDomainLink>> {
+        if (spanIds.isEmpty()) return emptyMap()
+        val placeholders = spanIds.joinToString(",") { "?" }
+        return jdbc.query(
+            """
+            SELECT DISTINCT span.id AS span_id, run.document_id, entry.id AS bibliography_entry_id
+              FROM analysis_run_execution_spans span
+              JOIN analysis_runs run ON run.id = span.analysis_run_id
+              JOIN source_documents document ON document.id = run.document_id
+              LEFT JOIN outbox_events event
+                ON event.analysis_run_id = span.analysis_run_id AND event.event_id = span.event_id
+              LEFT JOIN bibliography_entries entry
+                ON entry.analysis_run_id = span.analysis_run_id
+               AND entry.id::text = event.payload -> 'payload' ->> 'bibliographyEntryId'
+             WHERE span.analysis_run_id = ? AND span.id IN ($placeholders)
+               AND NOT EXISTS (SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = run.document_id)
+            """.trimIndent(),
+            { rs, _ ->
+                val spanId = rs.getObject("span_id", UUID::class.java)
+                val documentId = rs.getObject("document_id", UUID::class.java)
+                val links = mutableListOf(
+                    ExecutionDomainLink("ANALYSIS_RUN", analysisRunId, "/api/v1/analysis-runs/$analysisRunId"),
+                    ExecutionDomainLink("SOURCE_DOCUMENT", documentId, "/api/v1/analysis-runs/$analysisRunId/source-document"),
+                )
+                rs.getObject("bibliography_entry_id", UUID::class.java)?.let { entryId ->
+                    links += ExecutionDomainLink("BIBLIOGRAPHY_ENTRY", entryId, "/api/v1/analysis-runs/$analysisRunId/report")
+                }
+                spanId to links
+            },
+            analysisRunId,
+            *spanIds.toTypedArray(),
+        ).associate { it.first to it.second }
+    }
+
     private fun descriptors(analysisRunId: UUID, spanIds: List<UUID>): Map<UUID, List<ExecutionArtifactDescriptor>> {
         if (spanIds.isEmpty()) return emptyMap()
         val placeholders = spanIds.joinToString(",") { "?" }
@@ -435,10 +540,28 @@ class AnalysisRunExecutionRepository(
         val safeErrorCode: String?,
         val attributes: String,
     ) {
-        fun toResponse(attributes: JsonNode, artifacts: List<ExecutionArtifactDescriptor>) = ExecutionSpanResponse(
-            id, parentSpanId, operationId, stageId, kind, name, startedAt, endedAt, durationMillis,
-            status, attempt, providerId, modelId, httpStatus, safeErrorCode, attributes, artifacts,
-        )
+        fun toResponse(
+            attributes: JsonNode,
+            artifacts: List<ExecutionArtifactDescriptor>,
+            domainLinks: List<ExecutionDomainLink>,
+        ): ExecutionSpanResponse {
+            val trustBoundary = when {
+                kind in setOf("INTERNAL", "PERSISTENCE", "TRANSFORMATION") -> "INTERNAL"
+                kind == "QUEUE" -> "LOCAL"
+                providerId == null || providerId.lowercase() in LOCAL_PROVIDERS -> "LOCAL"
+                else -> "EXTERNAL"
+            }
+            val route = attributes.path("httpRoute").takeIf(JsonNode::isTextual)?.asText()
+            return ExecutionSpanResponse(
+                id, parentSpanId, operationId, stageId, kind, name, startedAt, endedAt, durationMillis,
+                status, attempt, providerId, modelId, httpStatus, safeErrorCode, attributes,
+                trustBoundary, route, domainLinks, artifacts,
+            )
+        }
+    }
+
+    companion object {
+        private val LOCAL_PROVIDERS = setOf("mock", "ollama", "grobid", "local", "recorded-fixtures", "feature-hash")
     }
 
     private fun ResultSet.toExecutionSpan() = ExecutionSpanRow(

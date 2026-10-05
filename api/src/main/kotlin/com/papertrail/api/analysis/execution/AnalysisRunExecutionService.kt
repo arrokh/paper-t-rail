@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.web.server.ResponseStatusException
+import java.security.MessageDigest
+import java.time.Instant
 import java.util.UUID
 
 @Service
@@ -42,27 +44,34 @@ class AnalysisRunExecutionService(
         name: String,
         providerId: String,
         modelId: String?,
+        attributes: Map<String, Any?> = emptyMap(),
+        analysisRunId: UUID? = null,
+        stageId: String? = null,
         operation: () -> T,
     ): T {
-        val parent = activeSpan.get() ?: return operation()
+        val parent = activeSpan.get()?.takeIf { analysisRunId == null || it.analysisRunId == analysisRunId }
+        val effectiveRunId = parent?.analysisRunId ?: analysisRunId ?: return operation()
+        val effectiveStageId = parent?.stageId ?: stageId ?: return operation()
         if (!SAFE_OPERATION_KEY.matches(operationKey)) {
-            markGap(parent.analysisRunId, "UNSAFE_SPAN_METADATA_OMITTED")
+            markGap(effectiveRunId, "UNSAFE_SPAN_METADATA_OMITTED")
             return operation()
         }
-        val operationId = parent.eventId?.let { ExecutionOperationId.forEvent(it, "provider-call:$operationKey") }
-            ?: UUID.nameUUIDFromBytes("${parent.operationId}:provider-call:$operationKey".toByteArray(Charsets.UTF_8))
+        val operationId = parent?.eventId?.let { ExecutionOperationId.forEvent(it, "provider-call:$operationKey") }
+            ?: parent?.operationId?.let { UUID.nameUUIDFromBytes("$it:provider-call:$operationKey".toByteArray(Charsets.UTF_8)) }
+            ?: UUID.nameUUIDFromBytes("$effectiveRunId:provider-call:$operationKey".toByteArray(Charsets.UTF_8))
         return record(
-            parent.analysisRunId,
+            effectiveRunId,
             ExecutionSpanSpec(
-                stageId = parent.stageId,
+                stageId = effectiveStageId,
                 kind = "PROVIDER",
                 name = name,
-                attempt = parent.attempt,
-                eventId = parent.eventId,
-                parentSpanId = parent.id,
+                attempt = parent?.attempt ?: 1,
+                eventId = parent?.eventId,
+                parentSpanId = parent?.id,
                 providerId = providerId,
                 modelId = modelId,
                 operationId = operationId,
+                attributes = attributes,
             ),
             operation,
         )
@@ -74,7 +83,11 @@ class AnalysisRunExecutionService(
             return null
         }
         val attributes = safeAttributes(spec.attributes, analysisRunId)
-        val linkedSpec = if (spec.parentSpanId == null) spec.copy(parentSpanId = activeSpan.get()?.id) else spec
+        val activeParent = activeSpan.get()?.takeIf { it.analysisRunId == analysisRunId }?.id
+        val causalParent = if (activeParent == null && spec.parentSpanId == null) {
+            spec.causationEventId?.let { repository.causalParentSpanId(analysisRunId, it) }
+        } else null
+        val linkedSpec = if (spec.parentSpanId == null) spec.copy(parentSpanId = activeParent ?: causalParent) else spec
         return try {
             repository.startSpan(analysisRunId, linkedSpec, attributes)
         } catch (_: Exception) {
@@ -92,6 +105,65 @@ class AnalysisRunExecutionService(
         }
         safely(handle.analysisRunId) {
             repository.finishSpan(handle, status, errorCode, httpStatus)
+        }
+    }
+
+    fun recordInterval(
+        analysisRunId: UUID,
+        spec: ExecutionSpanSpec,
+        startedAt: Instant,
+        endedAt: Instant,
+    ) {
+        if (!validSpec(spec) || endedAt.isBefore(startedAt)) {
+            markGap(analysisRunId, "INTERVAL_TIMESTAMPS_UNAVAILABLE")
+            return
+        }
+        val attributes = safeAttributes(spec.attributes, analysisRunId)
+        try {
+            repository.recordInterval(analysisRunId, spec, attributes, startedAt, endedAt)
+        } catch (_: Exception) {
+            markGap(analysisRunId, "SPAN_STORAGE_UNAVAILABLE")
+            logStorageFailure(analysisRunId)
+        }
+    }
+
+    fun recordQueueIntervals(
+        analysisRunId: UUID,
+        eventId: UUID,
+        attempt: Int,
+        stageId: String,
+        queueWaitStartedAt: Instant?,
+        retryScheduledAt: Instant?,
+        retryDueAt: Instant?,
+        causationEventId: UUID?,
+    ) {
+        val observedAt = Instant.now()
+        if (retryScheduledAt != null && retryDueAt != null) {
+            recordInterval(
+                analysisRunId,
+                ExecutionSpanSpec(stageId, "QUEUE", "Retry backoff", attempt + 1, eventId, operationId = eventId, causationEventId = causationEventId),
+                retryScheduledAt,
+                retryDueAt,
+            )
+            recordInterval(
+                analysisRunId,
+                ExecutionSpanSpec(stageId, "QUEUE", "Queue wait", attempt + 1, eventId, operationId = eventId, causationEventId = causationEventId),
+                retryDueAt,
+                observedAt,
+            )
+        } else if (retryScheduledAt != null || retryDueAt != null) {
+            markGap(analysisRunId, "RETRY_SCHEDULE_TIMESTAMPS_UNAVAILABLE")
+        } else if (queueWaitStartedAt != null) {
+            recordInterval(
+                analysisRunId,
+                ExecutionSpanSpec(stageId, "QUEUE", "Queue wait", attempt + 1, eventId, operationId = eventId, causationEventId = causationEventId),
+                queueWaitStartedAt,
+                observedAt,
+            )
+        } else if (attempt > 0) {
+            markGap(analysisRunId, "RETRY_SCHEDULE_TIMESTAMPS_UNAVAILABLE")
+        } else {
+            markGap(analysisRunId, "QUEUE_ENQUEUE_TIMESTAMP_UNAVAILABLE")
         }
     }
 
@@ -176,10 +248,13 @@ class AnalysisRunExecutionService(
             ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Execution span not found.")
     }
 
-    fun artifact(analysisRunId: UUID, artifactId: UUID): ExecutionArtifactResponse {
+    fun artifact(analysisRunId: UUID, artifactId: UUID, spanId: UUID? = null, role: String? = null): ExecutionArtifactResponse {
         requireRun(analysisRunId)
-        return repository.artifact(analysisRunId, artifactId)
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Execution artifact not found.")
+        if (role != null && role !in ARTIFACT_ROLES) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "Artifact role must be INPUT, REQUEST, RESPONSE, or RESULT.")
+        }
+        return repository.artifact(analysisRunId, artifactId, spanId, role)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Execution artifact association not found in this Analysis Run.")
     }
 
     fun stopCapture(analysisRunId: UUID): AnalysisRunExecutionSummary {
@@ -216,7 +291,11 @@ class AnalysisRunExecutionService(
     private fun safeAttributes(attributes: Map<String, Any?>, analysisRunId: UUID): String {
         val safe = attributes.filter { (key, value) ->
             key in SAFE_ATTRIBUTE_KEYS && when (value) {
-                is String -> sanitizer.isSafeIdentifier(value) || (key == "sourceHash" && value.matches(SAFE_HASH))
+                is String -> when (key) {
+                    "httpRoute" -> sanitizer.isSafeHttpRoute(value)
+                    "sourceHash" -> value.matches(SAFE_HASH)
+                    else -> sanitizer.isSafeIdentifier(value)
+                }
                 is Number -> value.toLong() >= 0
                 is Boolean -> true
                 else -> false
@@ -245,7 +324,7 @@ class AnalysisRunExecutionService(
     }
 
     private fun sha256Hex(content: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(content.toByteArray(Charsets.UTF_8))
+        val digest = MessageDigest.getInstance("SHA-256").digest(content.toByteArray(Charsets.UTF_8))
         return digest.joinToString("") { byte -> "%02x".format(byte) }
     }
 
@@ -262,7 +341,7 @@ class AnalysisRunExecutionService(
         private val SAFE_ATTRIBUTE_KEYS = setOf(
             "providerId", "modelId", "parserId", "parserVersion", "sourceHash", "httpMethod", "httpStatus",
             "queueName", "eventType", "eventAttempt", "byteCount", "itemCount", "durationMillis",
-            "firstChunkMillis", "reasonCode", "external",
+            "firstChunkMillis", "reasonCode", "external", "httpRoute",
         )
         const val MAX_PAGE_SIZE = 100
     }

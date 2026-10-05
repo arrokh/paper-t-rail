@@ -2,6 +2,8 @@ package com.papertrail.api.scholarly.acquisition.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.service.lockActiveAnalysisRun
 import com.papertrail.api.document.service.requireActiveSourceDocument
@@ -38,6 +40,7 @@ class CitedPaperAccessService(
     private val languageDetector: DocumentLanguageDetector,
     private val textExtractor: CitedPaperTextExtractor,
     private val providerFactories: List<OpenAccessProviderFactory>,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) {
     private val locationPolicy = LegalOpenAccessLocationPolicy()
     private val accessPolicy = CitedPaperAccessPolicy()
@@ -64,12 +67,32 @@ class CitedPaperAccessService(
             referenceType = reference.referenceType,
         )
         jdbc.requireActiveSourceDocument(context.documentId)
-        val discovery = provider.discover(metadata)
+        val discover = { provider.discover(metadata) }
+        val discovery = if (executionService == null) {
+            discover()
+        } else {
+            executionService.recordCurrentProviderCall(
+                operationKey = "open-access-discovery",
+                name = "Discover cited-paper access",
+                providerId = providerSelection.provider,
+                modelId = null,
+                analysisRunId = analysisRunId,
+                stageId = "access",
+                operation = discover,
+            )
+        }
         val permittedLocations = discovery?.locations.orEmpty().filter(locationPolicy::isUsable)
-        val acquiredText = acquireExtractableFullText(context.documentId, provider, permittedLocations)
+        val acquiredText = acquireExtractableFullText(analysisRunId, context.documentId, providerSelection.provider, provider, permittedLocations)
         val acquired = acquiredText?.first
         val extractedText = acquiredText?.second
-        val languageDetection = extractedText?.let(languageDetector::detect)
+        val languageDetection = extractedText?.let { text ->
+            val detect = { languageDetector.detect(text) }
+            executionService?.record(
+                analysisRunId,
+                ExecutionSpanSpec("access", "TRANSFORMATION", "Detect cited-paper language"),
+                detect,
+            ) ?: detect()
+        }
         val language = languageDetection?.language
         val confidenceThreshold = context.configuration.validationLimits.minimumLanguageConfidence
         val supportedLanguage = languageDetection?.takeIf { it.confidence >= confidenceThreshold }?.language
@@ -137,15 +160,32 @@ class CitedPaperAccessService(
     }
 
     private fun acquireExtractableFullText(
+        analysisRunId: UUID,
         documentId: UUID,
+        providerId: String,
         provider: OpenAccessProvider,
         locations: List<OpenAccessLocation>,
     ): Pair<AcquiredFullText, String>? {
-        for (location in locations.take(MAX_LOCATIONS_TO_TRY)) {
+        for ((index, location) in locations.take(MAX_LOCATIONS_TO_TRY).withIndex()) {
             try {
                 jdbc.requireActiveSourceDocument(documentId)
-                val acquired = provider.fetch(location)
-                return acquired to textExtractor.extract(acquired)
+                val fetch = { provider.fetch(location) }
+                val acquired = executionService?.recordCurrentProviderCall(
+                    operationKey = "open-access-fulltext-fetch-$index",
+                    name = "Fetch cited-paper full text",
+                    providerId = providerId,
+                    modelId = null,
+                    analysisRunId = analysisRunId,
+                    stageId = "access",
+                    operation = fetch,
+                ) ?: fetch()
+                val extract = { textExtractor.extract(acquired) }
+                val text = executionService?.record(
+                    analysisRunId,
+                    ExecutionSpanSpec("access", "TRANSFORMATION", "Extract cited-paper text"),
+                    extract,
+                ) ?: extract()
+                return acquired to text
             } catch (exception: ProviderCallRejectedException) {
                 throw exception
             } catch (_: Exception) {

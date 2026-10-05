@@ -22,6 +22,7 @@ import com.papertrail.api.document.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.storage.SourceObjectMetadata
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.ContentDisposition
@@ -406,6 +407,7 @@ class AnalysisRunService(
             occurredAt = createdAt,
             attempt = 0,
             payload = DocumentAnalysisRequestedPayload(documentId, sourceHash),
+            traceparent = W3CTraceContext.forTraceId(runId),
         )
         jdbc.update(
             """

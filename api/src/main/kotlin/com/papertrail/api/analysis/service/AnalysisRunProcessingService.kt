@@ -19,6 +19,7 @@ import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
 import com.papertrail.api.analysis.execution.ExecutionOperationId
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedPayload
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
@@ -52,6 +53,10 @@ class AnalysisRunProcessingService(
     ) == true
 
     fun process(event: PipelineEvent<DocumentAnalysisRequestedPayload>): UUID {
+        executionService?.recordQueueIntervals(
+            event.analysisRunId, event.eventId, event.attempt, "source", event.queueWaitStartedAt,
+            event.retryScheduledAt, event.retryDueAt, event.causationId,
+        )
         val operation = {
             processInternal(event)
         }
@@ -65,6 +70,7 @@ class AnalysisRunProcessingService(
                 eventId = event.eventId,
                 attributes = mapOf("eventAttempt" to event.attempt),
                 operationId = event.eventId,
+                causationEventId = event.causationId,
             ),
             operation,
         ) ?: operation()
@@ -367,6 +373,8 @@ class AnalysisRunProcessingService(
                             sourceContentSha256 = run.sourceHash,
                             bibliographyEntryId = entry.id,
                         ),
+                        traceparent = W3CTraceContext.child(event.traceparent),
+                        tracestate = event.tracestate,
                     )
                     insertOutboxEvent(resolutionEvent)
                 }

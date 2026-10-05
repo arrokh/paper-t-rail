@@ -144,7 +144,7 @@ class OpenApiDocumentationTest {
         val runId = UUID.randomUUID()
         val artifactId = UUID.randomUUID()
         val spanId = UUID.randomUUID()
-        Mockito.`when`(analysisRunExecutionService.artifact(runId, artifactId)).thenReturn(
+        Mockito.`when`(analysisRunExecutionService.artifact(runId, artifactId, spanId, "RESULT")).thenReturn(
             ExecutionArtifactResponse(
                 id = artifactId,
                 spanId = spanId,
@@ -160,7 +160,11 @@ class OpenApiDocumentationTest {
             ),
         )
 
-        val response = mockMvc.perform(get("/api/v1/analysis-runs/$runId/execution/artifacts/$artifactId"))
+        val response = mockMvc.perform(
+            get("/api/v1/analysis-runs/$runId/execution/artifacts/$artifactId")
+                .param("spanId", spanId.toString())
+                .param("role", "RESULT"),
+        )
             .andExpect(status().isOk)
             .andReturn()
             .response
@@ -168,6 +172,7 @@ class OpenApiDocumentationTest {
         assertEquals("no-store", response.getHeader("Cache-Control"))
         assertEquals("SANITIZED", objectMapper.readTree(response.contentAsString).path("fidelity").asText())
         assertEquals("""{"status":"SUCCEEDED"}""", objectMapper.readTree(response.contentAsString).path("content").asText())
+        Mockito.verify(analysisRunExecutionService).artifact(runId, artifactId, spanId, "RESULT")
     }
 
     @Test
@@ -406,18 +411,32 @@ class OpenApiDocumentationTest {
         assertTrue(spanPageProperties.has("nextCursor"))
         val spanSchemaName = spanPageProperties.path("items").path("items").path("${'$'}ref").asText().substringAfterLast('/')
         val executionSpanProperties = schemas.path(spanSchemaName).path("properties")
-        listOf("id", "parentSpanId", "operationId", "stageId", "kind", "name", "startedAt", "endedAt", "durationMillis", "status", "attempt", "providerId", "modelId", "httpStatus", "safeErrorCode", "attributes", "artifactRoles")
+        listOf("id", "parentSpanId", "operationId", "stageId", "kind", "name", "startedAt", "endedAt", "durationMillis", "status", "attempt", "providerId", "modelId", "httpStatus", "safeErrorCode", "attributes", "trustBoundary", "httpRoute", "domainLinks", "artifactRoles")
             .forEach { assertTrue(executionSpanProperties.has(it)) }
         val spanDetail = paths.path("$executionBase/spans/{spanId}").path("get")
         assertTrue(spanDetail.path("responses").has("200"))
         assertTrue(spanDetail.path("responses").has("404"))
         val executionArtifact = paths.path("$executionBase/artifacts/{artifactId}").path("get")
         assertTrue(executionArtifact.path("responses").path("200").path("headers").has("Cache-Control"))
+        assertTrue(executionArtifact.path("responses").has("400"))
+        assertTrue(executionArtifact.path("responses").has("404"))
+        assertTrue(executionArtifact.path("parameters").any { it.path("name").asText() == "spanId" && it.path("in").asText() == "query" })
+        assertTrue(executionArtifact.path("parameters").any { it.path("name").asText() == "role" && it.path("in").asText() == "query" })
         val artifactSchemaName = executionArtifact.path("responses").path("200").path("content")
             .path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val artifactProperties = schemas.path(artifactSchemaName).path("properties")
         listOf("id", "spanId", "role", "fidelity", "reason", "mediaType", "content", "schemaVersion", "captureVersion", "sanitizerVersion", "sizeBytes")
             .forEach { assertTrue(artifactProperties.has(it)) }
+        val artifactDescriptorSchema = executionSpanProperties.path("artifactRoles").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val artifactDescriptorProperties = schemas.path(artifactDescriptorSchema).path("properties")
+        listOf("id", "role", "fidelity", "reason", "mediaType", "sizeBytes").forEach { assertTrue(artifactDescriptorProperties.has(it)) }
+        listOf("id", "mediaType", "sizeBytes").forEach { field ->
+            val property = artifactDescriptorProperties.path(field)
+            val nullableType = property.path("type").isArray && property.path("type").any { it.asText() == "null" }
+            assertTrue(property.path("nullable").asBoolean() || nullableType, "$field must allow null: $property")
+        }
+        assertEquals(setOf("INPUT", "REQUEST", "RESPONSE", "RESULT"), artifactDescriptorProperties.path("role").path("enum").map { it.asText() }.toSet())
+        assertFalse(executionSpanProperties.has("artifactDescriptors"))
         assertTrue(paths.path("$executionBase/capture").path("patch").path("responses").has("409"))
         assertTrue(paths.path("$executionBase/artifacts/{artifactId}").path("delete").path("responses").has("204"))
         assertTrue(paths.path("/api/v1/health").path("get").path("responses").path("200").path("content").has("application/json"))

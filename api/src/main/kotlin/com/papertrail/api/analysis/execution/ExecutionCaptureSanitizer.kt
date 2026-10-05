@@ -18,7 +18,10 @@ class ExecutionCaptureSanitizer(
         }
     }
 
-    fun isSafeIdentifier(value: String): Boolean = SAFE_IDENTIFIER.matches(value) && !containsUnsafeText(value)
+    fun isSafeIdentifier(value: String): Boolean = SAFE_IDENTIFIER.matches(value) &&
+        (value == SAFE_FIXTURE_PROVIDER_ID || !containsUnsafeText(value))
+
+    fun isSafeHttpRoute(value: String): Boolean = SAFE_HTTP_ROUTE.matches(value)
 
     fun sanitizeOpenAiRequestBody(body: ByteArray): SanitizedExecutionArtifact {
         if (body.size > maxArtifactBytes) return omitted("openai-compatible-request-v1", "ARTIFACT_TOO_LARGE")
@@ -216,7 +219,9 @@ class ExecutionCaptureSanitizer(
 
     companion object {
         const val DEFAULT_MAX_ARTIFACT_BYTES = 1_048_576
+        private const val SAFE_FIXTURE_PROVIDER_ID = "recorded-fixtures"
         private val SAFE_IDENTIFIER = Regex("^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,119}$")
+        private val SAFE_HTTP_ROUTE = Regex("^/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+$")
         private val SAFE_HASH = Regex("^[0-9a-f]{64}$")
         private val SAFE_SCHEMA_VERSION = Regex("^[a-z0-9][a-z0-9-]{0,63}-v[0-9]{1,3}$")
         private val SAFE_OMISSION_REASONS = setOf(

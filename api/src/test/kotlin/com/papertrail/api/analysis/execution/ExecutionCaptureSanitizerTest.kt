@@ -137,6 +137,20 @@ class ExecutionCaptureSanitizerTest {
     }
 
     @Test
+    fun `the recorded fixture provider ID is not mistaken for a private record identifier`() {
+        assertTrue(sanitizer.isSafeIdentifier("recorded-fixtures"))
+        assertFalse(sanitizer.isSafeIdentifier("record P-0042"))
+    }
+
+    @Test
+    fun `HTTP routes omit hosts queries and path traversal`() {
+        assertTrue(sanitizer.isSafeHttpRoute("/v1/chat/completions"))
+        assertFalse(sanitizer.isSafeHttpRoute("//example.org/works"))
+        assertFalse(sanitizer.isSafeHttpRoute("/works?doi=10.1234/example"))
+        assertFalse(sanitizer.isSafeHttpRoute("/works/../private"))
+    }
+
+    @Test
     fun `credential-shaped model metadata is omitted`() {
         val result = sanitizer.sanitize(
             "provider-call-summary-v1",

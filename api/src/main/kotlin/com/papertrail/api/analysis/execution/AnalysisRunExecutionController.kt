@@ -75,7 +75,7 @@ class AnalysisRunExecutionController(
 
     @Operation(
         summary = "Get one sanitized execution artifact",
-        description = "Returns only a separately stored sanitized JSON artifact linked to this run. Removed content has a REMOVED fidelity and no body. Response caching is disabled. Anyone with access to this trusted local workspace can inspect artifacts; no user or owner identity is asserted.",
+        description = "Returns only a separately stored sanitized JSON artifact linked to this run. Optional spanId and role parameters select one specific run-local association; if supplied, that exact association must exist. Removed content has a REMOVED fidelity and no body. Response caching is disabled. Anyone with access to this trusted local workspace can inspect artifacts; no user or owner identity is asserted.",
     )
     @ApiResponses(
         value = [
@@ -85,12 +85,20 @@ class AnalysisRunExecutionController(
                 content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ExecutionArtifactResponse::class))],
                 headers = [Header(name = "Cache-Control", description = "Always no-store for protected execution content.", schema = Schema(type = "string"))],
             ),
-            ApiResponse(responseCode = "404", description = "Analysis Run or artifact not found in this run", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "400", description = "Unsupported artifact role", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "404", description = "Analysis Run, artifact, or requested span/role association not found in this run", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @GetMapping("/artifacts/{artifactId}", produces = [MediaType.APPLICATION_JSON_VALUE])
-    fun artifact(@PathVariable runId: UUID, @PathVariable artifactId: UUID): ResponseEntity<ExecutionArtifactResponse> =
-        ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(executionService.artifact(runId, artifactId))
+    fun artifact(
+        @PathVariable runId: UUID,
+        @PathVariable artifactId: UUID,
+        @Parameter(description = "Optional execution span association; must belong to this Analysis Run and artifact.")
+        @RequestParam(required = false) spanId: UUID?,
+        @Parameter(description = "Optional artifact role association: INPUT, REQUEST, RESPONSE, or RESULT.", schema = Schema(allowableValues = ["INPUT", "REQUEST", "RESPONSE", "RESULT"]))
+        @RequestParam(required = false) role: String?,
+    ): ResponseEntity<ExecutionArtifactResponse> =
+        ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(executionService.artifact(runId, artifactId, spanId, role))
 
     @Operation(
         summary = "Stop prospective execution capture",

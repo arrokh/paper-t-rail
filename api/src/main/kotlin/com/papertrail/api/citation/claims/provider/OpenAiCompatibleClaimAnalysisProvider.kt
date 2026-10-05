@@ -106,6 +106,7 @@ class OpenAiCompatibleClaimAnalysisProvider(
                     providerId = providerId,
                     modelId = settings.modelId,
                     operation = providerCall,
+                    attributes = mapOf("httpRoute" to "/v1/chat/completions"),
                 ) ?: providerCall()
                 parseResponse(response, batch.request.contexts.single())
             }

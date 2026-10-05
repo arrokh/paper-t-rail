@@ -12,6 +12,7 @@ import com.papertrail.api.document.service.isSourceDocumentDeleted
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
@@ -39,10 +40,14 @@ class ReferenceResolutionRequestedHandler(
     fun handle(serializedEvent: String): UUID {
         val event: PipelineEvent<ReferenceResolutionRequestedPayload> = objectMapper.readValue(serializedEvent)
         require(event.eventType == REFERENCE_RESOLUTION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        executionService?.recordQueueIntervals(
+            event.analysisRunId, event.eventId, event.attempt, "references", event.queueWaitStartedAt,
+            event.retryScheduledAt, event.retryDueAt, event.causationId,
+        )
         val operation = { handleEvent(event) }
         return executionService?.record(
             event.analysisRunId,
-            ExecutionSpanSpec("references", "QUEUE", "Reference resolution attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId),
+            ExecutionSpanSpec("references", "QUEUE", "Reference resolution attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId, causationEventId = event.causationId),
             operation,
         ) ?: operation()
     }
@@ -76,7 +81,7 @@ class ReferenceResolutionRequestedHandler(
         } else {
             executionService.record(
                 event.analysisRunId,
-                ExecutionSpanSpec("references", "PROVIDER", "Resolve bibliography entry", event.attempt + 1, event.eventId, operationId = ExecutionOperationId.forEvent(event.eventId, "reference-resolution")),
+                ExecutionSpanSpec("references", "INTERNAL", "Resolve bibliography entry", event.attempt + 1, event.eventId, operationId = ExecutionOperationId.forEvent(event.eventId, "reference-resolution")),
             ) {
                 executionService.captureCurrent(
                     ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1)),
@@ -175,6 +180,8 @@ class ReferenceResolutionRequestedHandler(
                 sourceContentSha256 = event.payload.sourceContentSha256,
                 bibliographyEntryId = event.payload.bibliographyEntryId,
             ),
+            traceparent = W3CTraceContext.child(event.traceparent),
+            tracestate = event.tracestate,
         )
         jdbc.update(
             """

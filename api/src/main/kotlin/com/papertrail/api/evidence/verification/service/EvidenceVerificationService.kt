@@ -413,6 +413,7 @@ class EvidenceVerificationService(
             name = "System One request preflight",
             providerId = provider.providerId,
             modelId = provider.modelId,
+            attributes = mapOf("httpRoute" to "/v1/systemone"),
         ) {
             executionService.captureCurrent(
                 ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1, "candidateCount" to QUESTION_SEQUENCE_COUNT)),
@@ -450,6 +451,7 @@ class EvidenceVerificationService(
             name = "System One evidence evaluation",
             providerId = provider.providerId,
             modelId = provider.modelId,
+            attributes = mapOf("httpRoute" to "/v1/systemone"),
         ) {
             executionService.captureCurrent(
                 ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to request.evidencePassages.size)),

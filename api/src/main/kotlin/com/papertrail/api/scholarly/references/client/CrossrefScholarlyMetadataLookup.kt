@@ -3,6 +3,7 @@ package com.papertrail.api.scholarly.references.client
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
@@ -21,6 +22,7 @@ class CrossrefScholarlyMetadataLookup(
     private val configuration: AnalysisConfigurationSnapshot,
     private val contactEmail: String?,
     private val cache: CrossrefLookupCache,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) : ScholarlyMetadataLookup {
     override fun byDoi(doi: String): ScholarlyWork? {
         val payload = payload(
@@ -36,7 +38,7 @@ class CrossrefScholarlyMetadataLookup(
                 ?.asText()
                 ?.let { uriBuilder.queryParam("mailto", it) }
             val uri = uriBuilder.buildAndExpand(requestDoi).encode().toUri()
-            val response = exchange(uri)
+            val response = exchange(uri, "crossref-doi-lookup", "/works")
             val works = response?.path("message")?.let(::toWork)?.let(::listOf).orEmpty()
             cache.storeByDoi(requestDoi, works)
             works.firstOrNull()
@@ -66,7 +68,7 @@ class CrossrefScholarlyMetadataLookup(
                 ?.takeIf(JsonNode::isTextual)
                 ?.asText()
                 ?.let { uriBuilder.queryParam("mailto", it) }
-            val response = exchange(uriBuilder.build().encode().toUri())
+            val response = exchange(uriBuilder.build().encode().toUri(), "crossref-bibliographic-search", "/works")
             val works = response?.path("message")?.path("items")?.mapNotNull(::toWork).orEmpty()
             cache.storeSearch(query, works)
             works
@@ -79,16 +81,32 @@ class CrossrefScholarlyMetadataLookup(
         return ProviderCallPayload(content)
     }
 
-    private fun exchange(uri: URI): JsonNode? = client.get()
-        .uri(uri)
-        .accept(MediaType.APPLICATION_JSON)
-        .exchange { _, response ->
-            when {
-                response.statusCode == HttpStatus.NOT_FOUND -> null
-                !response.statusCode.is2xxSuccessful -> throw IllegalStateException("Crossref returned HTTP ${response.statusCode.value()}.")
-                else -> objectMapper.readTree(response.body)
-            }
+    private fun exchange(uri: URI, operationKey: String, route: String): JsonNode? {
+        val request = {
+            client.get()
+                .uri(uri)
+                .accept(MediaType.APPLICATION_JSON)
+                .exchange { _, response ->
+                    when {
+                        response.statusCode == HttpStatus.NOT_FOUND -> null
+                        !response.statusCode.is2xxSuccessful -> throw IllegalStateException("Crossref returned HTTP ${response.statusCode.value()}.")
+                        else -> objectMapper.readTree(response.body)
+                    }
+                }
         }
+        return if (executionService == null) {
+            request()
+        } else {
+            executionService.recordCurrentProviderCall(
+                operationKey = operationKey,
+                name = "Crossref scholarly metadata request",
+                providerId = "crossref",
+                modelId = null,
+                attributes = mapOf("httpRoute" to route),
+                operation = request,
+            )
+        }
+    }
 
     private fun normalizeField(value: String): String? = value.trim().replace(WHITESPACE, " ").takeIf(String::isNotEmpty)
 

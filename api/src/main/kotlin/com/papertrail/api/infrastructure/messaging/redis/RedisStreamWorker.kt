@@ -32,9 +32,12 @@ import org.springframework.data.domain.Range
 import org.springframework.data.redis.connection.stream.StreamOffset
 import org.springframework.data.redis.connection.stream.StreamReadOptions
 import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.script.DefaultRedisScript
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import java.time.Duration
+import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -55,6 +58,7 @@ class RedisStreamWorker(
     @Value("\${paper-trail.queue.batch-size}") private val batchSize: Long,
     @Value("\${paper-trail.queue.max-attempts}") private val maxAttempts: Long,
     @Value("\${paper-trail.queue.retry-backoff-ms}") retryBackoffMs: String,
+    @Value("\${paper-trail.queue.event-attempt-retention-ms}") private val eventAttemptRetentionMs: Long = DEFAULT_EVENT_ATTEMPT_RETENTION_MS,
 ) {
     private val retryBackoffDelaysMs = retryBackoffMs.split(',').map { it.trim().toLong() }
     private val leaseHeartbeatExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { task ->
@@ -65,6 +69,7 @@ class RedisStreamWorker(
         require(maxAttempts > 0) { "Queue max attempts must be positive." }
         require(retryBackoffDelaysMs.size >= maxAttempts - 1) { "Queue retry backoff must define a delay between every attempt." }
         require(retryBackoffDelaysMs.all { it >= 0 }) { "Queue retry backoff values must not be negative." }
+        require(eventAttemptRetentionMs > 0) { "Event attempt retention must be positive." }
     }
     @Volatile
     private var groupReady = false
@@ -150,6 +155,21 @@ class RedisStreamWorker(
             deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The stream event envelope could not be parsed.")
             return
         }
+        val redisDeliveryCount = deliveryCount(record.id.value)
+        val eventAttempt = incrementEventAttempt(event.eventId)
+        val retrySchedule = retryBackoffSchedule(record.id.value)
+        if (retrySchedule != null) redis.opsForHash<String, String>().delete(retryBackoffKey, record.id.value)
+        val deliveryEvent = event.copy(
+            attempt = (eventAttempt - 1).coerceAtLeast(0).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+            queueWaitStartedAt = when {
+                retrySchedule != null -> Instant.ofEpochMilli(retrySchedule.dueAtMillis)
+                redisDeliveryCount == 1L -> streamEnqueuedAt(record.id.value)
+                else -> null
+            },
+            retryScheduledAt = retrySchedule?.let { Instant.ofEpochMilli(it.scheduledAtMillis) },
+            retryDueAt = retrySchedule?.let { Instant.ofEpochMilli(it.dueAtMillis) },
+        )
+        val deliveryEnvelope = objectMapper.writeValueAsString(deliveryEvent)
         val previousContext = MDC.getCopyOfContextMap()
         MDC.put("analysisRunId", event.analysisRunId.toString())
         MDC.put("eventId", event.eventId.toString())
@@ -157,7 +177,7 @@ class RedisStreamWorker(
         MDC.put("documentId", event.payload.path("documentId").asText())
         MDC.put("eventType", event.eventType)
         try {
-            processEvent(record, serialized, event)
+            processEvent(record, deliveryEnvelope, deliveryEvent)
         } finally {
             if (previousContext == null) MDC.clear() else MDC.setContextMap(previousContext)
         }
@@ -181,6 +201,7 @@ class RedisStreamWorker(
                     workDescription = "document analysis",
                     handle = { handler.handle(serialized) },
                     markFailed = { reason -> handler.markFailed(typedEvent, reason) },
+                    eventId = event.eventId,
                 )
             }
             REFERENCE_RESOLUTION_REQUESTED -> {
@@ -195,6 +216,7 @@ class RedisStreamWorker(
                     workDescription = "bibliography reference resolution",
                     handle = { referenceResolutionHandler.handle(serialized) },
                     markFailed = { reason -> referenceResolutionHandler.markFailed(typedEvent, reason) },
+                    eventId = event.eventId,
                 )
             }
             CITED_PAPER_INDEXING_REQUESTED -> {
@@ -209,6 +231,7 @@ class RedisStreamWorker(
                     workDescription = "Cited Paper Evidence Passage indexing",
                     handle = { citedPaperIndexingHandler.handle(serialized) },
                     markFailed = { reason -> citedPaperIndexingHandler.markFailed(typedEvent, reason) },
+                    eventId = event.eventId,
                 )
             }
             CITED_PAPER_ACQUISITION_REQUESTED -> {
@@ -223,6 +246,7 @@ class RedisStreamWorker(
                     workDescription = "cited-paper access",
                     handle = { citedPaperAcquisitionHandler.handle(serialized) },
                     markFailed = { reason -> citedPaperAcquisitionHandler.markFailed(typedEvent, reason) },
+                    eventId = event.eventId,
                 )
             }
             else -> deadLetter(record, "UNSUPPORTED_EVENT_TYPE", "No handler is registered for event type '${event.eventType}'.")
@@ -234,9 +258,10 @@ class RedisStreamWorker(
         workDescription: String,
         handle: () -> Unit,
         markFailed: (String) -> Unit,
+        eventId: UUID,
     ) {
         try {
-            val processingLease = startProcessingLease(record.id.value)
+            val processingLease = startProcessingLease(record.id.value, eventId)
             try {
                 handle()
             } finally {
@@ -267,7 +292,7 @@ class RedisStreamWorker(
                 }
             } else {
                 try {
-                    scheduleRetry(record.id.value, attempts)
+                    scheduleRetry(record.id.value, attempts, eventId)
                     logger.atWarn()
                         .addKeyValue("streamMessageId", record.id.value)
                         .addKeyValue("attempt", attempts)
@@ -317,6 +342,7 @@ class RedisStreamWorker(
     private fun acknowledge(record: MapRecord<String, String, String>) {
         redis.opsForStream<String, String>().acknowledge(stream, group, record.id)
         redis.opsForHash<String, String>().delete(retryScheduleKey, record.id.value)
+        redis.opsForHash<String, String>().delete(retryBackoffKey, record.id.value)
     }
 
     private fun deliveryCount(messageId: String): Long {
@@ -331,10 +357,16 @@ class RedisStreamWorker(
         .get(retryScheduleKey, messageId)
         ?.toLongOrNull()
 
+    private fun retryBackoffSchedule(messageId: String): RetryBackoffSchedule? = redis.opsForHash<String, String>()
+        .get(retryBackoffKey, messageId)
+        ?.let { value -> runCatching { objectMapper.readValue(value, RetryBackoffSchedule::class.java) }.getOrNull() }
+
+    private fun streamEnqueuedAt(messageId: String): Instant? = messageId.substringBefore('-').toLongOrNull()?.let(Instant::ofEpochMilli)
+
     private fun retryDelayMillis(attempt: Long): Long =
         retryBackoffDelaysMs[(attempt - 1).coerceIn(0, retryBackoffDelaysMs.lastIndex.toLong()).toInt()]
 
-    private fun startProcessingLease(messageId: String): AutoCloseable? {
+    private fun startProcessingLease(messageId: String, eventId: UUID): AutoCloseable? {
         if (reclaimDelayMs <= 0) return null
 
         val lock = Any()
@@ -344,6 +376,7 @@ class RedisStreamWorker(
                 if (!active) return@synchronized
                 val leaseExpiresAt = System.currentTimeMillis() + reclaimDelayMs
                 redis.opsForHash<String, String>().put(retryScheduleKey, messageId, leaseExpiresAt.toString())
+                refreshEventAttemptExpiry(eventId, eventAttemptRetentionMs)
             }
         }
         refresh()
@@ -385,9 +418,16 @@ class RedisStreamWorker(
         false
     }
 
-    private fun scheduleRetry(messageId: String, attempt: Long) {
-        val dueAt = System.currentTimeMillis() + retryDelayMillis(attempt)
+    private fun scheduleRetry(messageId: String, attempt: Long, eventId: UUID) {
+        val scheduledAt = System.currentTimeMillis()
+        val dueAt = scheduledAt + retryDelayMillis(attempt)
         redis.opsForHash<String, String>().put(retryScheduleKey, messageId, dueAt.toString())
+        redis.opsForHash<String, String>().put(
+            retryBackoffKey,
+            messageId,
+            objectMapper.writeValueAsString(RetryBackoffSchedule(scheduledAt, dueAt)),
+        )
+        refreshEventAttemptExpiry(eventId, eventAttemptRetentionMs + (dueAt - scheduledAt))
     }
 
     private fun ensureConsumerGroup(): Boolean {
@@ -415,7 +455,37 @@ class RedisStreamWorker(
     private val retryScheduleKey: String
         get() = "$stream:retry-after"
 
+    private val retryBackoffKey: String
+        get() = "$stream:retry-backoff"
+
+    private fun eventAttemptKey(eventId: UUID): String = "$stream:event-attempt:$eventId"
+
+    private data class RetryBackoffSchedule(val scheduledAtMillis: Long, val dueAtMillis: Long)
+
+    private fun incrementEventAttempt(eventId: UUID): Long = redis.execute(
+        INCREMENT_EVENT_ATTEMPT_SCRIPT,
+        listOf(eventAttemptKey(eventId)),
+        eventAttemptRetentionMs.toString(),
+    ) ?: throw IllegalStateException("Pipeline event attempt counter could not be incremented.")
+
+    private fun refreshEventAttemptExpiry(eventId: UUID, retentionMs: Long) {
+        redis.execute(
+            REFRESH_EVENT_ATTEMPT_EXPIRY_SCRIPT,
+            listOf(eventAttemptKey(eventId)),
+            retentionMs.toString(),
+        )
+    }
+
     companion object {
+        private const val DEFAULT_EVENT_ATTEMPT_RETENTION_MS = 2_592_000_000L
+        private val INCREMENT_EVENT_ATTEMPT_SCRIPT = DefaultRedisScript(
+            "local attempt = redis.call('INCR', KEYS[1]); redis.call('PEXPIRE', KEYS[1], ARGV[1]); return attempt",
+            Long::class.java,
+        )
+        private val REFRESH_EVENT_ATTEMPT_EXPIRY_SCRIPT = DefaultRedisScript<Long>(
+            "if redis.call('EXISTS', KEYS[1]) == 1 then return redis.call('PEXPIRE', KEYS[1], ARGV[1]) else return 0 end",
+            Long::class.java,
+        )
         private val logger = LoggerFactory.getLogger(RedisStreamWorker::class.java)
     }
 }

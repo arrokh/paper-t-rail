@@ -52,6 +52,7 @@ paper-trail:
     batch-size: ${REDIS_BATCH_SIZE:10}
     max-attempts: 3
     retry-backoff-ms: 250,1000,4000
+    event-attempt-retention-ms: 2592000000
   validation:
     parser-id: pdfbox
     parser-version: 3.0.5

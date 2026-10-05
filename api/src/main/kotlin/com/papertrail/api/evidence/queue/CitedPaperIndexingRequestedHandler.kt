@@ -41,10 +41,14 @@ class CitedPaperIndexingRequestedHandler(
     fun handle(serializedEvent: String): UUID {
         val event: PipelineEvent<CitedPaperIndexingRequestedPayload> = objectMapper.readValue(serializedEvent)
         require(event.eventType == CITED_PAPER_INDEXING_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        executionService?.recordQueueIntervals(
+            event.analysisRunId, event.eventId, event.attempt, "evidence", event.queueWaitStartedAt,
+            event.retryScheduledAt, event.retryDueAt, event.causationId,
+        )
         val operation = { handleEvent(event) }
         return executionService?.record(
             event.analysisRunId,
-            ExecutionSpanSpec("evidence", "QUEUE", "Evidence indexing attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId),
+            ExecutionSpanSpec("evidence", "QUEUE", "Evidence indexing attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId, causationEventId = event.causationId),
             operation,
         ) ?: operation()
     }

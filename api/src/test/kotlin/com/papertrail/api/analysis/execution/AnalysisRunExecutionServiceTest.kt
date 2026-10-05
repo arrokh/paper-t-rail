@@ -2,14 +2,33 @@ package com.papertrail.api.analysis.execution
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.papertrail.api.analysis.configuration.RunConfigurationFactory
+import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
+import com.papertrail.api.analysis.http.RunConfigurationRequest
+import com.papertrail.api.scholarly.references.client.CrossrefScholarlyMetadataLookup
+import com.papertrail.api.scholarly.references.client.NoOpCrossrefLookupCache
+import com.papertrail.api.infrastructure.providers.DataCategory
+import com.papertrail.api.infrastructure.providers.ProviderCallGate
+import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
+import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleChatClient
 import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.http.HttpMethod
+import org.springframework.http.MediaType
+import org.springframework.test.web.client.MockRestServiceServer
+import org.springframework.test.web.client.match.MockRestRequestMatchers.method
+import org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo
+import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
+import org.springframework.web.client.RestClient
 import java.net.InetSocketAddress
+import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -118,7 +137,81 @@ class AnalysisRunExecutionServiceTest {
         assertTrue(artifacts.all { it.second.fidelity == CaptureFidelity.PARTIAL })
     }
 
-    private fun sha256Hex(content: String): String = java.security.MessageDigest.getInstance("SHA-256")
+    @Test
+    fun `Crossref network calls produce nested content-free route spans`() {
+        val mapper = jacksonObjectMapper()
+        val catalog = configuredExternalProviderCatalog()
+        val configuration = RunConfigurationFactory(
+            objectMapper = mapper,
+            providerCatalog = catalog,
+            parserId = "grobid",
+            parserVersion = "0.9.1-crf",
+            languageDetectorVersion = "0.6",
+            limits = ValidationLimitsSnapshot(1_000_000, 20, 100_000, 100_000, 100, 0.65),
+        ).from(
+            RunConfigurationRequest(
+                scholarlyMetadataProvider = "crossref",
+                externalProviderConsents = listOf(
+                    externalProviderConsent(catalog, "crossref", listOf(DataCategory.BIBLIOGRAPHIC_METADATA.id)),
+                ),
+            ),
+        )
+        val builder = RestClient.builder().baseUrl("https://api.crossref.org")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo(containsString("https://api.crossref.org/works/10.1234")))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess(
+                """{"message":{"DOI":"10.1234/example","title":["Safe public title"],"author":[{"given":"Ada","family":"Researcher"}],"published-print":{"date-parts":[[2024]]}}}""",
+                MediaType.APPLICATION_JSON,
+            ))
+
+        val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
+        val runId = UUID.randomUUID()
+        val eventId = UUID.randomUUID()
+        val parent = ExecutionSpanSpec("references", "INTERNAL", "Resolve bibliography entry", eventId = eventId)
+        val parentHandle = ExecutionSpanHandle(UUID.randomUUID(), runId, UUID.randomUUID(), Instant.now(), System.nanoTime(), eventId = eventId)
+        val providerSpec = ExecutionSpanSpec(
+            stageId = "references",
+            kind = "PROVIDER",
+            name = "Crossref scholarly metadata request",
+            eventId = eventId,
+            parentSpanId = parentHandle.id,
+            providerId = "crossref",
+            operationId = ExecutionOperationId.forEvent(eventId, "provider-call:crossref-doi-lookup"),
+            attributes = mapOf("httpRoute" to "/works"),
+        )
+        val providerHandle = ExecutionSpanHandle(UUID.randomUUID(), runId, providerSpec.operationId!!, Instant.now(), System.nanoTime(), eventId = eventId)
+        Mockito.`when`(repository.startSpan(runId, parent, "{}")).thenReturn(parentHandle)
+        Mockito.`when`(repository.startSpan(runId, providerSpec, """{"httpRoute":"/works"}""")).thenReturn(providerHandle)
+        val execution = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), mapper)
+        val lookup = CrossrefScholarlyMetadataLookup(
+            client = builder.build(),
+            objectMapper = mapper,
+            callGate = ProviderCallGate(catalog),
+            configuration = configuration,
+            contactEmail = null,
+            cache = NoOpCrossrefLookupCache,
+            executionService = execution,
+        )
+        val work = try {
+            execution.record(runId, parent) { lookup.byDoi("10.1234/example") }
+        } finally {
+            server.verify()
+        }
+
+        assertEquals("10.1234/example", work?.doi)
+        val recordedProviderSpec = Mockito.mockingDetails(repository).invocations
+            .filter { it.method.name == "startSpan" }
+            .map { it.arguments[1] as ExecutionSpanSpec }
+            .single { it.name == "Crossref scholarly metadata request" }
+        assertEquals("PROVIDER", recordedProviderSpec.kind)
+        assertEquals("crossref", recordedProviderSpec.providerId)
+        assertEquals("/works", recordedProviderSpec.attributes["httpRoute"])
+        assertEquals(parentHandle.id, recordedProviderSpec.parentSpanId)
+        assertTrue(Mockito.mockingDetails(repository).invocations.none { it.method.name == "recordArtifact" })
+    }
+
+    private fun sha256Hex(content: String): String = MessageDigest.getInstance("SHA-256")
         .digest(content.toByteArray(Charsets.UTF_8))
         .joinToString("") { byte -> "%02x".format(byte) }
 }
