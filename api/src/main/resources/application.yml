@@ -126,9 +126,9 @@ paper-trail:
       request-timeout-millis: ${OLLAMA_REQUEST_TIMEOUT_MILLIS:60000}
       external-retention-disclosure: "${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:}"
     system-one:
-      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:laya}
+      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:jev}
     laya:
-      # Enabled as the default local provider when authenticated settings are valid.
+      # Keep the authenticated local candidate available; Jev is preferred when configured.
       enabled: ${LAYA_ENABLED:true}
       base-url: ${LAYA_BASE_URL:http://laya:8000}
       api-key: ${LAYA_API_KEY:}
@@ -167,14 +167,14 @@ spring:
     activate:
       on-profile: production
 
-# Production defaults select Laya and enable experimental aggregation per the owner decision.
-# Outputs remain uncalibrated; this configuration default does not establish accuracy or approval.
+# Production defaults prefer Jev when configured and enable experimental aggregation per the owner decision.
+# Jev remains consent-gated per Analysis Run; outputs remain uncalibrated.
 paper-trail:
   analysis:
     system-one-aggregation:
       enabled: ${SYSTEM_ONE_AGGREGATION_ENABLED:true}
   providers:
     system-one:
-      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:laya}
+      default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:jev}
     laya:
       enabled: ${LAYA_ENABLED:true}

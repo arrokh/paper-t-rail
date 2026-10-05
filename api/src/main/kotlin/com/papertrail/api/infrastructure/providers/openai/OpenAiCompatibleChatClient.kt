@@ -2,7 +2,6 @@ package com.papertrail.api.infrastructure.providers.openai
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.node.ObjectNode
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.io.ByteArrayOutputStream
@@ -28,13 +27,19 @@ class OpenAiCompatibleChatClient(
         .followRedirects(HttpClient.Redirect.NEVER)
         .build()
 
-    fun requestBody(modelId: String, maxCompletionTokens: Int, systemPrompt: String, userJson: String): ByteArray {
+    fun requestBody(
+        modelId: String,
+        maxCompletionTokens: Int,
+        responseFormat: JsonNode,
+        systemPrompt: String,
+        userJson: String,
+    ): ByteArray {
         val root = objectMapper.createObjectNode()
         root.put("model", modelId)
         root.put("temperature", 0)
         root.put("max_tokens", maxCompletionTokens)
         root.put("stream", false)
-        root.set<ObjectNode>("response_format", objectMapper.createObjectNode().put("type", "json_object"))
+        root.set<JsonNode>("response_format", responseFormat.deepCopy())
         root.set<JsonNode>("messages", objectMapper.createArrayNode().apply {
             add(objectMapper.createObjectNode().put("role", "system").put("content", systemPrompt))
             add(objectMapper.createObjectNode().put("role", "user").put("content", userJson))
@@ -97,7 +102,12 @@ class OpenAiCompatibleChatClient(
         }
     }
 
-    fun complete(requestBody: ByteArray): String {
+    fun complete(
+        requestBody: ByteArray,
+        modelId: String? = null,
+        responseFormatType: String? = null,
+        responseFormatName: String? = null,
+    ): String {
         val endpoint = settings.chatCompletionsUri
             ?: throw OpenAiCompatibleProviderException("The OpenAI-compatible endpoint is not configured.")
         if (!settings.isSelectable) {
@@ -106,10 +116,18 @@ class OpenAiCompatibleChatClient(
         if (requestBody.size > settings.maxRequestBytes) {
             throw OpenAiCompatibleProviderException("The OpenAI-compatible request exceeds the configured limit.")
         }
+        val requestMetadata = ChatRequestMetadata(
+            modelId = safeLogIdentifier(modelId) ?: "unknown",
+            responseFormatType = safeLogIdentifier(responseFormatType) ?: "unknown",
+            responseFormatName = safeLogIdentifier(responseFormatName),
+        )
         val startedAtNanos = System.nanoTime()
         logger.atDebug()
             .addKeyValue("providerId", OpenAiCompatibleEndpointSettings.PROVIDER_ID)
             .addKeyValue("operation", "chat-completion")
+            .addKeyValue("modelId", requestMetadata.modelId)
+            .addKeyValue("responseFormatType", requestMetadata.responseFormatType)
+            .also { builder -> requestMetadata.responseFormatName?.let { builder.addKeyValue("responseFormatName", it) } }
             .addKeyValue("requestBytes", requestBody.size)
             .log("OpenAI-compatible chat completion started")
         val requestBuilder = HttpRequest.newBuilder(endpoint)
@@ -153,7 +171,14 @@ class OpenAiCompatibleChatClient(
                 .log("OpenAI-compatible chat response exceeds its configured byte limit")
             throw OpenAiCompatibleProviderException("The OpenAI-compatible response exceeds the configured limit.")
         }
-        logHttpStatus("chat-completion", response.statusCode(), startedAtNanos, body.size)
+        logHttpStatus(
+            operation = "chat-completion",
+            statusCode = response.statusCode(),
+            startedAtNanos = startedAtNanos,
+            responseBytes = body.size,
+            requestBytes = requestBody.size,
+            requestMetadata = requestMetadata,
+        )
         if (response.statusCode() == 408 || response.statusCode() == 429 || response.statusCode() in 500..599) {
             throw RetryableOpenAiCompatibleProviderException(
                 "The OpenAI-compatible endpoint returned retryable HTTP ${response.statusCode()}.",
@@ -181,22 +206,37 @@ class OpenAiCompatibleChatClient(
         statusCode: Int,
         startedAtNanos: Long,
         responseBytes: Int? = null,
+        requestBytes: Int? = null,
+        requestMetadata: ChatRequestMetadata? = null,
     ) {
         val success = statusCode in 200..299
-        val event = when {
-            !success -> logger.atWarn()
-            operation == "availability-check" -> logger.atInfo()
-            else -> logger.atDebug()
-        }
+        val event = if (success) logger.atInfo() else logger.atWarn()
         event
             .addKeyValue("providerId", OpenAiCompatibleEndpointSettings.PROVIDER_ID)
             .addKeyValue("operation", operation)
             .addKeyValue("httpStatus", statusCode)
             .addKeyValue("retryable", statusCode == 408 || statusCode == 429 || statusCode in 500..599)
             .addKeyValue("durationMs", elapsedMillis(startedAtNanos))
-            .also { builder -> responseBytes?.let { builder.addKeyValue("responseBytes", it) } }
+            .also { builder ->
+                requestBytes?.let { builder.addKeyValue("requestBytes", it) }
+                responseBytes?.let { builder.addKeyValue("responseBytes", it) }
+                requestMetadata?.let {
+                    builder.addKeyValue("modelId", it.modelId)
+                    builder.addKeyValue("responseFormatType", it.responseFormatType)
+                    it.responseFormatName?.let { name -> builder.addKeyValue("responseFormatName", name) }
+                }
+            }
             .log(if (success) "OpenAI-compatible HTTP request succeeded" else "OpenAI-compatible HTTP request returned a failure status")
     }
+
+    private fun safeLogIdentifier(value: String?): String? =
+        value?.takeIf { SAFE_LOG_IDENTIFIER.matches(it) }
+
+    private data class ChatRequestMetadata(
+        val modelId: String,
+        val responseFormatType: String,
+        val responseFormatName: String?,
+    )
 
     private fun logTransportFailure(operation: String, exception: Exception, startedAtNanos: Long) {
         logger.atWarn()
@@ -214,6 +254,7 @@ class OpenAiCompatibleChatClient(
         private const val CONNECT_TIMEOUT_SECONDS = 5L
         private const val AVAILABILITY_TIMEOUT_MILLIS = 5_000L
         private const val NANOS_PER_MILLISECOND = 1_000_000L
+        private val SAFE_LOG_IDENTIFIER = Regex("[A-Za-z0-9_.:/-]{1,120}")
         private val logger = LoggerFactory.getLogger(OpenAiCompatibleChatClient::class.java)
     }
 }

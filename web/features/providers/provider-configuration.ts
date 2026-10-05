@@ -14,7 +14,7 @@ export type ProviderSelections = {
 export const DEFAULT_PROVIDER_SELECTIONS: ProviderSelections = {
   claimExtractorProvider: "openai-compatible-chat",
   embeddingProvider: "ollama",
-  systemOneProvider: "laya",
+  systemOneProvider: "jev",
   scholarlyMetadataProvider: "crossref",
   openAccessProvider: "unpaywall",
 };
@@ -112,6 +112,7 @@ export function availableProviderSelections(
     const options = selectableProviderOptions(directory, role);
     const preferredProviderId = explicitSelections[role] ?? selections[field];
     // The API directory gates availability; Laya and implicit Ollama preferences must be local.
+    // Jev may be preselected, but its consent remains a separate readiness gate.
     const preferred = options.find((provider) => {
       if (provider.providerId !== preferredProviderId) return false;
       if (role === "systemOne" && provider.providerId === "laya" && provider.trustBoundary !== "LOCAL") return false;

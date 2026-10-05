@@ -68,8 +68,8 @@ def configure_local_laya(env_path: Path = ENV_PATH, example_path: Path = EXAMPLE
         lines = set_value(lines, "SYSTEM_ONE_DEFAULT_PROVIDER", "mock")
         values["SYSTEM_ONE_DEFAULT_PROVIDER"] = "mock"
     elif enabled and not default_provider:
-        lines = set_value(lines, "SYSTEM_ONE_DEFAULT_PROVIDER", "laya")
-        values["SYSTEM_ONE_DEFAULT_PROVIDER"] = "laya"
+        lines = set_value(lines, "SYSTEM_ONE_DEFAULT_PROVIDER", "jev")
+        values["SYSTEM_ONE_DEFAULT_PROVIDER"] = "jev"
     key = values.get("LAYA_API_KEY", "")
     if enabled and not key:
         lines = set_value(lines, "LAYA_API_KEY", secrets.token_hex(32))

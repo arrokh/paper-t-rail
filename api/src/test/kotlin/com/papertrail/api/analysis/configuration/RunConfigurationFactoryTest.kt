@@ -208,36 +208,42 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
-    fun `rejects Jev as an omitted-provider deployment default`() {
+    fun `Jev is the configured omitted-provider default only when this run has explicit consent`() {
         val catalog = ProviderCatalog.safeDefaults(
             jevSystemOneSettings = JevSystemOneSettings(apiKey = "server-side-jev-key"),
         )
+        val jevFactory = factoryFor(
+            providerCatalog = catalog,
+            defaultSystemOneProvider = JevSystemOneSettings.PROVIDER_ID,
+        )
+        val omittedProviderRequest = jevFactory.parseRequest(jacksonObjectMapper().readTree("{}"))
 
-        assertThrows(IllegalArgumentException::class.java) {
-            factoryFor(
-                providerCatalog = catalog,
-                defaultSystemOneProvider = JevSystemOneSettings.PROVIDER_ID,
-            )
-        }
+        assertThrows(IllegalArgumentException::class.java) { jevFactory.from(omittedProviderRequest) }
+        val approvedRequest = omittedProviderRequest.copy(
+            externalProviderConsents = listOf(externalProviderConsent(
+                catalog,
+                JevSystemOneSettings.PROVIDER_ID,
+                listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id),
+            )),
+        )
+
+        assertEquals("jev", jevFactory.from(approvedRequest).systemOne.provider)
     }
 
     @Test
-    fun `uses mock when the configured Laya default is unavailable and never silently selects Jev`() {
-        val jevCatalog = ProviderCatalog.safeDefaults(
+    fun `uses mock when the configured Jev default is unavailable`() {
+        val unavailableJevCatalog = ProviderCatalog.safeDefaults(
             layaSystemOneSettings = LayaSystemOneSettings.disabled(),
-            jevSystemOneSettings = JevSystemOneSettings(apiKey = "server-side-jev-key"),
+            jevSystemOneSettings = JevSystemOneSettings(apiKey = ""),
         )
-        val layaDefaultFactory = factoryFor(
-            providerCatalog = jevCatalog,
-            defaultSystemOneProvider = LayaSystemOneSettings.PROVIDER_ID,
+        val jevDefaultFactory = factoryFor(
+            providerCatalog = unavailableJevCatalog,
+            defaultSystemOneProvider = JevSystemOneSettings.PROVIDER_ID,
         )
 
-        assertEquals("mock", layaDefaultFactory.from(layaDefaultFactory.parseRequest(null)).systemOne.provider)
+        assertEquals("mock", jevDefaultFactory.from(jevDefaultFactory.parseRequest(null)).systemOne.provider)
         assertThrows(ProviderNotSelectableException::class.java) {
-            layaDefaultFactory.from(RunConfigurationRequest(systemOneProvider = LayaSystemOneSettings.PROVIDER_ID))
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            layaDefaultFactory.from(RunConfigurationRequest(systemOneProvider = JevSystemOneSettings.PROVIDER_ID))
+            jevDefaultFactory.from(RunConfigurationRequest(systemOneProvider = JevSystemOneSettings.PROVIDER_ID))
         }
     }
 

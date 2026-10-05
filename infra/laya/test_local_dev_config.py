@@ -26,7 +26,7 @@ class LocalDevConfigTest(unittest.TestCase):
             self.assertIsNotNone(key)
             self.assertIn("POSTGRES_PASSWORD=example", contents)
             self.assertIn("LAYA_ENABLED=true", contents)
-            self.assertIn("SYSTEM_ONE_DEFAULT_PROVIDER=laya", contents)
+            self.assertIn("SYSTEM_ONE_DEFAULT_PROVIDER=jev", contents)
             self.assertIn("SYSTEM_ONE_AGGREGATION_ENABLED=true", contents)
             self.assertEqual(stat.S_IMODE(env_path.stat().st_mode), 0o600)
 
@@ -54,6 +54,17 @@ class LocalDevConfigTest(unittest.TestCase):
             self.assertIn("LAYA_ENABLED=false", env_path.read_text(encoding="utf-8"))
             self.assertIn("LAYA_API_KEY=", env_path.read_text(encoding="utf-8"))
             self.assertIn("SYSTEM_ONE_DEFAULT_PROVIDER=mock", env_path.read_text(encoding="utf-8"))
+
+    def test_preserves_the_jev_default_when_local_laya_is_disabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("LAYA_ENABLED=false\nSYSTEM_ONE_DEFAULT_PROVIDER=jev\nJEV_API_KEY=test-key\n", encoding="utf-8")
+
+            configure_local_laya(env_path, Path(directory) / "unused-example")
+
+            contents = env_path.read_text(encoding="utf-8")
+            self.assertIn("LAYA_ENABLED=false", contents)
+            self.assertIn("SYSTEM_ONE_DEFAULT_PROVIDER=jev", contents)
 
     def test_defaults_to_mock_when_legacy_env_disables_laya_without_a_system_one_default(self):
         with tempfile.TemporaryDirectory() as directory:

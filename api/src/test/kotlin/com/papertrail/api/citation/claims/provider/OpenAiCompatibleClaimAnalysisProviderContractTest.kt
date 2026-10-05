@@ -1,5 +1,8 @@
 package com.papertrail.api.citation.claims.provider
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
@@ -32,6 +35,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CountDownLatch
@@ -63,7 +67,22 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         assertFalse(requests.single().contains("server-side-secret"))
         val httpRequest = objectMapper.readTree(requests.single())
         assertEquals("fixture-model", httpRequest.path("model").asText())
-        assertEquals("json_object", httpRequest.path("response_format").path("type").asText())
+        val responseFormat = httpRequest.path("response_format")
+        assertEquals("json_schema", responseFormat.path("type").asText())
+        assertEquals("paper_trail_claim_analysis", responseFormat.path("json_schema").path("name").asText())
+        assertTrue(responseFormat.path("json_schema").path("strict").asBoolean())
+        val outputSchema = responseFormat.path("json_schema").path("schema")
+        assertEquals(setOf("contexts"), outputSchema.path("required").map { it.asText() }.toSet())
+        val contextSchema = outputSchema.path("properties").path("contexts").path("items")
+        assertEquals(
+            setOf("contextStartOffset", "contextEndOffset", "claims"),
+            contextSchema.path("required").map { it.asText() }.toSet(),
+        )
+        val claimSchema = contextSchema.path("properties").path("claims").path("items")
+        assertEquals(
+            setOf("text", "sourceStartOffset", "sourceEndOffset", "citationTargetKeys"),
+            claimSchema.path("required").map { it.asText() }.toSet(),
+        )
         assertEquals(false, httpRequest.path("stream").asBoolean())
         val user = objectMapper.readTree(httpRequest.path("messages")[1].path("content").asText())
         assertEquals(1, user.path("contexts").size())
@@ -136,10 +155,11 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         val singleContextBudgets = request.contexts.map { context ->
             val payload = payloadFactory.create(ClaimAnalysisRequest(listOf(context)))
             chatClient.requestBody(
-                initialSettings.modelId,
-                initialSettings.maxCompletionTokens,
-                OpenAiCompatibleClaimAnalysisPrompt.systemPrompt,
-                payloadFactory.userJson(payload),
+                modelId = initialSettings.modelId,
+                maxCompletionTokens = initialSettings.maxCompletionTokens,
+                responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(objectMapper),
+                systemPrompt = OpenAiCompatibleClaimAnalysisPrompt.systemPrompt,
+                userJson = payloadFactory.userJson(payload),
             ).size
         }
         val responseReserve = 512
@@ -242,6 +262,58 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     }
 
     @Test
+    fun `logs safe context-span rejection reason and counts without provider output`() {
+        val logger = LoggerFactory.getLogger(OpenAiCompatibleClaimAnalysisProvider::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            val request = requestFactory().from(documentWithOneContextAndTwoTargets())
+            val context = request.contexts.single()
+            val privateClaimText = "do-not-log-provider-claim"
+            val invalidContent = objectMapper.writeValueAsString(
+                mapOf(
+                    "contexts" to listOf(
+                        mapOf(
+                            "contextStartOffset" to context.contextStartOffset + 1,
+                            "contextEndOffset" to context.contextEndOffset,
+                            "claims" to listOf(
+                                mapOf(
+                                    "text" to privateClaimText,
+                                    "sourceStartOffset" to context.contextStartOffset,
+                                    "sourceEndOffset" to context.contextStartOffset + 5,
+                                    "citationTargetKeys" to emptyList<String>(),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+            withServer(response = chatResponse(invalidContent)) { server, _ ->
+                val settings = localSettings(server)
+                val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+                assertThrows(OpenAiCompatibleProviderException::class.java) {
+                    provider(settings, catalog).analyze(request, configuration(catalog))
+                }
+            }
+
+            val events = appender.list
+            val rejection = events.single { it.message == "OpenAI-compatible claim-analysis response rejected" }
+            val fields = rejection.keyValuePairs.associate { it.key to it.value }
+            assertEquals("unknown_response_context_span", fields["failureReasonCode"])
+            assertEquals(1, fields["requestedContextCount"])
+            assertEquals(1, fields["responseContextCount"])
+            assertEquals(0, fields["matchedContextCount"])
+            val loggedEvents = events.joinToString(" ") { it.formattedMessage + it.keyValuePairs }
+            assertFalse(loggedEvents.contains(privateClaimText))
+            assertFalse(loggedEvents.contains("contextStartOffset"))
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+    }
+
+    @Test
     fun `rejects malformed responses and unknown target keys without exposing model content`() {
         val request = requestFactory().from(documentWithOneContextAndTwoTargets())
         val context = request.contexts.single()
@@ -332,7 +404,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
                 endpoint = initialSettings.endpoint.copy(requestTimeoutMillis = 1_000),
             )
             val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
-            val requestBody = client.requestBody(settings.modelId, settings.maxCompletionTokens, "system", "{}")
+            val requestBody = transportRequestBody(client, settings)
 
             val failure = assertThrows(RetryableOpenAiCompatibleProviderException::class.java) {
                 client.complete(requestBody)
@@ -352,7 +424,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             val settings = localSettings(server)
             val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
             val failure = assertThrows(RetryableOpenAiCompatibleProviderException::class.java) {
-                client.complete(client.requestBody(settings.modelId, settings.maxCompletionTokens, "system", "{}"))
+                client.complete(transportRequestBody(client, settings))
             }
             assertFalse(failure.message.orEmpty().contains("provider-private-response"))
         }
@@ -360,10 +432,105 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             val settings = localSettings(server)
             val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
             val failure = assertThrows(OpenAiCompatibleProviderException::class.java) {
-                client.complete(client.requestBody(settings.modelId, settings.maxCompletionTokens, "system", "{}"))
+                client.complete(transportRequestBody(client, settings))
             }
             assertTrue(failure.message.orEmpty().contains("HTTP 400"))
             assertFalse(failure.message.orEmpty().contains("provider-private-response"))
+        }
+    }
+
+    @Test
+    fun `logs safe request metadata and response status without provider or request content`() {
+        val logger = LoggerFactory.getLogger(OpenAiCompatibleChatClient::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            withServer(response = "provider-private-response", statusCode = 400) { server, _ ->
+                val settings = localSettings(server)
+                val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
+                val requestBody = client.requestBody(
+                    modelId = settings.modelId,
+                    maxCompletionTokens = settings.maxCompletionTokens,
+                    responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(objectMapper),
+                    systemPrompt = "synthetic system content",
+                    userJson = "{\"syntheticClaim\":\"do-not-log\"}",
+                )
+
+                assertThrows(OpenAiCompatibleProviderException::class.java) {
+                    client.complete(
+                        requestBody = requestBody,
+                        modelId = settings.modelId,
+                        responseFormatType = "json_schema",
+                        responseFormatName = "paper_trail_claim_analysis",
+                    )
+                }
+            }
+
+            val events = appender.list
+            val failureEvent = events.single { it.message == "OpenAI-compatible HTTP request returned a failure status" }
+            val fields = failureEvent.keyValuePairs.associate { it.key to it.value }
+            assertEquals(400, fields["httpStatus"])
+            assertEquals("fixture-model", fields["modelId"])
+            assertEquals("json_schema", fields["responseFormatType"])
+            assertEquals("paper_trail_claim_analysis", fields["responseFormatName"])
+            assertTrue(fields.containsKey("requestBytes"))
+            assertTrue(fields.containsKey("responseBytes"))
+            val loggedEvents = events.joinToString(" ") { it.formattedMessage + it.keyValuePairs }
+            assertFalse(loggedEvents.contains("synthetic system content"))
+            assertFalse(loggedEvents.contains("do-not-log"))
+            assertFalse(loggedEvents.contains("provider-private-response"))
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
+    }
+
+    @Test
+    fun `logs successful chat status at info with safe metadata without request or response content`() {
+        val logger = LoggerFactory.getLogger(OpenAiCompatibleChatClient::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            withServer(response = "provider-private-response", statusCode = 200) { server, _ ->
+                val settings = localSettings(server)
+                val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
+                val requestBody = client.requestBody(
+                    modelId = settings.modelId,
+                    maxCompletionTokens = settings.maxCompletionTokens,
+                    responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(objectMapper),
+                    systemPrompt = "synthetic system content",
+                    userJson = "{\"syntheticClaim\":\"do-not-log\"}",
+                )
+
+                assertEquals(
+                    "provider-private-response",
+                    client.complete(
+                        requestBody = requestBody,
+                        modelId = settings.modelId,
+                        responseFormatType = "json_schema",
+                        responseFormatName = "paper_trail_claim_analysis",
+                    ),
+                )
+            }
+
+            val events = appender.list
+            val successEvent = events.single { it.message == "OpenAI-compatible HTTP request succeeded" }
+            val fields = successEvent.keyValuePairs.associate { it.key to it.value }
+            assertEquals("INFO", successEvent.level.toString())
+            assertEquals(200, fields["httpStatus"])
+            assertEquals("fixture-model", fields["modelId"])
+            assertEquals("json_schema", fields["responseFormatType"])
+            assertEquals("paper_trail_claim_analysis", fields["responseFormatName"])
+            assertTrue((fields["requestBytes"] as Number).toInt() > 0)
+            assertTrue((fields["responseBytes"] as Number).toInt() > 0)
+            assertTrue((fields["durationMs"] as Number).toLong() >= 0L)
+            val loggedEvents = events.joinToString(" ") { it.formattedMessage + it.keyValuePairs }
+            assertFalse(loggedEvents.contains("synthetic system content"))
+            assertFalse(loggedEvents.contains("do-not-log"))
+            assertFalse(loggedEvents.contains("provider-private-response"))
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
         }
     }
 
@@ -376,7 +543,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             endpoint = initialSettings.endpoint.copy(maxResponseBytes = 128),
         )
         val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
-        val requestBody = client.requestBody(settings.modelId, settings.maxCompletionTokens, "system", "{}")
+        val requestBody = transportRequestBody(client, settings)
 
         val failure = assertThrows(OpenAiCompatibleProviderException::class.java) {
             client.complete(requestBody)
@@ -385,6 +552,17 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         assertTrue(failure.message.orEmpty().contains("response exceeds"))
         assertFalse(failure.message.orEmpty().contains("provider-private-response"))
     }
+
+    private fun transportRequestBody(
+        client: OpenAiCompatibleChatClient,
+        settings: OpenAiCompatibleClaimAnalysisSettings,
+    ): ByteArray = client.requestBody(
+        modelId = settings.modelId,
+        maxCompletionTokens = settings.maxCompletionTokens,
+        responseFormat = objectMapper.createObjectNode().put("type", "json_object"),
+        systemPrompt = "system",
+        userJson = "{}",
+    )
 
     private fun provider(
         settings: OpenAiCompatibleClaimAnalysisSettings,

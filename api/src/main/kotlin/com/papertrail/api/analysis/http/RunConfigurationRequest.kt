@@ -16,7 +16,10 @@ data class RunConfigurationRequest(
         requiredMode = Schema.RequiredMode.NOT_REQUIRED,
     )
     val embeddingProvider: String? = null,
-    @field:Schema(description = "System One verification provider. If omitted, use the deployment default (mock if its default Laya is unavailable); an explicitly unavailable selection is rejected.", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+    @field:Schema(
+        description = "System One verification provider. If omitted, use the deployment default (Jev by default; mock if that default is unavailable). External providers require matching per-Analysis-Run consent before any call.",
+        requiredMode = Schema.RequiredMode.NOT_REQUIRED,
+    )
     val systemOneProvider: String? = null,
     @field:Schema(description = "Scholarly metadata provider used for conservative bibliography resolution.", defaultValue = "recorded-fixtures", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val scholarlyMetadataProvider: String = "recorded-fixtures",

@@ -39,7 +39,7 @@ class RunConfigurationFactory(
     private val reciprocalRankFusionConstant: Int = 60,
     private val evidenceAggregationThresholds: EvidenceAggregationThresholds? = null,
     private val systemOneAggregationEnabled: Boolean = false,
-    private val defaultSystemOneProvider: String = "mock",
+    private val defaultSystemOneProvider: String = JevSystemOneSettings.PROVIDER_ID,
     private val defaultClaimExtractorProvider: String = "heuristic",
     private val citedPaperParserId: String = "docling",
     private val citedPaperParserVersion: String = "1.30.0",
@@ -55,9 +55,6 @@ class RunConfigurationFactory(
         }
         require(reciprocalRankFusionConstant > 0) { "Reciprocal-rank fusion constant must be positive." }
         require(limits.maxClaimCitationPairs > 0) { "The claim-citation pair limit must be positive." }
-        require(defaultSystemOneProvider != JevSystemOneSettings.PROVIDER_ID) {
-            "Jev must be selected explicitly for each Analysis Run."
-        }
         require(defaultClaimExtractorProvider.isNotBlank()) { "Default claim-analysis provider must be configured." }
         require(citedPaperParserId.isNotBlank() && citedPaperParserVersion.isNotBlank()) {
             "The Cited Paper parser identity and version must be configured."
@@ -131,14 +128,16 @@ class RunConfigurationFactory(
             ?: providerCatalog.requireSelectable(EMBEDDING_ROLE, "local")
     }
 
-    /** Omitted deployment defaults fall back only when Laya is unavailable; explicit choices fail closed. */
+    /** Unavailable Jev or Laya defaults fall back to mock; explicit unavailable choices fail closed. */
     private fun defaultSystemOneRegistration(requestedProvider: String?): ProviderRegistration {
         if (requestedProvider != null) return providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, requestedProvider)
 
         return try {
             providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, defaultSystemOneProvider)
         } catch (exception: ProviderNotSelectableException) {
-            if (defaultSystemOneProvider != LayaSystemOneSettings.PROVIDER_ID) throw exception
+            if (defaultSystemOneProvider !in setOf(LayaSystemOneSettings.PROVIDER_ID, JevSystemOneSettings.PROVIDER_ID)) {
+                throw exception
+            }
             providerCatalog.requireSelectable(SYSTEM_ONE_ROLE, "mock")
         }
     }

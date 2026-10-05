@@ -179,13 +179,14 @@ const localSelections = {
 const preferredSelections = {
   ...localSelections,
   claimExtractorProvider: "openai-compatible-chat",
+  systemOneProvider: "jev",
 };
 
 function selectionsWith(overrides) {
   return { ...localSelections, ...overrides };
 }
 
-test("new-run preferences use trusted Ollama and Crossref/Unpaywall when available", () => {
+test("new-run preferences use Jev when configured and trusted Ollama/Crossref/Unpaywall when available", () => {
   const directoryWithOllama = {
     ...directory,
     providers: {
@@ -230,7 +231,7 @@ test("new-run preferences use trusted Ollama and Crossref/Unpaywall when availab
   assert.deepEqual(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS), {
     ...preferredSelections,
     embeddingProvider: "ollama",
-    systemOneProvider: "laya",
+    systemOneProvider: "jev",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
@@ -240,6 +241,7 @@ test("new-run preferences use trusted Ollama and Crossref/Unpaywall when availab
   }).embeddingProvider, "ollama");
   assert.deepEqual(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS), {
     ...preferredSelections,
+    systemOneProvider: "jev",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
@@ -286,10 +288,7 @@ test("an unavailable claim analyzer is not silently replaced while other prefere
   };
   const selections = availableProviderSelections(safeDirectory, DEFAULT_PROVIDER_SELECTIONS);
 
-  assert.deepEqual(selections, {
-    ...localSelections,
-    claimExtractorProvider: "openai-compatible-chat",
-  });
+  assert.deepEqual(selections, preferredSelections);
   assert.equal(providerSelectionsAreAvailable(safeDirectory, selections), false);
 });
 
@@ -317,7 +316,7 @@ test("unavailable selections reconcile to the intended fallback instead of direc
   );
 });
 
-test("Jev remains an explicit alternative and external calls require matching disclosure approval", () => {
+test("Jev is the default preference but external calls still require matching disclosure approval", () => {
   const externalLayaDirectory = {
     ...directory,
     providers: {
@@ -344,13 +343,17 @@ test("Jev remains an explicit alternative and external calls require matching di
     "mock",
   );
   assert.deepEqual(selectableProviderOptions(directory, "systemOne").map(({ providerId }) => providerId).sort(), ["jev", "mock"]);
-  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "mock");
+  assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS).systemOneProvider, "jev");
   assert.equal(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS, { systemOne: "jev" }).systemOneProvider, "jev");
   assert.equal(availableProviderSelections(
     directory,
     { ...DEFAULT_PROVIDER_SELECTIONS, systemOneProvider: "jev" },
     { systemOne: "jev" },
   ).systemOneProvider, "jev");
+
+  const defaultSelections = availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS);
+  assert.equal(defaultSelections.systemOneProvider, "jev");
+  assert.equal(isRunConfigurationReady(directory, defaultSelections, {}, {}), false);
 
   const jevSelections = selectionsWith({ systemOneProvider: "jev" });
   const jevRequirement = consentRequirements(directory, jevSelections)[0];

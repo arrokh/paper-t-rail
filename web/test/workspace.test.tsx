@@ -198,7 +198,7 @@ describe("interactive workspace remote state", () => {
     expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
   });
 
-  it("preselects Crossref and Unpaywall but requires explicit per-run consent fingerprints", async () => {
+  it("preselects configured Jev, Crossref, and Unpaywall but requires explicit per-run consent", async () => {
     let submittedConfiguration: Record<string, unknown> | null = null;
     const runs: ReturnType<typeof analysisRun>[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
@@ -232,10 +232,9 @@ describe("interactive workspace remote state", () => {
     await screen.findByRole("heading", { name: "Choose your services" });
     await waitForProviderDirectory();
     const evidenceAssessment = screen.getByLabelText("Evidence assessment") as HTMLSelectElement;
-    expect(evidenceAssessment.value).toBe("laya");
+    expect(evidenceAssessment.value).toBe("jev");
     expect((screen.getByLabelText("Bibliography resolution") as HTMLSelectElement).value).toBe("crossref");
     expect((screen.getByLabelText("Cited full-text access") as HTMLSelectElement).value).toBe("unpaywall");
-    fireEvent.change(evidenceAssessment, { target: { value: "jev" } });
     await continueToConsentStep();
     await screen.findByText("Jev hosted System One data access");
     await screen.findByText("Crossref REST API data access");
