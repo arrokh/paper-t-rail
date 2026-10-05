@@ -11,6 +11,7 @@ import com.papertrail.api.infrastructure.messaging.NonRetryablePipelineException
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.infrastructure.providers.ProviderRegistration
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 
 @Service
@@ -141,6 +142,18 @@ class ClaimAnalysisService(
             analyzed.copy(citationTargetKeys = targetOrder.filter(selected::contains))
         }
         val bySpan = normalized.groupBy { it.candidate.sourceStartOffset to it.candidate.sourceEndOffset }
+        val conflictingGroups = bySpan.values.filter { sameSpan ->
+            sameSpan.distinctBy { it.candidate.text to it.citationTargetKeys }.size > 1
+        }
+        if (conflictingGroups.isNotEmpty()) {
+            logger.atWarn()
+                .addKeyValue("failureReasonCode", "claim_source_span_conflict")
+                .addKeyValue("conflictingSpanGroupCount", conflictingGroups.size)
+                .addKeyValue("conflictingClaimCount", conflictingGroups.sumOf { it.size })
+                .addKeyValue("distinctClaimTextCount", conflictingGroups.sumOf { group -> group.map { it.candidate.text }.distinct().size })
+                .addKeyValue("distinctTargetSelectionCount", conflictingGroups.sumOf { group -> group.map { it.citationTargetKeys }.distinct().size })
+                .log("Claim analysis returned conflicting claims for identical source spans")
+        }
         val deduplicated = bySpan.map { (_, sameSpan) ->
             val distinctClaims = sameSpan.distinctBy { it.candidate.text to it.citationTargetKeys }
             require(distinctClaims.size == 1) { "Claim analysis returned conflicting Atomic Claims for the same source span." }
@@ -151,5 +164,9 @@ class ClaimAnalysisService(
                 .thenBy { it.candidate.sourceEndOffset }
                 .thenBy { it.candidate.text },
         )
+    }
+
+    private companion object {
+        val logger = LoggerFactory.getLogger(ClaimAnalysisService::class.java)
     }
 }

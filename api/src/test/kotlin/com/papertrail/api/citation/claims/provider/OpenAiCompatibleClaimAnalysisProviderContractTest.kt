@@ -72,17 +72,15 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         assertEquals("paper_trail_claim_analysis", responseFormat.path("json_schema").path("name").asText())
         assertTrue(responseFormat.path("json_schema").path("strict").asBoolean())
         val outputSchema = responseFormat.path("json_schema").path("schema")
-        assertEquals(setOf("contexts"), outputSchema.path("required").map { it.asText() }.toSet())
-        val contextSchema = outputSchema.path("properties").path("contexts").path("items")
-        assertEquals(
-            setOf("contextStartOffset", "contextEndOffset", "claims"),
-            contextSchema.path("required").map { it.asText() }.toSet(),
-        )
-        val claimSchema = contextSchema.path("properties").path("claims").path("items")
+        assertEquals(setOf("claims"), outputSchema.path("required").map { it.asText() }.toSet())
+        val claimSchema = outputSchema.path("properties").path("claims").path("items")
         assertEquals(
             setOf("text", "sourceStartOffset", "sourceEndOffset", "citationTargetKeys"),
             claimSchema.path("required").map { it.asText() }.toSet(),
         )
+        val allowedTargetKeys = request.contexts.single().targetCandidates.map { it.key.value }.toSet()
+        val targetKeyEnum = claimSchema.path("properties").path("citationTargetKeys").path("items").path("enum")
+        assertEquals(allowedTargetKeys, targetKeyEnum.map { it.asText() }.toSet())
         assertEquals(false, httpRequest.path("stream").asBoolean())
         val user = objectMapper.readTree(httpRequest.path("messages")[1].path("content").asText())
         assertEquals(1, user.path("contexts").size())
@@ -135,6 +133,36 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     }
 
     @Test
+    fun `maps claims from one context without requiring model generated context identity`() {
+        val request = requestFactory().from(documentWithOneContextAndTwoTargets())
+        val context = request.contexts.single()
+        val targetKey = context.targetCandidates.first().key.value
+        val responseContent = objectMapper.writeValueAsString(
+            mapOf(
+                "claims" to listOf(
+                    mapOf(
+                        "text" to "Validated atomic claim",
+                        "sourceStartOffset" to context.contextStartOffset,
+                        "sourceEndOffset" to context.contextStartOffset + 5,
+                        "citationTargetKeys" to listOf(targetKey),
+                    ),
+                ),
+            ),
+        )
+        val response = chatResponse(responseContent)
+
+        withServer(response = response) { server, _ ->
+            val settings = localSettings(server)
+            val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+            val result = provider(settings, catalog).analyze(request, configuration(catalog))
+
+            assertEquals(context.contextStartOffset, result.single().contextStartOffset)
+            assertEquals(context.contextEndOffset, result.single().contextEndOffset)
+            assertEquals(listOf(context.targetCandidates.first().key), result.single().claims.single().citationTargetKeys)
+        }
+    }
+
+    @Test
     fun `preserves a model response with no selected Citation Targets`() = withServer(selectTargets = false) { server, _ ->
         val settings = localSettings(server)
         val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
@@ -144,6 +172,23 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         val result = provider.analyze(request, configuration(catalog))
 
         assertTrue(result.single().claims.single().citationTargetKeys.isEmpty())
+    }
+
+    @Test
+    fun `sends each Citation Context in a separate model request`() = withServer { server, requests ->
+        val settings = localSettings(server)
+        val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val request = requestFactory().from(documentWithTwoContexts())
+
+        val result = provider(settings, catalog).analyze(request, configuration(catalog))
+
+        assertEquals(2, result.size)
+        assertEquals(2, requests.size)
+        val contextCounts = requests.map { serialized ->
+            val chat = objectMapper.readTree(serialized)
+            objectMapper.readTree(chat.path("messages")[1].path("content").asText()).path("contexts").size()
+        }
+        assertEquals(listOf(1, 1), contextCounts)
     }
 
     @Test
@@ -157,7 +202,10 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             chatClient.requestBody(
                 modelId = initialSettings.modelId,
                 maxCompletionTokens = initialSettings.maxCompletionTokens,
-                responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(objectMapper),
+                responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(
+                    objectMapper,
+                    context.targetCandidates.map { it.key.value },
+                ),
                 systemPrompt = OpenAiCompatibleClaimAnalysisPrompt.systemPrompt,
                 userJson = payloadFactory.userJson(payload),
             ).size
@@ -262,7 +310,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     }
 
     @Test
-    fun `logs safe context-span rejection reason and counts without provider output`() {
+    fun `logs safe counts when dropping unrequested target keys without provider output`() {
         val logger = LoggerFactory.getLogger(OpenAiCompatibleClaimAnalysisProvider::class.java) as Logger
         val appender = ListAppender<ILoggingEvent>().apply { start() }
         logger.addAppender(appender)
@@ -270,20 +318,15 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             val request = requestFactory().from(documentWithOneContextAndTwoTargets())
             val context = request.contexts.single()
             val privateClaimText = "do-not-log-provider-claim"
+            val privateTargetKey = "do-not-log-provider-target"
             val invalidContent = objectMapper.writeValueAsString(
                 mapOf(
-                    "contexts" to listOf(
+                    "claims" to listOf(
                         mapOf(
-                            "contextStartOffset" to context.contextStartOffset + 1,
-                            "contextEndOffset" to context.contextEndOffset,
-                            "claims" to listOf(
-                                mapOf(
-                                    "text" to privateClaimText,
-                                    "sourceStartOffset" to context.contextStartOffset,
-                                    "sourceEndOffset" to context.contextStartOffset + 5,
-                                    "citationTargetKeys" to emptyList<String>(),
-                                ),
-                            ),
+                            "text" to privateClaimText,
+                            "sourceStartOffset" to context.contextStartOffset,
+                            "sourceEndOffset" to context.contextStartOffset + 5,
+                            "citationTargetKeys" to listOf(privateTargetKey),
                         ),
                     ),
                 ),
@@ -292,21 +335,23 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             withServer(response = chatResponse(invalidContent)) { server, _ ->
                 val settings = localSettings(server)
                 val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
-                assertThrows(OpenAiCompatibleProviderException::class.java) {
-                    provider(settings, catalog).analyze(request, configuration(catalog))
-                }
+                val result = provider(settings, catalog).analyze(request, configuration(catalog))
+                assertTrue(result.single().claims.single().citationTargetKeys.isEmpty())
             }
 
             val events = appender.list
-            val rejection = events.single { it.message == "OpenAI-compatible claim-analysis response rejected" }
+            val rejection = events.single { it.message == "OpenAI-compatible claim-analysis target keys ignored" }
             val fields = rejection.keyValuePairs.associate { it.key to it.value }
-            assertEquals("unknown_response_context_span", fields["failureReasonCode"])
+            assertEquals("response_target_key_not_requested", fields["failureReasonCode"])
             assertEquals(1, fields["requestedContextCount"])
-            assertEquals(1, fields["responseContextCount"])
-            assertEquals(0, fields["matchedContextCount"])
+            assertEquals(1, fields["responseClaimCount"])
+            assertEquals(context.targetCandidates.size, fields["requestedTargetKeyCount"])
+            assertEquals(1, fields["responseTargetKeyCount"])
+            assertEquals(1, fields["ignoredTargetKeyCount"])
             val loggedEvents = events.joinToString(" ") { it.formattedMessage + it.keyValuePairs }
             assertFalse(loggedEvents.contains(privateClaimText))
-            assertFalse(loggedEvents.contains("contextStartOffset"))
+            assertFalse(loggedEvents.contains(privateTargetKey))
+            assertFalse(loggedEvents.contains("sourceStartOffset"))
         } finally {
             logger.detachAppender(appender)
             appender.stop()
@@ -314,27 +359,38 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     }
 
     @Test
-    fun `rejects malformed responses and unknown target keys without exposing model content`() {
+    fun `drops unrequested target keys while preserving selected keys from the context`() {
         val request = requestFactory().from(documentWithOneContextAndTwoTargets())
         val context = request.contexts.single()
-        val invalidTargetContent = objectMapper.createObjectNode().apply {
-            set<JsonNode>("contexts", objectMapper.createArrayNode().apply {
-                add(objectMapper.createObjectNode().apply {
-                    put("contextStartOffset", context.contextStartOffset)
-                    put("contextEndOffset", context.contextEndOffset)
-                    set<JsonNode>("claims", objectMapper.createArrayNode().add(
-                        objectMapper.createObjectNode().apply {
-                            put("text", "Treatment reduced pain")
-                            put("sourceStartOffset", context.contextStartOffset)
-                            put("sourceEndOffset", context.contextStartOffset + 5)
-                            set<JsonNode>("citationTargetKeys", objectMapper.createArrayNode().add("unknown-target"))
-                        },
-                    ))
-                })
-            })
-        }.toString()
+        val selectedTargetKey = context.targetCandidates.first().key
+        val content = objectMapper.writeValueAsString(
+            mapOf(
+                "claims" to listOf(
+                    mapOf(
+                        "text" to "Treatment reduced pain",
+                        "sourceStartOffset" to context.contextStartOffset,
+                        "sourceEndOffset" to context.contextStartOffset + 5,
+                        "citationTargetKeys" to listOf("unknown-target", selectedTargetKey.value),
+                    ),
+                ),
+            ),
+        )
 
-        listOf("provider-private-response", "{\"contexts\":[]}", invalidTargetContent).forEach { content ->
+        withServer(response = chatResponse(content)) { server, _ ->
+            val settings = localSettings(server)
+            val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+
+            val result = provider(settings, catalog).analyze(request, configuration(catalog))
+
+            assertEquals(listOf(selectedTargetKey), result.single().claims.single().citationTargetKeys)
+        }
+    }
+
+    @Test
+    fun `rejects malformed responses without exposing model content`() {
+        val request = requestFactory().from(documentWithOneContextAndTwoTargets())
+
+        listOf("provider-private-response", "{\"contexts\":[]}").forEach { content ->
             withServer(response = chatResponse(content)) { server, _ ->
                 val clientSettings = localSettings(server)
                 val providerCatalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = clientSettings)
@@ -351,21 +407,10 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     @Test
     fun `rejects duplicate JSON fields and trailing content in provider responses`() {
         val request = requestFactory().from(documentWithOneContextAndTwoTargets())
-        val context = request.contexts.single()
-        val validContent = objectMapper.writeValueAsString(
-            mapOf(
-                "contexts" to listOf(
-                    mapOf(
-                        "contextStartOffset" to context.contextStartOffset,
-                        "contextEndOffset" to context.contextEndOffset,
-                        "claims" to emptyList<Any>(),
-                    ),
-                ),
-            ),
-        )
+        val validContent = objectMapper.writeValueAsString(mapOf("claims" to emptyList<Any>()))
         val duplicateFieldContent = validContent.replaceFirst(
-            "\"contextStartOffset\":${context.contextStartOffset},",
-            "\"contextStartOffset\":${context.contextStartOffset},\"contextStartOffset\":${context.contextStartOffset},",
+            "\"claims\":[]",
+            "\"claims\":[],\"claims\":[]",
         )
 
         listOf("$validContent trailing content", duplicateFieldContent).forEach { invalidContent ->
@@ -737,29 +782,22 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     private fun createChatCompletionResponse(requestBody: String, selectTargets: Boolean): String {
         val request = objectMapper.readTree(requestBody)
         val user = objectMapper.readTree(request.path("messages")[1].path("content").asText())
-        val contexts = objectMapper.createArrayNode()
-        user.path("contexts").forEach { context ->
-            val contextStart = context.path("contextStartOffset").asInt()
-            val contextEnd = context.path("contextEndOffset").asInt()
-            val targetKeys = mutableListOf<String>()
-            context.path("occurrences").forEach { occurrence ->
-                occurrence.path("targetKeys").forEach { key -> targetKeys += key.asText() }
-            }
-            val claim = objectMapper.createObjectNode()
-                .put("text", "Validated atomic claim")
-                .put("sourceStartOffset", contextStart)
-                .put("sourceEndOffset", contextStart + 5)
-            claim.set<JsonNode>("citationTargetKeys", objectMapper.createArrayNode().apply {
-                if (selectTargets) targetKeys.firstOrNull()?.let(::add)
-            })
-            contexts.add(
-                objectMapper.createObjectNode()
-                    .put("contextStartOffset", contextStart)
-                    .put("contextEndOffset", contextEnd)
-                    .set<JsonNode>("claims", objectMapper.createArrayNode().add(claim)),
-            )
+        val context = user.path("contexts").single()
+        val contextStart = context.path("contextStartOffset").asInt()
+        val targetKeys = mutableListOf<String>()
+        context.path("occurrences").forEach { occurrence ->
+            occurrence.path("targetKeys").forEach { key -> targetKeys += key.asText() }
         }
-        val content = objectMapper.createObjectNode().apply { set<JsonNode>("contexts", contexts) }
+        val claim = objectMapper.createObjectNode()
+            .put("text", "Validated atomic claim")
+            .put("sourceStartOffset", contextStart)
+            .put("sourceEndOffset", contextStart + 5)
+        claim.set<JsonNode>("citationTargetKeys", objectMapper.createArrayNode().apply {
+            if (selectTargets) targetKeys.firstOrNull()?.let(::add)
+        })
+        val content = objectMapper.createObjectNode().apply {
+            set<JsonNode>("claims", objectMapper.createArrayNode().add(claim))
+        }
         val message = objectMapper.createObjectNode()
             .put("role", "assistant")
             .put("content", objectMapper.writeValueAsString(content))

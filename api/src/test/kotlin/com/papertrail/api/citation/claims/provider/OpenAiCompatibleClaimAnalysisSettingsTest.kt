@@ -26,10 +26,10 @@ class OpenAiCompatibleClaimAnalysisSettingsTest {
     }
 
     @Test
-    fun `preserves the existing claim-analysis fingerprint for unchanged queued runs`() {
+    fun `fingerprints the versioned target selection and response contract`() {
         val settings = localSettings()
         assertEquals(
-            "bed04a4a0a75660bc70b4de5ca7e3528720219bb66b84807b39dc3e1973cb693",
+            "85a123aee9067a227e54885113e3439f31e369431b69a2dde907474917f7f7e2",
             settings.configurationFingerprint,
         )
     }

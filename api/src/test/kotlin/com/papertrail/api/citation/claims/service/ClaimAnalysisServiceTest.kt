@@ -21,10 +21,13 @@ import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.infrastructure.providers.ProviderRegistration
 import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
 import org.junit.jupiter.api.Assertions.assertEquals
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.core.read.ListAppender
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 
 class ClaimAnalysisServiceTest {
     @Test
@@ -128,6 +131,49 @@ class ClaimAnalysisServiceTest {
         }
 
         assertTrue(failure.message.orEmpty().contains("outside its Citation Context"))
+    }
+
+    @Test
+    fun `rejects conflicting claims sharing one source span and logs only safe counts`() {
+        val document = documentWithOneContextAndTwoTargets()
+        val privateClaimTexts = listOf("private claim one", "private claim two")
+        val provider = FixedClaimAnalysisProvider { request ->
+            val context = request.contexts.single()
+            listOf(
+                CitationContextClaims(
+                    context.contextStartOffset,
+                    context.contextEndOffset,
+                    privateClaimTexts.map { text ->
+                        AnalyzedAtomicClaim(
+                            AtomicClaimCandidate(text, context.contextStartOffset, context.contextStartOffset + 5),
+                            emptyList(),
+                        )
+                    },
+                ),
+            )
+        }
+        val logger = LoggerFactory.getLogger(ClaimAnalysisService::class.java) as Logger
+        val appender = ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>().apply { start() }
+        logger.addAppender(appender)
+        try {
+            val failure = assertThrows(IllegalArgumentException::class.java) {
+                serviceFor(provider).analyze(document, configurationFor(provider))
+            }
+
+            assertTrue(failure.message.orEmpty().contains("conflicting Atomic Claims"))
+            val event = appender.list.single { it.message == "Claim analysis returned conflicting claims for identical source spans" }
+            val fields = event.keyValuePairs.associate { it.key to it.value }
+            assertEquals(1, fields["conflictingSpanGroupCount"])
+            assertEquals(2, fields["conflictingClaimCount"])
+            assertEquals(2, fields["distinctClaimTextCount"])
+            assertEquals(1, fields["distinctTargetSelectionCount"])
+            val loggedEvents = appender.list.joinToString(" ") { it.formattedMessage + it.keyValuePairs }
+            privateClaimTexts.forEach { assertFalse(loggedEvents.contains(it)) }
+            assertFalse(loggedEvents.contains("sourceStartOffset"))
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+        }
     }
 
     @Test
