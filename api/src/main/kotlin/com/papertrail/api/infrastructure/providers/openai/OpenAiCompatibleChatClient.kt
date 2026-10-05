@@ -2,6 +2,7 @@ package com.papertrail.api.infrastructure.providers.openai
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import java.io.ByteArrayOutputStream
@@ -21,6 +22,7 @@ import java.util.concurrent.TimeoutException
 class OpenAiCompatibleChatClient(
     private val settings: OpenAiCompatibleEndpointSettings,
     private val objectMapper: ObjectMapper,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) {
     private val httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS))
@@ -116,6 +118,7 @@ class OpenAiCompatibleChatClient(
         if (requestBody.size > settings.maxRequestBytes) {
             throw OpenAiCompatibleProviderException("The OpenAI-compatible request exceeds the configured limit.")
         }
+        executionService?.captureCurrentOpenAiRequest(requestBody)
         val requestMetadata = ChatRequestMetadata(
             modelId = safeLogIdentifier(modelId) ?: "unknown",
             responseFormatType = safeLogIdentifier(responseFormatType) ?: "unknown",
@@ -162,6 +165,7 @@ class OpenAiCompatibleChatClient(
             throw RetryableOpenAiCompatibleProviderException("The OpenAI-compatible endpoint could not be reached.")
         }
         val body = response.body()
+        executionService?.captureCurrentOpenAiResponse(body)
         if (body.size > settings.maxResponseBytes) {
             logger.atWarn()
                 .addKeyValue("providerId", OpenAiCompatibleEndpointSettings.PROVIDER_ID)

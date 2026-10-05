@@ -1,0 +1,8 @@
+DROP TRIGGER IF EXISTS execution_span_artifacts_active_document_guard ON analysis_run_execution_span_artifacts;
+DROP TRIGGER IF EXISTS analysis_run_execution_artifacts_require_active_source_document ON analysis_run_execution_artifacts;
+DROP TRIGGER IF EXISTS analysis_run_execution_spans_require_active_source_document ON analysis_run_execution_spans;
+DROP TRIGGER IF EXISTS analysis_run_execution_require_active_source_document ON analysis_run_execution;
+DROP TABLE analysis_run_execution_span_artifacts;
+DROP TABLE analysis_run_execution_artifacts;
+DROP TABLE analysis_run_execution_spans;
+DROP TABLE analysis_run_execution;

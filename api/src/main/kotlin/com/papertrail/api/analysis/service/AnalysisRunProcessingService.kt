@@ -14,6 +14,10 @@ import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.ExecutionOperationId
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedPayload
@@ -39,6 +43,7 @@ class AnalysisRunProcessingService(
     private val referenceResolutionService: ReferenceResolutionService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
+    private val executionService: AnalysisRunExecutionService? = null,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
@@ -47,6 +52,25 @@ class AnalysisRunProcessingService(
     ) == true
 
     fun process(event: PipelineEvent<DocumentAnalysisRequestedPayload>): UUID {
+        val operation = {
+            processInternal(event)
+        }
+        return executionService?.record(
+            event.analysisRunId,
+            ExecutionSpanSpec(
+                stageId = "source",
+                kind = "QUEUE",
+                name = "Source analysis attempt",
+                attempt = event.attempt + 1,
+                eventId = event.eventId,
+                attributes = mapOf("eventAttempt" to event.attempt),
+                operationId = event.eventId,
+            ),
+            operation,
+        ) ?: operation()
+    }
+
+    private fun processInternal(event: PipelineEvent<DocumentAnalysisRequestedPayload>): UUID {
         require(event.eventType == DOCUMENT_ANALYSIS_REQUESTED) { "Unsupported event type '${event.eventType}'." }
         if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
@@ -116,13 +140,116 @@ class AnalysisRunProcessingService(
         jdbc.requireActiveSourceDocument(event.payload.documentId)
         if (existingParsed == null) {
             jdbc.requireActiveSourceDocument(event.payload.documentId)
-            val parsed = scientificDocumentParser.parse(content)
+            val parsed = if (executionService == null) {
+                scientificDocumentParser.parse(content)
+            } else {
+                val parserSpan = executionService.startSpan(
+                    event.analysisRunId,
+                    ExecutionSpanSpec(
+                        stageId = "source",
+                        kind = "PROVIDER",
+                        name = "Parse Source Document",
+                        attempt = event.attempt + 1,
+                        eventId = event.eventId,
+                        providerId = run.parserId,
+                        modelId = run.parserVersion,
+                        operationId = ExecutionOperationId.forEvent(event.eventId, "source-parser"),
+                    ),
+                )
+                if (parserSpan != null) {
+                    executionService.capture(
+                        event.analysisRunId,
+                        parserSpan.id,
+                        ExecutionSpanArtifactSpec(
+                            role = "INPUT",
+                            schemaVersion = "source-parser-input-v1",
+                            fields = mapOf(
+                                "parserId" to run.parserId,
+                                "parserVersion" to run.parserVersion,
+                                "sourceSha256" to run.sourceHash,
+                                "inputBytes" to content.size,
+                            ),
+                        ),
+                    )
+                    executionService.capture(
+                        event.analysisRunId,
+                        parserSpan.id,
+                        ExecutionSpanArtifactSpec("REQUEST", "source-document-pdf-request-v1", emptyMap()),
+                    )
+                }
+                try {
+                    scientificDocumentParser.parse(content).also { output ->
+                        if (parserSpan != null) {
+                            executionService.capture(
+                                event.analysisRunId,
+                                parserSpan.id,
+                                ExecutionSpanArtifactSpec("RESPONSE", "source-parser-response-v1", emptyMap()),
+                            )
+                            executionService.capture(
+                                event.analysisRunId,
+                                parserSpan.id,
+                                ExecutionSpanArtifactSpec(
+                                    role = "RESULT",
+                                    schemaVersion = "run-stage-result-v1",
+                                    fields = mapOf(
+                                        "status" to "SUCCEEDED",
+                                        "itemCount" to output.sections.size,
+                                        "completedCount" to output.bibliographyEntries.size,
+                                        "failedCount" to 0,
+                                    ),
+                                ),
+                            )
+                        }
+                        executionService.finishSpan(parserSpan, "SUCCEEDED")
+                    }
+                } catch (exception: Exception) {
+                    if (parserSpan != null) {
+                        executionService.capture(
+                            event.analysisRunId,
+                            parserSpan.id,
+                            ExecutionSpanArtifactSpec("RESPONSE", "source-parser-response-v1", emptyMap()),
+                        )
+                    }
+                    executionService.finishSpan(parserSpan, "FAILED", "PARSER_FAILURE")
+                    throw exception
+                }
+            }
             if (parsed.parserId != run.parserId || parsed.parserVersion != run.parserVersion) {
                 throw IllegalStateException("The scientific parser identity does not match the Analysis Run provenance.")
             }
             require(parsed.rawParserOutput.isNotEmpty()) { "The scientific parser returned no raw parser output." }
             jdbc.requireActiveSourceDocument(event.payload.documentId)
-            val analyzedClaims = claimAnalysisService.analyze(parsed, run.configuration)
+            val analyzedClaims = executionService?.record(
+                event.analysisRunId,
+                ExecutionSpanSpec(
+                    stageId = "source",
+                    kind = "PROVIDER",
+                    name = "Analyze Atomic Claims",
+                    attempt = event.attempt + 1,
+                    eventId = event.eventId,
+                    providerId = run.configuration.claimExtractor.provider,
+                    modelId = run.configuration.claimExtractor.model,
+                    operationId = ExecutionOperationId.forEvent(event.eventId, "claim-analysis"),
+                ),
+            ) {
+                executionService.captureCurrent(
+                    ExecutionSpanArtifactSpec(
+                        "INPUT",
+                        "run-stage-input-v1",
+                        mapOf("itemCount" to parsed.citationContexts.size, "candidateCount" to parsed.bibliographyEntries.size),
+                    ),
+                )
+                claimAnalysisService.analyze(parsed, run.configuration).also { analyzed ->
+                    executionService.captureCurrent(
+                        ExecutionSpanArtifactSpec(
+                            "RESULT",
+                            "run-stage-result-v1",
+                            mapOf("status" to "SUCCEEDED", "itemCount" to analyzed.sumOf { it.claims.size }),
+                        ),
+                    )
+                }
+            }
+                ?: claimAnalysisService.analyze(parsed, run.configuration)
             val claimCitationPairCount = ClaimCitationPairCounter.count(parsed, analyzedClaims)
             val maxClaimCitationPairs = run.configuration.validationLimits.maxClaimCitationPairs
             if (claimCitationPairCount > maxClaimCitationPairs.toLong()) {
@@ -273,6 +400,7 @@ class AnalysisRunProcessingService(
                 event.eventId,
             )
         }
+        executionService?.finishIfTerminal(event.analysisRunId)
     }
 
     private fun evidenceRetrievalConfigured(analysisRunId: UUID): Boolean = jdbc.queryForObject(

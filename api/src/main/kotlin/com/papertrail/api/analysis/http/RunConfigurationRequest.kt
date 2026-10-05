@@ -5,6 +5,12 @@ import io.swagger.v3.oas.annotations.media.Schema
 @Schema(description = "Provider selections and explicit per-run external-provider consent. Consent must identify the exact data categories and the server-issued fingerprint for the disclosure displayed to the user; the server resolves and snapshots disclosure text.")
 data class RunConfigurationRequest(
     @field:Schema(
+        description = "Capture sanitized Analysis Run execution artifacts. Defaults to enabled; this does not grant additional external-provider consent.",
+        defaultValue = "true",
+        requiredMode = Schema.RequiredMode.NOT_REQUIRED,
+    )
+    val captureExecution: Boolean = true,
+    @field:Schema(
         description = "Claim-analysis provider. If omitted, use the deployment-configured default; heuristic remains selectable.",
         defaultValue = "openai-compatible-chat",
         requiredMode = Schema.RequiredMode.NOT_REQUIRED,

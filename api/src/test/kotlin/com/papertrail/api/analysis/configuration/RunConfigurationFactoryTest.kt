@@ -39,6 +39,18 @@ class RunConfigurationFactoryTest {
     )
 
     @Test
+    fun `execution capture defaults on and explicit opt-out is preserved in the immutable run snapshot`() {
+        val defaultSnapshot = factory.from(factory.parseRequest(jacksonObjectMapper().readTree("{}")))
+        val optedOutSnapshot = factory.from(factory.parseRequest(jacksonObjectMapper().readTree("""{"captureExecution":false}""")))
+
+        assertTrue(defaultSnapshot.captureExecution)
+        assertFalse(optedOutSnapshot.captureExecution)
+        assertThrows(IllegalArgumentException::class.java) {
+            factory.parseRequest(jacksonObjectMapper().readTree("""{"captureExecution":"false"}"""))
+        }
+    }
+
+    @Test
     fun `snapshots the selected safe local default configuration and parser limits`() {
         val request = factory.parseRequest(null)
         val snapshot = factory.from(request)

@@ -2,6 +2,7 @@ package com.papertrail.api.evidence.verification.provider
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
@@ -22,6 +23,7 @@ import kotlin.math.abs
 class JevSystemOneProvider(
     private val settings: JevSystemOneSettings,
     private val objectMapper: ObjectMapper,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) : SystemOneProvider {
     override val providerId = JevSystemOneSettings.PROVIDER_ID
     override val version = JevSystemOneSettings.PROVIDER_VERSION
@@ -66,7 +68,9 @@ class JevSystemOneProvider(
         passageIndex: Int,
         passageCount: Int,
     ): EvidenceJudgement {
-        val request = createRequest(claim, passage)
+        val preparedRequest = createRequest(claim, passage)
+        executionService?.captureCurrentSystemOneRequest(preparedRequest.body)
+        val request = preparedRequest.request
         val providerCallId = UUID.randomUUID()
         val startedAtNanos = System.nanoTime()
         logger.atInfo()
@@ -113,6 +117,7 @@ class JevSystemOneProvider(
             throw providerException
         }
         val responseBodyBytes = response.body().size
+        executionService?.captureCurrentJevResponse(response.body())
         logger.atInfo()
             .addKeyValue("providerCallId", providerCallId)
             .addKeyValue("providerId", providerId)
@@ -221,7 +226,7 @@ class JevSystemOneProvider(
     private fun elapsedMillis(startedAtNanos: Long): Long =
         (System.nanoTime() - startedAtNanos).coerceAtLeast(0L) / NANOS_PER_MILLI
 
-    private fun createRequest(claim: String, passage: EvidencePassageForJudgement): HttpRequest {
+    private fun createRequest(claim: String, passage: EvidencePassageForJudgement): PreparedRequest {
         val endpoint = settings.endpointUri ?: throw providerFailure(
             "Jev System One endpoint is unavailable.",
             JevSystemOneProviderException.NOT_CONFIGURED,
@@ -242,13 +247,16 @@ class JevSystemOneProvider(
                 JevSystemOneProviderException.REQUEST_ENCODING_FAILED,
             )
         }
-        return HttpRequest.newBuilder(endpoint)
+        val request = HttpRequest.newBuilder(endpoint)
             .timeout(Duration.ofMillis(settings.requestTimeoutMillis))
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer ${settings.apiKey}")
             .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody))
             .build()
+        return PreparedRequest(request, requestBody)
     }
+
+    private data class PreparedRequest(val request: HttpRequest, val body: ByteArray)
 
     private fun requireConfigured() {
         if (!settings.isSelectable || settings.endpointUri == null) {

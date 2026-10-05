@@ -9,7 +9,7 @@ data class UploadAnalysisRunRequest(
     val file: MultipartFile,
     @field:Schema(
         type = "string",
-        description = "JSON-encoded provider selections and externalProviderConsents. Each consent contains providerId, dataCategories, and the server-issued retentionDisclosureFingerprint for the disclosure shown to the user; clients cannot supply disclosure text or provider credentials.",
+        description = "JSON-encoded provider selections, captureExecution (defaults to true; captureExecution=false opts out of sanitized execution artifacts), and externalProviderConsents. Execution artifacts are inspectable within the trusted local workspace, which has no per-user ownership ACL. Each external consent contains providerId, dataCategories, and the server-issued retentionDisclosureFingerprint for the disclosure shown to the user; clients cannot supply disclosure text or provider credentials."
     )
     val configuration: String? = null,
 )

@@ -9,6 +9,12 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.analysis.configuration.AggregationPolicySnapshot
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.ExecutionOperationId
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.ProviderSelection
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
@@ -174,6 +180,7 @@ import org.springframework.transaction.TransactionStatus
 import org.springframework.transaction.TransactionSystemException
 import org.springframework.transaction.support.SimpleTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
+import org.mockito.Mockito
 import org.hamcrest.Matchers.containsString
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.PostgreSQLContainer
@@ -195,6 +202,247 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Testcontainers
 class AnalysisRunQueueIntegrationTest {
+    @Test
+    fun `execution artifacts are sanitized run-local deduplicated removable and deleted with their document`() {
+        val firstRun = createQueuedRun()
+        val otherRun = createQueuedRun()
+        val execution = executionService()
+        val logicalOperationId = ExecutionOperationId.forEvent(firstRun.eventId, "reference-resolution")
+        val firstSpan = execution.startSpan(
+            firstRun.analysisRunId,
+            ExecutionSpanSpec("references", "PROVIDER", "Resolve bibliography entry", attempt = 2, eventId = firstRun.eventId, operationId = logicalOperationId),
+        )!!
+        val secondSpan = execution.startSpan(
+            firstRun.analysisRunId,
+            ExecutionSpanSpec("references", "PROVIDER", "Resolve bibliography entry", attempt = 3, eventId = UUID.randomUUID(), operationId = logicalOperationId),
+        )!!
+        val attribution = ExecutionSpanArtifactSpec(
+            role = "REQUEST",
+            schemaVersion = "citation-metadata-v1",
+            fields = mapOf(
+                "title" to "Evidence-guided analysis",
+                "doi" to "10.1234/example.1",
+                "authors" to listOf("Ada Example"),
+                "publicationYear" to 2024,
+            ),
+        )
+        execution.capture(firstRun.analysisRunId, firstSpan.id, attribution)
+        execution.capture(
+            firstRun.analysisRunId,
+            firstSpan.id,
+            attribution.copy(role = "RESPONSE", fields = attribution.fields + ("title" to "Evidence synthesis study")),
+        )
+        execution.capture(
+            firstRun.analysisRunId,
+            firstSpan.id,
+            ExecutionSpanArtifactSpec(
+                role = "RESULT",
+                schemaVersion = "run-stage-result-v1",
+                fields = mapOf("status" to "SUCCEEDED", "itemCount" to 1, "completedCount" to 1, "failedCount" to 0),
+            ),
+        )
+        execution.capture(firstRun.analysisRunId, secondSpan.id, attribution)
+        execution.finishSpan(firstSpan, "SUCCEEDED")
+        execution.finishSpan(secondSpan, "FAILED", "PROVIDER_FAILURE")
+        val timelineStart = Instant.parse("2026-01-01T00:00:00Z")
+        jdbc.update(
+            "UPDATE analysis_run_execution SET started_at = ?, finished_at = ? WHERE analysis_run_id = ?",
+            Timestamp.from(timelineStart),
+            Timestamp.from(timelineStart.plusSeconds(12)),
+            firstRun.analysisRunId,
+        )
+        jdbc.update(
+            "UPDATE analysis_run_execution_spans SET started_at = ?, ended_at = ?, duration_millis = 10000 WHERE id = ?",
+            Timestamp.from(timelineStart), Timestamp.from(timelineStart.plusSeconds(10)), firstSpan.id,
+        )
+        jdbc.update(
+            "UPDATE analysis_run_execution_spans SET started_at = ?, ended_at = ?, duration_millis = 10000 WHERE id = ?",
+            Timestamp.from(timelineStart.plusSeconds(2)), Timestamp.from(timelineStart.plusSeconds(12)), secondSpan.id,
+        )
+        assertEquals(12_000L, execution.summary(firstRun.analysisRunId).totalDurationMillis)
+
+        val artifactId = jdbc.queryForObject(
+            "SELECT DISTINCT artifact.id FROM analysis_run_execution_artifacts artifact JOIN analysis_run_execution_span_artifacts link ON link.analysis_run_id = artifact.analysis_run_id AND link.artifact_id = artifact.id WHERE artifact.analysis_run_id = ? AND link.role = 'REQUEST' LIMIT 1",
+            UUID::class.java,
+            firstRun.analysisRunId,
+        )!!
+        assertEquals(3, jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_artifacts WHERE analysis_run_id = ?",
+            Int::class.java,
+            firstRun.analysisRunId,
+        ))
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_span_artifacts WHERE analysis_run_id = ? AND artifact_id = ?",
+            Int::class.java,
+            firstRun.analysisRunId,
+            artifactId,
+        ))
+        val storedContent = jdbc.queryForObject(
+            "SELECT content FROM analysis_run_execution_artifacts WHERE analysis_run_id = ? AND id = ?",
+            String::class.java,
+            firstRun.analysisRunId,
+            artifactId,
+        )!!
+        assertTrue(storedContent.contains("Ada Example"))
+        assertFalse(storedContent.contains("private@example.org"))
+        val firstSpanDetail = execution.span(firstRun.analysisRunId, firstSpan.id)
+        assertEquals(listOf("REQUEST", "RESPONSE", "RESULT"), firstSpanDetail.artifactRoles.map { it.role })
+        assertTrue(firstSpanDetail.artifactRoles.all { it.fidelity == "SANITIZED" })
+        assertEquals("FAILED", execution.span(firstRun.analysisRunId, secondSpan.id).status)
+        assertEquals(logicalOperationId, execution.span(firstRun.analysisRunId, firstSpan.id).operationId)
+        assertEquals(logicalOperationId, execution.span(firstRun.analysisRunId, secondSpan.id).operationId)
+        assertThrows(ResponseStatusException::class.java) {
+            execution.artifact(otherRun.analysisRunId, artifactId)
+        }
+
+        val stopped = execution.stopCapture(firstRun.analysisRunId)
+        assertFalse(stopped.captureEnabled)
+        assertEquals("STOPPED", stopped.recordingState)
+        assertEquals(null, execution.startSpan(firstRun.analysisRunId, ExecutionSpanSpec("source", "INTERNAL", "Late operation")))
+        execution.removeArtifact(firstRun.analysisRunId, artifactId)
+        val metadataOnlyJdbc = Mockito.spy(jdbc)
+        val metadataOnlyRepository = AnalysisRunExecutionRepository(
+            metadataOnlyJdbc,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            objectMapper,
+        )
+        val listedSpan = metadataOnlyRepository.page(firstRun.analysisRunId, 100, null).items.single { it.id == firstSpan.id }
+        val detailedSpan = metadataOnlyRepository.span(firstRun.analysisRunId, firstSpan.id)!!
+        assertEquals("REMOVED", listedSpan.artifactRoles.single { it.role == "REQUEST" }.fidelity)
+        assertEquals("REMOVED", detailedSpan.artifactRoles.single { it.role == "REQUEST" }.fidelity)
+        val descriptorQueries = Mockito.mockingDetails(metadataOnlyJdbc).invocations
+            .filter { it.method.name == "query" }
+            .mapNotNull { it.arguments.firstOrNull() as? String }
+            .filter { it.contains("analysis_run_execution_span_artifacts") }
+        assertTrue(descriptorQueries.size >= 2)
+        assertTrue(descriptorQueries.none { it.contains("content", ignoreCase = true) })
+
+        val removed = execution.artifact(firstRun.analysisRunId, artifactId)
+        assertEquals("REMOVED", removed.fidelity)
+        assertEquals(null, removed.content)
+        execution.capture(firstRun.analysisRunId, firstSpan.id, attribution)
+        assertEquals("REMOVED", execution.artifact(firstRun.analysisRunId, artifactId).fidelity)
+        assertEquals(null, jdbc.queryForObject(
+            "SELECT content FROM analysis_run_execution_artifacts WHERE analysis_run_id = ? AND id = ?",
+            String::class.java,
+            firstRun.analysisRunId,
+            artifactId,
+        ))
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_span_artifacts WHERE analysis_run_id = ? AND artifact_id = ? AND fidelity = 'REMOVED'",
+            Int::class.java,
+            firstRun.analysisRunId,
+            artifactId,
+        ))
+
+        sourceDocumentDeletionService().delete(firstRun.documentId)
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM analysis_run_execution WHERE analysis_run_id = ?", Int::class.java, firstRun.analysisRunId))
+        assertEquals(null, execution.startSpan(firstRun.analysisRunId, ExecutionSpanSpec("source", "INTERNAL", "Late deleted-run operation")))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM analysis_run_execution WHERE analysis_run_id = ?", Int::class.java, firstRun.analysisRunId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM analysis_run_execution WHERE analysis_run_id = ?", Int::class.java, otherRun.analysisRunId))
+    }
+
+    @Test
+    fun `source parser capture stores only safe provenance and typed result while omitting raw request and response`() {
+        val run = createQueuedRun()
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE event_id = ?",
+            String::class.java,
+            run.eventId,
+        )!!
+
+        eventHandler().handle(event)
+
+        val parserSpanId = jdbc.queryForObject(
+            "SELECT id FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND name = 'Parse Source Document'",
+            UUID::class.java,
+            run.analysisRunId,
+        )!!
+        val detail = executionService().span(run.analysisRunId, parserSpanId)
+        assertEquals("SUCCEEDED", detail.status)
+        assertEquals(listOf("INPUT", "REQUEST", "RESPONSE", "RESULT"), detail.artifactRoles.map { it.role })
+        assertEquals("SANITIZED", detail.artifactRoles.single { it.role == "INPUT" }.fidelity)
+        assertEquals("OMITTED", detail.artifactRoles.single { it.role == "REQUEST" }.fidelity)
+        assertEquals("UNSAFE_UNSTRUCTURED_CONTENT", detail.artifactRoles.single { it.role == "REQUEST" }.reason)
+        assertEquals("OMITTED", detail.artifactRoles.single { it.role == "RESPONSE" }.fidelity)
+        assertEquals("UNSAFE_UNSTRUCTURED_CONTENT", detail.artifactRoles.single { it.role == "RESPONSE" }.reason)
+        assertEquals("SANITIZED", detail.artifactRoles.single { it.role == "RESULT" }.fidelity)
+
+        val storedArtifacts = jdbc.queryForList(
+            "SELECT content FROM analysis_run_execution_artifacts WHERE analysis_run_id = ?",
+            String::class.java,
+            run.analysisRunId,
+        )
+        assertTrue(storedArtifacts.size >= 2)
+        assertTrue(storedArtifacts.none { it.contains("integration pdf bytes") || it.contains("test GROBID output") })
+        assertTrue(storedArtifacts.any { it.contains("sourceSha256") })
+        assertTrue(storedArtifacts.any { it.contains("candidateCount") })
+    }
+
+    @Test
+    fun `capture opt-out keeps content artifacts out of storage while preserving operation timing`() {
+        val configuration = objectMapper.writeValueAsString(
+            configurationFactory().from(RunConfigurationRequest(captureExecution = false)),
+        )
+        val run = createQueuedRun(configurationJson = configuration)
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE event_id = ?",
+            String::class.java,
+            run.eventId,
+        )!!
+
+        eventHandler().handle(event)
+
+        val summary = executionService().summary(run.analysisRunId)
+        assertFalse(summary.captureEnabled)
+        assertEquals("RECORDING", summary.recordingState)
+        assertTrue(executionService().spans(run.analysisRunId, 100, null).items.isNotEmpty())
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_artifacts WHERE analysis_run_id = ?",
+            Int::class.java,
+            run.analysisRunId,
+        ))
+        assertTrue(jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_span_artifacts WHERE analysis_run_id = ? AND reason = 'CAPTURE_DISABLED'",
+            Int::class.java,
+            run.analysisRunId,
+        )!! > 0)
+    }
+
+    @Test
+    fun `PARSED is terminal for execution recording`() {
+        val run = createQueuedRun()
+        val execution = executionService()
+
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", run.analysisRunId)
+        jdbc.update("UPDATE analysis_runs SET status = 'PARSED' WHERE id = ?", run.analysisRunId)
+        execution.finishIfTerminal(run.analysisRunId)
+
+        val summary = execution.summary(run.analysisRunId)
+        assertEquals("STOPPED", summary.recordingState)
+        assertEquals("COMPLETE", summary.completeness)
+        assertTrue(summary.finishedAt != null)
+        assertEquals(null, execution.startSpan(run.analysisRunId, ExecutionSpanSpec("references", "INTERNAL", "Late operation")))
+    }
+
+    @Test
+    fun `capture stopped before PARSED completion remains incomplete after recording finishes`() {
+        val run = createQueuedRun()
+        val execution = executionService()
+        val stopped = execution.stopCapture(run.analysisRunId)
+        assertEquals("RECORDING", stopped.completeness)
+        assertEquals("STOPPED", stopped.recordingState)
+
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", run.analysisRunId)
+        jdbc.update("UPDATE analysis_runs SET status = 'PARSED' WHERE id = ?", run.analysisRunId)
+        execution.finishIfTerminal(run.analysisRunId)
+
+        val finished = execution.summary(run.analysisRunId)
+        assertEquals("STOPPED", finished.recordingState)
+        assertEquals("INCOMPLETE", finished.completeness)
+        assertTrue(finished.finishedAt != null)
+    }
+
     @Test
     fun `original source PDF links are available for a queued run and reject deleted or changed sources`() {
         val created = createQueuedRun()
@@ -3315,6 +3563,11 @@ class AnalysisRunQueueIntegrationTest {
                VALUES (?, ?, ?, 'grobid', '0.9.1-crf', ?::jsonb, 'QUEUED', '{"stage":"QUEUED"}'::jsonb, ?)""",
             runId, documentId, hash, configurationJson, Timestamp.from(createdAt),
         )
+        val captureRequested = objectMapper.readTree(configurationJson).path("captureExecution").asBoolean(true)
+        jdbc.update(
+            "INSERT INTO analysis_run_execution (analysis_run_id, trace_id, capture_requested, capture_enabled, recording_state, completeness, started_at) VALUES (?, ?, ?, ?, 'RECORDING', 'RECORDING', ?)",
+            runId, runId, captureRequested, captureRequested, Timestamp.from(createdAt),
+        )
         val event = PipelineEvent(
             eventId,
             DOCUMENT_ANALYSIS_REQUESTED,
@@ -3345,6 +3598,16 @@ class AnalysisRunQueueIntegrationTest {
         objectStore = objectStore,
     )
 
+    private fun executionService() = AnalysisRunExecutionService(
+        repository = AnalysisRunExecutionRepository(
+            jdbc,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            objectMapper,
+        ),
+        sanitizer = ExecutionCaptureSanitizer(),
+        objectMapper = objectMapper,
+    )
+
     private fun createQueuedRunForExistingDocument(documentId: UUID, hash: String): CreatedRunIds {
         val runId = UUID.randomUUID()
         val eventId = UUID.randomUUID()
@@ -3362,6 +3625,10 @@ class AnalysisRunQueueIntegrationTest {
             hash,
             objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest())),
             Timestamp.from(createdAt),
+        )
+        jdbc.update(
+            "INSERT INTO analysis_run_execution (analysis_run_id, trace_id, capture_requested, capture_enabled, recording_state, completeness, started_at) VALUES (?, ?, TRUE, TRUE, 'RECORDING', 'RECORDING', ?)",
+            runId, runId, Timestamp.from(createdAt),
         )
         val event = PipelineEvent(
             eventId,
@@ -3539,6 +3806,7 @@ class AnalysisRunQueueIntegrationTest {
         citedPaperAccessService(providerFactories, languageDetector),
         CitedPaperIndexingQueue(jdbc, objectMapper),
         stageCompletionService(resolutionService),
+        executionService = executionService(),
     )
 
     private fun citedPaperIndexingEventHandler(
@@ -3576,8 +3844,10 @@ class AnalysisRunQueueIntegrationTest {
                 EvidencePassageSpanRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
                 LayaEvidencePassageSpanPlanner(),
                 claimReferenceVerificationRepository(),
+                executionService = executionService(),
             ),
             stageCompletionService(resolutionService),
+            executionService = executionService(),
         )
     }
 
@@ -3589,6 +3859,7 @@ class AnalysisRunQueueIntegrationTest {
         objectMapper,
         resolutionService,
         stageCompletionService(resolutionService),
+        executionService = executionService(),
     )
 
     private fun processReferenceResolutionEvents(
@@ -3720,6 +3991,7 @@ class AnalysisRunQueueIntegrationTest {
             claimReferenceVerificationRepository(),
             resolutionService,
             stageCompletionService(resolutionService),
+            executionService = executionService(),
         )
         return DocumentAnalysisRequestedHandler(objectMapper, processingService)
     }
@@ -3874,6 +4146,14 @@ class AnalysisRunQueueIntegrationTest {
             val pipelineProgressMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("persisted_analysis_run_pipeline.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(pipelineProgressMigrationVerification)) }
+            }
+            val executionMigration = migrationDirectory.resolve("analysis_run_execution.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(executionMigration)) }
+            }
+            val executionMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("analysis_run_execution.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(executionMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

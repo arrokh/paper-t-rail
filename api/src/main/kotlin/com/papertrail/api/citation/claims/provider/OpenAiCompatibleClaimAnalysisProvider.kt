@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
 import com.papertrail.api.citation.claims.domain.AnalyzedAtomicClaim
 import com.papertrail.api.citation.claims.domain.AtomicClaimCandidate
 import com.papertrail.api.citation.claims.domain.ClaimAnalysisContextInput
@@ -27,6 +28,7 @@ class OpenAiCompatibleClaimAnalysisProvider(
     private val chatClient: OpenAiCompatibleChatClient,
     private val payloadFactory: OpenAiCompatibleClaimAnalysisPayloadFactory,
     private val objectMapper: ObjectMapper,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) : ClaimAnalysisProvider {
     private val responseFormatType = OpenAiCompatibleClaimAnalysisResponseFormat.TYPE
     private val responseFormatName = OpenAiCompatibleClaimAnalysisResponseFormat.NAME
@@ -72,30 +74,39 @@ class OpenAiCompatibleClaimAnalysisProvider(
                 .addKeyValue("batchCount", batches.size)
                 .addKeyValue("contextCount", request.contexts.size)
                 .log("OpenAI-compatible claim-analysis batches prepared")
-            val result = batches.map { batch ->
-                val response = providerCallGate.call(
-                    role = CLAIM_EXTRACTOR_ROLE,
-                    providerId = providerId,
-                    payload = batch.payload,
-                    configuration = configuration,
-                ) { approvedPayload ->
-                    val requestBody = chatClient.requestBody(
-                        modelId = settings.modelId,
-                        maxCompletionTokens = settings.maxCompletionTokens,
-                        responseFormat = responseFormat(batch.request.contexts),
-                        systemPrompt = OpenAiCompatibleClaimAnalysisPrompt.systemPrompt,
-                        userJson = payloadFactory.userJson(approvedPayload),
-                    )
-                    if (!requestBody.contentEquals(batch.requestBody) || !fitsRequestBudget(requestBody)) {
-                        throw OpenAiCompatibleProviderException("The authorized claim-analysis payload exceeded its prepared request budget.")
+            val result = batches.mapIndexed { batchIndex, batch ->
+                val providerCall = {
+                    providerCallGate.call(
+                        role = CLAIM_EXTRACTOR_ROLE,
+                        providerId = providerId,
+                        payload = batch.payload,
+                        configuration = configuration,
+                    ) { approvedPayload ->
+                        val requestBody = chatClient.requestBody(
+                            modelId = settings.modelId,
+                            maxCompletionTokens = settings.maxCompletionTokens,
+                            responseFormat = responseFormat(batch.request.contexts),
+                            systemPrompt = OpenAiCompatibleClaimAnalysisPrompt.systemPrompt,
+                            userJson = payloadFactory.userJson(approvedPayload),
+                        )
+                        if (!requestBody.contentEquals(batch.requestBody) || !fitsRequestBudget(requestBody)) {
+                            throw OpenAiCompatibleProviderException("The authorized claim-analysis payload exceeded its prepared request budget.")
+                        }
+                        chatClient.complete(
+                            requestBody = requestBody,
+                            modelId = settings.modelId,
+                            responseFormatType = responseFormatType,
+                            responseFormatName = responseFormatName,
+                        )
                     }
-                    chatClient.complete(
-                        requestBody = requestBody,
-                        modelId = settings.modelId,
-                        responseFormatType = responseFormatType,
-                        responseFormatName = responseFormatName,
-                    )
                 }
+                val response = executionService?.recordCurrentProviderCall(
+                    operationKey = "openai-claim-batch-$batchIndex",
+                    name = "OpenAI-compatible claim model call",
+                    providerId = providerId,
+                    modelId = settings.modelId,
+                    operation = providerCall,
+                ) ?: providerCall()
                 parseResponse(response, batch.request.contexts.single())
             }
             logger.atInfo()

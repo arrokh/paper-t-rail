@@ -3,6 +3,8 @@ package com.papertrail.api.analysis.configuration
 import io.swagger.v3.oas.annotations.media.Schema
 
 data class AnalysisConfigurationSnapshot(
+    @field:Schema(description = "Original per-run choice to capture sanitized execution artifacts; stopping later capture does not change this immutable choice.")
+    val captureExecution: Boolean = true,
     val claimExtractor: ProviderSelection,
     val embedding: ProviderSelection,
     val retrieval: RetrievalConfigurationSnapshot = RetrievalConfigurationSnapshot(),

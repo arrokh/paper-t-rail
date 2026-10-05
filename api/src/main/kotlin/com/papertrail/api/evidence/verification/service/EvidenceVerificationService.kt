@@ -2,6 +2,8 @@ package com.papertrail.api.evidence.verification.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
 import com.papertrail.api.document.service.requireActiveAnalysisRun
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
@@ -38,6 +40,7 @@ class EvidenceVerificationService(
     private val spanRepository: EvidencePassageSpanRepository,
     private val spanPlanner: LayaEvidencePassageSpanPlanner,
     private val verificationRepository: ClaimReferenceVerificationRepository,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) {
     fun verifyReference(analysisRunId: UUID, bibliographyEntryId: UUID) {
         val configuration = loadConfiguration(analysisRunId)
@@ -397,12 +400,29 @@ class EvidenceVerificationService(
             evidencePassages = listOf(passage),
         )
         val payload = payload(request)
-        val counts = providerCallGate.call(
-            role = SYSTEM_ONE_ROLE,
+        val call = {
+            providerCallGate.call(
+                role = SYSTEM_ONE_ROLE,
+                providerId = provider.providerId,
+                payload = payload,
+                configuration = configuration,
+            ) { preflight.tokenCounts(claim.text, passage) }
+        }
+        val counts = executionService?.recordCurrentProviderCall(
+            operationKey = providerOperationKey("system-one-preflight", listOf(passage.id)),
+            name = "System One request preflight",
             providerId = provider.providerId,
-            payload = payload,
-            configuration = configuration,
-        ) { preflight.tokenCounts(claim.text, passage) }
+            modelId = provider.modelId,
+        ) {
+            executionService.captureCurrent(
+                ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1, "candidateCount" to QUESTION_SEQUENCE_COUNT)),
+            )
+            call().also { result ->
+                executionService.captureCurrent(
+                    ExecutionSpanArtifactSpec("RESULT", "run-stage-result-v1", mapOf("status" to "SUCCEEDED", "itemCount" to result.size)),
+                )
+            }
+        } ?: call()
         require(counts.size == QUESTION_SEQUENCE_COUNT && counts.all { it >= 0 }) {
             "Laya preflight must return token counts for all six complete question sequences."
         }
@@ -414,14 +434,37 @@ class EvidenceVerificationService(
         configuration: AnalysisConfigurationSnapshot,
         request: SemanticJudgementRequest,
     ): List<EvidenceJudgement> {
-        val result = providerCallGate.call(
-            role = SYSTEM_ONE_ROLE,
+        val call = {
+            providerCallGate.call(
+                role = SYSTEM_ONE_ROLE,
+                providerId = provider.providerId,
+                payload = payload(request),
+                configuration = configuration,
+            ) { provider.evaluate(request) }
+        }
+        val result = executionService?.recordCurrentProviderCall(
+            operationKey = providerOperationKey(
+                "system-one-evaluation",
+                listOf(request.atomicClaim.id) + request.evidencePassages.map(EvidencePassageForJudgement::id),
+            ),
+            name = "System One evidence evaluation",
             providerId = provider.providerId,
-            payload = payload(request),
-            configuration = configuration,
-        ) { provider.evaluate(request) }
+            modelId = provider.modelId,
+        ) {
+            executionService.captureCurrent(
+                ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to request.evidencePassages.size)),
+            )
+            call().also { response ->
+                executionService.captureCurrent(
+                    ExecutionSpanArtifactSpec("RESULT", "run-stage-result-v1", mapOf("status" to "SUCCEEDED", "itemCount" to response.evidenceJudgements.size)),
+                )
+            }
+        } ?: call()
         return result.evidenceJudgements
     }
+
+    private fun providerOperationKey(prefix: String, ids: List<UUID>): String =
+        "$prefix-${UUID.nameUUIDFromBytes(ids.joinToString(":").toByteArray(Charsets.UTF_8))}"
 
     private fun payload(request: SemanticJudgementRequest): ProviderCallPayload = ProviderCallPayload(
         mapOf(

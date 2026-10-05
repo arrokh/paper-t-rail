@@ -2,6 +2,7 @@ package com.papertrail.api.evidence.verification.provider
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
@@ -22,6 +23,7 @@ import java.util.UUID
 class LayaSystemOneProvider(
     private val settings: LayaSystemOneSettings,
     private val objectMapper: ObjectMapper,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) : LayaEvaluationProvider, SystemOneRequestPreflight {
     override val providerId = LayaSystemOneSettings.PROVIDER_ID
     override val version = LayaSystemOneSettings.PROVIDER_VERSION
@@ -34,7 +36,10 @@ class LayaSystemOneProvider(
         if (claim.isBlank() || passage.text.isBlank()) {
             throw LayaSystemOneProviderException("Laya System One requires non-empty Atomic Claims and Evidence Passages.")
         }
-        val response = sendRequest(createRequest(claim, passage, preflight = true))
+        val preparedRequest = createRequest(claim, passage, preflight = true)
+        executionService?.captureCurrentSystemOneRequest(preparedRequest.body)
+        val response = sendRequest(preparedRequest.request)
+        executionService?.omitCurrentBody("RESPONSE", "system-one-preflight-response-v1", "UNSAFE_UNSTRUCTURED_CONTENT")
         if (response.statusCode() !in 200..299) {
             throw LayaSystemOneProviderException("Laya System One preflight returned HTTP ${response.statusCode()}.")
         }
@@ -95,8 +100,11 @@ class LayaSystemOneProvider(
         rawResponses: MutableMap<UUID, ByteArray>?,
         tokenUsage: MutableMap<UUID, LayaEvaluationProvider.TokenUsage>?,
     ): EvidenceJudgement {
-        val response = sendRequest(createRequest(claim, passage))
+        val preparedRequest = createRequest(claim, passage)
+        executionService?.captureCurrentSystemOneRequest(preparedRequest.body)
+        val response = sendRequest(preparedRequest.request)
         val body = response.body()
+        executionService?.omitCurrentBody("RESPONSE", "system-one-response-v1", "UNSAFE_UNSTRUCTURED_CONTENT")
         if (body.size > LayaSystemOneSettings.MAX_RESPONSE_BYTES) {
             throw LayaSystemOneProviderException("Laya System One response exceeded the configured response limit.")
         }
@@ -155,7 +163,7 @@ class LayaSystemOneProvider(
         claim: String,
         passage: EvidencePassageForJudgement,
         preflight: Boolean = false,
-    ): HttpRequest {
+    ): PreparedRequest {
         val endpoint = settings.endpointUri ?: throw LayaSystemOneProviderException("Laya System One endpoint is unavailable.")
         val requestUri = if (preflight) URI.create("${endpoint.toASCIIString()}/preflight") else endpoint
         val state = linkedMapOf("claim" to claim, "evidence" to passage.text)
@@ -171,13 +179,16 @@ class LayaSystemOneProvider(
         } catch (_: IOException) {
             throw LayaSystemOneProviderException("Laya System One request could not be encoded.")
         }
-        return HttpRequest.newBuilder(requestUri)
+        val request = HttpRequest.newBuilder(requestUri)
             .timeout(Duration.ofMillis(settings.requestTimeoutMillis))
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer ${settings.apiKey}")
             .POST(HttpRequest.BodyPublishers.ofByteArray(requestBody))
             .build()
+        return PreparedRequest(request, requestBody)
     }
+
+    private data class PreparedRequest(val request: HttpRequest, val body: ByteArray)
 
     private fun requireConfigured() {
         if (!settings.isSelectable || settings.endpointUri == null) {

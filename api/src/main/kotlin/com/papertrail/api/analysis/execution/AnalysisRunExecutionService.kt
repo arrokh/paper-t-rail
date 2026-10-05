@@ -1,0 +1,269 @@
+package com.papertrail.api.analysis.execution
+
+import com.fasterxml.jackson.databind.ObjectMapper
+import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
+import org.springframework.stereotype.Service
+import org.springframework.web.server.ResponseStatusException
+import java.util.UUID
+
+@Service
+class AnalysisRunExecutionService(
+    private val repository: AnalysisRunExecutionRepository,
+    private val sanitizer: ExecutionCaptureSanitizer,
+    private val objectMapper: ObjectMapper,
+) {
+    private val activeSpan = ThreadLocal<ExecutionSpanHandle?>()
+
+    fun <T> record(
+        analysisRunId: UUID,
+        spec: ExecutionSpanSpec,
+        operation: () -> T,
+    ): T {
+        val previousSpan = activeSpan.get()
+        val handle = startSpan(analysisRunId, spec)
+        activeSpan.set(handle)
+        try {
+            val result = operation()
+            finishSpan(handle, "SUCCEEDED", null)
+            finishIfTerminal(analysisRunId)
+            return result
+        } catch (exception: Exception) {
+            finishSpan(handle, "FAILED", "OPERATION_FAILED")
+            finishIfTerminal(analysisRunId)
+            throw exception
+        } finally {
+            if (previousSpan == null) activeSpan.remove() else activeSpan.set(previousSpan)
+        }
+    }
+
+    fun <T> recordCurrentProviderCall(
+        operationKey: String,
+        name: String,
+        providerId: String,
+        modelId: String?,
+        operation: () -> T,
+    ): T {
+        val parent = activeSpan.get() ?: return operation()
+        if (!SAFE_OPERATION_KEY.matches(operationKey)) {
+            markGap(parent.analysisRunId, "UNSAFE_SPAN_METADATA_OMITTED")
+            return operation()
+        }
+        val operationId = parent.eventId?.let { ExecutionOperationId.forEvent(it, "provider-call:$operationKey") }
+            ?: UUID.nameUUIDFromBytes("${parent.operationId}:provider-call:$operationKey".toByteArray(Charsets.UTF_8))
+        return record(
+            parent.analysisRunId,
+            ExecutionSpanSpec(
+                stageId = parent.stageId,
+                kind = "PROVIDER",
+                name = name,
+                attempt = parent.attempt,
+                eventId = parent.eventId,
+                parentSpanId = parent.id,
+                providerId = providerId,
+                modelId = modelId,
+                operationId = operationId,
+            ),
+            operation,
+        )
+    }
+
+    fun startSpan(analysisRunId: UUID, spec: ExecutionSpanSpec): ExecutionSpanHandle? {
+        if (!validSpec(spec)) {
+            markGap(analysisRunId, "UNSAFE_SPAN_METADATA_OMITTED")
+            return null
+        }
+        val attributes = safeAttributes(spec.attributes, analysisRunId)
+        val linkedSpec = if (spec.parentSpanId == null) spec.copy(parentSpanId = activeSpan.get()?.id) else spec
+        return try {
+            repository.startSpan(analysisRunId, linkedSpec, attributes)
+        } catch (_: Exception) {
+            markGap(analysisRunId, "SPAN_STORAGE_UNAVAILABLE")
+            logStorageFailure(analysisRunId)
+            null
+        }
+    }
+
+    fun finishSpan(handle: ExecutionSpanHandle?, status: String, errorCode: String? = null, httpStatus: Int? = null) {
+        if (handle == null) return
+        if (status !in SPAN_STATUSES || errorCode?.matches(SAFE_ERROR_CODE) == false || httpStatus?.let { it !in 100..599 } == true) {
+            markGap(handle.analysisRunId, "UNSAFE_SPAN_RESULT_OMITTED")
+            return
+        }
+        safely(handle.analysisRunId) {
+            repository.finishSpan(handle, status, errorCode, httpStatus)
+        }
+    }
+
+    fun capture(analysisRunId: UUID, spanId: UUID, artifact: ExecutionSpanArtifactSpec) {
+        if (artifact.role !in ARTIFACT_ROLES) {
+            markGap(analysisRunId, "UNSAFE_ARTIFACT_METADATA_OMITTED")
+            return
+        }
+        try {
+            persistSanitized(analysisRunId, spanId, artifact, sanitizer.sanitize(artifact.schemaVersion, artifact.fields))
+        } catch (_: Exception) {
+            markGap(analysisRunId, "ARTIFACT_STORAGE_UNAVAILABLE")
+            logStorageFailure(analysisRunId)
+        }
+    }
+
+    fun captureCurrent(artifact: ExecutionSpanArtifactSpec) {
+        val handle = activeSpan.get() ?: return
+        capture(handle.analysisRunId, handle.id, artifact)
+    }
+
+    fun captureCurrentOpenAiRequest(body: ByteArray) = captureCurrentBody("REQUEST", sanitizer.sanitizeOpenAiRequestBody(body))
+
+    fun captureCurrentOpenAiResponse(body: ByteArray) = captureCurrentBody("RESPONSE", sanitizer.sanitizeOpenAiResponseBody(body))
+
+    fun captureCurrentSystemOneRequest(body: ByteArray) = captureCurrentBody("REQUEST", sanitizer.sanitizeSystemOneRequestBody(body))
+
+    fun captureCurrentJevResponse(body: ByteArray) = captureCurrentBody("RESPONSE", sanitizer.sanitizeJevResponseBody(body))
+
+    fun omitCurrentBody(role: String, schemaVersion: String, reason: String) {
+        val handle = activeSpan.get() ?: return
+        if (role !in ARTIFACT_ROLES) {
+            markGap(handle.analysisRunId, "UNSAFE_ARTIFACT_METADATA_OMITTED")
+            return
+        }
+        captureCurrentBody(role, sanitizer.omittedBody(schemaVersion, reason))
+    }
+
+    private fun captureCurrentBody(role: String, sanitized: SanitizedExecutionArtifact) {
+        val handle = activeSpan.get() ?: return
+        val artifact = ExecutionSpanArtifactSpec(role, sanitized.schemaVersion, emptyMap())
+        try {
+            persistSanitized(handle.analysisRunId, handle.id, artifact, sanitized)
+        } catch (_: Exception) {
+            markGap(handle.analysisRunId, "ARTIFACT_STORAGE_UNAVAILABLE")
+            logStorageFailure(handle.analysisRunId)
+        }
+    }
+
+    private fun persistSanitized(
+        analysisRunId: UUID,
+        spanId: UUID,
+        artifact: ExecutionSpanArtifactSpec,
+        sanitized: SanitizedExecutionArtifact,
+    ) {
+        repository.recordArtifact(analysisRunId, spanId, artifact, sanitized, sanitized.content?.let(::sha256Hex))
+    }
+
+    fun summary(analysisRunId: UUID): AnalysisRunExecutionSummary {
+        requireRun(analysisRunId)
+        return repository.summary(analysisRunId) ?: AnalysisRunExecutionSummary(
+            analysisRunId = analysisRunId,
+            captureEnabled = false,
+            recordingState = "NOT_RECORDED",
+            completeness = "NOT_RECORDED",
+            startedAt = null,
+            finishedAt = null,
+            totalDurationMillis = null,
+        )
+    }
+
+    fun spans(analysisRunId: UUID, limit: Int, cursor: String?): ExecutionSpanPage {
+        requireRun(analysisRunId)
+        val boundedLimit = limit.coerceIn(1, MAX_PAGE_SIZE)
+        val decoded = cursor?.let(ExecutionSpanCursorCodec::decode)
+        return repository.page(analysisRunId, boundedLimit, decoded)
+    }
+
+    fun span(analysisRunId: UUID, spanId: UUID): ExecutionSpanResponse {
+        requireRun(analysisRunId)
+        return repository.span(analysisRunId, spanId)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Execution span not found.")
+    }
+
+    fun artifact(analysisRunId: UUID, artifactId: UUID): ExecutionArtifactResponse {
+        requireRun(analysisRunId)
+        return repository.artifact(analysisRunId, artifactId)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Execution artifact not found.")
+    }
+
+    fun stopCapture(analysisRunId: UUID): AnalysisRunExecutionSummary {
+        requireRun(analysisRunId)
+        if (!repository.stopCapture(analysisRunId)) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "Execution recording is unavailable for this legacy Analysis Run.")
+        }
+        return summary(analysisRunId)
+    }
+
+    fun removeArtifact(analysisRunId: UUID, artifactId: UUID) {
+        requireRun(analysisRunId)
+        if (!repository.removeArtifact(analysisRunId, artifactId)) {
+            throw ResponseStatusException(HttpStatus.NOT_FOUND, "Execution artifact not found.")
+        }
+    }
+
+    fun finishIfTerminal(analysisRunId: UUID) = safely(analysisRunId) {
+        val status = repository.terminalStatus(analysisRunId) ?: return@safely
+        repository.finishRecording(analysisRunId, incomplete = status == "FAILED")
+    }
+
+    private fun requireRun(analysisRunId: UUID) {
+        if (!repository.runExists(analysisRunId)) {
+            throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
+        }
+    }
+
+    private fun validSpec(spec: ExecutionSpanSpec): Boolean =
+        spec.stageId in STAGES && spec.kind in KINDS && spec.name.matches(SAFE_LABEL) && spec.attempt > 0 &&
+            (spec.providerId == null || sanitizer.isSafeIdentifier(spec.providerId)) &&
+            (spec.modelId == null || sanitizer.isSafeIdentifier(spec.modelId))
+
+    private fun safeAttributes(attributes: Map<String, Any?>, analysisRunId: UUID): String {
+        val safe = attributes.filter { (key, value) ->
+            key in SAFE_ATTRIBUTE_KEYS && when (value) {
+                is String -> sanitizer.isSafeIdentifier(value) || (key == "sourceHash" && value.matches(SAFE_HASH))
+                is Number -> value.toLong() >= 0
+                is Boolean -> true
+                else -> false
+            }
+        }
+        if (safe.size != attributes.size) markGap(analysisRunId, "UNSAFE_SPAN_ATTRIBUTES_OMITTED")
+        return objectMapper.writeValueAsString(safe)
+    }
+
+    private fun markGap(analysisRunId: UUID, reason: String) {
+        safely(analysisRunId) { repository.markGap(analysisRunId, reason) }
+    }
+
+    private fun safely(analysisRunId: UUID, operation: () -> Unit) {
+        try {
+            operation()
+        } catch (_: Exception) {
+            logStorageFailure(analysisRunId)
+        }
+    }
+
+    private fun logStorageFailure(analysisRunId: UUID) {
+        logger.atWarn()
+            .addKeyValue("analysisRunId", analysisRunId)
+            .log("Analysis Run execution recording is incomplete because persistence failed")
+    }
+
+    private fun sha256Hex(content: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(content.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { byte -> "%02x".format(byte) }
+    }
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(AnalysisRunExecutionService::class.java)
+        private val SAFE_LABEL = Regex("^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,119}$")
+        private val SAFE_OPERATION_KEY = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+        private val SAFE_HASH = Regex("^[0-9a-f]{64}$")
+        private val SAFE_ERROR_CODE = Regex("^[A-Z][A-Z0-9_]{0,119}$")
+        private val STAGES = setOf("source", "references", "access", "evidence", "verification")
+        private val KINDS = setOf("INTERNAL", "PROVIDER", "QUEUE", "PERSISTENCE", "TRANSFORMATION")
+        private val SPAN_STATUSES = setOf("SUCCEEDED", "FAILED", "SKIPPED", "REUSED", "INTERRUPTED")
+        private val ARTIFACT_ROLES = setOf("INPUT", "REQUEST", "RESPONSE", "RESULT")
+        private val SAFE_ATTRIBUTE_KEYS = setOf(
+            "providerId", "modelId", "parserId", "parserVersion", "sourceHash", "httpMethod", "httpStatus",
+            "queueName", "eventType", "eventAttempt", "byteCount", "itemCount", "durationMillis",
+            "firstChunkMillis", "reasonCode", "external",
+        )
+        const val MAX_PAGE_SIZE = 100
+    }
+}

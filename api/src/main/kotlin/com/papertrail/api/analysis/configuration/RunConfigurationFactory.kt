@@ -67,7 +67,7 @@ class RunConfigurationFactory(
     fun parseRequest(node: JsonNode?): RunConfigurationRequest {
         if (node == null || node.isNull) return RunConfigurationRequest()
         require(node.isObject) { "Analysis configuration must be a JSON object." }
-        val allowed = setOf("claimExtractorProvider", "embeddingProvider", "systemOneProvider", "scholarlyMetadataProvider", "openAccessProvider", "externalProviderConsents")
+        val allowed = setOf("captureExecution", "claimExtractorProvider", "embeddingProvider", "systemOneProvider", "scholarlyMetadataProvider", "openAccessProvider", "externalProviderConsents")
         val supplied = node.fieldNames().asSequence().toSet()
         require(supplied.all { it in allowed }) { "Analysis configuration contains unsupported fields." }
         fun provider(name: String, default: String): String {
@@ -82,6 +82,10 @@ class RunConfigurationFactory(
             }
             return value.asText()
         }
+        val captureExecution = node.get("captureExecution")?.let { capture ->
+            require(capture.isBoolean) { "Analysis configuration field 'captureExecution' must be a boolean." }
+            capture.asBoolean()
+        } ?: true
         val providerConsents = node.get("externalProviderConsents")?.let { consents ->
             require(consents.isArray) { "Analysis configuration field 'externalProviderConsents' must be an array." }
             consents.map { consent ->
@@ -106,6 +110,7 @@ class RunConfigurationFactory(
             }
         } ?: emptyList()
         return RunConfigurationRequest(
+            captureExecution = captureExecution,
             claimExtractorProvider = optionalProvider("claimExtractorProvider"),
             embeddingProvider = optionalProvider("embeddingProvider"),
             systemOneProvider = optionalProvider("systemOneProvider"),
@@ -192,6 +197,7 @@ class RunConfigurationFactory(
             ExternalProviderConsentSnapshot(providerId, requiredCategories.map(DataCategory::id).sorted(), disclosure)
         }.sortedBy(ExternalProviderConsentSnapshot::providerId)
         return AnalysisConfigurationSnapshot(
+            captureExecution = request.captureExecution,
             claimExtractor = selected[0].toSelection(),
             embedding = embeddingSelection,
             retrieval = RetrievalConfigurationSnapshot(

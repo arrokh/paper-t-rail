@@ -58,6 +58,8 @@ paper-trail:
     language-detector-id: optimaize
     language-detector-version: 0.6
   analysis:
+    execution:
+      max-artifact-bytes: ${PAPER_EXECUTION_MAX_ARTIFACT_BYTES:1048576}
     parser-id: grobid
     parser-version: ${GROBID_PARSER_VERSION:0.9.1-crf}
     parser-response-max-bytes: ${PAPER_MAX_GROBID_RESPONSE_BYTES:67108864}
