@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { LocalDateTime } from "@/components/local-date-time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -383,7 +384,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                     >
                       <span className="min-w-0 flex-1 space-y-1">
                         <span className="block truncate text-sm font-medium text-foreground">{run.filename}</span>
-                        <span className="block font-mono text-xs text-muted-foreground">{new Date(run.createdAt).toLocaleString()}</span>
+                        <LocalDateTime className="block text-xs text-muted-foreground" value={run.createdAt} />
                       </span>
                       <RunStatusBadge status={run.status} />
                     </Button>

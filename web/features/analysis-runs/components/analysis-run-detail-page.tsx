@@ -28,8 +28,8 @@ import {
   useReferenceResolutionReport,
 } from "@/features/analysis-runs/queries/analysis-run-queries";
 import type { AnalysisRun } from "@/features/analysis-runs/types";
+import { LocalDateTime } from "@/components/local-date-time";
 import { cn } from "@/lib/utils";
-import { useClientTimeZone } from "@/lib/use-client-time-zone";
 
 const ANALYSIS_RUN_VIEW_TAB_CLASS_NAME = cn(
   "h-full min-w-fit shrink-0 px-2 text-xs font-semibold text-foreground/75 sm:min-w-32 sm:px-4 sm:text-sm",
@@ -40,17 +40,6 @@ const ANALYSIS_RUN_VIEW_TAB_CLASS_NAME = cn(
 
 function isParsedDocumentReady(status: AnalysisRun["status"]): boolean {
   return status === "PARSED" || status === "COMPLETED" || status === "COMPLETED_WITH_WARNINGS";
-}
-
-function formatDate(value: string | null, timeZone: string): string {
-  if (!value) return "Not recorded";
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return "Unknown time";
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone,
-  }).format(timestamp);
 }
 
 function homeHrefFor(searchParams: ReturnType<typeof useSearchParams>, focusRunId?: string): string {
@@ -90,7 +79,7 @@ function RunStatusBadge({ status }: { status: AnalysisRun["status"] }) {
   return <Badge variant="outline" className={cn("shrink-0 capitalize", ANALYSIS_RUN_STATUS_CLASS_NAMES[status])}>{analysisRunStatusLabel(status)}</Badge>;
 }
 
-function AnalysisRunProvenance({ run, timeZone }: { run: AnalysisRun; timeZone: string }) {
+function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
   return (
     <Collapsible defaultOpen className="group/provenance rounded-xl border border-border bg-card shadow-sm">
       <CollapsibleTrigger className="group flex min-h-14 w-full items-center justify-between gap-4 rounded-xl px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-5">
@@ -105,8 +94,8 @@ function AnalysisRunProvenance({ run, timeZone }: { run: AnalysisRun; timeZone: 
           <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
             <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Analysis Run ID</dt><dd className="m-0 break-all font-mono text-xs">{run.id}</dd></div>
             <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Source Document ID</dt><dd className="m-0 break-all font-mono text-xs">{run.documentId}</dd></div>
-            <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Created</dt><dd className="m-0 text-sm">{formatDate(run.createdAt, timeZone)}</dd></div>
-            <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Started</dt><dd className="m-0 text-sm">{formatDate(run.startedAt, timeZone)}</dd></div>
+            <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Created</dt><dd className="m-0 text-sm"><LocalDateTime value={run.createdAt} /></dd></div>
+            <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Started</dt><dd className="m-0 text-sm"><LocalDateTime value={run.startedAt} /></dd></div>
             <div className="min-w-0 space-y-1 sm:col-span-2"><dt className="font-mono text-xs uppercase text-muted-foreground">Source SHA-256</dt><dd className="m-0 break-all font-mono text-xs leading-relaxed">{run.sourceContentSha256}</dd></div>
             <div className="min-w-0 space-y-1 sm:col-span-2">
               <dt className="font-mono text-xs uppercase text-muted-foreground">Pinned providers</dt>
@@ -137,7 +126,6 @@ function AnalysisRunProvenance({ run, timeZone }: { run: AnalysisRun; timeZone: 
 }
 
 export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string }) {
-  const clientTimeZone = useClientTimeZone();
   const searchParams = useSearchParams();
   const { setPaperReviewActive: setShellPaperReviewActive } = useWorkspaceShellState();
   const runQuery = useAnalysisRun(analysisRunId);
@@ -304,7 +292,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             <p className="font-mono text-xs tracking-[0.13em] text-muted-foreground uppercase">Analysis Run details</p>
             <h1 id="analysis-run-heading" className="break-words font-serif text-2xl font-semibold tracking-tight sm:text-4xl">{run.filename}</h1>
             <p className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
-              <span>Created {formatDate(run.createdAt, clientTimeZone)}</span>
+              <span>Created <LocalDateTime value={run.createdAt} /></span>
               <RunStatusBadge status={run.status} />
             </p>
           </div>
@@ -353,7 +341,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             run={run}
             selectedStage={selectedStage}
             onSelectStage={selectStage}
-            afterIntro={<AnalysisRunProvenance run={run} timeZone={clientTimeZone} />}
+            afterIntro={<AnalysisRunProvenance run={run} />}
           />
           {selectedStage && (
             <AnalysisRunStageResults

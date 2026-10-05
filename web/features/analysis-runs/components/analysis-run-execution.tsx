@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LocalDateTime } from "@/components/local-date-time";
 import { normalizePipelineStageId, PIPELINE_STAGES } from "@/features/analysis-runs/pipeline";
 import {
   executionSpanQueryKey,
@@ -37,7 +38,6 @@ import type {
   ExecutionSpanFilters,
   ExecutionSummary,
 } from "@/features/analysis-runs/execution/execution-types";
-import { useClientTimeZone } from "@/lib/use-client-time-zone";
 import { cn } from "@/lib/utils";
 
 type InspectorArtifactSection = "input" | "response" | "result";
@@ -61,25 +61,6 @@ function elapsedMillisFromSummary(summary: ExecutionSummary, terminalRun: boolea
 function formatElapsed(summary: ExecutionSummary, terminalRun: boolean, now: number): string {
   const elapsed = elapsedMillisFromSummary(summary, terminalRun, now);
   return elapsed === null ? "Not recorded" : formatExecutionDuration(elapsed);
-}
-
-function LocalDateTime({ value }: { value: string | null }) {
-  const timeZone = useClientTimeZone();
-  if (!value) return <>Not recorded</>;
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return <>Unknown time</>;
-
-  const formatted = new Intl.DateTimeFormat("en", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    timeZoneName: "short",
-    timeZone,
-  }).format(timestamp);
-  return <time dateTime={value}>{formatted}</time>;
 }
 
 function statusBadgeClass(status: string): string {

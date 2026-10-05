@@ -36,7 +36,10 @@ describe("Human Review panel", () => {
     expect(screen.getByText("Machine result: insufficient evidence. Human assessments are separate and do not change it.")).toBeTruthy();
     expect(screen.getByText("Human assessment: supported")).toBeTruthy();
     expect(screen.getByText(reviews[0].note!)).toBeTruthy();
-    expect(screen.getByText(reviews[0].createdAt)).toBeTruthy();
+    const reviewTime = document.querySelector(`time[datetime="${reviews[0].createdAt}"]`);
+    expect(reviewTime).toBeTruthy();
+    expect(reviewTime?.textContent).not.toBe(reviews[0].createdAt);
+    expect(reviewTime?.textContent).toMatch(/^\d{1,2} [A-Za-z]{3} \d{4}, \d{2}:\d{2}$/);
     expect(screen.getByRole("heading", { name: "Human review history" })).toBeTruthy();
   });
 

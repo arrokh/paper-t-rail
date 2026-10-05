@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { LocalDateTime } from "@/components/local-date-time";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,7 +80,7 @@ export function HumanReviewPanel({
           {reviews.map((review) => (
             <li key={review.id} className="space-y-1 rounded-md border border-border bg-muted/20 p-3">
               <p className="m-0 text-sm font-medium">{actionLabel(review)}</p>
-              <time className="block text-xs text-muted-foreground" dateTime={review.createdAt}>{review.createdAt}</time>
+              <LocalDateTime className="block text-xs text-muted-foreground" value={review.createdAt} />
               {review.note && <p className="m-0 break-words text-sm leading-relaxed">{review.note}</p>}
             </li>
           ))}
