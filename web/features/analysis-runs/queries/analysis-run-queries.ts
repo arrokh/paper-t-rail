@@ -1,6 +1,7 @@
 import {
   mutationOptions,
   queryOptions,
+  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
@@ -19,6 +20,12 @@ import type {
   HumanReviewAction,
   HumanReviewStatus,
 } from "../types.ts";
+import type {
+  ExecutionArtifact,
+  ExecutionSpanDetail,
+  ExecutionSpanPage,
+  ExecutionSummary,
+} from "../execution/execution-types.ts";
 
 const RUN_PAGE_SIZE = 20;
 const RUN_POLL_INTERVAL_MS = 2500;
@@ -28,6 +35,7 @@ export const UPLOAD_ANALYSIS_RUN_MUTATION_KEY = ["analysis-runs", "upload"] as c
 export const REANALYZE_ANALYSIS_RUN_MUTATION_KEY = ["analysis-runs", "reanalyze"] as const;
 export const DELETE_SOURCE_DOCUMENT_MUTATION_KEY = ["analysis-runs", "delete-document"] as const;
 export const HUMAN_REVIEW_MUTATION_KEY = ["analysis-runs", "human-review"] as const;
+export const EXECUTION_QUERY_KEY = ["analysis-runs", "execution"] as const;
 
 function isTerminalRunStatus(status: string): boolean {
   return status === "PARSED"
@@ -123,7 +131,7 @@ export type ReanalyzeDocument = {
 async function uploadAnalysisRun({ file, configuration }: UploadAnalysisRun): Promise<CreatedRun> {
   const data = new FormData();
   data.append("file", file);
-  data.append("configuration", JSON.stringify(configuration));
+  data.append("configuration", JSON.stringify({ captureExecution: true, ...configuration }));
 
   const response = await fetch("/api/v1/analysis-runs", { method: "POST", body: data });
   if (!response.ok) throw new Error(await readApiError(response));
@@ -302,5 +310,152 @@ export function useReferenceResolutionReport(analysisRunId: string | null, enabl
   return useQuery({
     ...referenceResolutionReportQueryOptions(analysisRunId ?? ""),
     enabled: Boolean(analysisRunId && enabled),
+  });
+}
+
+const EXECUTION_POLL_INTERVAL_MS = 3000;
+
+export function executionSummaryQueryKey(analysisRunId: string) {
+  return [...EXECUTION_QUERY_KEY, analysisRunId, "summary"] as const;
+}
+
+export function executionSpansQueryKey(analysisRunId: string) {
+  return [...EXECUTION_QUERY_KEY, analysisRunId, "spans"] as const;
+}
+
+export function executionSpanQueryKey(analysisRunId: string, spanId: string) {
+  return [...EXECUTION_QUERY_KEY, analysisRunId, "span", spanId] as const;
+}
+
+export function executionArtifactQueryKey(analysisRunId: string, artifactId: string) {
+  return [...EXECUTION_QUERY_KEY, analysisRunId, "artifact", artifactId] as const;
+}
+
+export function executionSummaryQueryOptions(analysisRunId: string, terminalRun = false) {
+  return queryOptions({
+    queryKey: executionSummaryQueryKey(analysisRunId),
+    queryFn: async ({ signal }): Promise<ExecutionSummary> => {
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution`, {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as ExecutionSummary;
+    },
+    refetchInterval: (query) => !terminalRun && query.state.data?.recordingState === "RECORDING"
+      ? EXECUTION_POLL_INTERVAL_MS
+      : false,
+    refetchOnWindowFocus: false,
+    structuralSharing: false,
+    retry: false,
+  });
+}
+
+export function useExecutionSummary(analysisRunId: string, enabled: boolean, terminalRun: boolean) {
+  return useQuery({
+    ...executionSummaryQueryOptions(analysisRunId, terminalRun),
+    enabled,
+  });
+}
+
+export function executionSpansQueryOptions(analysisRunId: string, terminalRun: boolean, recording: boolean) {
+  return {
+    queryKey: executionSpansQueryKey(analysisRunId),
+    queryFn: async ({ signal, pageParam }: { signal: AbortSignal; pageParam: string | null }): Promise<ExecutionSpanPage> => {
+      const params = new URLSearchParams();
+      if (pageParam) params.set("cursor", pageParam);
+      const suffix = params.size ? `?${params.toString()}` : "";
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/spans${suffix}`, {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as ExecutionSpanPage;
+    },
+    initialPageParam: null as string | null,
+    getNextPageParam: (page: ExecutionSpanPage) => page.nextCursor ?? undefined,
+    refetchInterval: (query: { state: { data?: { pages?: ExecutionSpanPage[] } } }) => {
+      const hasLoadedPage = Boolean(query.state.data?.pages?.length);
+      return !terminalRun && recording && hasLoadedPage ? EXECUTION_POLL_INTERVAL_MS : false;
+    },
+    refetchOnWindowFocus: false as const,
+    structuralSharing: false as const,
+    retry: false as const,
+  };
+}
+
+export function useExecutionSpans(analysisRunId: string, enabled: boolean, terminalRun: boolean, recording: boolean) {
+  return useInfiniteQuery({
+    ...executionSpansQueryOptions(analysisRunId, terminalRun, recording),
+    enabled,
+  });
+}
+
+export function useExecutionSpan(analysisRunId: string, spanId: string | null) {
+  return useQuery({
+    queryKey: executionSpanQueryKey(analysisRunId, spanId ?? ""),
+    queryFn: async ({ signal }): Promise<ExecutionSpanDetail> => {
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/spans/${encodeURIComponent(spanId ?? "")}`, {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as ExecutionSpanDetail;
+    },
+    enabled: Boolean(analysisRunId && spanId),
+    retry: false,
+  });
+}
+
+export function useExecutionArtifact(analysisRunId: string, artifactId: string | null) {
+  return useQuery({
+    queryKey: executionArtifactQueryKey(analysisRunId, artifactId ?? ""),
+    queryFn: async ({ signal }): Promise<ExecutionArtifact> => {
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/artifacts/${encodeURIComponent(artifactId ?? "")}`, {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as ExecutionArtifact;
+    },
+    enabled: Boolean(analysisRunId && artifactId),
+    retry: false,
+  });
+}
+
+export function useStopExecutionCapture(analysisRunId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: [...EXECUTION_QUERY_KEY, analysisRunId, "stop-capture"],
+    mutationFn: async (): Promise<void> => {
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/capture`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ captureEnabled: false }),
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: executionSummaryQueryKey(analysisRunId) });
+      await queryClient.invalidateQueries({ queryKey: executionSpansQueryKey(analysisRunId) });
+    },
+  });
+}
+
+export function useRemoveExecutionArtifact(analysisRunId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationKey: [...EXECUTION_QUERY_KEY, analysisRunId, "remove-artifact"],
+    mutationFn: async (artifactId: string): Promise<void> => {
+      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/artifacts/${encodeURIComponent(artifactId)}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+    },
+    onSuccess: async (_data, artifactId) => {
+      queryClient.removeQueries({ queryKey: executionArtifactQueryKey(analysisRunId, artifactId), exact: true });
+      await queryClient.invalidateQueries({ queryKey: [...EXECUTION_QUERY_KEY, analysisRunId, "span"] });
+      await queryClient.invalidateQueries({ queryKey: executionSummaryQueryKey(analysisRunId) });
+    },
   });
 }

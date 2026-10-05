@@ -356,6 +356,7 @@ export type AnalysisRunConfiguration = {
   systemOneProvider: string;
   scholarlyMetadataProvider: string;
   openAccessProvider: string;
+  captureExecution?: boolean;
   externalProviderConsents: Array<{
     providerId: string;
     dataCategories: string[];

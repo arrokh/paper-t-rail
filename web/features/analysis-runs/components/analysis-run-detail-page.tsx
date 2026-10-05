@@ -12,6 +12,7 @@ import { AnalysisPipelineChart } from "@/features/analysis-runs/components/analy
 import { AnalysisRunPaperReview } from "@/features/analysis-runs/components/analysis-run-paper-review";
 import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/components/analysis-run-loading";
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
+import { AnalysisRunExecution } from "@/features/analysis-runs/components/analysis-run-execution";
 import { BackToTopFab } from "@/features/workspace/components/back-to-top-fab";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
 import { useWorkspaceShellState } from "@/features/workspace/components/workspace-shell-state";
@@ -30,7 +31,7 @@ import type { AnalysisRun } from "@/features/analysis-runs/types";
 import { cn } from "@/lib/utils";
 
 const ANALYSIS_RUN_VIEW_TAB_CLASS_NAME = cn(
-  "h-full min-w-32 px-4 font-semibold text-foreground/75",
+  "h-full min-w-0 px-2 text-xs font-semibold text-foreground/75 sm:min-w-32 sm:px-4 sm:text-sm",
   "hover:bg-accent hover:text-accent-foreground",
   "data-active:bg-primary data-active:text-primary-foreground data-active:shadow-sm",
   "data-active:hover:bg-primary data-active:hover:text-primary-foreground",
@@ -139,8 +140,16 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const run = runQuery.data ?? null;
   const stageParam = searchParams.get("step");
   const selectedStage = normalizePipelineStageId(stageParam);
-  const routeSelectedView = searchParams.get("view") === "review" ? "review" : "pipeline";
+  const routeViewParam = searchParams.get("view");
+  const routeSelectedView = routeViewParam === "review" ? "review" : routeViewParam === "execution" ? "execution" : "pipeline";
   const [selectedView, setSelectedView] = useState(routeSelectedView);
+  const urlSelectedSpanId = searchParams.get("span");
+  const [selectedExecutionSpanId, setSelectedExecutionSpanId] = useState(urlSelectedSpanId);
+  const [previousUrlSelectedSpanId, setPreviousUrlSelectedSpanId] = useState(urlSelectedSpanId);
+  if (urlSelectedSpanId !== previousUrlSelectedSpanId) {
+    setPreviousUrlSelectedSpanId(urlSelectedSpanId);
+    setSelectedExecutionSpanId(urlSelectedSpanId);
+  }
   const isPaperReviewActive = selectedView === "review" || routeSelectedView === "review";
   const previousRouteView = useRef(routeSelectedView);
   const previousSelectedView = useRef(selectedView);
@@ -179,10 +188,14 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
     if (previousSelectedView.current === selectedView) return;
     previousSelectedView.current = selectedView;
 
-    const cardId = selectedView === "review" ? "paper-review-card" : "analysis-pipeline-card";
+    const cardId = selectedView === "review" ? "paper-review-card" : selectedView === "execution" ? "execution-trace" : "analysis-pipeline-card";
     const panel = document.getElementById(cardId)?.closest<HTMLElement>(".analysis-run-view-panel");
     const scrollToSelectedView = () => {
       if (selectedView === "review") scrollToPaperReviewCard();
+      else if (selectedView === "execution") document.getElementById("execution-trace")?.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
       else scrollToAnalysisPipelineCard();
     };
 
@@ -272,6 +285,12 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
     updateQueryParameters({ view: "review", reviewDetail: detail });
   }
 
+  function selectExecutionSpan(spanId: string | null) {
+    setSelectedExecutionSpanId(spanId);
+    setSelectedView("execution");
+    updateQueryParameters({ view: "execution", span: spanId });
+  }
+
   return (
     <article className="analysis-run-detail space-y-6" aria-labelledby="analysis-run-heading">
       <WorkspaceBreadcrumb items={analysisRunBreadcrumbItems(run.filename, backHref)} />
@@ -299,10 +318,10 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
         value={selectedView}
         onValueChange={(value) => {
           if (typeof value !== "string") return;
-          const nextView = value === "review" ? "review" : "pipeline";
+          const nextView = value === "review" ? "review" : value === "execution" ? "execution" : "pipeline";
           if (value === "review") setHasOpenedPaperReview(true);
           setSelectedView(nextView);
-          updateQueryParameters({ view: nextView === "review" ? "review" : null });
+          updateQueryParameters({ view: nextView === "pipeline" ? null : nextView });
         }}
         className="gap-5"
       >
@@ -320,6 +339,9 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}
           >
             Paper Review
+          </TabsTrigger>
+          <TabsTrigger value="execution" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
+            Execution
           </TabsTrigger>
         </TabsList>
         <TabsContent value="pipeline" className="analysis-run-view-panel space-y-6">
@@ -353,6 +375,14 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
               </Card>
             </section>
           )}
+        </TabsContent>
+        <TabsContent value="execution" className="analysis-run-view-panel" id="execution-trace">
+          <AnalysisRunExecution
+            analysisRunId={analysisRunId}
+            runStatus={run.status}
+            selectedSpanId={selectedExecutionSpanId}
+            onSelectSpan={selectExecutionSpan}
+          />
         </TabsContent>
         <TabsContent value="review" keepMounted={hasOpenedPaperReview || selectedView === "review"} className="analysis-run-view-panel">
           <AnalysisRunPaperReview

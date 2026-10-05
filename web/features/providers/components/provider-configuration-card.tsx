@@ -79,6 +79,7 @@ export function ProviderConfigurationCard({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [currentStep, setCurrentStep] = useState(0);
+  const [captureExecution, setCaptureExecution] = useState(true);
   const stepHeadingRef = useRef<HTMLDivElement>(null);
   const stepContentRef = useRef<HTMLDivElement>(null);
   const shouldFocusStepRef = useRef(false);
@@ -109,7 +110,7 @@ export function ProviderConfigurationCard({
     }
 
     setValidationError(null);
-    uploadMutation.mutate({ file: fileInput.files[0], configuration }, {
+    uploadMutation.mutate({ file: fileInput.files[0], configuration: { ...configuration, captureExecution } }, {
       onSuccess: (created) => {
         onRunCreated(created.analysisRunId);
       },
@@ -405,12 +406,23 @@ export function ProviderConfigurationCard({
                 </div>
                 <FieldDescription id="source-file-description">English PDFs with selectable text only. The uploaded Source Document stays in this local installation.</FieldDescription>
               </Field>
-              <div className="flex gap-3 rounded-lg border border-primary/15 bg-primary/5 p-4 text-sm" role="note">
-                <LockKeyhole className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-                <p className="leading-relaxed text-muted-foreground">
-                  Provider selections and the categories you approved are recorded with this Analysis Run. The Source Document stays in this local installation.
+              <section className="space-y-3 rounded-lg border border-border bg-background p-4" aria-labelledby="execution-capture-heading">
+                <Field orientation="horizontal" className="items-start gap-3">
+                  <Checkbox
+                    id="capture-execution"
+                    checked={captureExecution}
+                    disabled={busy}
+                    onCheckedChange={(checked) => setCaptureExecution(checked === true)}
+                  />
+                  <div className="min-w-0 space-y-1">
+                    <FieldLabel id="execution-capture-heading" htmlFor="capture-execution" className="text-sm font-medium">Capture execution details</FieldLabel>
+                    <FieldDescription>Enabled by default. You can stop future capture during a run and remove individual artifacts later.</FieldDescription>
+                  </div>
+                </Field>
+                <p className="m-0 text-sm leading-relaxed text-muted-foreground">
+                  When enabled, permitted sanitized operation inputs, requests, responses, and interpreted results are stored with this run in this local installation. Uncertain content is omitted. Anyone already able to access this trusted workspace can inspect recorded artifacts; this is separate from external-provider consent. The Source Document stays in this local installation.
                 </p>
-              </div>
+              </section>
             </form>
           )}
 
