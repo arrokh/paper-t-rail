@@ -172,7 +172,7 @@ Use Chat Completions (`POST /v1/chat/completions`) with strict `json_schema` res
 | Run-pinned provider selection and non-secret endpoint fingerprint | `RunConfigurationFactoryTest` |
 | Selected-link persistence and no verification for an unlinked claim; immediate dead-letter for permanent response-contract failure | `AnalysisRunQueueIntegrationTest` |
 | Hand-authored deterministic review fixtures for claim decomposition, selected/empty targets, malformed responses, and context isolation | `ClaimAnalysisServiceTest`, `OpenAiCompatibleClaimAnalysisProviderContractTest`, and `AnalysisRunQueueIntegrationTest`; these verify the contract, not live model accuracy or calibration |
-| API verification and live local-model replay | The full API suite and local Compose rebuild passed after the latest backend edits. Web checks passed earlier and were not rerun after these backend-only changes. Live local-model replays reached 26 per-context responses but failed before persistence because the model returned two distinct claims for one source span; sanitized diagnostics contain counts only. No Jev, Crossref, Unpaywall, or other external-provider calls occurred. |
+| Full API and live local-model verification | The full API suite, local Compose rebuild, and live local-model replay passed. The same stored document, provider selections, and consent categories were reused; the run completed with 26 Citation Contexts, 30 claims, 37 selected target links, 47 bibliography entries, and 37 Claim–Paper Verifications. Two unrequested target keys were dropped and counted; no span conflicts remained. External providers ran only under the previously recorded per-run consent. Web checks passed earlier and were not rerun after these backend-only changes. |
 
 ## References
 
