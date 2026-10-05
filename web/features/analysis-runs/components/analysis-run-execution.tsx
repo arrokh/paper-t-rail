@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { normalizePipelineStageId, PIPELINE_STAGES } from "@/features/analysis-runs/pipeline";
 import {
   executionSpanQueryKey,
@@ -41,15 +40,9 @@ import type {
 import { useClientTimeZone } from "@/lib/use-client-time-zone";
 import { cn } from "@/lib/utils";
 
-type InspectorTab = "overview" | "input" | "response" | "result";
+type InspectorArtifactSection = "input" | "response" | "result";
 const POLL_ERROR_MESSAGE = "Execution details could not be loaded.";
 const INSPECTOR_ASIDE_CLASS_NAME = "min-w-0 border-t border-border bg-background lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:self-start lg:overflow-y-auto lg:border-t-0 lg:border-l";
-const INSPECTOR_TAB_CLASS_NAME = cn(
-  "h-10 flex-none rounded-md border border-transparent px-3 text-xs font-semibold text-foreground/75",
-  "hover:bg-accent hover:text-accent-foreground",
-  "data-active:bg-primary data-active:text-primary-foreground data-active:shadow-sm",
-  "data-active:hover:bg-primary data-active:hover:text-primary-foreground",
-);
 
 function isTerminalExecutionStatus(status: string): boolean {
   return ["PARSED", "COMPLETED", "COMPLETED_WITH_WARNINGS", "FAILED"].includes(status);
@@ -153,7 +146,7 @@ function stageLabel(stageId: string): string {
 function ExecutionRuler({ elapsedMillis }: { elapsedMillis: number }) {
   const midpoint = elapsedMillis / 2;
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-3 border-b border-border bg-muted/30 px-3 py-2 sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)] sm:px-4">
+    <div className="grid grid-cols-[minmax(0,1fr)_4.5rem] items-end gap-x-2 border-b border-border bg-muted/30 px-3 py-2 sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)] sm:gap-x-3 sm:px-4">
       <span className="text-xs font-medium text-muted-foreground">Operation / status</span>
       <span className="hidden text-right text-xs font-medium text-muted-foreground sm:block">Duration</span>
       <div className="col-span-2 min-w-0 sm:col-span-1" role="img" aria-label={`Shared run-relative time axis from 0 to ${formatExecutionDuration(elapsedMillis)}`}>
@@ -317,39 +310,39 @@ function ExecutionSpanTreeRow({
   return (
     <div role="listitem" className="min-w-0 border-b border-border/60 last:border-b-0">
       <div className={cn(
-        "grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 px-3 py-0.5 sm:min-h-9 sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)] sm:gap-x-3 sm:gap-y-0 sm:px-4 sm:py-0",
+        "grid min-h-10 grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-x-2 gap-y-0.5 px-3 py-0.5 sm:min-h-9 sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)] sm:gap-x-3 sm:gap-y-0 sm:px-4 sm:py-0",
         selectedSpanId === span.id && "bg-primary/5",
       )}>
-        <div className="flex min-w-0 items-center gap-1" style={{ paddingInlineStart: `${Math.min(depth, 6) * 1}rem` }}>
+        <div className="flex min-w-0 items-center gap-1" style={{ paddingInlineStart: `${Math.min(depth, 6) * 0.25}rem` }}>
           {hasChildren ? (
             <Button
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="size-8 shrink-0"
+              className="size-6 shrink-0 sm:size-8"
               aria-label={`${isOpen ? "Collapse" : "Expand"} ${name}`}
               aria-expanded={isOpen}
               onClick={() => onDisclosureChange(span.id, !isOpen)}
             >
               {isOpen ? <ChevronDown className="size-4" aria-hidden="true" /> : <ChevronRight className="size-4" aria-hidden="true" />}
             </Button>
-          ) : <span className="inline-block size-8 shrink-0" aria-hidden="true" />}
+          ) : <span className="inline-block size-6 shrink-0 sm:size-8" aria-hidden="true" />}
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="min-h-8 h-auto min-w-0 flex-1 flex-nowrap justify-start gap-x-2 rounded-sm px-1 py-0.5 text-left whitespace-nowrap"
+            className="h-8 min-h-8 min-w-0 flex-1 justify-start gap-2 overflow-x-auto overscroll-x-contain rounded-sm px-1 text-left flex-nowrap whitespace-nowrap [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/40"
             aria-label={`${name}, ${executionStatusLabel(span.status)}, ${isRunning ? `Running, ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}`}
             title={`${name} · Status: ${executionStatusLabel(span.status)} (${span.status})`}
             aria-pressed={selectedSpanId === span.id}
             onClick={() => onSelect(span.id)}
           >
-            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{name}</span>
+            <span className="w-max shrink-0 whitespace-nowrap text-sm font-medium text-foreground">{name}</span>
             <SpanStatus status={span.status} />
             {span.attempt > 1 && <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[0.65rem]">Attempt {span.attempt}</Badge>}
           </Button>
         </div>
-        <span className="text-right font-mono text-xs text-muted-foreground">
+        <span className="min-w-0 text-right font-mono text-xs tabular-nums text-muted-foreground" title={isRunning ? `Running · ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}>
           {isRunning ? `Running · ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}
         </span>
         <div className="col-span-2 h-3 min-w-0 sm:col-span-1" aria-hidden="true">
@@ -367,7 +360,7 @@ function ExecutionSpanTreeRow({
         </div>
       </div>
       {hasChildren && isOpen && (
-        <div role="list" className="border-l border-border/70" style={{ marginInlineStart: `${Math.min(depth + 1, 6) * 1}rem` }}>
+        <div role="list" className="border-l border-border/70" style={{ marginInlineStart: `${Math.min(depth + 1, 6) * 0.5}rem` }}>
           <ExecutionSpanRows
             spans={children}
             depth={depth + 1}
@@ -494,24 +487,24 @@ function permissionError(error: unknown): string {
 function InspectorArtifacts({
   analysisRunId,
   detail,
-  tab,
+  section,
   onRemove,
   removing,
 }: {
   analysisRunId: string;
   detail: NonNullable<ReturnType<typeof useExecutionSpan>["data"]>;
-  tab: InspectorTab;
+  section: InspectorArtifactSection;
   onRemove: (artifactId: string) => void;
   removing: boolean;
 }) {
-  const roleSet: ExecutionArtifactRole[] = tab === "input"
+  const roleSet: ExecutionArtifactRole[] = section === "input"
     ? ["INPUT", "REQUEST"]
-    : tab === "response"
+    : section === "response"
       ? ["RESPONSE"]
       : ["RESULT"];
   const descriptors = detail.artifactRoles.filter((descriptor) => roleSet.includes(descriptor.role));
   if (!descriptors.length) {
-    return <p className="m-0 rounded-md border border-border bg-muted/30 p-4 text-sm text-muted-foreground">No {tab === "input" ? "input or request" : tab} artifact was recorded for this operation.</p>;
+    return <p className="m-0 rounded-md border border-border bg-muted/30 p-4 text-sm text-muted-foreground">No {section === "input" ? "input or request" : section} artifact was recorded for this operation.</p>;
   }
   return (
     <div className="divide-y divide-border/60">
@@ -532,7 +525,6 @@ function InspectorArtifacts({
 function SpanInspector({ analysisRunId, spanId }: { analysisRunId: string; spanId: string | null }) {
   const detailQuery = useExecutionSpan(analysisRunId, spanId);
   const removeMutation = useRemoveExecutionArtifact(analysisRunId);
-  const [tab, setTab] = useState<InspectorTab>("overview");
   if (!spanId) {
     return (
       <aside className={cn(INSPECTOR_ASIDE_CLASS_NAME, "flex min-h-64 items-center justify-center p-5")} aria-label="Selected operation details">
@@ -574,52 +566,55 @@ function SpanInspector({ analysisRunId, spanId }: { analysisRunId: string; spanI
         <p className="m-0 text-sm text-muted-foreground">{detail.kind} · Attempt {detail.attempt} · {formatExecutionDuration(detail.durationMillis)}</p>
       </div>
       <Separator />
-      <Tabs value={tab} onValueChange={(value) => { if (typeof value === "string") setTab(value as InspectorTab); }} className="gap-0">
-        <div className="border-b border-border px-3 py-2 sm:px-4">
-          <TabsList aria-label="Operation details" className="grid h-auto w-full grid-cols-2 gap-1 rounded-lg border border-border bg-muted/70 p-1 group-data-horizontal/tabs:h-auto">
-            <TabsTrigger value="overview" className={cn(INSPECTOR_TAB_CLASS_NAME, "w-full min-w-0 px-2")}>Overview</TabsTrigger>
-            <TabsTrigger value="input" className={cn(INSPECTOR_TAB_CLASS_NAME, "w-full min-w-0 px-2")}>Input / Request</TabsTrigger>
-            <TabsTrigger value="response" className={cn(INSPECTOR_TAB_CLASS_NAME, "w-full min-w-0 px-2")}>Response</TabsTrigger>
-            <TabsTrigger value="result" className={cn(INSPECTOR_TAB_CLASS_NAME, "w-full min-w-0 px-2")}>Result</TabsTrigger>
-          </TabsList>
+      {removeMutation.isError && (
+        <div className="px-4 py-3 sm:px-5">
+          <Alert variant="destructive"><AlertTitle>Artifact removal failed</AlertTitle><AlertDescription>{permissionError(removeMutation.error)}</AlertDescription></Alert>
         </div>
-        <TabsContent value="overview" className="max-h-[min(70vh,42rem)] overflow-auto p-4 sm:p-5">
-          <dl className="grid min-w-0 grid-cols-[minmax(6rem,0.8fr)_minmax(0,1.2fr)] gap-x-3 gap-y-3 text-sm">
-            <dt className="text-muted-foreground">Execution span</dt><dd className="m-0 break-all font-mono text-xs">{detail.id}</dd>
-            <dt className="text-muted-foreground">Logical operation</dt><dd className="m-0 break-all font-mono text-xs">{detail.operationId}</dd>
-            <dt className="text-muted-foreground">Kind</dt><dd className="m-0 break-words">{detail.kind}</dd>
-            {stage && <><dt className="text-muted-foreground">Pipeline stage</dt><dd className="m-0 break-words">{stage}</dd></>}
-            {trustBoundary && <><dt className="text-muted-foreground">Trust boundary</dt><dd className="m-0 capitalize">{trustBoundary}</dd></>}
-            {detail.providerId && <><dt className="text-muted-foreground">Provider</dt><dd className="m-0 break-words">{detail.providerId}</dd></>}
-            {detail.modelId && <><dt className="text-muted-foreground">Model</dt><dd className="m-0 break-words">{detail.modelId}</dd></>}
-            {safeRoute && <><dt className="text-muted-foreground">HTTP route</dt><dd className="m-0 break-all font-mono text-xs">{safeRoute}</dd></>}
-            {detail.httpStatus !== null && <><dt className="text-muted-foreground">HTTP status</dt><dd className="m-0">{detail.httpStatus}</dd></>}
-            {detail.safeErrorCode && <><dt className="text-muted-foreground">Safe error code</dt><dd className="m-0 break-words font-mono text-xs">{detail.safeErrorCode}</dd></>}
-            <dt className="text-muted-foreground">Started</dt><dd className="m-0 break-words text-sm tabular-nums"><LocalDateTime value={detail.startedAt} /></dd>
-            {detail.endedAt && <><dt className="text-muted-foreground">Finished</dt><dd className="m-0 break-words text-sm tabular-nums"><LocalDateTime value={detail.endedAt} /></dd></>}
-            <dt className="text-muted-foreground">Duration</dt><dd className="m-0">{formatExecutionDuration(detail.durationMillis)} <span className="text-xs text-muted-foreground">(includes capture overhead)</span></dd>
-            {safeAttributes.map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="m-0">{formatExecutionDuration(value)}</dd></div>)}
-          </dl>
-          {detail.domainLinks?.some((link) => link.href.startsWith("/") && !link.href.startsWith("//")) && (
-            <div className="mt-5 space-y-2 border-t border-border pt-4">
-              <h4 className="m-0 text-sm font-semibold">Related run items</h4>
-              {detail.domainLinks.filter((link) => link.href.startsWith("/") && !link.href.startsWith("//")).map((link) => <a key={`${link.type}:${link.id}:${link.href}`} className="block break-words text-sm text-primary underline-offset-4 hover:underline" href={link.href}>{domainLinkLabel(link.type, link.id)}</a>)}
-            </div>
-          )}
-        </TabsContent>
-        {(["input", "response", "result"] as const).map((artifactTab) => (
-          <TabsContent key={artifactTab} value={artifactTab} className="max-h-[min(70vh,42rem)] overflow-auto p-4 sm:p-5">
-            <InspectorArtifacts
-              analysisRunId={analysisRunId}
-              detail={detail}
-              tab={artifactTab}
-              onRemove={(artifactId) => removeMutation.mutate(artifactId)}
-              removing={removeMutation.isPending}
-            />
-            {removeMutation.isError && <p className="mt-3 text-sm text-destructive" role="alert">{permissionError(removeMutation.error)}</p>}
-          </TabsContent>
-        ))}
-      </Tabs>
+      )}
+      <section aria-labelledby="selected-operation-overview-heading" className="space-y-3 p-4 sm:p-5">
+        <h4 id="selected-operation-overview-heading" className="m-0 text-sm font-semibold">Overview</h4>
+        <dl className="grid min-w-0 grid-cols-[minmax(6rem,0.8fr)_minmax(0,1.2fr)] gap-x-3 gap-y-3 text-sm">
+          <dt className="text-muted-foreground">Execution span</dt><dd className="m-0 break-all font-mono text-xs">{detail.id}</dd>
+          <dt className="text-muted-foreground">Logical operation</dt><dd className="m-0 break-all font-mono text-xs">{detail.operationId}</dd>
+          <dt className="text-muted-foreground">Kind</dt><dd className="m-0 break-words">{detail.kind}</dd>
+          {stage && <><dt className="text-muted-foreground">Pipeline stage</dt><dd className="m-0 break-words">{stage}</dd></>}
+          {trustBoundary && <><dt className="text-muted-foreground">Trust boundary</dt><dd className="m-0 capitalize">{trustBoundary}</dd></>}
+          {detail.providerId && <><dt className="text-muted-foreground">Provider</dt><dd className="m-0 break-words">{detail.providerId}</dd></>}
+          {detail.modelId && <><dt className="text-muted-foreground">Model</dt><dd className="m-0 break-words">{detail.modelId}</dd></>}
+          {safeRoute && <><dt className="text-muted-foreground">HTTP route</dt><dd className="m-0 break-all font-mono text-xs">{safeRoute}</dd></>}
+          {detail.httpStatus !== null && <><dt className="text-muted-foreground">HTTP status</dt><dd className="m-0">{detail.httpStatus}</dd></>}
+          {detail.safeErrorCode && <><dt className="text-muted-foreground">Safe error code</dt><dd className="m-0 break-words font-mono text-xs">{detail.safeErrorCode}</dd></>}
+          <dt className="text-muted-foreground">Started</dt><dd className="m-0 break-words text-sm tabular-nums"><LocalDateTime value={detail.startedAt} /></dd>
+          {detail.endedAt && <><dt className="text-muted-foreground">Finished</dt><dd className="m-0 break-words text-sm tabular-nums"><LocalDateTime value={detail.endedAt} /></dd></>}
+          <dt className="text-muted-foreground">Duration</dt><dd className="m-0">{formatExecutionDuration(detail.durationMillis)} <span className="text-xs text-muted-foreground">(includes capture overhead)</span></dd>
+          {safeAttributes.map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="m-0">{formatExecutionDuration(value)}</dd></div>)}
+        </dl>
+        {detail.domainLinks?.some((link) => link.href.startsWith("/") && !link.href.startsWith("//")) && (
+          <div className="space-y-2 border-t border-border pt-4">
+            <h5 className="m-0 text-sm font-semibold">Related run items</h5>
+            {detail.domainLinks.filter((link) => link.href.startsWith("/") && !link.href.startsWith("//")).map((link) => <a key={`${link.type}:${link.id}:${link.href}`} className="block break-words text-sm text-primary underline-offset-4 hover:underline" href={link.href}>{domainLinkLabel(link.type, link.id)}</a>)}
+          </div>
+        )}
+      </section>
+      {(["input", "response", "result"] as const).map((section) => {
+        const heading = section === "input" ? "Input / Request" : section === "response" ? "Response" : "Result";
+        const headingId = `selected-operation-${section}-heading`;
+        return (
+          <div key={section}>
+            <Separator />
+            <section aria-labelledby={headingId} className="space-y-3 p-4 sm:p-5">
+              <h4 id={headingId} className="m-0 text-sm font-semibold">{heading}</h4>
+              <InspectorArtifacts
+                analysisRunId={analysisRunId}
+                detail={detail}
+                section={section}
+                onRemove={(artifactId) => removeMutation.mutate(artifactId)}
+                removing={removeMutation.isPending}
+              />
+            </section>
+          </div>
+        );
+      })}
     </aside>
   );
 }

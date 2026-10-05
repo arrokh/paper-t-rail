@@ -179,8 +179,12 @@ describe("Analysis Run Execution view", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}`);
     renderRun();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Execution Trace" }));
+    const executionTab = screen.getByRole("tab", { name: "Execution Trace" });
+    fireEvent.click(executionTab);
     const trace = await screen.findByRole("list", { name: "Execution operations" });
+    const controlledPanelId = executionTab.getAttribute("aria-controls");
+    expect(controlledPanelId).toBeTruthy();
+    expect(controlledPanelId && document.getElementById(controlledPanelId)).toBeTruthy();
     expect(within(trace).getByText("Read the PDF")).toBeTruthy();
     expect(within(trace).queryByText("Parse source")).toBeTruthy();
     expect(within(trace).getByText("2 attempts")).toBeTruthy();
@@ -194,6 +198,11 @@ describe("Analysis Run Execution view", () => {
     fireEvent.click(within(trace).getByRole("button", { name: /Model request, Failed, 10 sec/i }));
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("span")).toBe("model"));
     expect(screen.getByRole("heading", { name: "Model request" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Overview", level: 4 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Input / Request", level: 4 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Response", level: 4 })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Result", level: 4 })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Response" })).toBeNull();
     expect(screen.getByText("/v1/chat")).toBeTruthy();
     expect(screen.getByText("Trust boundary").nextElementSibling?.textContent).toBe("local");
     const startedAtElement = screen.getByText("Started").nextElementSibling?.querySelector("time");
@@ -209,7 +218,6 @@ describe("Analysis Run Execution view", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Execution Trace" }));
     expect(new URLSearchParams(window.location.search).get("span")).toBe("model");
 
-    fireEvent.click(screen.getByRole("tab", { name: "Response" }));
     const sanitizedContent = await screen.findByText("<img src=x onerror=alert(1)> sanitized response");
     expect(sanitizedContent.closest("pre")).toBeTruthy();
     expect(sanitizedContent.querySelector("img")).toBeNull();
@@ -331,14 +339,12 @@ describe("Analysis Run Execution view", () => {
           ? /Model request, Succeeded, 7 sec/
           : new RegExp(`${span.name}, Succeeded`);
       fireEvent.click(await screen.findByRole("button", { name: rowName }));
-      fireEvent.click(await screen.findByRole("tab", { name: "Response" }));
       expect(await screen.findByText(fidelity[0] + fidelity.slice(1).toLowerCase())).toBeTruthy();
       if (content) expect(screen.getByText(content).closest("pre")).toBeTruthy();
       else expect(screen.getByText("This artifact was removed. Its captured content is no longer available.")).toBeTruthy();
     }
 
     fireEvent.click(await screen.findByRole("button", { name: /Model request, Succeeded/ }));
-    fireEvent.click(await screen.findByRole("tab", { name: "Response" }));
     expect(await screen.findByText("Unavailable")).toBeTruthy();
     expect(screen.getByText("BODY_UNAVAILABLE")).toBeTruthy();
   });
@@ -380,7 +386,6 @@ describe("Analysis Run Execution view", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution&span=model`);
     renderRun();
 
-    fireEvent.click(await screen.findByRole("tab", { name: "Input / Request" }));
     expect(await screen.findByText("Omitted")).toBeTruthy();
     expect(screen.getAllByText("CAPTURE_DISABLED").length).toBeGreaterThan(0);
     expect(screen.getByText("Media type unknown · Unknown size bytes")).toBeTruthy();
@@ -398,7 +403,6 @@ describe("Analysis Run Execution view", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution&span=model`);
     renderRun();
 
-    fireEvent.click(await screen.findByRole("tab", { name: "Response" }));
     expect(await screen.findByText("The artifact response did not match this operation and is unavailable.")).toBeTruthy();
     expect(screen.queryByText(responseArtifact.content!)).toBeNull();
     expect(executionMocks.artifactRequests).toHaveBeenCalledWith(run.id, responseArtifact.id, "model", "RESPONSE");

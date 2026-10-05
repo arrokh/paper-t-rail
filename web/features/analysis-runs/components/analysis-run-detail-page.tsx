@@ -380,13 +380,15 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             </section>
           )}
         </TabsContent>
-        <TabsContent value="execution" className="analysis-run-view-panel" id="execution-trace">
-          <AnalysisRunExecution
-            analysisRunId={analysisRunId}
-            runStatus={run.status}
-            selectedSpanId={selectedExecutionSpanId}
-            onSelectSpan={selectExecutionSpan}
-          />
+        <TabsContent value="execution" className="analysis-run-view-panel">
+          <div id="execution-trace">
+            <AnalysisRunExecution
+              analysisRunId={analysisRunId}
+              runStatus={run.status}
+              selectedSpanId={selectedExecutionSpanId}
+              onSelectSpan={selectExecutionSpan}
+            />
+          </div>
         </TabsContent>
         <TabsContent value="review" keepMounted={hasOpenedPaperReview || selectedView === "review"} className="analysis-run-view-panel">
           <AnalysisRunPaperReview
