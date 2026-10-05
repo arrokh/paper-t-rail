@@ -1,16 +1,16 @@
 # Analysis Run Execution — Implementation Plan
 
-**Status:** Approved product direction; implementation not started. This document plans work, not an implemented API contract.
+**Status:** Core API, persistence, and Execution Trace UI are implemented. The live ICLR run validated trace persistence and UI; verification was skipped because no eligible evidence was available. Content-free OpenTelemetry and finer-grained instrumentation gaps remain. This plan records the intended complete scope, not a separately maintained API contract.
 
 ## Goal and boundaries
 
-Let every authorized user inspect how an Analysis Run worked: what each meaningful operation received, produced, and took to execute. Add an **Execution** tab alongside Analysis Pipeline and Paper Review. Use familiar observability-tool composition, not a dashboard of decorative metric cards.
+Let every authorized user inspect how an Analysis Run worked: what each meaningful operation received, produced, and took to execute. Add an **Execution Trace** tab alongside Analysis Pipeline and Paper Review. Use familiar observability-tool composition, not a dashboard of decorative metric cards.
 
 Record stages, sub-pipelines, transformations, retrieval, persistence batches, provider calls and attempts. Do not instrument every helper, loop iteration or SQL statement. Preserve execution outcomes separately from domain evidence outcomes. Record data useful for later performance and quality investigation, without inventing quality scores or validated accuracy.
 
 Use PostgreSQL for durable execution records and protected payload artifacts. Use OpenTelemetry for content-free developer diagnostics; a collector/backend is optional. Do not add an enterprise audit subsystem, new broker, full event-sourcing framework, bulk export, or evaluation platform.
 
-Related decisions: [ADR 0016](adr/0016-inspectable-analysis-run-execution.md), [observability policy](paper-t-rail-tech-design.md#49-observability), [UI system](ui-design-system.md#execution-trace-planned).
+Related decisions: [ADR 0016](adr/0016-inspectable-analysis-run-execution.md), [observability policy](paper-t-rail-tech-design.md#49-observability), [UI system](ui-design-system.md#execution-trace).
 
 ## Existing seams
 
@@ -47,11 +47,11 @@ Provider · Model · Start · Duration · Capture fidelity
 Captured application body / mapped result
 ```
 
-The sketch is schematic, not to scale. Use a wide, bordered workspace with a compact toolbar, sticky time ruler, aligned rows and light grid lines. Nest labels with disclosure controls. Bars share one run-relative time axis, with overlapping parallel work visible. Selecting a row/bar highlights both and opens the inspector beside the waterfall on wide screens; at intermediate widths place the inspector below. Do not wrap every row in a card. No imported dark theme or unrelated palette: retain paper/ink tokens, IBM Plex Sans and monospace technical values.
+The sketch is schematic, not to scale. Use a wide, bordered workspace with a compact toolbar, sticky time ruler, aligned rows and light grid lines. Nest labels with disclosure controls. Bars share one run-relative time axis, with overlapping parallel work visible. Selecting a row/bar highlights both and opens a sticky inspector beside the waterfall on wide screens; at intermediate widths place the inspector below. Do not wrap every row in a card. No imported dark theme or unrelated palette: retain paper/ink tokens, IBM Plex Sans and monospace technical values.
 
 - Row label, text status, numeric duration and bar all represent the same operation. Render zero-duration events as markers. Active bars extend to the last refreshed time and carry a Running label; no invented completion percentage.
-- Stage rows start expanded; operation branches and retries can be expanded. Group attempts under a logical operation, retaining failed attempts after eventual success. Use bounded child loading/pagination for large branches rather than silently losing spans.
-- Toolbar filters operation names, status and kind; preserve ancestor context for matched children. Search only safe span labels/metadata initially, not payload text.
+- Stage rows start expanded; operation branches and retries can be expanded. Group attempts under a logical operation, retaining failed attempts after eventual success. Fetch every cursor page automatically before filtering; surface pagination failures rather than silently showing a partial trace.
+- Toolbar filters operation names, one of the five canonical pipeline stages, status and kind; preserve ancestor context for matched children. Search only safe span labels/metadata initially, not payload text.
 - Show queue wait and retry backoff as explicit intervals. Show operation execution and capture overhead separately. Total elapsed time is end minus start, not the sum of children. Do not compute exclusive time by subtracting overlapping child durations.
 - Inspector Overview includes operation kind, trust boundary (internal/local/external), provider/model, safe HTTP route/status, attempt, safe error code, domain links and provenance. No credentials, internal hostnames, query strings or raw headers.
 - Input/Request, Response and Result are separate tabs: actual application body as captured, received application response, and interpreted typed result. Internal operations use versioned snapshots rather than object dumps. Preformatted JSON/text is selectable and escaped, never interpreted as HTML. Copy copies only the authorized sanitized artifact.
@@ -88,7 +88,18 @@ Capture actual serialized application request/response bodies where permitted, n
 
 The current API is local and unauthenticated, and the workspace has no user/owner identity or per-run ACL. NetworkBindingGuard limits the API's binding boundary. Artifact routes therefore use the same trusted-workspace boundary as existing run and report routes; do not add a pretend owner permission check or a new identity system. This means anyone already able to access this trusted workspace can inspect recorded artifacts. Document this boundary in the capture disclosure. If account-level or shared public access is introduced, add explicit payload authorization before retaining this access model. No dedicated access-view audit system.
 
-Initial implementation defaults **to validate**, not settled requirements: 1 MiB sanitized artifact maximum, 100 spans per list page, 3-second active polling. Keep limits configurable; show explicit partial/omitted states. Select final values with representative fixtures before shipping.
+Validated implementation defaults: a 1 MiB sanitized artifact maximum, 100 spans per API page, 3-second summary/elapsed-time polling, and 15-second full span-list polling while a run is active. The UI automatically follows cursors and refreshes the full list once when a live run becomes terminal. Re-fetching all historical pages every 15 seconds remains a large-trace performance risk; keep explicit partial/omitted states. Select final values with representative fixtures before shipping.
+
+## Current implementation status
+
+The current implementation includes durable run-linked spans and sanitized artifacts, cursor-based read routes, queue/retry timing, capture controls, safe artifact inspection, and the responsive Execution Trace view. Desktop inspection keeps the selected-operation pane sticky; smaller layouts place it below the trace. The UI fetches all cursor pages automatically, supports the five canonical stage filters, and formats dates in the client time zone. Summary timing polls every 3 seconds; all span pages refresh every 15 seconds while active and once at run termination.
+
+The following items remain open before claiming complete instrumentation coverage:
+
+- Content-free OpenTelemetry diagnostics are not implemented.
+- Verification provider calls are represented by broader operations; per-passage transport spans and distinct aggregation/persistence timing still need coverage.
+- TEI transformation and some source persistence work remain inside broader spans.
+- Repeated polling of all cursor pages for a live, very large trace may be expensive and needs measurement or an incremental refresh design.
 
 ## Instrumentation and timing
 
@@ -120,7 +131,7 @@ Define pagination, stable ordering, filter semantics, concurrency and authorizat
 
 ## Vertical delivery slices
 
-1. **One observable source operation:** migration, recorder, source-stage and GROBID call instrumentation, protected request/response/result artifacts where safety permits, execution read APIs, minimal Execution tab/waterfall/inspector. Include opt-out, sanitizer omission and deletion behavior immediately—not later privacy hardening. Verify a complete input → call → response → mapped result chain.
+1. **One observable source operation:** migration, recorder, source-stage and GROBID call instrumentation, protected request/response/result artifacts where safety permits, execution read APIs, minimal Execution Trace tab/waterfall/inspector. Include opt-out, sanitizer omission and deletion behavior immediately—not later privacy hardening. Verify a complete input → call → response → mapped result chain.
 2. **Source sub-operations and async attempts:** validation, TEI transformation, claim analysis/provider calls, persistence batches, queue wait, retries, capture overhead, context propagation and interruption states. Ensure live queries stop when the run is terminal and don't re-fetch large artifacts each poll.
 3. **All remaining meaningful operations:** reference lookup/matching, acquisition and language gating, Docling/chunking/embedding/retrieval, System One calls and aggregation. Preserve domain links, reuse and diagnostic Evidence Passage Span relationships without conflating the two span types.
 4. **Complete inspectability:** metadata filtering, ancestor context, bounded branch loading, URL span selection, responsive layout, stop/remove controls, all empty/permission/fidelity states and content-free OpenTelemetry diagnostics. No backend required for product inspection.

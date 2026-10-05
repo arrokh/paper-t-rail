@@ -188,6 +188,7 @@ export function deleteSourceDocumentMutationOptions(queryClient: QueryClient) {
         queryClient.removeQueries({ queryKey: ["analysis-runs", "parsed-document", runId], exact: true });
         queryClient.removeQueries({ queryKey: referenceResolutionReportQueryKey(runId), exact: true });
         queryClient.removeQueries({ queryKey: sourceDocumentPdfAccessQueryKey(runId), exact: true });
+        queryClient.removeQueries({ queryKey: [...EXECUTION_QUERY_KEY, runId] });
       });
       await refreshRecentAnalysisRuns(queryClient);
     },
@@ -315,6 +316,7 @@ export function useReferenceResolutionReport(analysisRunId: string | null, enabl
 }
 
 const EXECUTION_POLL_INTERVAL_MS = 3000;
+const EXECUTION_SPANS_POLL_INTERVAL_MS = 15_000;
 
 export function executionSummaryQueryKey(analysisRunId: string) {
   return [...EXECUTION_QUERY_KEY, analysisRunId, "summary"] as const;
@@ -367,22 +369,38 @@ export function useExecutionSummary(analysisRunId: string, enabled: boolean, ter
 export function executionSpansQueryOptions(analysisRunId: string, terminalRun: boolean, recording: boolean) {
   return {
     queryKey: executionSpansQueryKey(analysisRunId),
-    queryFn: async ({ signal, pageParam }: { signal: AbortSignal; pageParam: string | null }): Promise<ExecutionSpanPage> => {
-      const params = new URLSearchParams();
-      if (pageParam) params.set("cursor", pageParam);
-      const suffix = params.size ? `?${params.toString()}` : "";
-      const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/spans${suffix}`, {
-        cache: "no-store",
-        signal,
-      });
-      if (!response.ok) throw new Error(await readApiError(response));
-      return (await response.json()) as ExecutionSpanPage;
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<ExecutionSpanPage> => {
+      const items: ExecutionSpanPage["items"] = [];
+      const visitedCursors = new Set<string>();
+      let cursor: string | null = null;
+
+      while (true) {
+        const params = new URLSearchParams();
+        if (cursor) params.set("cursor", cursor);
+        const suffix = params.size ? `?${params.toString()}` : "";
+        const response = await fetch(`/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/execution/spans${suffix}`, {
+          cache: "no-store",
+          signal,
+        });
+        if (!response.ok) throw new Error(await readApiError(response));
+        const page = (await response.json()) as ExecutionSpanPage;
+        items.push(...page.items);
+
+        if (!page.nextCursor) break;
+        if (visitedCursors.has(page.nextCursor)) {
+          throw new Error("Execution trace pagination returned a repeated cursor.");
+        }
+        visitedCursors.add(page.nextCursor);
+        cursor = page.nextCursor;
+      }
+
+      return { items, nextCursor: null };
     },
     initialPageParam: null as string | null,
-    getNextPageParam: (page: ExecutionSpanPage) => page.nextCursor ?? undefined,
+    getNextPageParam: () => undefined,
     refetchInterval: (query: { state: { data?: { pages?: ExecutionSpanPage[] } } }) => {
       const hasLoadedPage = Boolean(query.state.data?.pages?.length);
-      return !terminalRun && recording && hasLoadedPage ? EXECUTION_POLL_INTERVAL_MS : false;
+      return !terminalRun && recording && hasLoadedPage ? EXECUTION_SPANS_POLL_INTERVAL_MS : false;
     },
     refetchOnWindowFocus: false as const,
     structuralSharing: false as const,

@@ -30,6 +30,9 @@ export type ExecutionSpan = {
   httpStatus: number | null;
   safeErrorCode: string | null;
   attributes: Record<string, unknown>;
+  trustBoundary: string;
+  httpRoute: string | null;
+  domainLinks: ExecutionDomainLink[];
   artifactRoles: ExecutionArtifactDescriptor[];
 };
 
@@ -47,9 +50,13 @@ export type ExecutionArtifactDescriptor = {
   sizeBytes: number | null;
 };
 
-export type ExecutionSpanDetail = ExecutionSpan & {
-  domainLinks?: Array<{ label: string; href: string }>;
+export type ExecutionDomainLink = {
+  type: string;
+  id: string;
+  href: string;
 };
+
+export type ExecutionSpanDetail = ExecutionSpan;
 
 export type ExecutionArtifact = {
   id: string;
@@ -67,6 +74,7 @@ export type ExecutionArtifact = {
 
 export type ExecutionSpanFilters = {
   query: string;
+  stage: string;
   status: string;
   kind: string;
 };

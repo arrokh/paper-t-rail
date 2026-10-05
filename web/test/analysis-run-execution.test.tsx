@@ -18,6 +18,8 @@ const executionMocks = vi.hoisted(() => ({
   useRemoveExecutionArtifact: vi.fn(),
   stopCapture: vi.fn(),
   removeArtifact: vi.fn(),
+  refetchSummary: vi.fn(),
+  refetchSpans: vi.fn(),
   spanRequests: vi.fn(),
   artifactRequests: vi.fn(),
 }));
@@ -67,25 +69,37 @@ const spans: ExecutionSpan[] = [
     id: "stage-source", parentSpanId: null, operationId: "source", stageId: "source", kind: "STAGE", name: "Read the PDF",
     startedAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T00:00:12.000Z", durationMillis: 12_000,
     status: "SUCCEEDED", attempt: 1, providerId: null, modelId: null, httpStatus: null, safeErrorCode: null,
-    attributes: {}, artifactRoles: [],
+    attributes: {}, trustBoundary: "INTERNAL", httpRoute: null, domainLinks: [], artifactRoles: [],
   },
   {
     id: "parse", parentSpanId: "stage-source", operationId: "parse", stageId: "source", kind: "TRANSFORM", name: "Parse source",
     startedAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T00:00:10.000Z", durationMillis: 10_000,
     status: "SUCCEEDED", attempt: 1, providerId: null, modelId: null, httpStatus: null, safeErrorCode: null,
-    attributes: {}, artifactRoles: [],
+    attributes: {}, trustBoundary: "INTERNAL", httpRoute: null, domainLinks: [], artifactRoles: [],
   },
   {
     id: "model", parentSpanId: "stage-source", operationId: "model", stageId: "source", kind: "PROVIDER_CALL", name: "Model request",
     startedAt: "2026-01-01T00:00:02.000Z", endedAt: "2026-01-01T00:00:12.000Z", durationMillis: 10_000,
     status: "FAILED", attempt: 1, providerId: "local", modelId: "demo-model", httpStatus: 503, safeErrorCode: "PROVIDER_UNAVAILABLE",
-    attributes: { trustBoundary: "local", httpRoute: "POST https://private-host.example/v1/chat?secret=hidden" }, artifactRoles: [{ id: "response-artifact", role: "RESPONSE", fidelity: "SANITIZED", reason: null, mediaType: "text/plain", sizeBytes: 44 }],
+    attributes: {}, trustBoundary: "LOCAL", httpRoute: "POST https://private-host.example/v1/chat?secret=hidden", domainLinks: [], artifactRoles: [{ id: "response-artifact", role: "RESPONSE", fidelity: "SANITIZED", reason: null, mediaType: "text/plain", sizeBytes: 44 }],
   },
   {
     id: "model-retry", parentSpanId: "stage-source", operationId: "model", stageId: "source", kind: "PROVIDER_CALL", name: "Model request",
     startedAt: "2026-01-01T00:00:04.000Z", endedAt: "2026-01-01T00:00:11.000Z", durationMillis: 7_000,
     status: "SUCCEEDED", attempt: 2, providerId: "local", modelId: "demo-model", httpStatus: 200, safeErrorCode: null,
-    attributes: { trustBoundary: "local" }, artifactRoles: [],
+    attributes: {}, trustBoundary: "LOCAL", httpRoute: null, domainLinks: [], artifactRoles: [],
+  },
+  {
+    id: "event-queue", parentSpanId: "stage-source", operationId: "analysis-event", stageId: "source", kind: "QUEUE", name: "Queue wait",
+    startedAt: "2026-01-01T00:00:00.000Z", endedAt: "2026-01-01T00:00:00.100Z", durationMillis: 100,
+    status: "SUCCEEDED", attempt: 1, providerId: null, modelId: null, httpStatus: null, safeErrorCode: null,
+    attributes: {}, trustBoundary: "LOCAL", httpRoute: null, domainLinks: [], artifactRoles: [],
+  },
+  {
+    id: "event-processing", parentSpanId: "stage-source", operationId: "analysis-event", stageId: "source", kind: "QUEUE", name: "Source analysis attempt",
+    startedAt: "2026-01-01T00:00:00.100Z", endedAt: "2026-01-01T00:00:12.000Z", durationMillis: 11_900,
+    status: "SUCCEEDED", attempt: 1, providerId: null, modelId: null, httpStatus: null, safeErrorCode: null,
+    attributes: {}, trustBoundary: "LOCAL", httpRoute: null, domainLinks: [], artifactRoles: [],
   },
 ];
 
@@ -97,6 +111,7 @@ const responseArtifact: ExecutionArtifact = {
 const detail: ExecutionSpanDetail = {
   ...spans[2],
   artifactRoles: [{ id: responseArtifact.id, role: "RESPONSE", fidelity: "SANITIZED", reason: null, mediaType: "text/plain", sizeBytes: 44 }],
+  domainLinks: [{ type: "BIBLIOGRAPHY_ENTRY", id: "b20f6121-a3d5-4d8b-a3bd-2c1ddc10ea98", href: "/api/v1/analysis-runs/execution-run/report" }],
 };
 
 function configureExecutionMocks() {
@@ -104,10 +119,12 @@ function configureExecutionMocks() {
   executionMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
   executionMocks.useParsedDocument.mockReturnValue({ data: null, isPending: false, isError: false, error: null });
   executionMocks.useReferenceResolutionReport.mockReturnValue({ data: null, isPending: false, isError: false, error: null });
-  executionMocks.useExecutionSummary.mockReturnValue({ data: summary, isPending: false, isError: false, error: null });
+  executionMocks.refetchSummary.mockReset();
+  executionMocks.useExecutionSummary.mockReturnValue({ data: summary, isPending: false, isError: false, error: null, refetch: executionMocks.refetchSummary });
+  executionMocks.refetchSpans.mockReset();
   executionMocks.useExecutionSpans.mockReturnValue({
     data: { pages: [{ items: spans, nextCursor: null }] }, isPending: false, isError: false, isFetchingNextPage: false,
-    fetchNextPage: vi.fn(),
+    fetchNextPage: vi.fn(), refetch: executionMocks.refetchSpans,
   });
   executionMocks.useExecutionSpan.mockImplementation((analysisRunId: string, spanId: string | null) => {
     executionMocks.spanRequests(analysisRunId, spanId);
@@ -133,11 +150,13 @@ function configureExecutionMocks() {
 
 function renderRun() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const tree = () => (
     <QueryClientProvider client={queryClient}>
       <WorkspaceShell><AnalysisRunDetailPage analysisRunId={run.id} /></WorkspaceShell>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const rendered = render(tree());
+  return { ...rendered, rerenderRun: () => rendered.rerender(tree()) };
 }
 
 beforeEach(() => {
@@ -160,26 +179,34 @@ describe("Analysis Run Execution view", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}`);
     renderRun();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Execution" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Execution Trace" }));
     const trace = await screen.findByRole("list", { name: "Execution operations" });
     expect(within(trace).getByText("Read the PDF")).toBeTruthy();
     expect(within(trace).queryByText("Parse source")).toBeTruthy();
     expect(within(trace).getByText("2 attempts")).toBeTruthy();
+    expect(within(trace).queryByRole("button", { name: /Queue wait 2 attempts/i })).toBeNull();
+    expect(within(trace).getByRole("button", { name: /Queue wait, Succeeded, 100 ms/i })).toBeTruthy();
+    expect(within(trace).getByRole("button", { name: /Source analysis attempt, Succeeded, 11.9 sec/i })).toBeTruthy();
     expect(within(trace).getByRole("button", { name: /Model request, Failed, 10 sec/i })).toBeTruthy();
     expect(within(trace).getByRole("button", { name: /Model request, Succeeded, 7 sec/i })).toBeTruthy();
-    expect(screen.getByText("Elapsed 12 sec")).toBeTruthy();
+    expect(screen.getByText("Elapsed").nextElementSibling?.textContent).toBe("12 sec");
 
     fireEvent.click(within(trace).getByRole("button", { name: /Model request, Failed, 10 sec/i }));
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("span")).toBe("model"));
     expect(screen.getByRole("heading", { name: "Model request" })).toBeTruthy();
     expect(screen.getByText("/v1/chat")).toBeTruthy();
+    expect(screen.getByText("Trust boundary").nextElementSibling?.textContent).toBe("local");
+    const startedAtElement = screen.getByText("Started").nextElementSibling?.querySelector("time");
+    expect(startedAtElement?.getAttribute("dateTime")).toBe(detail.startedAt);
+    expect(startedAtElement?.textContent).not.toBe(detail.startedAt);
+    expect(screen.getByRole("link", { name: "Bibliography entry · b20f6121" })).toBeTruthy();
     expect(screen.queryByText("private-host.example")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Stop future capture" }));
     expect(executionMocks.stopCapture).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("tab", { name: "Analysis Pipeline" }));
     expect(new URLSearchParams(window.location.search).get("span")).toBe("model");
-    fireEvent.click(screen.getByRole("tab", { name: "Execution" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Execution Trace" }));
     expect(new URLSearchParams(window.location.search).get("span")).toBe("model");
 
     fireEvent.click(screen.getByRole("tab", { name: "Response" }));
@@ -191,6 +218,59 @@ describe("Analysis Run Execution view", () => {
     expect(window.confirm).toHaveBeenCalledWith("Remove this deduplicated artifact body from all linked spans in this Analysis Run? The analysis result will not change.");
     expect(executionMocks.removeArtifact).toHaveBeenCalledWith(responseArtifact.id);
     expect(executionMocks.artifactRequests).toHaveBeenCalledWith(run.id, responseArtifact.id, "model", "RESPONSE");
+  });
+
+  it("refreshes a still-recording summary once after the Analysis Run becomes terminal", async () => {
+    configureExecutionMocks();
+    executionMocks.useAnalysisRun.mockReturnValue({
+      data: { ...run, status: "COMPLETED_WITH_WARNINGS" },
+      isPending: false,
+      error: null,
+    });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
+    renderRun();
+
+    await waitFor(() => expect(executionMocks.refetchSummary).toHaveBeenCalledOnce());
+  });
+
+  it("refreshes the complete span list once when a run becomes terminal", async () => {
+    configureExecutionMocks();
+    let currentRun = run;
+    executionMocks.useAnalysisRun.mockImplementation(() => ({ data: currentRun, isPending: false, error: null }));
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
+    const rendered = renderRun();
+
+    expect(executionMocks.refetchSpans).not.toHaveBeenCalled();
+    currentRun = { ...run, status: "PARSED" };
+    rendered.rerenderRun();
+    await waitFor(() => expect(executionMocks.refetchSpans).toHaveBeenCalledOnce());
+    rendered.rerenderRun();
+    expect(executionMocks.refetchSpans).toHaveBeenCalledOnce();
+  });
+
+  it("announces operation status changes without announcing unchanged polling updates", async () => {
+    configureExecutionMocks();
+    let currentSpans = spans;
+    executionMocks.useExecutionSpans.mockImplementation(() => ({
+      data: { pages: [{ items: currentSpans, nextCursor: null }] },
+      isPending: false,
+      isError: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    }));
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
+    const rendered = renderRun();
+    const announcement = screen.getByRole("status");
+    expect(announcement.textContent).toBe("");
+
+    currentSpans = spans.map((span) => span.id === "model"
+      ? { ...span, status: "RUNNING", endedAt: null, durationMillis: null }
+      : span);
+    rendered.rerenderRun();
+    await waitFor(() => expect(announcement.textContent).toBe("Execution status changed: Model request: running."));
+
+    rendered.rerenderRun();
+    expect(announcement.textContent).toBe("Execution status changed: Model request: running.");
   });
 
   it("renders every supported artifact fidelity as a truthful state", async () => {
@@ -369,6 +449,33 @@ describe("Analysis Run Execution view", () => {
     expect(fetch).toHaveBeenCalledWith(`/api/v1/analysis-runs/${run.id}/execution/spans/${pageTwoParent.id}`, expect.objectContaining({ cache: "no-store" }));
     expect(executionMocks.spanRequests).toHaveBeenCalledWith(run.id, selectedSpan.id);
     expect(fetchNextPage).not.toHaveBeenCalled();
+  });
+
+  it("filters the trace by a canonical pipeline stage and omits unrelated operations", async () => {
+    configureExecutionMocks();
+    const referenceSpan: ExecutionSpan = {
+      ...spans[1],
+      id: "reference-operation",
+      operationId: "reference-operation",
+      stageId: "references",
+      name: "Resolve references",
+    };
+    executionMocks.useExecutionSpans.mockReturnValue({
+      data: { pages: [{ items: [...spans, referenceSpan], nextCursor: null }] },
+      isPending: false,
+      isError: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
+    renderRun();
+
+    const stageFilter = await screen.findByRole("combobox", { name: "Pipeline stage" });
+    fireEvent.change(stageFilter, { target: { value: "references" } });
+    const trace = screen.getByRole("list", { name: "Execution operations" });
+    expect(within(trace).getByText("Resolve references")).toBeTruthy();
+    expect(within(trace).queryByText("Parse source")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more operations" })).toBeNull();
   });
 
   it("keeps matching descendants visible with their stage and parent context", async () => {

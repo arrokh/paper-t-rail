@@ -147,13 +147,16 @@ class AnalysisRunExecutionRepository(
         status: String,
         errorCode: String?,
         httpStatus: Int?,
+        captureOverheadMillis: Long?,
     ) {
         val endedAt = Instant.now()
         val durationMillis = ((System.nanoTime() - handle.startedNanos).coerceAtLeast(0L) / 1_000_000L)
         jdbc.update(
             """
             UPDATE analysis_run_execution_spans
-               SET ended_at = ?, duration_millis = ?, status = ?, safe_error_code = ?, http_status = ?
+               SET ended_at = ?, duration_millis = ?, status = ?, safe_error_code = ?, http_status = ?,
+                   attributes = CASE WHEN ?::BIGINT IS NULL THEN attributes
+                                     ELSE attributes || jsonb_build_object('captureOverheadMillis', ?::BIGINT) END
              WHERE analysis_run_id = ? AND id = ? AND status = 'RUNNING'
             """.trimIndent(),
             Timestamp.from(endedAt),
@@ -161,6 +164,8 @@ class AnalysisRunExecutionRepository(
             status,
             errorCode,
             httpStatus,
+            captureOverheadMillis,
+            captureOverheadMillis,
             handle.analysisRunId,
             handle.id,
         )
@@ -307,8 +312,14 @@ class AnalysisRunExecutionRepository(
         val selectedIds = selected.map(ExecutionSpanRow::id)
         val descriptors = descriptors(analysisRunId, selectedIds)
         val links = domainLinks(analysisRunId, selectedIds)
+        val configuration = if (selected.isEmpty()) null else runConfigurationSnapshot(analysisRunId)
         val items = selected.map {
-            it.toResponse(objectMapper.readTree(it.attributes), descriptors[it.id].orEmpty(), links[it.id].orEmpty())
+            it.toResponse(
+                objectMapper.readTree(it.attributes),
+                descriptors[it.id].orEmpty(),
+                links[it.id].orEmpty(),
+                configuration?.let { snapshot -> executionTrustBoundary(it, snapshot) } ?: fallbackTrustBoundary(it),
+            )
         }
         val last = selected.lastOrNull()
         return ExecutionSpanPage(
@@ -330,10 +341,12 @@ class AnalysisRunExecutionRepository(
             analysisRunId,
             spanId,
         ).firstOrNull() ?: return null
+        val configuration = runConfigurationSnapshot(analysisRunId)
         return row.toResponse(
             objectMapper.readTree(row.attributes),
             descriptors(analysisRunId, listOf(spanId))[spanId].orEmpty(),
             domainLinks(analysisRunId, listOf(spanId))[spanId].orEmpty(),
+            executionTrustBoundary(row, configuration),
         )
     }
 
@@ -522,6 +535,48 @@ class AnalysisRunExecutionRepository(
         ).groupBy({ it.first }, { it.second })
     }
 
+    private fun runConfigurationSnapshot(analysisRunId: UUID): JsonNode = jdbc.query(
+        "SELECT configuration_snapshot::text AS configuration_snapshot FROM analysis_runs WHERE id = ?",
+        { rs, _ -> objectMapper.readTree(rs.getString("configuration_snapshot")) },
+        analysisRunId,
+    ).firstOrNull() ?: objectMapper.createObjectNode()
+
+    private fun executionTrustBoundary(row: ExecutionSpanRow, configuration: JsonNode): String {
+        if (row.kind in setOf("INTERNAL", "PERSISTENCE", "TRANSFORMATION")) return "INTERNAL"
+        if (row.kind == "QUEUE") return "LOCAL"
+        val configured = configuredProviderTrustBoundary(configuration, row.stageId, row.providerId)
+            ?: row.providerId?.let { normalizeTrustBoundary(objectMapper.readTree(row.attributes).path("trustBoundary")) }
+        return configured ?: fallbackTrustBoundary(row)
+    }
+
+    private fun configuredProviderTrustBoundary(configuration: JsonNode, stageId: String, providerId: String?): String? {
+        if (providerId == null) return null
+        val selections = when (stageId) {
+            "source" -> listOf(configuration.path("sourceParser"), configuration.path("claimExtractor"))
+            "references" -> listOf(configuration.path("referenceResolution").path("provider"))
+            "access" -> listOf(configuration.path("openAccess"))
+            "evidence" -> listOf(configuration.path("citedPaperParser"), configuration.path("embedding"))
+            "verification" -> listOf(configuration.path("systemOne"))
+            else -> emptyList()
+        }
+        val selection = selections.firstOrNull { it.path("provider").asText() == providerId } ?: return null
+        return normalizeTrustBoundary(selection.path("trustBoundary"))
+    }
+
+    private fun normalizeTrustBoundary(value: JsonNode): String? = when (value.takeIf(JsonNode::isTextual)?.asText()?.uppercase()) {
+        "INTERNAL" -> "INTERNAL"
+        "LOCAL" -> "LOCAL"
+        "EXTERNAL", "UNREVIEWED" -> "EXTERNAL"
+        else -> null
+    }
+
+    private fun fallbackTrustBoundary(row: ExecutionSpanRow): String = when {
+        row.kind in setOf("INTERNAL", "PERSISTENCE", "TRANSFORMATION") -> "INTERNAL"
+        row.kind == "QUEUE" -> "LOCAL"
+        row.providerId == null || row.providerId.lowercase() in LOCAL_PROVIDERS -> "LOCAL"
+        else -> "EXTERNAL"
+    }
+
     private data class ExecutionSpanRow(
         val id: UUID,
         val parentSpanId: UUID?,
@@ -544,13 +599,8 @@ class AnalysisRunExecutionRepository(
             attributes: JsonNode,
             artifacts: List<ExecutionArtifactDescriptor>,
             domainLinks: List<ExecutionDomainLink>,
+            trustBoundary: String,
         ): ExecutionSpanResponse {
-            val trustBoundary = when {
-                kind in setOf("INTERNAL", "PERSISTENCE", "TRANSFORMATION") -> "INTERNAL"
-                kind == "QUEUE" -> "LOCAL"
-                providerId == null || providerId.lowercase() in LOCAL_PROVIDERS -> "LOCAL"
-                else -> "EXTERNAL"
-            }
             val route = attributes.path("httpRoute").takeIf(JsonNode::isTextual)?.asText()
             return ExecutionSpanResponse(
                 id, parentSpanId, operationId, stageId, kind, name, startedAt, endedAt, durationMillis,

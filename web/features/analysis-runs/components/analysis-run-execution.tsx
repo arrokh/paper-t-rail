@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronRight, Copy, LoaderCircle, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -12,7 +12,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PIPELINE_STAGES } from "@/features/analysis-runs/pipeline";
+import { normalizePipelineStageId, PIPELINE_STAGES } from "@/features/analysis-runs/pipeline";
 import {
   executionSpanQueryKey,
   executionSpanQueryOptions,
@@ -38,10 +38,18 @@ import type {
   ExecutionSpanFilters,
   ExecutionSummary,
 } from "@/features/analysis-runs/execution/execution-types";
+import { useClientTimeZone } from "@/lib/use-client-time-zone";
 import { cn } from "@/lib/utils";
 
 type InspectorTab = "overview" | "input" | "response" | "result";
 const POLL_ERROR_MESSAGE = "Execution details could not be loaded.";
+const INSPECTOR_ASIDE_CLASS_NAME = "min-w-0 border-t border-border bg-background lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:self-start lg:overflow-y-auto lg:border-t-0 lg:border-l";
+const INSPECTOR_TAB_CLASS_NAME = cn(
+  "h-10 flex-none rounded-md border border-transparent px-3 text-xs font-semibold text-foreground/75",
+  "hover:bg-accent hover:text-accent-foreground",
+  "data-active:bg-primary data-active:text-primary-foreground data-active:shadow-sm",
+  "data-active:hover:bg-primary data-active:hover:text-primary-foreground",
+);
 
 function isTerminalExecutionStatus(status: string): boolean {
   return ["PARSED", "COMPLETED", "COMPLETED_WITH_WARNINGS", "FAILED"].includes(status);
@@ -62,6 +70,25 @@ function formatElapsed(summary: ExecutionSummary, terminalRun: boolean, now: num
   return elapsed === null ? "Not recorded" : formatExecutionDuration(elapsed);
 }
 
+function LocalDateTime({ value }: { value: string | null }) {
+  const timeZone = useClientTimeZone();
+  if (!value) return <>Not recorded</>;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return <>Unknown time</>;
+
+  const formatted = new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+    timeZone,
+  }).format(timestamp);
+  return <time dateTime={value}>{formatted}</time>;
+}
+
 function statusBadgeClass(status: string): string {
   const normalized = status.toUpperCase();
   if (["FAILED", "ERROR"].includes(normalized)) return "border-destructive/40 bg-destructive/10 text-destructive";
@@ -72,7 +99,7 @@ function statusBadgeClass(status: string): string {
 }
 
 function safeHttpRoute(span: ExecutionSpan): string | null {
-  const routeCandidate = span.attributes.httpRoute ?? span.attributes.route;
+  const routeCandidate = span.httpRoute ?? span.attributes.httpRoute ?? span.attributes.route;
   if (typeof routeCandidate !== "string" || !routeCandidate.trim()) return null;
   const route = routeCandidate.trim().replace(/^[A-Z]+\s+/i, "");
   const withoutQuery = route.split("?")[0].trim();
@@ -88,10 +115,19 @@ function safeHttpRoute(span: ExecutionSpan): string | null {
 }
 
 function spanTrustBoundary(span: ExecutionSpan): string | null {
-  const boundary = span.attributes.trustBoundary;
+  const boundary = span.trustBoundary ?? span.attributes.trustBoundary;
   if (typeof boundary !== "string") return null;
   const normalized = boundary.toLowerCase();
   return ["internal", "local", "external"].includes(normalized) ? normalized : null;
+}
+
+function domainLinkLabel(type: string, id: string): string {
+  const labels: Record<string, string> = {
+    ANALYSIS_RUN: "Analysis Run",
+    SOURCE_DOCUMENT: "Source Document",
+    BIBLIOGRAPHY_ENTRY: "Bibliography entry",
+  };
+  return `${labels[type] ?? "Related run item"} · ${id.slice(0, 8)}`;
 }
 
 function SpanStatus({ status }: { status: string }) {
@@ -110,7 +146,8 @@ function spanChildren(spans: ExecutionSpan[]): Map<string, ExecutionSpan[]> {
 }
 
 function stageLabel(stageId: string): string {
-  return PIPELINE_STAGES.find((stage) => stage.id === stageId)?.label ?? stageId.replaceAll("-", " ");
+  const canonicalStageId = normalizePipelineStageId(stageId);
+  return PIPELINE_STAGES.find((stage) => stage.id === canonicalStageId)?.label ?? stageId.replaceAll("-", " ");
 }
 
 function ExecutionRuler({ elapsedMillis }: { elapsedMillis: number }) {
@@ -135,54 +172,106 @@ type ExecutionSpanTreeContext = {
   visibleIds: Set<string>;
   timelineRows: Map<string, ReturnType<typeof getExecutionTimeline>["rows"][number]>;
   selectedSpanId: string | null;
-  expandedAll: boolean;
+  autoExpandedSpanIds: Set<string>;
+  filtersActive: boolean;
+  expandedAll: boolean | null;
   openOverrides: Record<string, boolean>;
   onDisclosureChange: (id: string, open: boolean) => void;
   onSelect: (spanId: string) => void;
 };
 
-function ExecutionSpanRows({ spans, ...context }: { spans: ExecutionSpan[] } & ExecutionSpanTreeContext) {
-  const groups = new Map<string, ExecutionSpan[]>();
+type LogicalOperationGroup = { key: string; spans: ExecutionSpan[] };
+
+function ExecutionSpanRows({
+  spans,
+  groupSimilarOperations = true,
+  ...context
+}: { spans: ExecutionSpan[]; groupSimilarOperations?: boolean } & ExecutionSpanTreeContext) {
+  const logicalGroups = new Map<string, ExecutionSpan[]>();
   for (const span of spans) {
-    const group = groups.get(span.operationId) ?? [];
+    const groupKey = JSON.stringify([span.parentSpanId, span.operationId, span.stageId, span.kind, span.name]);
+    const group = logicalGroups.get(groupKey) ?? [];
     group.push(span);
-    groups.set(span.operationId, group);
+    logicalGroups.set(groupKey, group);
+  }
+
+  const families = new Map<string, LogicalOperationGroup[]>();
+  for (const [key, operationSpans] of logicalGroups) {
+    const span = operationSpans[0];
+    const familyKey = JSON.stringify([span.parentSpanId, span.stageId, span.kind, span.name]);
+    const family = families.get(familyKey) ?? [];
+    family.push({ key, spans: operationSpans });
+    families.set(familyKey, family);
   }
 
   return (
     <>
-      {[...groups].map(([operationId, attempts]) => {
-        if (attempts.length === 1) {
-          const span = attempts[0];
-          return <ExecutionSpanTreeRow key={span.id} span={span} {...context} timelineRow={context.timelineRows.get(span.id)!} />;
+      {[...families].flatMap(([familyKey, operations]) => {
+        const familySpans = operations.flatMap((operation) => operation.spans);
+        if (groupSimilarOperations && operations.length >= 3) {
+          const first = familySpans[0];
+          const kind = first.kind.toUpperCase();
+          const unit = kind === "QUEUE" ? "intervals" : kind.includes("PROVIDER") ? "calls" : "operations";
+          const failureCount = familySpans.filter((span) => ["FAILED", "ERROR"].includes(span.status.toUpperCase())).length;
+          const groupId = `similar:${familyKey}`;
+          const selectedWithin = familySpans.some((span) => span.id === context.selectedSpanId || context.autoExpandedSpanIds.has(span.id));
+          const isOpen = context.openOverrides[groupId] ?? (
+            context.expandedAll === true || (context.expandedAll === null && selectedWithin)
+          );
+          return (
+            <div key={groupId} role="listitem" className="border-b border-border/60 last:border-b-0">
+              <Collapsible open={isOpen} onOpenChange={(open) => context.onDisclosureChange(groupId, open)}>
+                <CollapsibleTrigger className="group flex min-h-9 w-full items-center gap-2 px-3 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4">
+                  <ChevronDown className="size-4 shrink-0 transition-transform group-data-[closed]:-rotate-90" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 break-words">{first.name || first.kind}</span>
+                  <Badge variant="outline" className="shrink-0 text-[0.65rem]">{operations.length} {unit}</Badge>
+                  {failureCount > 0 && <Badge variant="outline" className={cn("shrink-0 text-[0.65rem]", statusBadgeClass("FAILED"))}>{failureCount} failed</Badge>}
+                </CollapsibleTrigger>
+                <CollapsibleContent className="border-l border-border/70">
+                  <div role="list">
+                    <ExecutionSpanRows spans={familySpans} {...context} groupSimilarOperations={false} />
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+          );
         }
-        const firstAttempt = attempts[0];
-        const groupId = `attempts:${firstAttempt.parentSpanId ?? "root"}:${operationId}`;
-        const isOpen = context.openOverrides[groupId] ?? context.expandedAll;
-        return (
-          <div key={groupId} role="listitem" className="border-b border-border/60 last:border-b-0">
-            <Collapsible open={isOpen} onOpenChange={(open) => context.onDisclosureChange(groupId, open)}>
-              <CollapsibleTrigger className="group flex min-h-11 w-full items-center gap-2 px-3 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4">
-                <ChevronDown className="size-4 shrink-0 transition-transform group-data-[closed]:-rotate-90" aria-hidden="true" />
-                <span className="min-w-0 flex-1 break-words">{firstAttempt.name || firstAttempt.kind}</span>
-                <Badge variant="outline" className="shrink-0 text-[0.65rem]">{attempts.length} attempts</Badge>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="border-l border-border/70">
-                <div role="list">
-                  {attempts.map((span) => (
-                    <ExecutionSpanTreeRow
-                      key={span.id}
-                      span={span}
-                      {...context}
-                      depth={context.depth + 1}
-                      timelineRow={context.timelineRows.get(span.id)!}
-                    />
-                  ))}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
-        );
+
+        return operations.flatMap(({ key, spans: attempts }) => {
+          const attemptNumbers = new Set(attempts.map((span) => span.attempt));
+          if (attempts.length === 1 || attemptNumbers.size !== attempts.length) {
+            return attempts.map((span) => (
+              <ExecutionSpanTreeRow key={span.id} span={span} {...context} timelineRow={context.timelineRows.get(span.id)!} />
+            ));
+          }
+          const firstAttempt = attempts[0];
+          const groupId = `attempts:${key}`;
+          const isOpen = context.openOverrides[groupId] ?? context.expandedAll !== false;
+          return (
+            <div key={groupId} role="listitem" className="border-b border-border/60 last:border-b-0">
+              <Collapsible open={isOpen} onOpenChange={(open) => context.onDisclosureChange(groupId, open)}>
+                <CollapsibleTrigger className="group flex min-h-9 w-full items-center gap-2 px-3 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4">
+                  <ChevronDown className="size-4 shrink-0 transition-transform group-data-[closed]:-rotate-90" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 break-words">{firstAttempt.name || firstAttempt.kind}</span>
+                  <Badge variant="outline" className="shrink-0 text-[0.65rem]">{attempts.length} attempts</Badge>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="border-l border-border/70">
+                  <div role="list">
+                    {attempts.map((span) => (
+                      <ExecutionSpanTreeRow
+                        key={span.id}
+                        span={span}
+                        {...context}
+                        depth={context.depth + 1}
+                        timelineRow={context.timelineRows.get(span.id)!}
+                      />
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+          );
+        });
       })}
     </>
   );
@@ -196,6 +285,8 @@ function ExecutionSpanTreeRow({
   timelineRow,
   timelineRows,
   selectedSpanId,
+  autoExpandedSpanIds,
+  filtersActive,
   expandedAll,
   openOverrides,
   onDisclosureChange,
@@ -207,8 +298,17 @@ function ExecutionSpanTreeRow({
   const children = (childrenByParent.get(span.id) ?? []).filter((child) => visibleIds.has(child.id));
   const hasChildren = children.length > 0;
   const isRunning = isActiveExecutionSpan(span);
-  const stageOpen = span.kind.toLowerCase() === "stage";
-  const isOpen = openOverrides[span.id] ?? (expandedAll || stageOpen);
+  const stageOpen = span.kind.toLowerCase() === "stage"
+    || span.name.toLowerCase() === stageLabel(span.stageId).toLowerCase();
+  const shouldExpandByDefault = stageOpen && depth === 0;
+  const isOpen = openOverrides[span.id] ?? (
+    expandedAll === true
+    || (expandedAll === null && (
+      autoExpandedSpanIds.has(span.id)
+      || (filtersActive && hasChildren)
+      || shouldExpandByDefault
+    ))
+  );
   const timelineStyle = {
     left: `${timelineRow.leftPercent}%`,
     width: timelineRow.isInstant ? "0.3rem" : `${timelineRow.widthPercent}%`,
@@ -217,7 +317,7 @@ function ExecutionSpanTreeRow({
   return (
     <div role="listitem" className="min-w-0 border-b border-border/60 last:border-b-0">
       <div className={cn(
-        "grid min-h-12 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 px-3 py-1.5 sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)] sm:gap-x-3 sm:px-4",
+        "grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 px-3 py-0.5 sm:min-h-9 sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)] sm:gap-x-3 sm:gap-y-0 sm:px-4 sm:py-0",
         selectedSpanId === span.id && "bg-primary/5",
       )}>
         <div className="flex min-w-0 items-center gap-1" style={{ paddingInlineStart: `${Math.min(depth, 6) * 1}rem` }}>
@@ -226,32 +326,33 @@ function ExecutionSpanTreeRow({
               type="button"
               variant="ghost"
               size="icon-sm"
-              className="size-10 shrink-0"
+              className="size-8 shrink-0"
               aria-label={`${isOpen ? "Collapse" : "Expand"} ${name}`}
               aria-expanded={isOpen}
               onClick={() => onDisclosureChange(span.id, !isOpen)}
             >
               {isOpen ? <ChevronDown className="size-4" aria-hidden="true" /> : <ChevronRight className="size-4" aria-hidden="true" />}
             </Button>
-          ) : <span className="inline-block size-7 shrink-0" aria-hidden="true" />}
+          ) : <span className="inline-block size-8 shrink-0" aria-hidden="true" />}
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="min-h-10 h-auto min-w-0 flex-1 flex-wrap justify-start gap-x-2 gap-y-1 rounded-sm px-1 py-1 text-left whitespace-normal"
+            className="min-h-8 h-auto min-w-0 flex-1 flex-nowrap justify-start gap-x-2 rounded-sm px-1 py-0.5 text-left whitespace-nowrap"
             aria-label={`${name}, ${executionStatusLabel(span.status)}, ${isRunning ? `Running, ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}`}
+            title={`${name} · Status: ${executionStatusLabel(span.status)} (${span.status})`}
             aria-pressed={selectedSpanId === span.id}
             onClick={() => onSelect(span.id)}
           >
-            <span className="min-w-0 break-words text-sm font-medium text-foreground">{name}</span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{name}</span>
             <SpanStatus status={span.status} />
             {span.attempt > 1 && <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[0.65rem]">Attempt {span.attempt}</Badge>}
           </Button>
         </div>
-        <span className="text-right font-mono text-xs text-muted-foreground" aria-label={`Duration ${isRunning ? `Running, ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}`}>
+        <span className="text-right font-mono text-xs text-muted-foreground">
           {isRunning ? `Running · ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}
         </span>
-        <div className="col-span-2 h-5 min-w-0 sm:col-span-1" aria-hidden="true">
+        <div className="col-span-2 h-3 min-w-0 sm:col-span-1" aria-hidden="true">
           <div className="relative h-full border-l border-border/70 bg-[linear-gradient(to_right,var(--ptr-border)_1px,transparent_1px)] bg-[length:25%_100%]">
             <span
               className={cn(
@@ -274,6 +375,8 @@ function ExecutionSpanTreeRow({
             visibleIds={visibleIds}
             timelineRows={timelineRows}
             selectedSpanId={selectedSpanId}
+            autoExpandedSpanIds={autoExpandedSpanIds}
+            filtersActive={filtersActive}
             expandedAll={expandedAll}
             openOverrides={openOverrides}
             onDisclosureChange={onDisclosureChange}
@@ -431,14 +534,21 @@ function SpanInspector({ analysisRunId, spanId }: { analysisRunId: string; spanI
   const removeMutation = useRemoveExecutionArtifact(analysisRunId);
   const [tab, setTab] = useState<InspectorTab>("overview");
   if (!spanId) {
-    return <aside className="min-w-0 border-t border-border p-5 text-sm text-muted-foreground lg:border-t-0 lg:border-l" aria-label="Selected operation details">Select an operation to inspect its details.</aside>;
+    return (
+      <aside className={cn(INSPECTOR_ASIDE_CLASS_NAME, "flex min-h-64 items-center justify-center p-5")} aria-label="Selected operation details">
+        <div className="max-w-sm space-y-2 text-center">
+          <h3 className="m-0 font-serif text-lg font-semibold">Choose an operation</h3>
+          <p className="m-0 text-sm text-muted-foreground">Select a row to see its timing, safe metadata, and any captured artifacts.</p>
+        </div>
+      </aside>
+    );
   }
   if (detailQuery.isPending) {
-    return <aside className="space-y-3 border-t border-border p-5 lg:border-t-0 lg:border-l" aria-label="Selected operation details"><Skeleton className="h-6 w-2/3" /><Skeleton className="h-20 w-full" /><Skeleton className="h-32 w-full" /></aside>;
+    return <aside className={cn(INSPECTOR_ASIDE_CLASS_NAME, "space-y-3 p-5")} aria-label="Selected operation details"><Skeleton className="h-6 w-2/3" /><Skeleton className="h-20 w-full" /><Skeleton className="h-32 w-full" /></aside>;
   }
   if (detailQuery.isError || !detailQuery.data) {
     return (
-      <aside className="min-w-0 border-t border-border p-5 lg:border-t-0 lg:border-l" aria-label="Selected operation details">
+      <aside className={cn(INSPECTOR_ASIDE_CLASS_NAME, "p-5")} aria-label="Selected operation details">
         <Alert variant="destructive"><AlertTitle>Operation details unavailable</AlertTitle><AlertDescription>{permissionError(detailQuery.error)}</AlertDescription></Alert>
       </aside>
     );
@@ -455,23 +565,24 @@ function SpanInspector({ analysisRunId, spanId }: { analysisRunId: string; spanI
   ].filter(([, value]) => typeof value === "number") as Array<[string, number]>;
 
   return (
-    <aside className="min-w-0 border-t border-border lg:border-t-0 lg:border-l" aria-label="Selected operation details">
+    <aside className={INSPECTOR_ASIDE_CLASS_NAME} aria-label="Selected operation details">
       <div className="space-y-1 px-4 py-4 sm:px-5">
-        <p className="m-0 font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Selected operation</p>
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="m-0 min-w-0 break-words text-base font-semibold">{detail.name}</h3>
+          <h3 className="m-0 min-w-0 break-words font-serif text-xl font-semibold tracking-tight">{detail.name}</h3>
           <SpanStatus status={detail.status} />
         </div>
-        <p className="m-0 text-xs text-muted-foreground">{detail.kind} · Attempt {detail.attempt} · {formatExecutionDuration(detail.durationMillis)}</p>
+        <p className="m-0 text-sm text-muted-foreground">{detail.kind} · Attempt {detail.attempt} · {formatExecutionDuration(detail.durationMillis)}</p>
       </div>
       <Separator />
       <Tabs value={tab} onValueChange={(value) => { if (typeof value === "string") setTab(value as InspectorTab); }} className="gap-0">
-        <TabsList aria-label="Operation details" className="flex h-auto w-full flex-wrap justify-start rounded-none border-b border-border bg-background px-3 py-2 sm:px-4">
-          <TabsTrigger value="overview" className="min-h-10 px-2 text-xs sm:px-3">Overview</TabsTrigger>
-          <TabsTrigger value="input" className="min-h-10 px-2 text-xs sm:px-3">Input / Request</TabsTrigger>
-          <TabsTrigger value="response" className="min-h-10 px-2 text-xs sm:px-3">Response</TabsTrigger>
-          <TabsTrigger value="result" className="min-h-10 px-2 text-xs sm:px-3">Result</TabsTrigger>
-        </TabsList>
+        <div className="border-b border-border px-3 py-2 sm:px-4">
+          <TabsList aria-label="Operation details" className="grid h-auto w-full grid-cols-2 gap-1 rounded-lg border border-border bg-muted/70 p-1 group-data-horizontal/tabs:h-auto">
+            <TabsTrigger value="overview" className={cn(INSPECTOR_TAB_CLASS_NAME, "w-full min-w-0 px-2")}>Overview</TabsTrigger>
+            <TabsTrigger value="input" className={cn(INSPECTOR_TAB_CLASS_NAME, "w-full min-w-0 px-2")}>Input / Request</TabsTrigger>
+            <TabsTrigger value="response" className={cn(INSPECTOR_TAB_CLASS_NAME, "w-full min-w-0 px-2")}>Response</TabsTrigger>
+            <TabsTrigger value="result" className={cn(INSPECTOR_TAB_CLASS_NAME, "w-full min-w-0 px-2")}>Result</TabsTrigger>
+          </TabsList>
+        </div>
         <TabsContent value="overview" className="max-h-[min(70vh,42rem)] overflow-auto p-4 sm:p-5">
           <dl className="grid min-w-0 grid-cols-[minmax(6rem,0.8fr)_minmax(0,1.2fr)] gap-x-3 gap-y-3 text-sm">
             <dt className="text-muted-foreground">Execution span</dt><dd className="m-0 break-all font-mono text-xs">{detail.id}</dd>
@@ -484,15 +595,15 @@ function SpanInspector({ analysisRunId, spanId }: { analysisRunId: string; spanI
             {safeRoute && <><dt className="text-muted-foreground">HTTP route</dt><dd className="m-0 break-all font-mono text-xs">{safeRoute}</dd></>}
             {detail.httpStatus !== null && <><dt className="text-muted-foreground">HTTP status</dt><dd className="m-0">{detail.httpStatus}</dd></>}
             {detail.safeErrorCode && <><dt className="text-muted-foreground">Safe error code</dt><dd className="m-0 break-words font-mono text-xs">{detail.safeErrorCode}</dd></>}
-            <dt className="text-muted-foreground">Started</dt><dd className="m-0 break-words font-mono text-xs">{detail.startedAt}</dd>
-            {detail.endedAt && <><dt className="text-muted-foreground">Finished</dt><dd className="m-0 break-words font-mono text-xs">{detail.endedAt}</dd></>}
-            <dt className="text-muted-foreground">Duration</dt><dd className="m-0">{formatExecutionDuration(detail.durationMillis)}</dd>
+            <dt className="text-muted-foreground">Started</dt><dd className="m-0 break-words text-sm tabular-nums"><LocalDateTime value={detail.startedAt} /></dd>
+            {detail.endedAt && <><dt className="text-muted-foreground">Finished</dt><dd className="m-0 break-words text-sm tabular-nums"><LocalDateTime value={detail.endedAt} /></dd></>}
+            <dt className="text-muted-foreground">Duration</dt><dd className="m-0">{formatExecutionDuration(detail.durationMillis)} <span className="text-xs text-muted-foreground">(includes capture overhead)</span></dd>
             {safeAttributes.map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="m-0">{formatExecutionDuration(value)}</dd></div>)}
           </dl>
           {detail.domainLinks?.some((link) => link.href.startsWith("/") && !link.href.startsWith("//")) && (
             <div className="mt-5 space-y-2 border-t border-border pt-4">
               <h4 className="m-0 text-sm font-semibold">Related run items</h4>
-              {detail.domainLinks.filter((link) => link.href.startsWith("/") && !link.href.startsWith("//")).map((link) => <a key={link.href} className="block break-words text-sm text-primary underline-offset-4 hover:underline" href={link.href}>{link.label}</a>)}
+              {detail.domainLinks.filter((link) => link.href.startsWith("/") && !link.href.startsWith("//")).map((link) => <a key={`${link.type}:${link.id}:${link.href}`} className="block break-words text-sm text-primary underline-offset-4 hover:underline" href={link.href}>{domainLinkLabel(link.type, link.id)}</a>)}
             </div>
           )}
         </TabsContent>
@@ -526,7 +637,12 @@ export function AnalysisRunExecution({
 }) {
   const terminalRun = isTerminalExecutionStatus(runStatus);
   const summaryQuery = useExecutionSummary(analysisRunId, true, terminalRun);
-  const summary = summaryQuery.data;
+  const { data: summary, refetch: refetchSummary } = summaryQuery;
+  useEffect(() => {
+    if (terminalRun && summary?.recordingState === "RECORDING") {
+      void refetchSummary();
+    }
+  }, [terminalRun, summary?.recordingState, refetchSummary]);
   const recording = summary?.recordingState === "RECORDING";
   const spansQuery = useExecutionSpans(
     analysisRunId,
@@ -534,10 +650,21 @@ export function AnalysisRunExecution({
     terminalRun,
     recording,
   );
+  const { refetch: refetchSpans } = spansQuery;
+  const terminalSpanRefreshPending = useRef(!terminalRun);
+  useEffect(() => {
+    if (!terminalRun) {
+      terminalSpanRefreshPending.current = true;
+      return;
+    }
+    if (!terminalSpanRefreshPending.current || spansQuery.isPending || !spansQuery.data) return;
+    terminalSpanRefreshPending.current = false;
+    void refetchSpans();
+  }, [terminalRun, spansQuery.isPending, spansQuery.data, refetchSpans]);
   const selectedSpanQuery = useExecutionSpan(analysisRunId, selectedSpanId);
   const selectedSpanDetail = selectedSpanQuery.data?.id === selectedSpanId ? selectedSpanQuery.data : null;
-  const [filters, setFilters] = useState<ExecutionSpanFilters>({ query: "", status: "all", kind: "all" });
-  const [expandedAll, setExpandedAll] = useState(true);
+  const [filters, setFilters] = useState<ExecutionSpanFilters>({ query: "", stage: "all", status: "all", kind: "all" });
+  const [expandedAll, setExpandedAll] = useState<boolean | null>(null);
   const [openOverrides, setOpenOverrides] = useState<Record<string, boolean>>({});
   const pages = spansQuery.data?.pages;
   const pageSpans = useMemo(() => pages?.flatMap((page) => page.items) ?? [], [pages]);
@@ -553,6 +680,10 @@ export function AnalysisRunExecution({
   const ancestorContextSpan = ancestorQuery.data?.id === ancestorContext.missingAncestorSpanId
     ? ancestorQuery.data
     : null;
+  const autoExpandedSpanIds = useMemo(() => new Set([
+    ...ancestorContext.spans.map((span) => span.id),
+    ...(ancestorContextSpan ? [ancestorContextSpan.id] : []),
+  ]), [ancestorContext.spans, ancestorContextSpan]);
   const spans = useMemo(() => {
     const byId = new Map(pageSpans.map((span) => [span.id, span]));
     ancestorContext.spans.forEach((span) => byId.set(span.id, span));
@@ -560,7 +691,22 @@ export function AnalysisRunExecution({
     if (selectedSpanDetail) byId.set(selectedSpanDetail.id, selectedSpanDetail);
     return [...byId.values()];
   }, [pageSpans, ancestorContext.spans, ancestorContextSpan, selectedSpanDetail]);
+  const previousSpanStatuses = useRef<Map<string, string> | null>(null);
+  const [spanStatusAnnouncement, setSpanStatusAnnouncement] = useState("");
+  useEffect(() => {
+    const previous = previousSpanStatuses.current;
+    previousSpanStatuses.current = new Map(spans.map((span) => [span.id, span.status]));
+    if (!previous) return;
+
+    const changed = spans.filter((span) => previous.has(span.id) && previous.get(span.id) !== span.status);
+    if (changed.length === 0) return;
+    const transitions = changed.slice(0, 2).map((span) => `${span.name}: ${executionStatusLabel(span.status).toLowerCase()}`);
+    setSpanStatusAnnouncement(changed.length > 2
+      ? `${changed.length} operation statuses changed.`
+      : `Execution status changed: ${transitions.join("; ")}.`);
+  }, [spans]);
   const filteredIds = useMemo(() => filterExecutionSpans(spans, filters), [spans, filters]);
+  const filtersActive = filters.query.trim() !== "" || filters.stage !== "all" || filters.status !== "all" || filters.kind !== "all";
   const executionNow = Math.max(summaryQuery.dataUpdatedAt ?? 0, spansQuery.dataUpdatedAt ?? 0);
   const timelineStartedAt = summary?.startedAt ?? null;
   const recordingActive = Boolean(summary && !terminalRun && summary.recordingState === "RECORDING");
@@ -577,26 +723,22 @@ export function AnalysisRunExecution({
     const loadedSpanIds = new Set(spans.map((span) => span.id));
     for (const span of spans) {
       if (!filteredIds.has(span.id) || (span.parentSpanId && loadedSpanIds.has(span.parentSpanId))) continue;
-      const groupId = span.stageId ?? "other";
+      const groupId = normalizePipelineStageId(span.stageId) ?? "other";
       const group = groups.get(groupId) ?? [];
       group.push(span);
       groups.set(groupId, group);
     }
     return groups;
   }, [spans, filteredIds]);
-  const knownStageIds = new Set(PIPELINE_STAGES.map((stage) => stage.id));
-  const stageOrder = [
-    ...PIPELINE_STAGES.map((stage) => stage.id),
-    ...[...stageGroups.keys()].filter((stageId) => stageId !== "other" && !knownStageIds.has(stageId as typeof PIPELINE_STAGES[number]["id"])).sort(),
-    "other",
-  ];
+  const stageOrder = [...PIPELINE_STAGES.map((stage) => stage.id), "other"];
   const visibleStages = stageOrder.filter((stageId) => stageGroups.has(stageId));
   const kinds = [...new Set(spans.map((span) => span.kind))].sort();
   const statuses = [...new Set(spans.map((span) => span.status))].sort();
-  const hasMore = Boolean(pages?.at(-1)?.nextCursor);
   const stopCapture = useStopExecutionCapture(analysisRunId);
 
   function changeFilter(key: keyof ExecutionSpanFilters, value: string) {
+    setExpandedAll(null);
+    setOpenOverrides({});
     setFilters((current) => ({ ...current, [key]: value }));
   }
 
@@ -605,6 +747,7 @@ export function AnalysisRunExecution({
   }
 
   function selectSpan(spanId: string) {
+    if (expandedAll === false) setExpandedAll(null);
     onSelectSpan(spanId);
   }
 
@@ -618,7 +761,7 @@ export function AnalysisRunExecution({
   if (summary.recordingState === "NOT_RECORDED" || summary.completeness === "NOT_RECORDED") {
     return (
       <section className="space-y-4" aria-labelledby="execution-heading">
-        <header className="space-y-1"><h2 id="execution-heading" className="m-0 text-lg font-semibold">Execution</h2><p className="m-0 text-sm text-muted-foreground">Processing steps, timings, and service calls</p></header>
+        <header className="space-y-1"><h2 id="execution-heading" className="m-0 font-serif text-2xl font-semibold tracking-tight">Execution Trace</h2><p className="m-0 text-sm text-muted-foreground">Processing steps, timings, and service calls for this run.</p></header>
         <Alert>
           <AlertTitle>Historical execution unavailable</AlertTitle>
           <AlertDescription>This Analysis Run predates execution recording. Its execution history was not recorded, so no timeline can be reconstructed.</AlertDescription>
@@ -636,18 +779,19 @@ export function AnalysisRunExecution({
 
   return (
     <section className="min-w-0 space-y-4" aria-labelledby="execution-heading">
-      <header className="space-y-1">
-        <h2 id="execution-heading" className="m-0 text-lg font-semibold">Execution</h2>
-        <p className="m-0 text-sm text-muted-foreground">Processing steps, timings, and service calls</p>
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-1 text-sm">
-          <span>Elapsed {elapsedLabel}</span>
-          <span aria-hidden="true">·</span>
-          <span aria-live="polite">{recordingStatusLabel}</span>
-          <span aria-hidden="true">·</span>
-          <span>Capture {summary.captureEnabled ? "enabled" : "disabled"}</span>
-          {traceMayBeIncomplete && <Badge variant="outline" className="border-warning/50 bg-warning/20 text-warning-foreground">Incomplete trace</Badge>}
-        </p>
+      <header className="space-y-3">
+        <div className="space-y-1">
+          <h2 id="execution-heading" className="m-0 font-serif text-2xl font-semibold tracking-tight sm:text-3xl">Execution Trace</h2>
+          <p className="m-0 text-sm text-muted-foreground">Processing steps, timings, and service calls for this run.</p>
+        </div>
+        <dl className="m-0 flex flex-wrap items-baseline gap-x-6 gap-y-2 border-y border-border py-3 text-sm">
+          <div className="flex items-baseline gap-2"><dt className="text-xs text-muted-foreground">Elapsed</dt><dd className="m-0 font-mono tabular-nums">{elapsedLabel}</dd></div>
+          <div className="flex items-baseline gap-2"><dt className="text-xs text-muted-foreground">Recording</dt><dd className="m-0" aria-live="polite">{recordingStatusLabel}</dd></div>
+          <div className="flex items-baseline gap-2"><dt className="text-xs text-muted-foreground">Payload capture at start</dt><dd className="m-0">{summary.captureEnabled ? "Enabled" : "Disabled"}</dd></div>
+          {traceMayBeIncomplete && <div className="contents"><dt className="sr-only">Trace completeness</dt><dd className="m-0"><Badge variant="outline" className="border-warning/50 bg-warning/20 text-warning-foreground">Incomplete trace</Badge></dd></div>}
+        </dl>
       </header>
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{spanStatusAnnouncement}</p>
 
       {summary.recordingState === "RECORDING" && !summary.captureEnabled && (
         <Alert>
@@ -665,32 +809,39 @@ export function AnalysisRunExecution({
       {spansQuery.isError && <Alert variant="destructive"><AlertTitle>Could not load operations</AlertTitle><AlertDescription>{permissionError(spansQuery.error)}</AlertDescription></Alert>}
 
       <div className="flex flex-col gap-3 border-y border-border py-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
-        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-[minmax(12rem,1fr)_minmax(9rem,0.6fr)_minmax(9rem,0.6fr)]">
+        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(12rem,1.2fr)_repeat(3,minmax(8rem,0.7fr))]">
           <label className="space-y-1 text-xs font-medium text-muted-foreground">
             <span>Find operation</span>
             <Input value={filters.query} onChange={(event) => changeFilter("query", event.target.value)} placeholder="Name, provider, model, or error" className="h-11" />
           </label>
           <label className="space-y-1 text-xs font-medium text-muted-foreground">
+            <span>Pipeline stage</span>
+            <NativeSelect value={filters.stage} onChange={(event) => changeFilter("stage", event.target.value)} className="h-11 w-full" selectClassName="h-11">
+              <NativeSelectOption value="all">All stages</NativeSelectOption>
+              {PIPELINE_STAGES.map((stage) => <NativeSelectOption key={stage.id} value={stage.id}>{stage.label}</NativeSelectOption>)}
+            </NativeSelect>
+          </label>
+          <label className="space-y-1 text-xs font-medium text-muted-foreground">
             <span>Status</span>
-            <NativeSelect value={filters.status} onChange={(event) => changeFilter("status", event.target.value)} className="h-11 w-full">
+            <NativeSelect value={filters.status} onChange={(event) => changeFilter("status", event.target.value)} className="h-11 w-full" selectClassName="h-11">
               <NativeSelectOption value="all">All statuses</NativeSelectOption>
               {statuses.map((status) => <NativeSelectOption key={status} value={status}>{executionStatusLabel(status)}</NativeSelectOption>)}
             </NativeSelect>
           </label>
           <label className="space-y-1 text-xs font-medium text-muted-foreground">
             <span>Kind</span>
-            <NativeSelect value={filters.kind} onChange={(event) => changeFilter("kind", event.target.value)} className="h-11 w-full">
+            <NativeSelect value={filters.kind} onChange={(event) => changeFilter("kind", event.target.value)} className="h-11 w-full" selectClassName="h-11">
               <NativeSelectOption value="all">All kinds</NativeSelectOption>
               {kinds.map((kind) => <NativeSelectOption key={kind} value={kind}>{kind.replaceAll("_", " ")}</NativeSelectOption>)}
             </NativeSelect>
           </label>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" size="sm" variant="outline" className="min-h-11 sm:min-h-8" onClick={() => { setExpandedAll((current) => !current); setOpenOverrides({}); }}>
-            {expandedAll ? "Collapse all" : "Expand all"}
+          <Button type="button" size="sm" variant="outline" className="h-11" onClick={() => { setExpandedAll(expandedAll === true ? false : true); setOpenOverrides({}); }}>
+            {expandedAll === true ? "Collapse all" : "Expand all"}
           </Button>
           {summary.recordingState === "RECORDING" && summary.captureEnabled && !terminalRun && (
-            <Button type="button" size="sm" variant="outline" className="min-h-11 sm:min-h-8" disabled={stopCapture.isPending} onClick={() => stopCapture.mutate()}>
+            <Button type="button" size="sm" variant="outline" className="h-11" disabled={stopCapture.isPending} onClick={() => stopCapture.mutate()}>
               {stopCapture.isPending && <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
               Stop future capture
             </Button>
@@ -708,7 +859,7 @@ export function AnalysisRunExecution({
         <Alert><AlertTitle>No operations yet</AlertTitle><AlertDescription>{summary.recordingState === "RECORDING" ? "Execution spans will appear as operations are recorded." : "No execution operations were recorded for this Analysis Run."}</AlertDescription></Alert>
       )}
       {!spansQuery.isPending && spans.length > 0 && visibleRows.length === 0 && (
-        <p className="rounded-md border border-border bg-muted/20 p-5 text-sm text-muted-foreground">No loaded operations match these filters.{hasMore ? " More operations may match after loading another page." : ""}</p>
+        <p className="rounded-md border border-border bg-muted/20 p-5 text-sm text-muted-foreground">No operations match these filters.</p>
       )}
 
       <div className="grid min-w-0 gap-0 rounded-md border border-border bg-background lg:grid-cols-[minmax(0,1.65fr)_minmax(20rem,0.85fr)]">
@@ -719,9 +870,8 @@ export function AnalysisRunExecution({
               {visibleStages.map((stageId) => {
                 const stageSpans = stageGroups.get(stageId) ?? [];
                 const stageKey = `stage:${stageId}`;
-                const stageOpen = openOverrides[stageKey] ?? true;
+                const stageOpen = openOverrides[stageKey] ?? expandedAll !== false;
                 const explicitStageRow = stageSpans.length === 1
-                  && stageSpans[0].kind.toLowerCase() === "stage"
                   && stageSpans[0].name.toLowerCase() === stageName(stageId).toLowerCase();
                 const rowContext = {
                   depth: 0,
@@ -729,6 +879,8 @@ export function AnalysisRunExecution({
                   visibleIds: filteredIds,
                   timelineRows,
                   selectedSpanId,
+                  autoExpandedSpanIds,
+                  filtersActive,
                   expandedAll,
                   openOverrides,
                   onDisclosureChange: updateDisclosure,
@@ -741,8 +893,8 @@ export function AnalysisRunExecution({
                 return (
                   <div key={stageId} role="listitem" className="border-b border-border last:border-b-0">
                     <Collapsible open={stageOpen} onOpenChange={(open) => updateDisclosure(stageKey, open)}>
-                      <div className="flex min-h-10 items-center gap-2 bg-muted/25 px-3 sm:px-4">
-                        <CollapsibleTrigger className="group flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left text-xs font-semibold text-muted-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                      <div className="flex min-h-9 items-center gap-2 bg-muted/25 px-3 sm:px-4">
+                        <CollapsibleTrigger className="group flex min-h-9 min-w-0 flex-1 items-center gap-2 text-left text-xs font-semibold text-muted-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
                           <ChevronDown className="size-3.5 shrink-0 transition-transform group-data-[closed]:-rotate-90" aria-hidden="true" />
                           <span className="truncate">{stageName(stageId)}</span>
                           <span className="font-mono text-[0.65rem] font-normal">{operationCount} {operationCount === 1 ? "operation" : "operations"}</span>
@@ -759,13 +911,7 @@ export function AnalysisRunExecution({
               })}
             </div>
           ) : !spansQuery.isPending && spans.length > 0 && <p className="m-0 p-5 text-sm text-muted-foreground">No operations match these filters.</p>}
-          {hasMore && (
-            <div className="border-t border-border p-3 text-center">
-              <Button type="button" variant="outline" size="sm" className="min-h-11 sm:min-h-8" disabled={spansQuery.isFetchingNextPage} onClick={() => spansQuery.fetchNextPage()}>
-                {spansQuery.isFetchingNextPage ? "Loading operations…" : "Load more operations"}
-              </Button>
-            </div>
-          )}
+          {spansQuery.isPending && <p className="m-0 border-t border-border px-4 py-2 text-xs text-muted-foreground">Loading all operations…</p>}
           {traceMayBeIncomplete && <p className="m-0 border-t border-border px-4 py-2 text-xs text-muted-foreground">This trace may contain gaps. Captured execution is not evidence that every operation was recorded.</p>}
         </div>
         <SpanInspector key={selectedSpanId ?? "no-selection"} analysisRunId={analysisRunId} spanId={selectedSpanId} />

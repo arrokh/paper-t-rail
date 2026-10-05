@@ -16,18 +16,26 @@ class AnalysisRunExecutionService(
     private val objectMapper: ObjectMapper,
 ) {
     private val activeSpan = ThreadLocal<ExecutionSpanHandle?>()
+    private val captureNanosBySpan = ThreadLocal.withInitial { mutableMapOf<UUID, Long>() }
 
     fun <T> record(
         analysisRunId: UUID,
         spec: ExecutionSpanSpec,
         operation: () -> T,
+    ): T = recordWithStatus(analysisRunId, spec, operation) { "SUCCEEDED" }
+
+    fun <T> recordWithStatus(
+        analysisRunId: UUID,
+        spec: ExecutionSpanSpec,
+        operation: () -> T,
+        successStatus: (T) -> String,
     ): T {
         val previousSpan = activeSpan.get()
         val handle = startSpan(analysisRunId, spec)
         activeSpan.set(handle)
         try {
             val result = operation()
-            finishSpan(handle, "SUCCEEDED", null)
+            finishSpan(handle, successStatus(result), null)
             finishIfTerminal(analysisRunId)
             return result
         } catch (exception: Exception) {
@@ -99,12 +107,15 @@ class AnalysisRunExecutionService(
 
     fun finishSpan(handle: ExecutionSpanHandle?, status: String, errorCode: String? = null, httpStatus: Int? = null) {
         if (handle == null) return
+        val captureNanos = captureNanosBySpan.get().remove(handle.id)
+        if (captureNanosBySpan.get().isEmpty()) captureNanosBySpan.remove()
         if (status !in SPAN_STATUSES || errorCode?.matches(SAFE_ERROR_CODE) == false || httpStatus?.let { it !in 100..599 } == true) {
             markGap(handle.analysisRunId, "UNSAFE_SPAN_RESULT_OMITTED")
             return
         }
+        val captureOverheadMillis = captureNanos?.div(1_000_000L)
         safely(handle.analysisRunId) {
-            repository.finishSpan(handle, status, errorCode, httpStatus)
+            repository.finishSpan(handle, status, errorCode, httpStatus, captureOverheadMillis)
         }
     }
 
@@ -172,11 +183,13 @@ class AnalysisRunExecutionService(
             markGap(analysisRunId, "UNSAFE_ARTIFACT_METADATA_OMITTED")
             return
         }
-        try {
-            persistSanitized(analysisRunId, spanId, artifact, sanitizer.sanitize(artifact.schemaVersion, artifact.fields))
-        } catch (_: Exception) {
-            markGap(analysisRunId, "ARTIFACT_STORAGE_UNAVAILABLE")
-            logStorageFailure(analysisRunId)
+        measureCapture(spanId) {
+            try {
+                persistSanitized(analysisRunId, spanId, artifact, sanitizer.sanitize(artifact.schemaVersion, artifact.fields))
+            } catch (_: Exception) {
+                markGap(analysisRunId, "ARTIFACT_STORAGE_UNAVAILABLE")
+                logStorageFailure(analysisRunId)
+            }
         }
     }
 
@@ -185,13 +198,13 @@ class AnalysisRunExecutionService(
         capture(handle.analysisRunId, handle.id, artifact)
     }
 
-    fun captureCurrentOpenAiRequest(body: ByteArray) = captureCurrentBody("REQUEST", sanitizer.sanitizeOpenAiRequestBody(body))
+    fun captureCurrentOpenAiRequest(body: ByteArray) = captureCurrentBody("REQUEST") { sanitizer.sanitizeOpenAiRequestBody(body) }
 
-    fun captureCurrentOpenAiResponse(body: ByteArray) = captureCurrentBody("RESPONSE", sanitizer.sanitizeOpenAiResponseBody(body))
+    fun captureCurrentOpenAiResponse(body: ByteArray) = captureCurrentBody("RESPONSE") { sanitizer.sanitizeOpenAiResponseBody(body) }
 
-    fun captureCurrentSystemOneRequest(body: ByteArray) = captureCurrentBody("REQUEST", sanitizer.sanitizeSystemOneRequestBody(body))
+    fun captureCurrentSystemOneRequest(body: ByteArray) = captureCurrentBody("REQUEST") { sanitizer.sanitizeSystemOneRequestBody(body) }
 
-    fun captureCurrentJevResponse(body: ByteArray) = captureCurrentBody("RESPONSE", sanitizer.sanitizeJevResponseBody(body))
+    fun captureCurrentJevResponse(body: ByteArray) = captureCurrentBody("RESPONSE") { sanitizer.sanitizeJevResponseBody(body) }
 
     fun omitCurrentBody(role: String, schemaVersion: String, reason: String) {
         val handle = activeSpan.get() ?: return
@@ -199,17 +212,32 @@ class AnalysisRunExecutionService(
             markGap(handle.analysisRunId, "UNSAFE_ARTIFACT_METADATA_OMITTED")
             return
         }
-        captureCurrentBody(role, sanitizer.omittedBody(schemaVersion, reason))
+        captureCurrentBody(role) { sanitizer.omittedBody(schemaVersion, reason) }
     }
 
-    private fun captureCurrentBody(role: String, sanitized: SanitizedExecutionArtifact) {
+    private fun captureCurrentBody(role: String, sanitized: () -> SanitizedExecutionArtifact) {
         val handle = activeSpan.get() ?: return
-        val artifact = ExecutionSpanArtifactSpec(role, sanitized.schemaVersion, emptyMap())
+        measureCapture(handle.id) {
+            try {
+                val captured = sanitized()
+                val artifact = ExecutionSpanArtifactSpec(role, captured.schemaVersion, emptyMap())
+                persistSanitized(handle.analysisRunId, handle.id, artifact, captured)
+            } catch (_: Exception) {
+                markGap(handle.analysisRunId, "ARTIFACT_STORAGE_UNAVAILABLE")
+                logStorageFailure(handle.analysisRunId)
+            }
+        }
+    }
+
+    private inline fun measureCapture(spanId: UUID, operation: () -> Unit) {
+        val startedNanos = System.nanoTime()
         try {
-            persistSanitized(handle.analysisRunId, handle.id, artifact, sanitized)
-        } catch (_: Exception) {
-            markGap(handle.analysisRunId, "ARTIFACT_STORAGE_UNAVAILABLE")
-            logStorageFailure(handle.analysisRunId)
+            operation()
+        } finally {
+            val elapsedNanos = (System.nanoTime() - startedNanos).coerceAtLeast(0L)
+            val captures = captureNanosBySpan.get()
+            val previousNanos = captures[spanId] ?: 0L
+            captures[spanId] = if (Long.MAX_VALUE - previousNanos < elapsedNanos) Long.MAX_VALUE else previousNanos + elapsedNanos
         }
     }
 

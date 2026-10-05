@@ -3,6 +3,8 @@ import test from "node:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   RECENT_ANALYSIS_RUNS_QUERY_KEY,
+  deleteSourceDocumentMutationOptions,
+  executionArtifactQueryKey,
   executionArtifactQueryOptions,
   recentAnalysisRunsQueryOptions,
   referenceResolutionReportQueryKey,
@@ -146,6 +148,33 @@ test("upload mutation refreshes the active recent-run query without refetching i
   assert.equal(JSON.parse(uploadRequest.body.get("configuration")).claimExtractorProvider, "heuristic");
   assert.equal(listRequests, 3);
   assert.equal(client.getQueryData([...RECENT_ANALYSIS_RUNS_QUERY_KEY, null, "", ""]).items[0].id, "run-created");
+});
+
+test("document deletion clears cached execution artifacts for its runs", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  const runPageKey = [...RECENT_ANALYSIS_RUNS_QUERY_KEY, null, "", ""];
+  const artifactKey = executionArtifactQueryKey("deleted-run", "artifact-1", "span-1", "RESPONSE");
+  client.setQueryData(runPageKey, {
+    items: [{ id: "deleted-run", documentId: "deleted-document" }],
+    nextCursor: null,
+  });
+  client.setQueryData(artifactKey, { content: "sanitized artifact body" });
+  globalThis.fetch = async (url, options = {}) => {
+    assert.equal(url, "/api/v1/documents/deleted-document");
+    assert.equal(options.method, "DELETE");
+    return jsonResponse(null);
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const mutation = client.getMutationCache().build(client, deleteSourceDocumentMutationOptions(client));
+  await mutation.execute("deleted-document");
+
+  assert.equal(client.getQueryData(artifactKey), undefined);
+  assert.deepEqual(client.getQueryData(runPageKey).items, []);
 });
 
 test("Human Review mutation appends a separate result and refreshes the active run report", async (context) => {

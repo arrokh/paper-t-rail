@@ -46,6 +46,8 @@ class AnalysisRunProcessingService(
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
     private val executionService: AnalysisRunExecutionService? = null,
 ) {
+    private data class ProcessingOutcome(val eventId: UUID, val spanStatus: String)
+
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
         Boolean::class.java,
@@ -57,10 +59,8 @@ class AnalysisRunProcessingService(
             event.analysisRunId, event.eventId, event.attempt, "source", event.queueWaitStartedAt,
             event.retryScheduledAt, event.retryDueAt, event.causationId,
         )
-        val operation = {
-            processInternal(event)
-        }
-        return executionService?.record(
+        val operation = { processInternal(event) }
+        val outcome = executionService?.recordWithStatus(
             event.analysisRunId,
             ExecutionSpanSpec(
                 stageId = "source",
@@ -73,13 +73,14 @@ class AnalysisRunProcessingService(
                 causationEventId = event.causationId,
             ),
             operation,
-        ) ?: operation()
+        ) { it.spanStatus } ?: operation()
+        return outcome.eventId
     }
 
-    private fun processInternal(event: PipelineEvent<DocumentAnalysisRequestedPayload>): UUID {
+    private fun processInternal(event: PipelineEvent<DocumentAnalysisRequestedPayload>): ProcessingOutcome {
         require(event.eventType == DOCUMENT_ANALYSIS_REQUESTED) { "Unsupported event type '${event.eventType}'." }
-        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return event.eventId
-        if (isProcessed(event.eventId)) return event.eventId
+        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return ProcessingOutcome(event.eventId, "SKIPPED")
+        if (isProcessed(event.eventId)) return ProcessingOutcome(event.eventId, "REUSED")
 
         val document = jdbc.query(
             "SELECT object_key, sha256 FROM source_documents WHERE id = ?",
@@ -138,7 +139,7 @@ class AnalysisRunProcessingService(
             updated == 1
         } ?: false
         if (!shouldParse) {
-            if (isProcessed(event.eventId)) return event.eventId
+            if (isProcessed(event.eventId)) return ProcessingOutcome(event.eventId, "REUSED")
             throw IllegalStateException("Analysis Run is not in a parsable state.")
         }
         pipelineProgressRepository.mark(event.analysisRunId, "source", "parse-document", "document", "Source Document", "IN_PROGRESS")
@@ -260,7 +261,7 @@ class AnalysisRunProcessingService(
             val maxClaimCitationPairs = run.configuration.validationLimits.maxClaimCitationPairs
             if (claimCitationPairCount > maxClaimCitationPairs.toLong()) {
                 rejectClaimCitationPairLimit(event, claimCitationPairCount, maxClaimCitationPairs)
-                return event.eventId
+                return ProcessingOutcome(event.eventId, "SUCCEEDED")
             }
             val rawTeiObjectKey =
                 "source/${event.payload.documentId}/analysis-runs/${event.analysisRunId}/grobid-${sha256Hex(parsed.rawParserOutput)}.xml"
@@ -381,7 +382,7 @@ class AnalysisRunProcessingService(
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
-        return event.eventId
+        return ProcessingOutcome(event.eventId, "SUCCEEDED")
     }
 
     fun markFailed(event: PipelineEvent<DocumentAnalysisRequestedPayload>, reason: String) {

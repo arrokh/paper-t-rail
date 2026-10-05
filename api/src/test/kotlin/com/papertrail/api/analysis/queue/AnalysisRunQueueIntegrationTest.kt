@@ -245,6 +245,16 @@ class AnalysisRunQueueIntegrationTest {
         execution.capture(firstRun.analysisRunId, secondSpan.id, attribution)
         execution.finishSpan(firstSpan, "SUCCEEDED")
         execution.finishSpan(secondSpan, "FAILED", "PROVIDER_FAILURE")
+        val localProviderSpan = execution.startSpan(
+            firstRun.analysisRunId,
+            ExecutionSpanSpec("source", "PROVIDER", "Heuristic claim extraction", providerId = "heuristic"),
+        )!!
+        execution.finishSpan(localProviderSpan, "SUCCEEDED")
+        assertEquals("LOCAL", execution.span(firstRun.analysisRunId, localProviderSpan.id).trustBoundary)
+        assertEquals(
+            "number",
+            jdbc.queryForObject("SELECT jsonb_typeof(attributes -> 'captureOverheadMillis') FROM analysis_run_execution_spans WHERE id = ?", String::class.java, firstSpan.id),
+        )
         val timelineStart = Instant.parse("2026-01-01T00:00:00Z")
         jdbc.update(
             "UPDATE analysis_run_execution SET started_at = ?, finished_at = ? WHERE analysis_run_id = ?",
@@ -2997,11 +3007,12 @@ class AnalysisRunQueueIntegrationTest {
 
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = (SELECT event_id FROM outbox_events WHERE analysis_run_id = ? AND event_type = 'DocumentAnalysisRequested')", Int::class.java, created.analysisRunId))
         val attempts = jdbc.query(
-            "SELECT id, attempt FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND name = 'Source analysis attempt' ORDER BY attempt",
-            { rs, _ -> rs.getObject("id", UUID::class.java) to rs.getInt("attempt") },
+            "SELECT id, attempt, status FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND name = 'Source analysis attempt' ORDER BY attempt",
+            { rs, _ -> Triple(rs.getObject("id", UUID::class.java), rs.getInt("attempt"), rs.getString("status")) },
             created.analysisRunId,
         )
         assertEquals(listOf(1, 2), attempts.map { it.second })
+        assertEquals(listOf("SUCCEEDED", "REUSED"), attempts.map { it.third })
         assertEquals(2, attempts.map { it.first }.toSet().size)
         assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         assertNotEquals(null, jdbc.queryForObject("SELECT completed_at FROM analysis_runs WHERE id = ?", Timestamp::class.java, created.analysisRunId))

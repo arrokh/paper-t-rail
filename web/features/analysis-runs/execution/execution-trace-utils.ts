@@ -1,3 +1,4 @@
+import { normalizePipelineStageId } from "../pipeline";
 import type { ExecutionSpan, ExecutionSpanFilters } from "./execution-types";
 
 export const MAX_SELECTED_SPAN_ANCESTORS = 12;
@@ -124,9 +125,10 @@ export function filterExecutionSpans(spans: ExecutionSpan[], filters: ExecutionS
       span.safeErrorCode ?? "",
       span.operationId,
     ].some((value) => value.toLowerCase().includes(normalizedQuery));
+    const stageMatches = filters.stage === "all" || normalizePipelineStageId(span.stageId) === filters.stage;
     const statusMatches = filters.status === "all" || span.status.toLowerCase() === filters.status.toLowerCase();
     const kindMatches = filters.kind === "all" || span.kind.toLowerCase() === filters.kind.toLowerCase();
-    return textMatches && statusMatches && kindMatches;
+    return textMatches && stageMatches && statusMatches && kindMatches;
   });
 
   const visible = new Set<string>();

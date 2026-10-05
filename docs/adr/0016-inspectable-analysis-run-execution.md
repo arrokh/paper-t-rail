@@ -1,8 +1,8 @@
 # Store Inspectable Execution Content Separately from Operational Telemetry
 
-**Status:** Accepted design direction; implementation planned in [Analysis Run Execution](../analysis-run-execution-plan.md).
+**Status:** Accepted; core persistence, API, and Execution Trace UI are implemented. Remaining instrumentation gaps are tracked in [Analysis Run Execution](../analysis-run-execution-plan.md).
 
-Users need to inspect how an Analysis Run works, including meaningful internal transformations, provider requests/responses and durations. Content-free spans alone cannot explain actual interactions. Store durable run-linked execution spans and separately protected, sanitized input/output artifacts in PostgreSQL, displayed together in an observability-style Execution view. OpenTelemetry and application logs remain content-free; product visibility must not depend on an external backend's sampling or retention.
+Users need to inspect how an Analysis Run works, including meaningful internal transformations, provider requests/responses and durations. Content-free spans alone cannot explain actual interactions. Store durable run-linked execution spans and separately protected, sanitized input/output artifacts in PostgreSQL, displayed together in an observability-style Execution Trace view. OpenTelemetry and application logs remain content-free; product visibility must not depend on an external backend's sampling or retention.
 
 This adjusts the blanket prohibition on processing content for protected execution artifacts only. Credentials, private contact details, account identities and participant identifiers are excluded before persistence; public scholarly attribution needed for citations is allowed. Uncertain content is omitted with an explicit reason. Capture actual application bodies where safe and versioned internal snapshots, distinguish sanitized/partial/omitted captures, and link existing authorized binary assets instead of duplicating them. This is not a claim of perfect automatic PII detection.
 
