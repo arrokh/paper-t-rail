@@ -10,6 +10,10 @@ The five persisted pipeline stages have corresponding code paths and progress re
 
 “LLM integration” refers to different jobs in the design. Paper T-Rail has local Ollama embeddings in Stage 04 and a local Laya System One provider for narrow Evidence Judgements in Stage 05. Neither is a generic chat-generation integration. The implemented OpenAI-compatible adapter serves Stage 01 only; Stage 04 embeddings and Stage 05 System One remain future consumers, not part of this implementation.
 
+## Planned execution inspection
+
+The [Analysis Run Execution plan](analysis-run-execution-plan.md) covers a user-facing nested span waterfall and protected input/request/response/result inspection across all five stages. [ADR 0016](adr/0016-inspectable-analysis-run-execution.md) permits sanitized processing content in protected run-linked artifacts, while logs and exported telemetry remain content-free. This is planned work: current persisted pipeline progress is not a recorded execution trace, and historical spans or payloads must not be reconstructed and presented as recorded facts.
+
 ## Current five-stage flow and effective configuration
 
 The diagram below separates the five persisted worker stages from the work inside each stage. Provider names in this diagram are the defaults for a new Analysis Run; an enabled option in the provider catalog is not automatically selected.
