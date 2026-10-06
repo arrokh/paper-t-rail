@@ -138,6 +138,25 @@ class OpenApiDocumentationTest {
         assertTrue(body.path("startedAt").isNull)
         assertTrue(body.path("finishedAt").isNull)
         assertTrue(body.path("totalDurationMillis").isNull)
+        assertTrue(body.path("gapReason").isNull)
+    }
+
+    @Test
+    fun `execution summary returns the safe reason for an incomplete trace`() {
+        val runId = UUID.randomUUID()
+        Mockito.`when`(analysisRunExecutionService.summary(runId)).thenReturn(
+            AnalysisRunExecutionSummary(
+                runId, true, true, "STOPPED", "INCOMPLETE", Instant.parse("2026-10-01T00:00:00Z"),
+                Instant.parse("2026-10-01T00:00:12Z"), 12_000, "UNSAFE_SPAN_METADATA_OMITTED",
+            ),
+        )
+
+        val response = mockMvc.perform(get("/api/v1/analysis-runs/$runId/execution"))
+            .andExpect(status().isOk)
+            .andReturn()
+            .response
+
+        assertEquals("UNSAFE_SPAN_METADATA_OMITTED", objectMapper.readTree(response.contentAsString).path("gapReason").asText())
     }
 
     @Test
@@ -400,8 +419,9 @@ class OpenApiDocumentationTest {
         val executionSummarySchema = executionSummary.path("responses").path("200").path("content")
             .path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val executionSummaryProperties = schemas.path(executionSummarySchema).path("properties")
-        listOf("analysisRunId", "captureRequested", "captureEnabled", "recordingState", "completeness", "startedAt", "finishedAt", "totalDurationMillis")
+        listOf("analysisRunId", "captureRequested", "captureEnabled", "recordingState", "completeness", "startedAt", "finishedAt", "totalDurationMillis", "gapReason")
             .forEach { assertTrue(executionSummaryProperties.has(it)) }
+        assertTrue(executionSummaryProperties.path("gapReason").path("enum").any { it.asText() == "UNSAFE_SPAN_METADATA_OMITTED" })
         val spanList = paths.path("$executionBase/spans").path("get")
         assertTrue(spanList.path("responses").path("200").path("content").has("application/json"))
         assertTrue(spanList.path("parameters").any { it.path("name").asText() == "cursor" })

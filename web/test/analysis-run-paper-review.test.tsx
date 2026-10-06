@@ -645,6 +645,63 @@ describe("Analysis Run Paper Review", () => {
     expect(await screen.findByRole("region", { name: quickAccessName })).toBeTruthy();
   });
 
+  it("uses the same scroll-before-select transition for pipeline cards and sticky buttons", async () => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=source`);
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalMatchMedia = window.matchMedia;
+    const scrollEvents: string[] = [];
+    const rect = (top: number, bottom: number): DOMRect => ({
+      x: 0, y: top, width: 1_024, height: bottom - top, top, right: 1_024, bottom, left: 0,
+      toJSON: () => ({}),
+    });
+    const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.id === "pipeline-results") return rect(-10, 1_000);
+      if (this.getAttribute("aria-label")?.includes("configuration and persisted progress")) return rect(-100, -1);
+      if (this.hasAttribute("data-sticky-step-navigation")) return rect(0, 50);
+      return originalGetBoundingClientRect.call(this);
+    });
+    window.matchMedia = () => ({
+      matches: true,
+      media: "(prefers-reduced-motion: reduce)",
+      onchange: null,
+      addListener() {},
+      removeListener() {},
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent: () => false,
+    });
+    const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => scrollEvents.push("scroll"));
+    const originalReplaceState = window.history.replaceState.bind(window.history);
+    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation((data, unused, url) => {
+      scrollEvents.push("url");
+      originalReplaceState(data, unused, url);
+    });
+
+    try {
+      renderDetailPage();
+      await waitFor(() => expect(document.querySelector("[data-sticky-step-navigation]")?.getAttribute("aria-hidden")).toBe("false"));
+      const [pipelineCardNavigation, stickyNavigation] = await screen.findAllByRole("navigation", { name: "Analysis pipeline stages" });
+
+      fireEvent.click(within(stickyNavigation).getByRole("button", { name: /02 Resolve references/ }));
+      await waitFor(() => expect(new URLSearchParams(window.location.search).get("step")).toBe("references"));
+      expect(scrollEvents).toEqual(["scroll", "url"]);
+
+      scrollEvents.length = 0;
+      fireEvent.click(within(pipelineCardNavigation).getByRole("button", { name: /03 Acquire cited sources/ }));
+      await waitFor(() => expect(new URLSearchParams(window.location.search).get("step")).toBe("access"));
+      expect(scrollEvents).toEqual(["scroll", "url"]);
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    } finally {
+      scrollIntoView.mockRestore();
+      replaceState.mockRestore();
+      geometry.mockRestore();
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+
   it("removes Back to top while Paper Review is active and restores it for the pipeline", async () => {
     installSourcePdfResponse();
     queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });

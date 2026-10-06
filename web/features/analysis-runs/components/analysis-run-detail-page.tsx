@@ -21,6 +21,7 @@ import {
   scrollToAnalysisPipelineCard,
   scrollToPaperReviewCard,
 } from "@/features/analysis-runs/scroll-to-paper-review-card";
+import { scrollToPipelineStageNavigation } from "@/features/analysis-runs/scroll-to-pipeline-stage-navigation";
 import { ANALYSIS_RUN_STATUS_CLASS_NAMES, analysisRunStatusLabel } from "@/features/analysis-runs/run-status";
 import {
   useAnalysisRun,
@@ -145,6 +146,10 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const isPaperReviewActive = selectedView === "review" || routeSelectedView === "review";
   const previousRouteView = useRef(routeSelectedView);
   const previousSelectedView = useRef(selectedView);
+  const stageSelectionRequestRef = useRef(0);
+  useEffect(() => () => {
+    stageSelectionRequestRef.current += 1;
+  }, []);
   const [hasOpenedPaperReview, setHasOpenedPaperReview] = useState(selectedView === "review");
   const selectedOutcomeId = searchParams.get("reviewPair");
   const selectedReferenceKey = searchParams.get("reviewReference");
@@ -239,8 +244,10 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
 
   const backHref = homeHrefFor(searchParams, run.id);
 
-  function selectStage(stage: PipelineStageId) {
-    updateQueryParameters({ step: stage, substep: null });
+  async function selectStage(stage: PipelineStageId) {
+    const requestId = ++stageSelectionRequestRef.current;
+    await scrollToPipelineStageNavigation();
+    if (requestId === stageSelectionRequestRef.current) updateQueryParameters({ step: stage, substep: null });
   }
 
   function selectReviewPair(outcomeId: string, localReferenceKey: string) {

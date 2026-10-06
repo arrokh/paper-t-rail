@@ -507,7 +507,7 @@ class ExecutionCaptureSanitizer(
     companion object {
         const val DEFAULT_MAX_ARTIFACT_BYTES = 1_048_576
         private const val SAFE_FIXTURE_PROVIDER_ID = "recorded-fixtures"
-        private val SAFE_IDENTIFIER = Regex("^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,119}$")
+        private val SAFE_IDENTIFIER = Regex("^(?![a-zA-Z][a-zA-Z0-9+.-]*://)[a-zA-Z0-9][a-zA-Z0-9._/:-]{0,119}$")
         private val SAFE_HTTP_ROUTE = Regex("^/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+$")
         private val SAFE_HASH = Regex("^[0-9a-f]{64}$")
         private val SAFE_SCHEMA_VERSION = Regex("^[a-z0-9][a-z0-9-]{0,63}-v[0-9]{1,3}$")

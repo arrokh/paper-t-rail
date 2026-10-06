@@ -19,4 +19,14 @@ data class AnalysisRunExecutionSummary(
     val finishedAt: Instant?,
     @field:Schema(description = "Elapsed time from recording start to finish or now; overlapping spans are not summed.")
     val totalDurationMillis: Long?,
+    @field:Schema(
+        allowableValues = [
+            "UNSAFE_SPAN_METADATA_OMITTED", "UNSAFE_SPAN_RESULT_OMITTED", "INTERVAL_TIMESTAMPS_UNAVAILABLE",
+            "SPAN_STORAGE_UNAVAILABLE", "RETRY_SCHEDULE_TIMESTAMPS_UNAVAILABLE", "QUEUE_ENQUEUE_TIMESTAMP_UNAVAILABLE",
+            "UNSAFE_ARTIFACT_METADATA_OMITTED", "ARTIFACT_STORAGE_UNAVAILABLE", "UNSAFE_SPAN_ATTRIBUTES_OMITTED",
+            "CAPTURE_STOPPED", "INTERRUPTED_OPERATION",
+        ],
+        description = "First safe reason recorded for an execution trace gap; null when no gap reason was recorded.",
+    )
+    val gapReason: String? = null,
 )

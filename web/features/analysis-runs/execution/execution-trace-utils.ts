@@ -1,5 +1,5 @@
 import { normalizePipelineStageId } from "../pipeline";
-import type { ExecutionSpan, ExecutionSpanFilters } from "./execution-types";
+import type { ExecutionGapReason, ExecutionSpan, ExecutionSpanFilters } from "./execution-types";
 
 export const MAX_SELECTED_SPAN_ANCESTORS = 12;
 
@@ -84,6 +84,24 @@ export function formatExecutionDuration(durationMillis: number | null): string {
   const seconds = durationMillis / 1_000;
   const formatted = Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1).replace(/\.0$/, "");
   return `${formatted} sec`;
+}
+
+const EXECUTION_GAP_REASON_DESCRIPTIONS: Record<ExecutionGapReason, string> = {
+  UNSAFE_SPAN_METADATA_OMITTED: "An operation's provider or model metadata did not meet trace safety rules, so its span was omitted.",
+  UNSAFE_SPAN_RESULT_OMITTED: "An operation result did not meet trace safety rules, so its span was omitted.",
+  INTERVAL_TIMESTAMPS_UNAVAILABLE: "Required interval timestamps were unavailable.",
+  SPAN_STORAGE_UNAVAILABLE: "Span storage was unavailable for part of the run.",
+  RETRY_SCHEDULE_TIMESTAMPS_UNAVAILABLE: "A retry could not be timestamped.",
+  QUEUE_ENQUEUE_TIMESTAMP_UNAVAILABLE: "A queued operation could not be timestamped.",
+  UNSAFE_ARTIFACT_METADATA_OMITTED: "Artifact metadata did not meet trace safety rules and was omitted.",
+  ARTIFACT_STORAGE_UNAVAILABLE: "Artifact storage was unavailable for part of the run.",
+  UNSAFE_SPAN_ATTRIBUTES_OMITTED: "Some operation attributes did not meet trace safety rules and were omitted.",
+  CAPTURE_STOPPED: "Trace capture was stopped before the Analysis Run finished.",
+  INTERRUPTED_OPERATION: "An operation was still running when the Analysis Run ended.",
+};
+
+export function executionGapReasonDescription(gapReason: ExecutionGapReason | null): string {
+  return gapReason ? EXECUTION_GAP_REASON_DESCRIPTIONS[gapReason] ?? "One or more operation spans could not be recorded." : "One or more operation spans could not be recorded.";
 }
 
 export function getExecutionAncestorContext(

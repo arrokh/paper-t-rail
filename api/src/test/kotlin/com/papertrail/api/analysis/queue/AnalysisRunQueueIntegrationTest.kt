@@ -575,6 +575,7 @@ class AnalysisRunQueueIntegrationTest {
         val finished = execution.summary(run.analysisRunId)
         assertEquals("STOPPED", finished.recordingState)
         assertEquals("INCOMPLETE", finished.completeness)
+        assertEquals("CAPTURE_STOPPED", finished.gapReason)
         assertTrue(finished.finishedAt != null)
     }
 

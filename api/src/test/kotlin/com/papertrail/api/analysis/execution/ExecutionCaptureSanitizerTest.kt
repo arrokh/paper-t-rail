@@ -174,6 +174,20 @@ class ExecutionCaptureSanitizerTest {
     }
 
     @Test
+    fun `URL-shaped provider metadata is rejected while versioned model IDs remain safe`() {
+        assertTrue(sanitizer.isSafeIdentifier("nomic-embed-text:v1.5"))
+
+        val result = sanitizer.sanitize(
+            "provider-call-summary-v1",
+            mapOf("providerId" to "provider", "modelId" to "https://internal-host.example"),
+        )
+
+        assertEquals(CaptureFidelity.OMITTED, result.fidelity)
+        assertEquals("UNSUPPORTED_OR_UNSAFE_FIELDS", result.reason)
+        assertEquals(null, result.content)
+    }
+
+    @Test
     fun `source PDF and raw parser XML are omitted rather than duplicated`() {
         val request = sanitizer.sanitize("source-document-pdf-request-v1", mapOf("content" to "private paper text"))
         val response = sanitizer.sanitize(

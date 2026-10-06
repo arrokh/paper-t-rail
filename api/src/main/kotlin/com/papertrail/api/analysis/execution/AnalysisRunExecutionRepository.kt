@@ -268,7 +268,7 @@ class AnalysisRunExecutionRepository(
 
     fun summary(analysisRunId: UUID): AnalysisRunExecutionSummary? = jdbc.query(
         """
-        SELECT capture_requested, capture_enabled, recording_state, completeness, started_at, finished_at
+        SELECT capture_requested, capture_enabled, recording_state, completeness, gap_reason, started_at, finished_at
           FROM analysis_run_execution WHERE analysis_run_id = ?
         """.trimIndent(),
         { rs, _ ->
@@ -283,6 +283,7 @@ class AnalysisRunExecutionRepository(
                 startedAt = started,
                 finishedAt = finished,
                 totalDurationMillis = Duration.between(started, finished ?: Instant.now()).toMillis().coerceAtLeast(0),
+                gapReason = rs.getString("gap_reason"),
             )
         },
         analysisRunId,

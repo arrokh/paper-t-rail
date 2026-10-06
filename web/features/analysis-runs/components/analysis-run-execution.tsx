@@ -25,6 +25,7 @@ import {
   useStopExecutionCapture,
 } from "@/features/analysis-runs/queries/analysis-run-queries";
 import {
+  executionGapReasonDescription,
   executionStatusLabel,
   filterExecutionSpans,
   getExecutionAncestorContext,
@@ -810,9 +811,17 @@ export function AnalysisRunExecution({
         </Alert>
       )}
       {traceMayBeIncomplete && (
-        <Alert><AlertTitle>Some execution details may be missing</AlertTitle><AlertDescription>{summary.completeness === "INCOMPLETE"
-          ? "The recording is marked incomplete. Missing spans are not reconstructed."
-          : "The Analysis Run is terminal, but execution recording is not finalized. This trace may contain gaps."}</AlertDescription></Alert>
+        <Alert>
+          <AlertTitle>Some execution details may be missing</AlertTitle>
+          <AlertDescription>
+            {summary.completeness === "INCOMPLETE" ? (
+              <>
+                {executionGapReasonDescription(summary.gapReason)} This trace gap does not change the Analysis Run result. Missing spans are not reconstructed.
+                {summary.gapReason && <span className="mt-1 block text-xs">Reason code: <code>{summary.gapReason}</code></span>}
+              </>
+            ) : "The Analysis Run is terminal, but execution recording is not finalized. This trace may contain gaps."}
+          </AlertDescription>
+        </Alert>
       )}
       {spansQuery.isError && <Alert variant="destructive"><AlertTitle>Could not load operations</AlertTitle><AlertDescription>{permissionError(spansQuery.error)}</AlertDescription></Alert>}
 

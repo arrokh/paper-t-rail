@@ -64,6 +64,54 @@ class AnalysisRunExecutionServiceTest {
     }
 
     @Test
+    fun `versioned embedding model IDs remain valid provider span metadata`() {
+        val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
+        val service = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), ObjectMapper())
+        val analysisRunId = UUID.randomUUID()
+        val parentSpec = ExecutionSpanSpec("evidence", "INTERNAL", "Index cited paper")
+        val parentHandle = ExecutionSpanHandle(
+            UUID.randomUUID(), analysisRunId, UUID.randomUUID(), Instant.now(), System.nanoTime(), stageId = "evidence",
+        )
+        val operationKey = "evidence-embedding-0"
+        val embeddingModelId = "nomic-embed-text:v1.5"
+        val providerOperationId = UUID.nameUUIDFromBytes(
+            "${parentHandle.operationId}:provider-call:$operationKey".toByteArray(Charsets.UTF_8),
+        )
+        val providerSpec = ExecutionSpanSpec(
+            stageId = "evidence",
+            kind = "PROVIDER",
+            name = "Generate evidence embedding",
+            parentSpanId = parentHandle.id,
+            providerId = "ollama",
+            modelId = embeddingModelId,
+            operationId = providerOperationId,
+        )
+        val providerHandle = ExecutionSpanHandle(
+            UUID.randomUUID(), analysisRunId, providerOperationId, Instant.now(), System.nanoTime(), stageId = "evidence",
+        )
+        Mockito.`when`(repository.startSpan(analysisRunId, parentSpec, "{}")).thenReturn(parentHandle)
+        Mockito.`when`(repository.startSpan(analysisRunId, providerSpec, "{}")).thenReturn(providerHandle)
+
+        val result = service.record(analysisRunId, parentSpec) {
+            service.recordCurrentProviderCall(
+                operationKey = operationKey,
+                name = "Generate evidence embedding",
+                providerId = "ollama",
+                modelId = embeddingModelId,
+            ) { "embedded" }
+        }
+
+        assertEquals("embedded", result)
+        val providerSpans = Mockito.mockingDetails(repository).invocations
+            .filter { it.method.name == "startSpan" }
+            .map { it.arguments[1] as ExecutionSpanSpec }
+            .filter { it.kind == "PROVIDER" }
+        assertEquals(1, providerSpans.size)
+        assertEquals(embeddingModelId, providerSpans.single().modelId)
+        Mockito.verify(repository, Mockito.never()).markGap(analysisRunId, "UNSAFE_SPAN_METADATA_OMITTED")
+    }
+
+    @Test
     fun `OpenAI transport artifacts retain safe summaries but omit prompt and answer content`() {
         val mapper = ObjectMapper()
         val requestBodyReceived = AtomicReference<String>()
