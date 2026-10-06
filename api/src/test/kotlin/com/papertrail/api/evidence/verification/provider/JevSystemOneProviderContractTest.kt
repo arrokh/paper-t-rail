@@ -2,14 +2,15 @@ package com.papertrail.api.evidence.verification.provider
 
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionRepository
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.CaptureFidelity
-import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
-import com.papertrail.api.analysis.execution.ExecutionOperationId
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
-import com.papertrail.api.analysis.execution.ExecutionSpanHandle
-import com.papertrail.api.analysis.execution.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.execution.domain.SanitizedExecutionArtifact
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.domain.CaptureFidelity
+import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.domain.ExecutionOperationId
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanHandle
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
 import com.papertrail.api.evidence.verification.domain.AtomicClaimForJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
@@ -31,6 +32,9 @@ import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Executors
+import com.papertrail.api.external.jev.JevSystemOneProvider
+import com.papertrail.api.external.jev.JevSystemOneProviderException
+import com.papertrail.api.external.jev.JevSystemOneSettings
 
 class JevSystemOneProviderContractTest {
     private val objectMapper = jacksonObjectMapper()
@@ -39,7 +43,7 @@ class JevSystemOneProviderContractTest {
     fun `sends the minimum typed judgement request and maps Jev output into shared judgements`() {
         TestServer(responseBody = validResponse()).use { server ->
             val settings = settings(server.baseUrl)
-            val provider = JevSystemOneProvider(settings, objectMapper)
+            val provider = JevSystemOneProvider(settings)
             val claimId = UUID.randomUUID()
             val evidenceId = UUID.randomUUID()
             val result = provider.evaluate(
@@ -94,7 +98,7 @@ class JevSystemOneProviderContractTest {
     fun `Jev transport records sanitized actual request and response with a typed mapped result`() {
         TestServer(responseBody = validResponse()).use { server ->
             val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
-            val execution = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), objectMapper)
+            val execution = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer())
             val runId = UUID.randomUUID()
             val eventId = UUID.randomUUID()
             val operationId = UUID.randomUUID()
@@ -117,7 +121,7 @@ class JevSystemOneProviderContractTest {
             )
             Mockito.`when`(repository.startSpan(runId, parentSpec, "{}")).thenReturn(parent)
             Mockito.`when`(repository.startSpan(runId, providerSpec, "{}")).thenReturn(providerSpan)
-            val provider = JevSystemOneProvider(settings(server.baseUrl), objectMapper, execution)
+            val provider = JevSystemOneProvider(settings(server.baseUrl), execution)
             val request = SemanticJudgementRequest(
                 AtomicClaimForJudgement(UUID.randomUUID(), "participant P-0042 private@example.org"),
                 listOf(EvidencePassageForJudgement(UUID.randomUUID(), "apiKey=sk-private-value", "Results")),
@@ -148,7 +152,7 @@ class JevSystemOneProviderContractTest {
                 .filter { it.method.name == "recordArtifact" }
                 .map {
                     it.arguments[2] as ExecutionSpanArtifactSpec to
-                        it.arguments[3] as com.papertrail.api.analysis.execution.SanitizedExecutionArtifact
+                        it.arguments[3] as SanitizedExecutionArtifact
                 }
             assertEquals(listOf("INPUT", "REQUEST", "RESPONSE", "RESULT"), artifacts.map { it.first.role })
             assertEquals(CaptureFidelity.SANITIZED, artifacts.first().second.fidelity)
@@ -366,14 +370,13 @@ class JevSystemOneProviderContractTest {
             assertEquals(0, server.requestCount)
         }
 
-        val unconfigured = JevSystemOneProvider(JevSystemOneSettings.disabled(), objectMapper)
+        val unconfigured = JevSystemOneProvider(JevSystemOneSettings.disabled())
         val failure = assertThrows<JevSystemOneProviderException> { unconfigured.evaluate(request()) }
         assertEquals("SYSTEM_ONE_NOT_CONFIGURED", failure.failureReasonCode)
     }
 
     private fun provider(baseUrl: String, requestTimeoutMillis: Long = 5_000) = JevSystemOneProvider(
         settings(baseUrl, requestTimeoutMillis),
-        objectMapper,
     )
 
     private fun settings(baseUrl: String, requestTimeoutMillis: Long = 5_000) = JevSystemOneSettings(

@@ -6,7 +6,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidenceRole
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue

@@ -1,4 +1,5 @@
 package com.papertrail.api.scholarly.references.client
+import com.papertrail.api.external.crossref.CrossrefLookupCache
 
 internal object NoOpCrossrefLookupCache : CrossrefLookupCache {
     override fun findByDoi(doi: String): List<ScholarlyWork>? = null

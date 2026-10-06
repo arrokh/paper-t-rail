@@ -1,5 +1,6 @@
 package com.papertrail.api.analysis.execution
 
+import com.papertrail.api.analysis.execution.domain.CaptureFidelity
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -7,6 +8,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.net.URI
+import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
 
 class ExecutionCaptureSanitizerTest {
     private val sanitizer = ExecutionCaptureSanitizer()

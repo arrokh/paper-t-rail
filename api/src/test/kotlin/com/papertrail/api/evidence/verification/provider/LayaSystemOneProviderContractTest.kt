@@ -27,6 +27,10 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import com.papertrail.api.external.laya.LayaSystemOneProvider
+import com.papertrail.api.external.laya.LayaSystemOneProviderException
+import com.papertrail.api.external.laya.LayaSystemOneSettings
+import com.papertrail.api.external.laya.LayaEvaluationProvider
 
 class LayaSystemOneProviderContractTest {
     @Test
@@ -378,14 +382,12 @@ class LayaSystemOneProviderContractTest {
 
     private fun provider(settings: LayaSystemOneSettings): LayaSystemOneProvider = LayaSystemOneProvider(
         settings = settings,
-        objectMapper = mapper,
     )
 
     private fun catalog(settings: LayaSystemOneSettings): ProviderCatalog =
         ProviderCatalog.safeDefaults(layaSystemOneSettings = settings)
 
     private fun configurationFactory(settings: LayaSystemOneSettings): RunConfigurationFactory = RunConfigurationFactory(
-        objectMapper = mapper,
         providerCatalog = catalog(settings),
         parserId = "grobid",
         parserVersion = "0.9.1-crf",

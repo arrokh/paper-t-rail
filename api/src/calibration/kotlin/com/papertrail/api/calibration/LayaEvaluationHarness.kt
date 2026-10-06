@@ -3,9 +3,9 @@ package com.papertrail.api.calibration
 import com.papertrail.api.evidence.verification.domain.AtomicClaimForJudgement
 import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementRequest
-import com.papertrail.api.evidence.verification.provider.LayaEvaluationProvider
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneProviderException
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.laya.LayaEvaluationProvider
+import com.papertrail.api.external.laya.LayaSystemOneProviderException
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import java.time.Clock
 import java.time.Instant
 import java.util.Base64

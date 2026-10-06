@@ -14,6 +14,7 @@ import org.springframework.test.web.client.match.MockRestRequestMatchers.method
 import org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
 import org.springframework.web.client.RestClient
+import com.papertrail.api.external.docling.DoclingCitedPaperPdfParser
 
 class DoclingCitedPaperPdfParserContractTest {
     @Test
@@ -34,7 +35,6 @@ class DoclingCitedPaperPdfParserContractTest {
             )
         val parser = DoclingCitedPaperPdfParser(
             client = builder.build(),
-            objectMapper = jacksonObjectMapper(),
             parserVersion = "1.30.0",
             maximumResponseBytes = 64 * 1024,
             maximumCharacters = 5_000,
@@ -70,7 +70,6 @@ class DoclingCitedPaperPdfParserContractTest {
             )
         val parser = DoclingCitedPaperPdfParser(
             client = builder.build(),
-            objectMapper = jacksonObjectMapper(),
             parserVersion = "1.30.0",
             maximumResponseBytes = 64 * 1024,
             maximumCharacters = 5_000,
@@ -93,7 +92,6 @@ class DoclingCitedPaperPdfParserContractTest {
             )
         val parser = DoclingCitedPaperPdfParser(
             client = builder.build(),
-            objectMapper = jacksonObjectMapper(),
             parserVersion = "1.30.0",
             maximumResponseBytes = 16,
             maximumCharacters = 5_000,

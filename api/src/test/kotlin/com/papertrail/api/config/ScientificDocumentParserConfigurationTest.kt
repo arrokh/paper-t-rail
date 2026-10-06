@@ -2,6 +2,7 @@ package com.papertrail.api.config
 
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
+import com.papertrail.api.external.grobid.ScientificDocumentParserConfiguration
 
 class ScientificDocumentParserConfigurationTest {
     private val configuration = ScientificDocumentParserConfiguration()

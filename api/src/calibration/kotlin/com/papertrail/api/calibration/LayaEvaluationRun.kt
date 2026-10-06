@@ -3,8 +3,8 @@ package com.papertrail.api.calibration
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidenceRole
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneProviderException
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneProviderException
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID

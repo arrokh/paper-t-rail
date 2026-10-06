@@ -1,7 +1,7 @@
 package com.papertrail.api.evidence.verification.repository
 
 import com.fasterxml.jackson.core.type.TypeReference
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidencePassageSpanDefinition
 import com.papertrail.api.evidence.verification.domain.LayaEvidencePassageSpanPlanner
@@ -15,7 +15,6 @@ import java.util.UUID
 @Repository
 class EvidencePassageSpanRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
     private val transactionTemplate: TransactionTemplate,
 ) {
     fun prepare(
@@ -52,7 +51,7 @@ class EvidencePassageSpanRepository(
                 definition.coreEndOffset,
                 definition.contextStartOffset,
                 definition.contextEndOffset,
-                objectMapper.writeValueAsString(definition.tokenCounts),
+                JsonUtil.toJson(definition.tokenCounts),
                 providerId,
                 modelId,
                 providerVersion,
@@ -110,7 +109,7 @@ class EvidencePassageSpanRepository(
             judgement.claimScopeMatch,
             judgement.studyDesignQuality,
             judgement.relevance,
-            objectMapper.writeValueAsString(judgement.rawScores()),
+            JsonUtil.toJson(judgement.rawScores()),
             spanId,
         )
     }
@@ -220,7 +219,7 @@ class EvidencePassageSpanRepository(
                     contextEndOffset = contextEnd,
                     coreText = parentText.substring(coreStart, coreEnd),
                     contextText = parentText.substring(contextStart, contextEnd),
-                    tokenCounts = objectMapper.readValue(rs.getString("token_counts"), object : TypeReference<List<Int>>() {}),
+                    tokenCounts = JsonUtil.fromJson(rs.getString("token_counts"), object : TypeReference<List<Int>>() {}),
                     status = status,
                     failureReason = rs.getString("failure_reason"),
                     providerId = rs.getString("system_one_provider"),
@@ -256,7 +255,7 @@ class EvidencePassageSpanRepository(
                     coreEndOffset = rs.getInt("core_end_offset"),
                     contextStartOffset = rs.getInt("context_start_offset"),
                     contextEndOffset = rs.getInt("context_end_offset"),
-                    tokenCounts = objectMapper.readValue(rs.getString("token_counts"), object : TypeReference<List<Int>>() {}),
+                    tokenCounts = JsonUtil.fromJson(rs.getString("token_counts"), object : TypeReference<List<Int>>() {}),
                     incompleteReason = failureReason.takeIf { status == "INCOMPLETE" },
                 ),
                 status = status,

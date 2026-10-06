@@ -3,7 +3,7 @@ package com.papertrail.api.citation.claims.provider
 import com.papertrail.api.citation.claims.domain.ClaimAnalysisVersions
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.external.openai.OpenAiCompatibleEndpointSettings
 
 /** Claim-analysis model profile layered on the shared OpenAI-compatible endpoint configuration. */
 data class OpenAiCompatibleClaimAnalysisSettings(

@@ -10,13 +10,14 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionRepository
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.CaptureFidelity
-import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
-import com.papertrail.api.analysis.execution.ExecutionSpanHandle
-import com.papertrail.api.analysis.execution.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.execution.domain.SanitizedExecutionArtifact
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.domain.CaptureFidelity
+import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanHandle
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.citation.claims.domain.ClaimAnalysisContextInput
@@ -32,10 +33,10 @@ import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleChatClient
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleProviderException
-import com.papertrail.api.infrastructure.providers.openai.RetryableOpenAiCompatibleProviderException
+import com.papertrail.api.external.openai.OpenAiCompatibleChatClient
+import com.papertrail.api.external.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.external.openai.OpenAiCompatibleProviderException
+import com.papertrail.api.external.openai.RetryableOpenAiCompatibleProviderException
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -106,7 +107,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         val settings = localSettings(server)
         val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
         val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
-        val execution = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), objectMapper)
+        val execution = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer())
         val runId = UUID.randomUUID()
         val spanSpec = ExecutionSpanSpec("source", "PROVIDER", "Analyze Atomic Claims")
         val spanHandle = ExecutionSpanHandle(UUID.randomUUID(), runId, UUID.randomUUID(), Instant.now(), System.nanoTime())
@@ -156,7 +157,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             .filter { it.method.name == "recordArtifact" }
             .map {
                 it.arguments[2] as ExecutionSpanArtifactSpec to
-                    it.arguments[3] as com.papertrail.api.analysis.execution.SanitizedExecutionArtifact
+                    it.arguments[3] as SanitizedExecutionArtifact
             }
         assertEquals(listOf("INPUT", "REQUEST", "RESPONSE", "RESULT"), captured.map { it.first.role })
         assertEquals(CaptureFidelity.SANITIZED, captured.first().second.fidelity)
@@ -274,15 +275,14 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     fun `batches whole contexts deterministically and rejects an oversized context before sending any request`() = withServer { server, requests ->
         val initialSettings = localSettings(server)
         val request = requestFactory().from(documentWithTwoContexts())
-        val payloadFactory = OpenAiCompatibleClaimAnalysisPayloadFactory(objectMapper)
-        val chatClient = OpenAiCompatibleChatClient(initialSettings.endpoint, objectMapper)
+        val payloadFactory = OpenAiCompatibleClaimAnalysisPayloadFactory()
+        val chatClient = OpenAiCompatibleChatClient(initialSettings.endpoint)
         val singleContextBudgets = request.contexts.map { context ->
             val payload = payloadFactory.create(ClaimAnalysisRequest(listOf(context)))
             chatClient.requestBody(
                 modelId = initialSettings.modelId,
                 maxCompletionTokens = initialSettings.maxCompletionTokens,
                 responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(
-                    objectMapper,
                     context.targetCandidates.map { it.key.value },
                 ),
                 systemPrompt = OpenAiCompatibleClaimAnalysisPrompt.systemPrompt,
@@ -345,7 +345,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
                 disclosureFingerprint,
             )),
         )
-        val payload = OpenAiCompatibleClaimAnalysisPayloadFactory(objectMapper)
+        val payload = OpenAiCompatibleClaimAnalysisPayloadFactory()
             .create(requestFactory().from(documentWithOneContextAndTwoTargets()))
         val gate = ProviderCallGate(catalog)
         var sent = false
@@ -377,7 +377,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         withServer { server, requests ->
             val initialSettings = localSettings(server)
             val settings = initialSettings.copy(endpoint = initialSettings.endpoint.copy(enabled = false))
-            val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
+            val client = OpenAiCompatibleChatClient(settings.endpoint)
 
             val failure = assertThrows(OpenAiCompatibleProviderException::class.java) {
                 client.complete(byteArrayOf())
@@ -527,7 +527,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
             val settings = initialSettings.copy(
                 endpoint = initialSettings.endpoint.copy(requestTimeoutMillis = 1_000),
             )
-            val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
+            val client = OpenAiCompatibleChatClient(settings.endpoint)
             val requestBody = transportRequestBody(client, settings)
 
             val failure = assertThrows(RetryableOpenAiCompatibleProviderException::class.java) {
@@ -546,7 +546,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     fun `retries provider throttling but treats client errors as permanent without exposing response content`() {
         withServer(response = "provider-private-response", statusCode = 429) { server, _ ->
             val settings = localSettings(server)
-            val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
+            val client = OpenAiCompatibleChatClient(settings.endpoint)
             val failure = assertThrows(RetryableOpenAiCompatibleProviderException::class.java) {
                 client.complete(transportRequestBody(client, settings))
             }
@@ -554,7 +554,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         }
         withServer(response = "provider-private-response", statusCode = 400) { server, _ ->
             val settings = localSettings(server)
-            val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
+            val client = OpenAiCompatibleChatClient(settings.endpoint)
             val failure = assertThrows(OpenAiCompatibleProviderException::class.java) {
                 client.complete(transportRequestBody(client, settings))
             }
@@ -571,11 +571,11 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         try {
             withServer(response = "provider-private-response", statusCode = 400) { server, _ ->
                 val settings = localSettings(server)
-                val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
+                val client = OpenAiCompatibleChatClient(settings.endpoint)
                 val requestBody = client.requestBody(
                     modelId = settings.modelId,
                     maxCompletionTokens = settings.maxCompletionTokens,
-                    responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(objectMapper),
+                    responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(),
                     systemPrompt = "synthetic system content",
                     userJson = "{\"syntheticClaim\":\"do-not-log\"}",
                 )
@@ -617,11 +617,11 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         try {
             withServer(response = "provider-private-response", statusCode = 200) { server, _ ->
                 val settings = localSettings(server)
-                val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
+                val client = OpenAiCompatibleChatClient(settings.endpoint)
                 val requestBody = client.requestBody(
                     modelId = settings.modelId,
                     maxCompletionTokens = settings.maxCompletionTokens,
-                    responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(objectMapper),
+                    responseFormat = OpenAiCompatibleClaimAnalysisResponseFormat.create(),
                     systemPrompt = "synthetic system content",
                     userJson = "{\"syntheticClaim\":\"do-not-log\"}",
                 )
@@ -666,7 +666,7 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         val settings = initialSettings.copy(
             endpoint = initialSettings.endpoint.copy(maxResponseBytes = 128),
         )
-        val client = OpenAiCompatibleChatClient(settings.endpoint, objectMapper)
+        val client = OpenAiCompatibleChatClient(settings.endpoint)
         val requestBody = transportRequestBody(client, settings)
 
         val failure = assertThrows(OpenAiCompatibleProviderException::class.java) {
@@ -695,9 +695,8 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     ) = OpenAiCompatibleClaimAnalysisProvider(
         settings = settings,
         providerCallGate = ProviderCallGate(catalog),
-        chatClient = OpenAiCompatibleChatClient(settings.endpoint, objectMapper, executionService),
-        payloadFactory = OpenAiCompatibleClaimAnalysisPayloadFactory(objectMapper),
-        objectMapper = objectMapper,
+        chatClient = OpenAiCompatibleChatClient(settings.endpoint, executionService),
+        payloadFactory = OpenAiCompatibleClaimAnalysisPayloadFactory(),
         executionService = executionService,
     )
 
@@ -705,7 +704,6 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         catalog: ProviderCatalog,
         consents: List<ExternalProviderConsentRequest> = emptyList(),
     ) = RunConfigurationFactory(
-        objectMapper = objectMapper,
         providerCatalog = catalog,
         parserId = "grobid",
         parserVersion = "0.9.1-crf",

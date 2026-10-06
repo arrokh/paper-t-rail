@@ -1,17 +1,14 @@
 package com.papertrail.api.evidence.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.evidence.domain.EmbeddedEvidenceChunk
 import com.papertrail.api.evidence.domain.EmbeddingProfile
 import com.papertrail.api.evidence.domain.EvidenceClaim
 import com.papertrail.api.evidence.domain.EvidenceIndexingContext
 import com.papertrail.api.evidence.domain.RankedEvidenceChunk
-import com.papertrail.api.evidence.embedding.toPostgresVectorLiteral
-import com.papertrail.api.evidence.retrieval.PostgresHybridEvidenceRetriever
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
-import com.papertrail.api.document.service.lockActiveAnalysisRun
-import com.papertrail.api.document.service.requireActiveAnalysisRun
+import com.papertrail.api.document.repository.SourceDocumentRepository
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
@@ -21,10 +18,47 @@ import java.util.UUID
 @Repository
 class EvidenceRetrievalRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
     private val transactionTemplate: TransactionTemplate,
     private val retriever: PostgresHybridEvidenceRetriever,
+    private val sourceDocumentRepository: SourceDocumentRepository,
 ) {
+    fun verificationOutcome(analysisRunId: UUID, bibliographyEntryId: UUID): VerificationOutcome = jdbc.queryForObject(
+        """
+        SELECT min(processing_failure_reason) FILTER (WHERE processing_status = 'FAILED') AS failure_reason,
+               count(*) FILTER (WHERE processing_status = 'PENDING' AND verification_scope = 'FULL_TEXT')::integer AS pending_full_text_pairs,
+               count(*) FILTER (WHERE processing_status = 'COMPLETED' AND verification_scope = 'FULL_TEXT')::integer AS completed_pairs,
+               EXISTS (
+                   SELECT 1 FROM evidence_judgements judgement
+                    WHERE judgement.analysis_run_id = ? AND judgement.bibliography_entry_id = ?
+               ) AS has_judgements,
+               EXISTS (
+                   SELECT 1 FROM laya_evidence_passage_spans span
+                    WHERE span.analysis_run_id = ? AND span.bibliography_entry_id = ? AND span.status = 'COMPLETED'
+               ) AS has_completed_spans,
+               (SELECT configuration_snapshot #>> '{aggregation,executionStatus}'
+                  FROM analysis_runs WHERE id = ?) AS aggregation_status
+          FROM claim_paper_verifications
+         WHERE analysis_run_id = ? AND bibliography_entry_id = ?
+        """.trimIndent(),
+        { rs, _ ->
+            VerificationOutcome(
+                failureReason = rs.getString("failure_reason"),
+                pendingFullTextPairs = rs.getInt("pending_full_text_pairs"),
+                completedPairs = rs.getInt("completed_pairs"),
+                hasJudgements = rs.getBoolean("has_judgements"),
+                hasCompletedSpans = rs.getBoolean("has_completed_spans"),
+                aggregationStatus = rs.getString("aggregation_status"),
+            )
+        },
+        analysisRunId,
+        bibliographyEntryId,
+        analysisRunId,
+        bibliographyEntryId,
+        analysisRunId,
+        analysisRunId,
+        bibliographyEntryId,
+    ) ?: throw IllegalStateException("Claim–Paper Verification progress could not be read after processing.")
+
     fun status(analysisRunId: UUID, bibliographyEntryId: UUID): String? = jdbc.query(
         "SELECT status FROM cited_paper_indexing WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
         { rs, _ -> rs.getString("status") },
@@ -36,7 +70,7 @@ class EvidenceRetrievalRepository(
         status(analysisRunId, bibliographyEntryId) == "COMPLETED"
 
     fun requireActiveRun(analysisRunId: UUID) {
-        jdbc.requireActiveAnalysisRun(analysisRunId)
+        sourceDocumentRepository.requireActiveAnalysisRun(analysisRunId)
     }
 
     fun loadContext(analysisRunId: UUID, bibliographyEntryId: UUID): EvidenceIndexingContext? {
@@ -94,7 +128,7 @@ class EvidenceRetrievalRepository(
         claimVectors: Map<UUID, FloatArray>,
         profile: EmbeddingProfile,
     ): Int = transactionTemplate.execute {
-        jdbc.lockActiveAnalysisRun(context.analysisRunId)
+        sourceDocumentRepository.lockActiveAnalysisRun(context.analysisRunId)
         val state = jdbc.query(
             "SELECT status, cited_paper_parse_id, candidate_count FROM cited_paper_indexing WHERE analysis_run_id = ? AND bibliography_entry_id = ? FOR UPDATE",
             { rs, _ -> IndexingState(rs.getString("status"), rs.getObject("cited_paper_parse_id", UUID::class.java), rs.getInt("candidate_count")) },
@@ -294,7 +328,7 @@ class EvidenceRetrievalRepository(
     }
 
     private fun ResultSet.toIndexingContext(analysisRunId: UUID, bibliographyEntryId: UUID): EvidenceIndexingContext {
-        val configuration = objectMapper.readValue(getString("configuration"), AnalysisConfigurationSnapshot::class.java)
+        val configuration = JsonUtil.fromJson(getString("configuration"), AnalysisConfigurationSnapshot::class.java)
         return EvidenceIndexingContext(
             analysisRunId = analysisRunId,
             bibliographyEntryId = bibliographyEntryId,
@@ -308,6 +342,15 @@ class EvidenceRetrievalRepository(
             claims = emptyList(),
         )
     }
+
+    data class VerificationOutcome(
+        val failureReason: String?,
+        val pendingFullTextPairs: Int,
+        val completedPairs: Int,
+        val hasJudgements: Boolean,
+        val hasCompletedSpans: Boolean,
+        val aggregationStatus: String?,
+    )
 
     private data class IndexingState(val status: String, val parseId: UUID?, val candidateCount: Int)
     private data class ExistingParse(

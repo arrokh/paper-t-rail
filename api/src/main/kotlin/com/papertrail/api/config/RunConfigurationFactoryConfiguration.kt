@@ -1,15 +1,14 @@
 package com.papertrail.api.config
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
-import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
+import com.papertrail.api.external.ollama.OllamaEmbeddingSettings
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
-import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.jev.JevSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.external.openai.OpenAiCompatibleEndpointSettings
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import org.springframework.beans.factory.annotation.Value
@@ -133,7 +132,6 @@ class RunConfigurationFactoryConfiguration {
 
     @Bean
     fun runConfigurationFactory(
-        objectMapper: ObjectMapper,
         providerCatalog: ProviderCatalog,
         validator: PdfDocumentValidator,
         @Value("\${paper-trail.analysis.parser-id}") parserId: String,
@@ -163,7 +161,6 @@ class RunConfigurationFactoryConfiguration {
             comparabilityMargin = comparabilityMargin,
         )
         return RunConfigurationFactory(
-            objectMapper = objectMapper,
             providerCatalog = providerCatalog,
             parserId = parserId,
             parserVersion = parserVersion,

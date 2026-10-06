@@ -1,32 +1,30 @@
 package com.papertrail.api.citation.claims.provider
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.citation.claims.domain.ClaimAnalysisRequest
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
 import org.springframework.stereotype.Component
 
 @Component
-class OpenAiCompatibleClaimAnalysisPayloadFactory(
-    private val objectMapper: ObjectMapper,
-) {
+class OpenAiCompatibleClaimAnalysisPayloadFactory {
     fun create(request: ClaimAnalysisRequest): ProviderCallPayload {
-        val contexts = objectMapper.createArrayNode()
+        val contexts = JsonUtil.arrayNode()
         request.contexts.forEach { context ->
-            val contextNode = objectMapper.createObjectNode().apply {
+            val contextNode = JsonUtil.objectNode().apply {
                 put("contextText", context.contextText)
                 put("contextStartOffset", context.contextStartOffset)
                 put("contextEndOffset", context.contextEndOffset)
             }
-            contextNode.set<JsonNode>("occurrences", objectMapper.createArrayNode().apply {
+            contextNode.set<JsonNode>("occurrences", JsonUtil.arrayNode().apply {
                 context.occurrences.forEach { occurrence ->
-                    val occurrenceNode = objectMapper.createObjectNode().apply {
+                    val occurrenceNode = JsonUtil.objectNode().apply {
                         put("ordinal", occurrence.ordinal)
                         put("markerText", occurrence.markerText)
                         put("startOffset", occurrence.startOffset)
                         put("endOffset", occurrence.endOffset)
-                        set<JsonNode>("targetKeys", objectMapper.createArrayNode().apply {
+                        set<JsonNode>("targetKeys", JsonUtil.arrayNode().apply {
                             occurrence.targets.forEach { add(it.key.value) }
                         })
                     }
@@ -40,16 +38,16 @@ class OpenAiCompatibleClaimAnalysisPayloadFactory(
             .flatMap { it.targetCandidates }
             .distinctBy { it.key.bibliographyReferenceKey }
             .map { target ->
-                objectMapper.createObjectNode().apply {
+                JsonUtil.objectNode().apply {
                     put("localReferenceKey", target.key.bibliographyReferenceKey)
                     target.title?.let { put("title", it) }
-                    set<JsonNode>("authors", objectMapper.valueToTree(target.authors))
+                    set<JsonNode>("authors", JsonUtil.toTree(target.authors))
                     target.year?.let { put("year", it) }
                     target.doi?.let { put("doi", it) }
                 }
             }
-        val bibliographyMetadata = objectMapper.createObjectNode().apply {
-            set<JsonNode>("references", objectMapper.valueToTree(bibliographyReferences))
+        val bibliographyMetadata = JsonUtil.objectNode().apply {
+            set<JsonNode>("references", JsonUtil.toTree(bibliographyReferences))
         }
         return ProviderCallPayload(
             mapOf(
@@ -64,10 +62,10 @@ class OpenAiCompatibleClaimAnalysisPayloadFactory(
             ?: throw IllegalArgumentException("Claim-analysis payload lacks Citation Contexts.")
         val bibliographyMetadata = payload.contentByCategory[DataCategory.BIBLIOGRAPHIC_METADATA]
             ?: throw IllegalArgumentException("Claim-analysis payload lacks bibliography metadata.")
-        val root = objectMapper.createObjectNode().apply {
+        val root = JsonUtil.objectNode().apply {
             set<JsonNode>("contexts", contexts)
             set<JsonNode>("bibliographicMetadata", bibliographyMetadata)
         }
-        return objectMapper.writeValueAsString(root)
+        return JsonUtil.toJson(root)
     }
 }

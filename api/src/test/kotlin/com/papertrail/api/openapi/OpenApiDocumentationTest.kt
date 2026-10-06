@@ -3,21 +3,22 @@ package com.papertrail.api.openapi
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.infrastructure.cache.OperatorCredentialVerifier
 import com.papertrail.api.infrastructure.logging.RequestCorrelationFilter
-import com.papertrail.api.citation.parsing.ParsedDocumentView
-import com.papertrail.api.citation.parsing.ParsedAtomicClaimView
-import com.papertrail.api.citation.parsing.ParsedClaimCitationTargetView
-import com.papertrail.api.citation.parsing.ParsedCitationContextView
-import com.papertrail.api.citation.parsing.ParsedCitationOccurrenceView
-import com.papertrail.api.citation.parsing.ParsedParserProvenance
-import com.papertrail.api.scholarly.references.report.ReferenceResolutionReportResponse
+import com.papertrail.api.analysis.http.ParsedDocumentView
+import com.papertrail.api.analysis.http.ParsedAtomicClaimView
+import com.papertrail.api.analysis.http.ParsedClaimCitationTargetView
+import com.papertrail.api.analysis.http.ParsedCitationContextView
+import com.papertrail.api.analysis.http.ParsedCitationOccurrenceView
+import com.papertrail.api.analysis.http.ParsedParserProvenance
+import com.papertrail.api.analysis.report.http.ReferenceResolutionReportResponse
+import com.papertrail.api.analysis.report.service.AnalysisRunReportService
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
-import com.papertrail.api.scholarly.acquisition.client.UnpaywallDiscoveryCache
-import com.papertrail.api.scholarly.acquisition.http.UnpaywallCacheInvalidationRequest
-import com.papertrail.api.scholarly.acquisition.service.UnpaywallCacheInvalidationService
+import com.papertrail.api.external.unpaywall.UnpaywallDiscoveryCache
+import com.papertrail.api.external.unpaywall.http.UnpaywallCacheInvalidationRequest
+import com.papertrail.api.external.unpaywall.service.UnpaywallCacheInvalidationService
 import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.review.domain.HumanReview
 import com.papertrail.api.review.domain.HumanReviewAction
@@ -27,16 +28,16 @@ import com.papertrail.api.scholarly.acquisition.domain.TerminalVerificationStatu
 import com.papertrail.api.evidence.report.EvidenceCoverageReport
 import com.papertrail.api.evidence.report.EvidenceCoverageSummary
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
-import com.papertrail.api.scholarly.references.client.CrossrefLookupCache
-import com.papertrail.api.scholarly.references.http.CrossrefCacheInvalidationRequest
-import com.papertrail.api.scholarly.references.http.CrossrefCacheLookupType
-import com.papertrail.api.scholarly.references.service.CrossrefCacheInvalidationService
+import com.papertrail.api.external.crossref.CrossrefLookupCache
+import com.papertrail.api.external.crossref.http.CrossrefCacheInvalidationRequest
+import com.papertrail.api.external.crossref.http.CrossrefCacheLookupType
+import com.papertrail.api.external.crossref.service.CrossrefCacheInvalidationService
 import com.papertrail.api.analysis.http.AnalysisRunPage
 import com.papertrail.api.analysis.http.AnalysisRunSourcePdfAccess
 import com.papertrail.api.analysis.http.AnalysisRunSummary
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionSummary
-import com.papertrail.api.analysis.execution.ExecutionArtifactResponse
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.http.AnalysisRunExecutionSummary
+import com.papertrail.api.analysis.execution.http.ExecutionArtifactResponse
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
 import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.document.service.SourceDocumentDeletionService
@@ -108,6 +109,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var referenceResolutionService: ReferenceResolutionService
+
+    @MockitoBean
+    private lateinit var analysisRunReportService: AnalysisRunReportService
 
     @MockitoBean
     private lateinit var humanReviewService: HumanReviewService
@@ -877,7 +881,7 @@ class OpenApiDocumentationTest {
             evidenceConflict = false,
             aggregatorVersion = "conflict-aware-evidence-strength-v1",
         )
-        Mockito.`when`(referenceResolutionService.report(runId)).thenReturn(
+        Mockito.`when`(analysisRunReportService.report(runId)).thenReturn(
             ReferenceResolutionReportResponse(
                 analysisRunId = runId,
                 runStatus = "COMPLETED",

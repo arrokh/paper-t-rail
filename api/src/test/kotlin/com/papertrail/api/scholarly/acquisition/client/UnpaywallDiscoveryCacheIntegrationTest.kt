@@ -48,6 +48,10 @@ import org.testcontainers.utility.DockerImageName
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.TimeUnit
+import com.papertrail.api.external.unpaywall.RedisUnpaywallDiscoveryCache
+import com.papertrail.api.external.unpaywall.UnpaywallDiscoveryCache
+import com.papertrail.api.external.unpaywall.UnpaywallDiscoveryCacheEntry
+import com.papertrail.api.external.unpaywall.UnpaywallOpenAccessProviderFactory
 
 @Testcontainers
 class UnpaywallDiscoveryCacheIntegrationTest {
@@ -59,7 +63,6 @@ class UnpaywallDiscoveryCacheIntegrationTest {
         unpaywallContactEmail = contactEmail,
     )
     private val configurationFactory = RunConfigurationFactory(
-        objectMapper = objectMapper,
         providerCatalog = providerCatalog,
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
@@ -109,6 +112,23 @@ class UnpaywallDiscoveryCacheIntegrationTest {
         assertFalse(encoded.contains("PRIVATE RAW RESPONSE"))
         assertFalse(encoded.contains("Summary"))
         assertFalse(encoded.contains(contactEmail))
+    }
+
+    @Test
+    fun `reads discovery cache JSON written before provider files were relocated`() {
+        redis.opsForValue().set(
+            "unpaywall:doi:v1:10.1234/legacy",
+            """{"schemaVersion":1,"fetchedAt":"2026-10-05T00:00:00Z","metadataAvailable":true,"abstractAvailable":false,"locations":[{"url":"https://example.invalid/legacy.pdf","license":"cc-by","version":"publishedVersion","hostType":"repository"}]}""",
+        )
+
+        val cached = requireNotNull(cache().findByDoi("10.1234/legacy"))
+
+        assertEquals(1, cached.schemaVersion)
+        assertEquals(Instant.parse("2026-10-05T00:00:00Z"), cached.fetchedAt)
+        assertTrue(cached.metadataAvailable)
+        assertFalse(cached.abstractAvailable)
+        assertEquals("https://example.invalid/legacy.pdf", cached.locations.single().url)
+        assertEquals("cc-by", cached.locations.single().license)
     }
 
     @Test
@@ -259,7 +279,6 @@ class UnpaywallDiscoveryCacheIntegrationTest {
         val discoveryServer = MockRestServiceServer.bindTo(discoveryBuilder).build()
         val contentServer = MockRestServiceServer.bindTo(contentBuilder).build()
         val provider = UnpaywallOpenAccessProviderFactory(
-            objectMapper = objectMapper,
             providerCallGate = ProviderCallGate(providerCatalog),
             discoveryCache = cache,
             unpaywallClient = discoveryBuilder.build(),
@@ -273,7 +292,7 @@ class UnpaywallDiscoveryCacheIntegrationTest {
     private fun cache(
         positiveTtl: Duration = Duration.ofHours(24),
         negativeTtl: Duration = Duration.ofHours(1),
-    ) = RedisUnpaywallDiscoveryCache(RedisProviderCacheStore(redis), objectMapper, positiveTtl, negativeTtl)
+    ) = RedisUnpaywallDiscoveryCache(RedisProviderCacheStore(redis), positiveTtl, negativeTtl)
 
     private data class ProviderFixture(
         val provider: OpenAccessProvider,

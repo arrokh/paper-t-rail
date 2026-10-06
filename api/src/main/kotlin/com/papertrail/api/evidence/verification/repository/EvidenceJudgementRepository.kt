@@ -1,6 +1,7 @@
 package com.papertrail.api.evidence.verification.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
+import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
@@ -15,9 +16,14 @@ import java.util.UUID
 @Repository
 class EvidenceJudgementRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
     private val transactionTemplate: TransactionTemplate,
 ) {
+    fun loadProcessingConfiguration(analysisRunId: UUID): AnalysisConfigurationSnapshot = jdbc.query(
+        "SELECT configuration_snapshot::text FROM analysis_runs WHERE id = ? AND status = 'PROCESSING'",
+        { rs, _ -> JsonUtil.fromJson(rs.getString(1), AnalysisConfigurationSnapshot::class.java) },
+        analysisRunId,
+    ).firstOrNull() ?: throw IllegalStateException("Analysis Run is not available for semantic verification.")
+
     fun pendingRequests(analysisRunId: UUID, bibliographyEntryId: UUID): List<PendingJudgement> {
         val rows = jdbc.query(
             """
@@ -125,7 +131,7 @@ class EvidenceJudgementRepository(
                 judgement.claimScopeMatch,
                 judgement.studyDesignQuality,
                 judgement.relevance,
-                objectMapper.writeValueAsString(judgement.rawScores()),
+                JsonUtil.toJson(judgement.rawScores()),
             )
         }
         jdbc.query(

@@ -15,6 +15,8 @@ import org.springframework.test.web.client.match.MockRestRequestMatchers.method
 import org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
 import org.springframework.web.client.RestClient
+import com.papertrail.api.external.grobid.GrobidScientificDocumentParser
+import com.papertrail.api.external.grobid.GrobidTeiParser
 
 class GrobidScientificDocumentParserContractTest {
     @Test

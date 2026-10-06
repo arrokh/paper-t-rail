@@ -1,6 +1,7 @@
 package com.papertrail.api.scholarly.acquisition.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
+import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessDecision
@@ -17,8 +18,19 @@ import java.util.UUID
 @Repository
 class CitedPaperAccessRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
 ) {
+    fun loadRun(analysisRunId: UUID): AccessRunContext? = jdbc.query(
+        "SELECT document_id, status, configuration_snapshot::text AS configuration FROM analysis_runs WHERE id = ?",
+        { rs, _ ->
+            AccessRunContext(
+                documentId = rs.getObject("document_id", UUID::class.java),
+                status = rs.getString("status"),
+                configuration = JsonUtil.fromJson(rs.getString("configuration"), AnalysisConfigurationSnapshot::class.java),
+            )
+        },
+        analysisRunId,
+    ).firstOrNull()
+
     fun accessExists(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM cited_paper_access WHERE analysis_run_id = ? AND bibliography_entry_id = ?)",
         Boolean::class.java,
@@ -40,9 +52,9 @@ class CitedPaperAccessRepository(
             ResolvedCitedReference(
                 bibliographyEntryId = rs.getObject("id", UUID::class.java),
                 title = rs.getString("parsed_title"),
-                authors = objectMapper.readValue(
+                authors = JsonUtil.fromJson(
                     rs.getString("parsed_authors"),
-                    objectMapper.typeFactory.constructCollectionType(List::class.java, String::class.java),
+                    JsonUtil.collectionType(List::class.java, String::class.java),
                 ),
                 year = rs.getObject("parsed_year", Integer::class.java)?.toInt(),
                 doi = rs.getString("parsed_doi") ?: rs.getString("canonical_doi"),
@@ -125,6 +137,12 @@ class CitedPaperAccessRepository(
         analysisRunId,
     )
 
+    data class AccessRunContext(
+        val documentId: UUID,
+        val status: String,
+        val configuration: AnalysisConfigurationSnapshot,
+    )
+
     private fun ResultSet.toAccessReportEntry(): CitedPaperAccessReportEntry = CitedPaperAccessReportEntry(
         bibliographyEntryId = getObject("bibliography_entry_id", UUID::class.java),
         localReferenceKey = getString("local_reference_key"),
@@ -143,9 +161,3 @@ class CitedPaperAccessRepository(
         ),
     )
 }
-
-data class CitedPaperAccessReportEntry(
-    val bibliographyEntryId: UUID,
-    val localReferenceKey: String,
-    val report: CitedPaperAccessReport,
-)

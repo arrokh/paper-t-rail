@@ -2,8 +2,8 @@ package com.papertrail.api.calibration
 
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneProvider
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneProvider
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -81,7 +81,7 @@ private fun runLayaEvaluationCommand(args: Array<String>, environment: Map<Strin
         split = split,
         datasetSha256 = datasetSha256,
         applicationRevision = applicationRevision,
-        provider = LayaSystemOneProvider(settings, mapper),
+        provider = LayaSystemOneProvider(settings),
         plan = planAndHash?.first,
         planSha256 = planAndHash?.second,
     )

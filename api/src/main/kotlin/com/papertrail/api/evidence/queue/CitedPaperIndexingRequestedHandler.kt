@@ -1,45 +1,44 @@
 package com.papertrail.api.evidence.queue
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
-import com.papertrail.api.analysis.service.AnalysisRunPipelineProgressRepository
+import com.papertrail.api.utils.JsonUtil
+import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
+import com.papertrail.api.analysis.repository.AnalysisRunProcessingRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
-import com.papertrail.api.analysis.execution.ExecutionSpanSpec
-import com.papertrail.api.analysis.execution.ExecutionOperationId
-import com.papertrail.api.document.service.isSourceDocumentDeleted
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionOperationId
+import com.papertrail.api.document.repository.SourceDocumentRepository
+import com.papertrail.api.evidence.events.CITED_PAPER_INDEXING_HANDLER
+import com.papertrail.api.evidence.events.CITED_PAPER_INDEXING_REQUESTED
+import com.papertrail.api.evidence.events.CitedPaperIndexingRequestedPayload
 import com.papertrail.api.evidence.service.EvidenceRetrievalService
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.infrastructure.messaging.repository.InboxRepository
 import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
 import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
-import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
-import java.sql.Timestamp
 import java.time.Instant
 import java.util.UUID
 
 @Component
 class CitedPaperIndexingRequestedHandler(
-    private val jdbc: JdbcTemplate,
+    private val processingRepository: AnalysisRunProcessingRepository,
+    private val sourceDocumentRepository: SourceDocumentRepository,
+    private val inboxRepository: InboxRepository,
     private val transactionTemplate: TransactionTemplate,
-    private val objectMapper: ObjectMapper,
     private val evidenceRetrievalService: EvidenceRetrievalService,
     private val evidenceRetrievalRepository: EvidenceRetrievalRepository,
     private val evidenceVerificationService: EvidenceVerificationService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
-    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
+    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
     private val executionService: AnalysisRunExecutionService? = null,
 ) {
-    fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
-        "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
-        Boolean::class.java,
-        eventId,
-    ) == true
+    fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
 
     fun handle(serializedEvent: String): UUID {
-        val event: PipelineEvent<CitedPaperIndexingRequestedPayload> = objectMapper.readValue(serializedEvent)
+        val event: PipelineEvent<CitedPaperIndexingRequestedPayload> = JsonUtil.fromJson(serializedEvent)
         require(event.eventType == CITED_PAPER_INDEXING_REQUESTED) { "Unsupported event type '${event.eventType}'." }
         executionService?.recordQueueIntervals(
             event.analysisRunId, event.eventId, event.attempt, "evidence", event.queueWaitStartedAt,
@@ -54,18 +53,11 @@ class CitedPaperIndexingRequestedHandler(
     }
 
     private fun handleEvent(event: PipelineEvent<CitedPaperIndexingRequestedPayload>): UUID {
-        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return event.eventId
+        if (sourceDocumentRepository.isDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
 
-        val run = jdbc.query(
-            "SELECT document_id, source_content_sha256, status FROM analysis_runs WHERE id = ?",
-            { rs, _ -> RunProvenance(
-                documentId = rs.getObject("document_id", UUID::class.java),
-                sourceHash = rs.getString("source_content_sha256"),
-                status = rs.getString("status"),
-            ) },
-            event.analysisRunId,
-        ).firstOrNull() ?: throw IllegalStateException("Queued Cited Paper indexing Analysis Run is missing.")
+        val run = processingRepository.queueRun(event.analysisRunId)
+            ?: throw IllegalStateException("Queued Cited Paper indexing Analysis Run is missing.")
         if (run.documentId != event.payload.documentId || run.sourceHash != event.payload.sourceContentSha256) {
             throw IllegalStateException("Cited Paper indexing event provenance does not match its Analysis Run.")
         }
@@ -148,21 +140,20 @@ class CitedPaperIndexingRequestedHandler(
 
     fun markFailed(event: PipelineEvent<CitedPaperIndexingRequestedPayload>, reason: String) {
         require(event.eventType == CITED_PAPER_INDEXING_REQUESTED) { "Unsupported event type '${event.eventType}'." }
-        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return
+        if (sourceDocumentRepository.isDeleted(event.payload.documentId)) return
         recordProcessed(event, reason)
         executionService?.finishIfTerminal(event.analysisRunId)
     }
 
     private fun recordProcessed(event: PipelineEvent<CitedPaperIndexingRequestedPayload>, failureReason: String? = null) {
         transactionTemplate.executeWithoutResult {
-            val inserted = jdbc.update(
-                "INSERT INTO inbox_events (event_id, analysis_run_id, handler_name, processed_at) VALUES (?, ?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
+            val inserted = inboxRepository.insertIfAbsent(
                 event.eventId,
                 event.analysisRunId,
                 CITED_PAPER_INDEXING_HANDLER,
-                Timestamp.from(Instant.now()),
+                Instant.now(),
             )
-            if (inserted == 0) return@executeWithoutResult
+            if (!inserted) return@executeWithoutResult
             if (failureReason != null) {
                 val failureCode = when (evidenceRetrievalRepository.status(event.analysisRunId, event.payload.bibliographyEntryId)) {
                     "PENDING" -> {
@@ -195,62 +186,14 @@ class CitedPaperIndexingRequestedHandler(
                         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "verification", "assess-and-aggregate", event.payload.bibliographyEntryId, "FAILED", failureCode)
                     }
                 }
-                jdbc.update(
-                    "UPDATE analysis_runs SET failure_reason = COALESCE(failure_reason, ?), updated_at = now() WHERE id = ? AND status = 'PROCESSING'",
-                    failureReason,
-                    event.analysisRunId,
-                )
+                processingRepository.updateFailureReasonIfProcessing(event.analysisRunId, failureReason)
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
     }
 
-    private fun verificationOutcome(analysisRunId: UUID, bibliographyEntryId: UUID): VerificationOutcome = jdbc.queryForObject(
-        """
-        SELECT min(processing_failure_reason) FILTER (WHERE processing_status = 'FAILED') AS failure_reason,
-               count(*) FILTER (WHERE processing_status = 'PENDING' AND verification_scope = 'FULL_TEXT')::integer AS pending_full_text_pairs,
-               count(*) FILTER (WHERE processing_status = 'COMPLETED' AND verification_scope = 'FULL_TEXT')::integer AS completed_pairs,
-               EXISTS (
-                   SELECT 1 FROM evidence_judgements judgement
-                    WHERE judgement.analysis_run_id = ? AND judgement.bibliography_entry_id = ?
-               ) AS has_judgements,
-               EXISTS (
-                   SELECT 1 FROM laya_evidence_passage_spans span
-                    WHERE span.analysis_run_id = ? AND span.bibliography_entry_id = ? AND span.status = 'COMPLETED'
-               ) AS has_completed_spans,
-               (SELECT configuration_snapshot #>> '{aggregation,executionStatus}'
-                  FROM analysis_runs WHERE id = ?) AS aggregation_status
-          FROM claim_paper_verifications
-         WHERE analysis_run_id = ? AND bibliography_entry_id = ?
-        """.trimIndent(),
-        { rs, _ ->
-            VerificationOutcome(
-                failureReason = rs.getString("failure_reason"),
-                pendingFullTextPairs = rs.getInt("pending_full_text_pairs"),
-                completedPairs = rs.getInt("completed_pairs"),
-                hasJudgements = rs.getBoolean("has_judgements"),
-                hasCompletedSpans = rs.getBoolean("has_completed_spans"),
-                aggregationStatus = rs.getString("aggregation_status"),
-            )
-        },
-        analysisRunId,
-        bibliographyEntryId,
-        analysisRunId,
-        bibliographyEntryId,
-        analysisRunId,
-        analysisRunId,
-        bibliographyEntryId,
-    ) ?: throw IllegalStateException("Claim–Paper Verification progress could not be read after processing.")
-
-    private data class RunProvenance(val documentId: UUID, val sourceHash: String, val status: String)
-    private data class VerificationOutcome(
-        val failureReason: String?,
-        val pendingFullTextPairs: Int,
-        val completedPairs: Int,
-        val hasJudgements: Boolean,
-        val hasCompletedSpans: Boolean,
-        val aggregationStatus: String?,
-    )
+    private fun verificationOutcome(analysisRunId: UUID, bibliographyEntryId: UUID): EvidenceRetrievalRepository.VerificationOutcome =
+        evidenceRetrievalRepository.verificationOutcome(analysisRunId, bibliographyEntryId)
 
     companion object {
         const val INDEXING_RETRIES_EXHAUSTED = "INDEXING_RETRIES_EXHAUSTED"

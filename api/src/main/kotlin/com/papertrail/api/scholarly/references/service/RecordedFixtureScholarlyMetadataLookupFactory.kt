@@ -1,7 +1,7 @@
 package com.papertrail.api.scholarly.references.service
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.scholarly.references.client.BibliographyReference
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookup
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookupFactory
@@ -12,10 +12,8 @@ import org.springframework.core.io.ClassPathResource
 import org.springframework.stereotype.Component
 
 @Component
-class RecordedFixtureScholarlyMetadataLookupFactory(
-    objectMapper: ObjectMapper,
-) : ScholarlyMetadataLookupFactory {
-    private val works: List<ScholarlyWork> = objectMapper.readTree(ClassPathResource("provider-fixtures/recorded-scholarly-works.json").inputStream)
+class RecordedFixtureScholarlyMetadataLookupFactory : ScholarlyMetadataLookupFactory {
+    private val works: List<ScholarlyWork> = JsonUtil.parseTree(ClassPathResource("provider-fixtures/recorded-scholarly-works.json").inputStream)
         .map { node ->
             ScholarlyWork(
                 doi = node.path("doi").takeIf(JsonNode::isTextual)?.asText(),

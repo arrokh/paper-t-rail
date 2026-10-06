@@ -1,16 +1,16 @@
 package com.papertrail.api.infrastructure.providers
 
-import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
-import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
-import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
-import com.papertrail.api.infrastructure.messaging.NonRetryablePipelineException
+import com.papertrail.api.external.ollama.OllamaEmbeddingSettings
+import com.papertrail.api.external.jev.JevSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import com.papertrail.api.citation.claims.domain.ClaimAnalysisVersions
 import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
-import io.swagger.v3.oas.annotations.media.Schema
+import com.papertrail.api.external.openai.OpenAiCompatibleEndpointSettings
 import java.security.MessageDigest
+import com.papertrail.api.infrastructure.providers.http.DataCategoryDisclosure
+import com.papertrail.api.infrastructure.providers.http.ProviderDirectoryResponse
+import com.papertrail.api.infrastructure.providers.http.ProviderOption
 
 const val CLAIM_EXTRACTOR_ROLE = "claimExtractor"
 const val EMBEDDING_ROLE = "embedding"
@@ -31,28 +31,6 @@ private val EMBEDDING_DATA_CATEGORIES = setOf(
     DataCategory.ATOMIC_CLAIMS,
     DataCategory.EMBEDDING_INPUT,
 )
-
-enum class ProviderTrustBoundary(val id: String) {
-    LOCAL("LOCAL"),
-    EXTERNAL("EXTERNAL"),
-    UNREVIEWED("UNREVIEWED"),
-}
-
-enum class DataCategory(val id: String, val label: String, val description: String) {
-    SOURCE_DOCUMENT_TEXT("source_document_text", "Source Document text", "Text extracted from the uploaded document."),
-    BIBLIOGRAPHIC_METADATA("bibliographic_metadata", "Bibliographic metadata", "DOIs and the minimum title, author, year, or reference fields used for lookup."),
-    CITATION_CONTEXT("citation_context", "Citation Context", "The citation-bearing clause or sentence submitted for Atomic Claim extraction and Citation Target selection."),
-    CITED_PAPER_CHUNKS("cited_paper_chunks", "Cited Paper chunks", "Text chunks from an acquired Cited Paper."),
-    ATOMIC_CLAIMS("atomic_claims", "Atomic Claims", "Individual propositions submitted for assessment."),
-    EVIDENCE_PASSAGES("evidence_passages", "Evidence Passages", "Passages from a Cited Paper submitted for assessment."),
-    EMBEDDING_INPUT("embedding_input", "Embedding input", "Text submitted to a provider to calculate embeddings."),
-    PROVIDER_CONTACT_EMAIL("provider_contact_email", "Provider contact email", "An operator contact email required or configured for a provider request."),
-    CITED_PAPER_LOCATION("cited_paper_location", "Cited Paper location", "A discovered full-text URL used to request an openly licensed Cited Paper; Paper T-Rail does not send Source Document text.");
-
-    companion object {
-        fun fromId(id: String): DataCategory? = entries.firstOrNull { it.id == id }
-    }
-}
 
 data class ProviderRegistration(
     val role: String,
@@ -81,48 +59,6 @@ data class ProviderRegistration(
         sha256Fingerprint("paper-trail-provider-disclosure-v1\n$providerId\n$disclosure")
     }
 }
-
-@Schema(description = "One enabled and classified provider option available for selection.")
-data class ProviderOption(
-    @field:Schema(description = "Provider role, such as `embedding` or `systemOne`.")
-    val role: String,
-    @field:Schema(description = "Stable provider identifier used in Analysis Run configuration.")
-    val providerId: String,
-    @field:Schema(description = "Human-readable provider name.")
-    val displayName: String,
-    @field:Schema(description = "Provider or model version used for provenance.")
-    val version: String,
-    @field:Schema(description = "Model identifier when this provider uses a model.")
-    val model: String?,
-    @field:Schema(description = "Provider trust boundary. Providers with an unclassified technical boundary are not listed.", allowableValues = ["LOCAL", "EXTERNAL"])
-    val trustBoundary: String,
-    @field:Schema(description = "Stable data-category IDs that may be sent to this provider.")
-    val dataCategories: List<String>,
-    @field:Schema(description = "Retention and deletion disclosure shown before per-run consent. Unknown terms are stated explicitly.")
-    val retentionDisclosure: String?,
-    @field:Schema(description = "Opaque fingerprint the server validates to ensure consent matches the disclosure returned by this directory.")
-    val retentionDisclosureFingerprint: String?,
-)
-
-@Schema(description = "Stable data category and its user-facing disclosure.")
-data class DataCategoryDisclosure(
-    @field:Schema(description = "Stable identifier used in provider consent and configuration.")
-    val id: String,
-    @field:Schema(description = "Short display label.")
-    val label: String,
-    @field:Schema(description = "Description of the data represented by this category.")
-    val description: String,
-)
-
-@Schema(description = "Selectable providers grouped by role and the catalog of data categories used for disclosure and consent.")
-data class ProviderDirectoryResponse(
-    @field:Schema(description = "Enabled provider options grouped by their role identifier.")
-    val providers: Map<String, List<ProviderOption>>,
-    @field:Schema(description = "Stable data-category identifiers and descriptions.")
-    val dataCategories: List<DataCategoryDisclosure>,
-)
-
-class ProviderNotSelectableException(message: String) : IllegalArgumentException(message)
 
 class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
     private val registrationsByRoleAndId: Map<Pair<String, String>, ProviderRegistration>
@@ -363,130 +299,6 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                 ),
                 ),
             )
-        }
-    }
-}
-
-class ProviderCallRejectedException(message: String) : NonRetryablePipelineException(message)
-
-/** Provider-bound content grouped by the stable category used to disclose and authorize it. */
-class ProviderCallPayload(contentByCategory: Map<DataCategory, JsonNode>) {
-    val contentByCategory: Map<DataCategory, JsonNode> = contentByCategory.mapValues { (_, content) -> content.deepCopy() }
-    val dataCategories: Set<DataCategory> = this.contentByCategory.keys
-}
-
-/** The adapter serializes only this categorized payload after the gate approves it. */
-class ProviderCallGate(private val catalog: ProviderCatalog) {
-    fun <T> call(
-        role: String,
-        providerId: String,
-        payload: ProviderCallPayload,
-        configuration: AnalysisConfigurationSnapshot,
-        sendRequest: (ProviderCallPayload) -> T,
-    ): T {
-        val registration = requireMatchingSelection(role, providerId, configuration)
-        val actualPayloadCategories = payload.dataCategories
-        if (actualPayloadCategories.any { it !in registration.dataCategories }) {
-            throw ProviderCallRejectedException("Provider '$providerId' request contains an unclassified data category.")
-        }
-        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL && actualPayloadCategories.isEmpty()) {
-            throw ProviderCallRejectedException("External provider '$providerId' request has no classified payload categories.")
-        }
-        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
-            requireConsent(role, registration, actualPayloadCategories, configuration)
-        }
-        return sendRequest(payload)
-    }
-
-    /** Authorizes a content-free availability probe while preserving run selection and external consent checks. */
-    fun <T> callAvailabilityCheck(
-        role: String,
-        providerId: String,
-        configuration: AnalysisConfigurationSnapshot,
-        checkAvailability: () -> T,
-    ): T {
-        val registration = requireMatchingSelection(role, providerId, configuration)
-        if (registration.trustBoundary == ProviderTrustBoundary.EXTERNAL) {
-            requireConsent(role, registration, registration.dataCategories, configuration)
-        }
-        return checkAvailability()
-    }
-
-    private fun requireMatchingSelection(
-        role: String,
-        providerId: String,
-        configuration: AnalysisConfigurationSnapshot,
-    ): ProviderRegistration {
-        val registration = try {
-            catalog.requireSelectable(role, providerId)
-        } catch (exception: ProviderNotSelectableException) {
-            throw ProviderCallRejectedException(exception.message ?: "Provider is not selectable.")
-        }
-        val selected = when (role) {
-            CLAIM_EXTRACTOR_ROLE -> configuration.claimExtractor
-            EMBEDDING_ROLE -> configuration.embedding
-            SYSTEM_ONE_ROLE -> configuration.systemOne
-            SCHOLARLY_METADATA_ROLE -> configuration.referenceResolution.provider
-            OPEN_ACCESS_ROLE -> configuration.openAccess
-            else -> throw ProviderCallRejectedException("Provider role '$role' is not supported.")
-        } ?: throw ProviderCallRejectedException("Provider role '$role' was not configured for this Analysis Run.")
-        if (selected.provider != providerId) {
-            throw ProviderCallRejectedException("Provider '$providerId' was not selected for this Analysis Run.")
-        }
-        val scholarlyConfigurationChanged = role == SCHOLARLY_METADATA_ROLE &&
-            configuration.referenceResolution.providerConfigurationFingerprint != registration.payloadConfigurationFingerprint
-        val openAccessConfigurationChanged = role == OPEN_ACCESS_ROLE &&
-            configuration.openAccessProviderConfigurationFingerprint != registration.payloadConfigurationFingerprint
-        val embeddingDimensionChanged = role == EMBEDDING_ROLE &&
-            selected.embeddingDimension != registration.embeddingDimension &&
-            !(selected.provider == "local" && selected.embeddingDimension == null)
-        val embeddingConfigurationChanged = role == EMBEDDING_ROLE &&
-            (selected.configurationFingerprint != registration.configurationFingerprint || embeddingDimensionChanged)
-        val systemOneConfigurationChanged = role == SYSTEM_ONE_ROLE &&
-            selected.configurationFingerprint != registration.configurationFingerprint
-        val legacyHeuristicSnapshot = role == CLAIM_EXTRACTOR_ROLE && selected.provider == "heuristic" &&
-            selected.version == "v1" && selected.targetSelectionPolicyVersion == null &&
-            selected.promptVersion == null && selected.outputMappingVersion == null
-        val claimAnalysisConfigurationChanged = role == CLAIM_EXTRACTOR_ROLE && !legacyHeuristicSnapshot && (
-            selected.configurationFingerprint != registration.configurationFingerprint ||
-                selected.retentionDisclosure != registration.retentionDisclosure ||
-                selected.targetSelectionPolicyVersion != registration.targetSelectionPolicyVersion ||
-                selected.promptVersion != registration.promptVersion ||
-                selected.outputMappingVersion != registration.outputMappingVersion
-            )
-        if (selected.version != registration.version || selected.model != registration.model ||
-            selected.trustBoundary != registration.trustBoundary.id ||
-            selected.dataCategories.toSet() != registration.dataCategories.map(DataCategory::id).toSet() ||
-            scholarlyConfigurationChanged || openAccessConfigurationChanged || embeddingConfigurationChanged ||
-            systemOneConfigurationChanged || claimAnalysisConfigurationChanged
-        ) {
-            throw ProviderCallRejectedException("Provider '$providerId' configuration or payload mapping changed after this Analysis Run was created.")
-        }
-        return registration
-    }
-
-    private fun requireConsent(
-        role: String,
-        registration: ProviderRegistration,
-        requiredCategories: Set<DataCategory>,
-        configuration: AnalysisConfigurationSnapshot,
-    ) {
-        val providerId = registration.providerId
-        if (requiredCategories.isEmpty()) {
-            throw ProviderCallRejectedException("External provider '$providerId' request has no classified payload categories.")
-        }
-        val consent = configuration.externalProviderConsents.firstOrNull { it.providerId == providerId }
-            ?: throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent.")
-        val consented = consent.dataCategories.mapNotNull(DataCategory::fromId).toSet()
-        val missingConsent = requiredCategories - consented
-        if (missingConsent.isNotEmpty()) {
-            val categories = missingConsent.map { it.id }.sorted().joinToString(", ")
-            throw ProviderCallRejectedException("Provider '$providerId' lacks per-run consent for: $categories.")
-        }
-        val snapshottedDisclosure = consent.retentionDisclosure
-            ?: configuration.openAccessRetentionDisclosure.takeIf { role == OPEN_ACCESS_ROLE }
-        if (snapshottedDisclosure != null && snapshottedDisclosure != registration.consentDisclosure()) {
-            throw ProviderCallRejectedException("Provider '$providerId' retention disclosure changed after this Analysis Run was created.")
         }
     }
 }

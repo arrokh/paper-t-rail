@@ -1,6 +1,6 @@
 package com.papertrail.api.evidence.verification.domain
 
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import org.springframework.stereotype.Component
 import java.text.BreakIterator
 import java.util.Locale

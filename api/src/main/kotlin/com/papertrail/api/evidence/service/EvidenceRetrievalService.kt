@@ -1,8 +1,8 @@
 package com.papertrail.api.evidence.service
 
-import com.papertrail.api.document.storage.SourceDocumentObjectStore
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.ExecutionSpanSpec
+import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
 import com.papertrail.api.evidence.domain.EmbeddedEvidenceChunk
 import com.papertrail.api.evidence.domain.EmbeddingProfile

@@ -1,47 +1,46 @@
 package com.papertrail.api.scholarly.acquisition.queue
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
-import com.papertrail.api.analysis.service.AnalysisRunPipelineProgressRepository
+import com.papertrail.api.utils.JsonUtil
+import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
+import com.papertrail.api.analysis.repository.AnalysisRunProcessingRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
-import com.papertrail.api.analysis.execution.ExecutionSpanSpec
-import com.papertrail.api.analysis.execution.ExecutionOperationId
-import com.papertrail.api.document.service.isSourceDocumentDeleted
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionOperationId
+import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.evidence.queue.EvidenceIndexingEnqueueResult
 import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
+import com.papertrail.api.infrastructure.messaging.repository.InboxRepository
+import com.papertrail.api.scholarly.acquisition.events.CITED_PAPER_ACQUISITION_HANDLER
+import com.papertrail.api.scholarly.acquisition.events.CITED_PAPER_ACQUISITION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.events.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
-import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
-import java.sql.Timestamp
 import java.time.Instant
 import java.util.UUID
 
 @Component
 class CitedPaperAcquisitionRequestedHandler(
-    private val jdbc: JdbcTemplate,
+    private val processingRepository: AnalysisRunProcessingRepository,
+    private val sourceDocumentRepository: SourceDocumentRepository,
+    private val inboxRepository: InboxRepository,
     private val transactionTemplate: TransactionTemplate,
-    private val objectMapper: ObjectMapper,
     private val citedPaperAccessService: CitedPaperAccessService,
     private val citedPaperIndexingQueue: CitedPaperIndexingQueue,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
-    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
+    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
     private val evidenceVerificationService: EvidenceVerificationService? = null,
     private val executionService: AnalysisRunExecutionService? = null,
 ) {
-    fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
-        "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
-        Boolean::class.java,
-        eventId,
-    ) == true
+    fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
 
     fun handle(serializedEvent: String): UUID {
-        val event: PipelineEvent<CitedPaperAcquisitionRequestedPayload> = objectMapper.readValue(serializedEvent)
+        val event: PipelineEvent<CitedPaperAcquisitionRequestedPayload> = JsonUtil.fromJson(serializedEvent)
         require(event.eventType == CITED_PAPER_ACQUISITION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
         executionService?.recordQueueIntervals(
             event.analysisRunId, event.eventId, event.attempt, "access", event.queueWaitStartedAt,
@@ -56,20 +55,11 @@ class CitedPaperAcquisitionRequestedHandler(
     }
 
     private fun handleEvent(event: PipelineEvent<CitedPaperAcquisitionRequestedPayload>): UUID {
-        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return event.eventId
+        if (sourceDocumentRepository.isDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
 
-        val run = jdbc.query(
-            "SELECT document_id, source_content_sha256, status FROM analysis_runs WHERE id = ?",
-            { rs, _ ->
-                RunProvenance(
-                    documentId = rs.getObject("document_id", UUID::class.java),
-                    sourceHash = rs.getString("source_content_sha256"),
-                    status = rs.getString("status"),
-                )
-            },
-            event.analysisRunId,
-        ).firstOrNull() ?: throw IllegalStateException("Queued Analysis Run is missing.")
+        val run = processingRepository.queueRun(event.analysisRunId)
+            ?: throw IllegalStateException("Queued Analysis Run is missing.")
 
         if (run.documentId != event.payload.documentId || run.sourceHash != event.payload.sourceContentSha256) {
             throw IllegalStateException("Cited-paper acquisition event provenance does not match its Analysis Run.")
@@ -100,7 +90,7 @@ class CitedPaperAcquisitionRequestedHandler(
 
     fun markFailed(event: PipelineEvent<CitedPaperAcquisitionRequestedPayload>, reason: String) {
         require(event.eventType == CITED_PAPER_ACQUISITION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
-        if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return
+        if (sourceDocumentRepository.isDeleted(event.payload.documentId)) return
         recordProcessed(event, reason)
         executionService?.finishIfTerminal(event.analysisRunId)
     }
@@ -110,25 +100,20 @@ class CitedPaperAcquisitionRequestedHandler(
         failureReason: String? = null,
     ) {
         transactionTemplate.executeWithoutResult {
-            val inserted = jdbc.update(
-                "INSERT INTO inbox_events (event_id, analysis_run_id, handler_name, processed_at) VALUES (?, ?, ?, ?) ON CONFLICT (event_id) DO NOTHING",
+            val inserted = inboxRepository.insertIfAbsent(
                 event.eventId,
                 event.analysisRunId,
                 CITED_PAPER_ACQUISITION_HANDLER,
-                Timestamp.from(Instant.now()),
+                Instant.now(),
             )
-            if (inserted == 0) return@executeWithoutResult
+            if (!inserted) return@executeWithoutResult
             if (failureReason != null) {
                 citedPaperAccessService.failAccess(
                     event.analysisRunId,
                     event.payload.bibliographyEntryId,
                     CITED_PAPER_ACCESS_RETRIES_EXHAUSTED,
                 )
-                jdbc.update(
-                    "UPDATE analysis_runs SET failure_reason = COALESCE(failure_reason, ?), updated_at = now() WHERE id = ? AND status = 'PROCESSING'",
-                    failureReason,
-                    event.analysisRunId,
-                )
+                processingRepository.updateFailureReasonIfProcessing(event.analysisRunId, failureReason)
                 pipelineProgressRepository.markBibliographyItem(
                     event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId,
                     "FAILED", CITED_PAPER_ACCESS_RETRIES_EXHAUSTED,
@@ -179,9 +164,4 @@ class CitedPaperAcquisitionRequestedHandler(
         const val CITED_PAPER_ACCESS_RETRIES_EXHAUSTED = "CITED_PAPER_ACCESS_RETRIES_EXHAUSTED"
     }
 
-    private data class RunProvenance(
-        val documentId: UUID,
-        val sourceHash: String,
-        val status: String,
-    )
 }
