@@ -104,8 +104,7 @@ api/
 ```text
 com.papertrail.api/
   PaperTrailApplication.kt     # Application/scanning root; keep
-  config/                     # Cross-feature composition; keep
-  openapi/                    # Generated-contract framework wiring
+  config/                     # Cross-feature Spring/OpenAPI composition; keep
   http/                       # Shared API contracts: ApiError, HealthResponse
 
   document/

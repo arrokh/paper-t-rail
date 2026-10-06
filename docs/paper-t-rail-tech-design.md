@@ -2574,8 +2574,7 @@ Keep one Spring Boot project and group business code by capability first. Inside
 ```text
 com.papertrail.api/
 ├── PaperTrailApplication.kt        # Stable application/scanning root
-├── config/                         # Cross-feature Spring composition
-├── openapi/                        # Generated-contract framework wiring
+├── config/                         # Cross-feature Spring/OpenAPI composition
 ├── http/                           # Shared HTTP contracts (for example ApiError)
 ├── document/
 │   ├── controller/                 # Document HTTP entry points
