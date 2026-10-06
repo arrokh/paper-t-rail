@@ -169,6 +169,7 @@ describe("execution trace timeline and filtering", () => {
   it("stops execution polling for terminal Analysis Runs", () => {
     const recordedSummary = {
       analysisRunId: "run",
+      captureRequested: true,
       captureEnabled: true,
       recordingState: "RECORDING",
       completeness: "RECORDING",

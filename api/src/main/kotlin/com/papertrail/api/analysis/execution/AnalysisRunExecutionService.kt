@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.web.server.ResponseStatusException
+import java.net.URI
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
@@ -206,6 +207,24 @@ class AnalysisRunExecutionService(
 
     fun captureCurrentJevResponse(body: ByteArray) = captureCurrentBody("RESPONSE") { sanitizer.sanitizeJevResponseBody(body) }
 
+    fun captureCurrentSystemOneResponse(body: ByteArray, schemaVersion: String = "system-one-response-v1") =
+        captureCurrentBody("RESPONSE") { sanitizer.sanitizeProviderJsonBody(schemaVersion, body) }
+
+    fun captureCurrentCrossrefRequest(uri: URI) =
+        captureCurrentBody("REQUEST") { sanitizer.sanitizeCrossrefRequest(uri) }
+
+    fun captureCurrentCrossrefResponse(body: ByteArray) =
+        captureCurrentBody("RESPONSE") { sanitizer.sanitizeProviderJsonBody("crossref-response-v1", body) }
+
+    fun captureCurrentUnpaywallRequest(uri: URI) =
+        captureCurrentBody("REQUEST") { sanitizer.sanitizeUnpaywallRequest(uri) }
+
+    fun captureCurrentUnpaywallResponse(body: ByteArray) =
+        captureCurrentBody("RESPONSE") { sanitizer.sanitizeProviderJsonBody("unpaywall-response-v1", body) }
+
+    fun captureCurrentOpenAccessRequest(uri: URI) =
+        captureCurrentBody("REQUEST") { sanitizer.sanitizeOpenAccessRequest(uri) }
+
     fun omitCurrentBody(role: String, schemaVersion: String, reason: String) {
         val handle = activeSpan.get() ?: return
         if (role !in ARTIFACT_ROLES) {
@@ -217,14 +236,27 @@ class AnalysisRunExecutionService(
 
     private fun captureCurrentBody(role: String, sanitized: () -> SanitizedExecutionArtifact) {
         val handle = activeSpan.get() ?: return
-        measureCapture(handle.id) {
+        captureBody(handle.analysisRunId, handle.id, role, sanitized)
+    }
+
+    private fun captureBody(
+        analysisRunId: UUID,
+        spanId: UUID,
+        role: String,
+        sanitized: () -> SanitizedExecutionArtifact,
+    ) {
+        if (role !in ARTIFACT_ROLES) {
+            markGap(analysisRunId, "UNSAFE_ARTIFACT_METADATA_OMITTED")
+            return
+        }
+        measureCapture(spanId) {
             try {
                 val captured = sanitized()
                 val artifact = ExecutionSpanArtifactSpec(role, captured.schemaVersion, emptyMap())
-                persistSanitized(handle.analysisRunId, handle.id, artifact, captured)
+                persistSanitized(analysisRunId, spanId, artifact, captured)
             } catch (_: Exception) {
-                markGap(handle.analysisRunId, "ARTIFACT_STORAGE_UNAVAILABLE")
-                logStorageFailure(handle.analysisRunId)
+                markGap(analysisRunId, "ARTIFACT_STORAGE_UNAVAILABLE")
+                logStorageFailure(analysisRunId)
             }
         }
     }
@@ -254,6 +286,7 @@ class AnalysisRunExecutionService(
         requireRun(analysisRunId)
         return repository.summary(analysisRunId) ?: AnalysisRunExecutionSummary(
             analysisRunId = analysisRunId,
+            captureRequested = null,
             captureEnabled = false,
             recordingState = "NOT_RECORDED",
             completeness = "NOT_RECORDED",

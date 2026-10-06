@@ -56,6 +56,7 @@ const run: AnalysisRun = {
 
 const summary: ExecutionSummary = {
   analysisRunId: run.id,
+  captureRequested: true,
   captureEnabled: true,
   recordingState: "RECORDING",
   completeness: "RECORDING",
@@ -373,6 +374,29 @@ describe("Analysis Run Execution view", () => {
     expect(screen.getByText(/predates execution recording/)).toBeTruthy();
   });
 
+  it("keeps the original capture choice visible after future capture stops", async () => {
+    configureExecutionMocks();
+    executionMocks.useExecutionSummary.mockReturnValue({
+      data: {
+        ...summary,
+        captureRequested: true,
+        captureEnabled: false,
+        recordingState: "STOPPED",
+        completeness: "COMPLETE",
+        finishedAt: "2026-01-01T00:00:12.000Z",
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
+    renderRun();
+
+    expect(await screen.findByText("Capture stopped")).toBeTruthy();
+    expect(screen.getByText("Payload capture at start").nextElementSibling?.textContent).toBe("Enabled");
+    expect(screen.getByText(/Future capture has stopped/)).toBeTruthy();
+  });
+
   it("renders an omitted nullable descriptor without requesting content or crashing the inspector", async () => {
     configureExecutionMocks();
     const omittedDetail: ExecutionSpanDetail = {
@@ -490,8 +514,132 @@ describe("Analysis Run Execution view", () => {
     const search = await screen.findByRole("textbox", { name: "Find operation" });
     fireEvent.change(search, { target: { value: "Model request" } });
     const trace = screen.getByRole("list", { name: "Execution operations" });
-    expect(within(trace).getByText("Read the PDF")).toBeTruthy();
+    expect(within(trace).getByText("Pipeline stage: Read the PDF")).toBeTruthy();
     expect(within(trace).getAllByText("Model request").length).toBeGreaterThan(0);
     expect(within(trace).queryByText("Parse source")).toBeNull();
+  });
+
+  it("wraps long operation labels and aligns Duration on a fixed-width track on mobile and desktop", async () => {
+    configureExecutionMocks();
+    const longName = "Unbroken-operation-label-" + "x".repeat(180);
+    const longSpan: ExecutionSpan = {
+      ...spans[0],
+      id: "long-operation",
+      parentSpanId: null,
+      operationId: "long-operation",
+      kind: "TRANSFORM",
+      name: longName,
+      status: "RUNNING",
+      endedAt: null,
+      durationMillis: null,
+    };
+    executionMocks.useExecutionSpans.mockReturnValue({
+      data: { pages: [{ items: [longSpan], nextCursor: null }] },
+      isPending: false,
+      isError: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
+    renderRun();
+
+    const trace = await screen.findByRole("list", { name: "Execution operations" });
+    const operation = within(trace).getByRole("button", { name: new RegExp(`^${longName}, Running`) });
+    expect(operation.textContent).toContain(longName);
+    expect(operation.className).toContain("whitespace-normal");
+    expect(operation.className).not.toContain("overflow-x-auto");
+    expect(within(operation).getByText(longName).className).toContain("[overflow-wrap:anywhere]");
+
+    const rowGrid = operation.closest(".grid");
+    const rulerGrid = screen.getByText("Duration").closest(".grid");
+    expect(rowGrid?.className).toContain("grid-cols-[minmax(0,1fr)_5rem]");
+    expect(rowGrid?.className).toContain("sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)]");
+    expect(rulerGrid?.className).toContain("grid-cols-[minmax(0,1fr)_5rem]");
+    expect(rulerGrid?.className).toContain("sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)]");
+  });
+
+  it.each([
+    { sizeBytes: 64 * 1024, opensDialog: false },
+    { sizeBytes: 64 * 1024 + 1, opensDialog: true },
+  ])("keeps an artifact of $sizeBytes bytes inline only at or below the 64 KiB threshold", async ({ sizeBytes, opensDialog }) => {
+    configureExecutionMocks();
+    const prefix = "<img src=x onerror=alert(1)>";
+    const content = `${prefix}${"x".repeat(sizeBytes - prefix.length)}`;
+    const storedArtifact: ExecutionArtifact = { ...responseArtifact, content, sizeBytes };
+    const storedDetail: ExecutionSpanDetail = {
+      ...detail,
+      artifactRoles: [{ ...detail.artifactRoles[0], sizeBytes }],
+    };
+    executionMocks.useExecutionSpan.mockImplementation((analysisRunId: string, spanId: string | null) => {
+      executionMocks.spanRequests(analysisRunId, spanId);
+      return { data: spanId === "model" ? storedDetail : undefined, isPending: false, isError: false, error: null };
+    });
+    executionMocks.useExecutionArtifact.mockImplementation((analysisRunId: string, artifactId: string | null, spanId: string | null, role: string | null) => {
+      executionMocks.artifactRequests(analysisRunId, artifactId, spanId, role);
+      return { data: artifactId === storedArtifact.id ? storedArtifact : undefined, isPending: false, isError: false, error: null };
+    });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution&span=model`);
+    renderRun();
+
+    const artifactArea = await screen.findByRole("region", { name: "response artifact" });
+    expect(executionMocks.artifactRequests).toHaveBeenCalledWith(run.id, storedArtifact.id, "model", "RESPONSE");
+    if (!opensDialog) {
+      expect(within(artifactArea).queryByRole("button", { name: "Open full artifact" })).toBeNull();
+      const inlineContent = Array.from(artifactArea.querySelectorAll("pre")).find((pre) => pre.textContent === content);
+      expect(inlineContent).toBeTruthy();
+      expect(inlineContent?.querySelector("img")).toBeNull();
+      return;
+    }
+
+    const openButton = within(artifactArea).getByRole("button", { name: "Open full artifact" });
+    expect(Array.from(artifactArea.querySelectorAll("pre")).some((pre) => pre.textContent === content)).toBe(false);
+    fireEvent.click(openButton);
+    const dialog = await screen.findByRole("dialog", { name: "Full response artifact" });
+    const fullText = within(dialog).getByLabelText("response artifact content");
+    expect(fullText.tagName).toBe("PRE");
+    expect(fullText.textContent).toBe(content);
+    expect(fullText.getAttribute("tabindex")).toBe("0");
+    expect(fullText.className).toContain("overflow-auto");
+    expect(fullText.className).toContain("select-text");
+    expect(fullText.querySelector("img")).toBeNull();
+  });
+
+  it("groups operations by one of the canonical pipeline stage IDs and keeps unknown stages in Other", async () => {
+    configureExecutionMocks();
+    const stageAssignments = [
+      { id: "source-operation", stageId: "source", operationId: "references", name: "Resolve references operation", group: "Read the PDF" },
+      { id: "references-operation", stageId: "references", operationId: "source", name: "Read the PDF operation", group: "Resolve references" },
+      { id: "access-operation", stageId: "access", operationId: "verification", name: "Acquire source operation", group: "Acquire cited sources" },
+      { id: "evidence-operation", stageId: "evidence", operationId: "access", name: "Evidence indexing operation", group: "Prepare evidence" },
+      { id: "verification-operation", stageId: "verification", operationId: "evidence", name: "Claim assessment operation", group: "Assess evidence" },
+      { id: "unknown-operation", stageId: "future-analysis-stage", operationId: "access", name: "Future stage operation", group: "Other operations" },
+    ];
+    const assignedSpans: ExecutionSpan[] = stageAssignments.map((assignment) => ({
+      ...spans[0],
+      id: assignment.id,
+      parentSpanId: null,
+      operationId: assignment.operationId,
+      stageId: assignment.stageId,
+      kind: "TRANSFORM",
+      name: assignment.name,
+    }));
+    executionMocks.useExecutionSpans.mockReturnValue({
+      data: { pages: [{ items: assignedSpans, nextCursor: null }] },
+      isPending: false,
+      isError: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
+    renderRun();
+
+    const trace = await screen.findByRole("list", { name: "Execution operations" });
+    for (const { group, name } of stageAssignments) {
+      const heading = within(trace).getByRole("button", { name: new RegExp(group === "Other operations" ? "Other operations" : `Pipeline stage: ${group}`) });
+      const stageGroup = heading.closest('[role="listitem"]');
+      expect(stageGroup).toBeTruthy();
+      expect(within(stageGroup as HTMLElement).getByRole("button", { name: new RegExp(`${name}, Succeeded`) })).toBeTruthy();
+    }
+    expect(within(trace).queryByRole("button", { name: /Pipeline stage: Future analysis stage/ })).toBeNull();
   });
 });

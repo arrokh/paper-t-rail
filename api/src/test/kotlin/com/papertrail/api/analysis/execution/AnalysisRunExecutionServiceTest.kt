@@ -64,7 +64,7 @@ class AnalysisRunExecutionServiceTest {
     }
 
     @Test
-    fun `OpenAI transport artifacts come from actual request and response with sensitive message content omitted`() {
+    fun `OpenAI transport artifacts retain safe summaries but omit prompt and answer content`() {
         val mapper = ObjectMapper()
         val requestBodyReceived = AtomicReference<String>()
         val privateResponse = """
@@ -134,11 +134,13 @@ class AnalysisRunExecutionServiceTest {
         assertTrue(storedContents.all { it.contains("gpt-public") })
         assertTrue(storedContents.none { it.contains("private@example.org") || it.contains("P-0042") || it.contains("sk-private-value") })
         assertTrue(storedContents.none { it.contains("private system prompt") || it.contains("response-private-id") })
+        assertTrue(storedContents.any { it.contains("promptContentOmitted") })
+        assertTrue(storedContents.any { it.contains("messageContentOmitted") })
         assertTrue(artifacts.all { it.second.fidelity == CaptureFidelity.PARTIAL })
     }
 
     @Test
-    fun `Crossref network calls produce nested content-free route spans`() {
+    fun `Crossref network calls capture sanitized request and response details within provider spans`() {
         val mapper = jacksonObjectMapper()
         val catalog = configuredExternalProviderCatalog()
         val configuration = RunConfigurationFactory(
@@ -169,7 +171,7 @@ class AnalysisRunExecutionServiceTest {
         val runId = UUID.randomUUID()
         val eventId = UUID.randomUUID()
         val parent = ExecutionSpanSpec("references", "INTERNAL", "Resolve bibliography entry", eventId = eventId)
-        val parentHandle = ExecutionSpanHandle(UUID.randomUUID(), runId, UUID.randomUUID(), Instant.now(), System.nanoTime(), eventId = eventId)
+        val parentHandle = ExecutionSpanHandle(UUID.randomUUID(), runId, UUID.randomUUID(), Instant.now(), System.nanoTime(), stageId = "references", eventId = eventId)
         val providerSpec = ExecutionSpanSpec(
             stageId = "references",
             kind = "PROVIDER",
@@ -208,7 +210,17 @@ class AnalysisRunExecutionServiceTest {
         assertEquals("crossref", recordedProviderSpec.providerId)
         assertEquals("/works", recordedProviderSpec.attributes["httpRoute"])
         assertEquals(parentHandle.id, recordedProviderSpec.parentSpanId)
-        assertTrue(Mockito.mockingDetails(repository).invocations.none { it.method.name == "recordArtifact" })
+        val recordedArtifacts = Mockito.mockingDetails(repository).invocations
+            .filter { it.method.name == "recordArtifact" }
+            .map { it.arguments[2] as ExecutionSpanArtifactSpec to it.arguments[3] as SanitizedExecutionArtifact }
+        assertEquals(listOf("REQUEST", "RESPONSE"), recordedArtifacts.map { it.first.role })
+        val requestContent = recordedArtifacts[0].second.content!!
+        val responseContent = recordedArtifacts[1].second.content!!
+        assertTrue(requestContent.contains("10.1234/example"))
+        assertTrue(responseContent.contains("10.1234/example"))
+        assertTrue(responseContent.contains("Safe public title"))
+        assertEquals(CaptureFidelity.COMPLETE, recordedArtifacts[0].second.fidelity)
+        assertEquals(CaptureFidelity.PARTIAL, recordedArtifacts[1].second.fidelity)
     }
 
     private fun sha256Hex(content: String): String = MessageDigest.getInstance("SHA-256")

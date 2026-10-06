@@ -207,7 +207,7 @@ class AnalysisRunExecutionRepository(
                 INSERT INTO analysis_run_execution_artifacts (
                     id, analysis_run_id, content_sha256, media_type, content,
                     schema_version, capture_version, sanitizer_version, size_bytes
-                ) VALUES (?, ?, ?, 'application/json', ?, ?, 'execution-capture-v1', 'allowlist-sanitizer-v1', ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'execution-capture-v1', 'structured-redaction-sanitizer-v3', ?)
                 ON CONFLICT (analysis_run_id, content_sha256, schema_version) DO UPDATE
                    SET content_sha256 = EXCLUDED.content_sha256
                 RETURNING id, content IS NOT NULL AS content_available
@@ -216,15 +216,16 @@ class AnalysisRunExecutionRepository(
                 artifactId,
                 analysisRunId,
                 sha256,
+                sanitized.mediaType,
                 sanitized.content,
                 sanitized.schemaVersion,
                 sizeBytes,
             ).firstOrNull()
             if (persisted == null || !persisted.second) {
-                insertAssociation(analysisRunId, spanId, artifact.role, persisted?.first, CaptureFidelity.REMOVED.name, "ARTIFACT_REMOVED", artifact.schemaVersion, "application/json", sizeBytes)
+                insertAssociation(analysisRunId, spanId, artifact.role, persisted?.first, CaptureFidelity.REMOVED.name, "ARTIFACT_REMOVED", artifact.schemaVersion, sanitized.mediaType, sizeBytes)
                 return@executeWithoutResult
             }
-            insertAssociation(analysisRunId, spanId, artifact.role, persisted.first, sanitized.fidelity.name, sanitized.reason, artifact.schemaVersion, "application/json", sizeBytes)
+            insertAssociation(analysisRunId, spanId, artifact.role, persisted.first, sanitized.fidelity.name, sanitized.reason, artifact.schemaVersion, sanitized.mediaType, sizeBytes)
         }
     }
 
@@ -267,7 +268,7 @@ class AnalysisRunExecutionRepository(
 
     fun summary(analysisRunId: UUID): AnalysisRunExecutionSummary? = jdbc.query(
         """
-        SELECT capture_enabled, recording_state, completeness, started_at, finished_at
+        SELECT capture_requested, capture_enabled, recording_state, completeness, started_at, finished_at
           FROM analysis_run_execution WHERE analysis_run_id = ?
         """.trimIndent(),
         { rs, _ ->
@@ -275,6 +276,7 @@ class AnalysisRunExecutionRepository(
             val finished = rs.getTimestamp("finished_at")?.toInstant()
             AnalysisRunExecutionSummary(
                 analysisRunId = analysisRunId,
+                captureRequested = rs.getBoolean("capture_requested"),
                 captureEnabled = rs.getBoolean("capture_enabled"),
                 recordingState = rs.getString("recording_state"),
                 completeness = rs.getString("completeness"),

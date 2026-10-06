@@ -39,7 +39,7 @@ class LayaSystemOneProvider(
         val preparedRequest = createRequest(claim, passage, preflight = true)
         executionService?.captureCurrentSystemOneRequest(preparedRequest.body)
         val response = sendRequest(preparedRequest.request)
-        executionService?.omitCurrentBody("RESPONSE", "system-one-preflight-response-v1", "UNSAFE_UNSTRUCTURED_CONTENT")
+        executionService?.captureCurrentSystemOneResponse(response.body(), "system-one-preflight-response-v1")
         if (response.statusCode() !in 200..299) {
             throw LayaSystemOneProviderException("Laya System One preflight returned HTTP ${response.statusCode()}.")
         }
@@ -104,7 +104,7 @@ class LayaSystemOneProvider(
         executionService?.captureCurrentSystemOneRequest(preparedRequest.body)
         val response = sendRequest(preparedRequest.request)
         val body = response.body()
-        executionService?.omitCurrentBody("RESPONSE", "system-one-response-v1", "UNSAFE_UNSTRUCTURED_CONTENT")
+        executionService?.captureCurrentSystemOneResponse(body)
         if (body.size > LayaSystemOneSettings.MAX_RESPONSE_BYTES) {
             throw LayaSystemOneProviderException("Laya System One response exceeded the configured response limit.")
         }

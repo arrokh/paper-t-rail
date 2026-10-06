@@ -5,6 +5,7 @@ export type ExecutionArtifactFidelity = "COMPLETE" | "SANITIZED" | "PARTIAL" | "
 
 export type ExecutionSummary = {
   analysisRunId: string;
+  captureRequested: boolean | null;
   captureEnabled: boolean;
   recordingState: ExecutionRecordingState;
   completeness: ExecutionCompleteness;

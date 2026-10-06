@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
@@ -42,6 +43,8 @@ import { cn } from "@/lib/utils";
 
 type InspectorArtifactSection = "input" | "response" | "result";
 const POLL_ERROR_MESSAGE = "Execution details could not be loaded.";
+const INLINE_ARTIFACT_SIZE_LIMIT_BYTES = 64 * 1024;
+const EXECUTION_GRID_COLUMNS = "grid-cols-[minmax(0,1fr)_5rem] sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)]";
 const INSPECTOR_ASIDE_CLASS_NAME = "min-w-0 border-t border-border bg-background lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:self-start lg:overflow-y-auto lg:border-t-0 lg:border-l";
 
 function isTerminalExecutionStatus(status: string): boolean {
@@ -127,9 +130,9 @@ function stageLabel(stageId: string): string {
 function ExecutionRuler({ elapsedMillis }: { elapsedMillis: number }) {
   const midpoint = elapsedMillis / 2;
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_4.5rem] items-end gap-x-2 border-b border-border bg-muted/30 px-3 py-2 sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)] sm:gap-x-3 sm:px-4">
-      <span className="text-xs font-medium text-muted-foreground">Operation / status</span>
-      <span className="hidden text-right text-xs font-medium text-muted-foreground sm:block">Duration</span>
+    <div className={cn("grid items-end gap-x-2 border-b border-border bg-muted/30 px-3 py-2 sm:gap-x-3 sm:px-4", EXECUTION_GRID_COLUMNS)}>
+      <span className="min-w-0 text-xs font-medium text-muted-foreground">Operation / status</span>
+      <span className="min-w-0 text-right text-xs font-medium text-muted-foreground">Duration</span>
       <div className="col-span-2 min-w-0 sm:col-span-1" role="img" aria-label={`Shared run-relative time axis from 0 to ${formatExecutionDuration(elapsedMillis)}`}>
         <div className="flex justify-between font-mono text-[0.65rem] text-muted-foreground">
           <span>0</span><span>{formatExecutionDuration(midpoint)}</span><span>{formatExecutionDuration(elapsedMillis)}</span>
@@ -193,11 +196,11 @@ function ExecutionSpanRows({
             context.expandedAll === true || (context.expandedAll === null && selectedWithin)
           );
           return (
-            <div key={groupId} role="listitem" className="border-b border-border/60 last:border-b-0">
+            <div key={groupId} role="listitem" className="min-w-0 border-b border-border/60 last:border-b-0">
               <Collapsible open={isOpen} onOpenChange={(open) => context.onDisclosureChange(groupId, open)}>
-                <CollapsibleTrigger className="group flex min-h-9 w-full items-center gap-2 px-3 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4">
+                <CollapsibleTrigger className="group flex min-h-9 min-w-0 w-full flex-wrap items-center gap-2 px-3 text-left text-sm font-medium whitespace-normal focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4">
                   <ChevronDown className="size-4 shrink-0 transition-transform group-data-[closed]:-rotate-90" aria-hidden="true" />
-                  <span className="min-w-0 flex-1 break-words">{first.name || first.kind}</span>
+                  <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{first.name || first.kind}</span>
                   <Badge variant="outline" className="shrink-0 text-[0.65rem]">{operations.length} {unit}</Badge>
                   {failureCount > 0 && <Badge variant="outline" className={cn("shrink-0 text-[0.65rem]", statusBadgeClass("FAILED"))}>{failureCount} failed</Badge>}
                 </CollapsibleTrigger>
@@ -222,11 +225,11 @@ function ExecutionSpanRows({
           const groupId = `attempts:${key}`;
           const isOpen = context.openOverrides[groupId] ?? context.expandedAll !== false;
           return (
-            <div key={groupId} role="listitem" className="border-b border-border/60 last:border-b-0">
+            <div key={groupId} role="listitem" className="min-w-0 border-b border-border/60 last:border-b-0">
               <Collapsible open={isOpen} onOpenChange={(open) => context.onDisclosureChange(groupId, open)}>
-                <CollapsibleTrigger className="group flex min-h-9 w-full items-center gap-2 px-3 text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4">
+                <CollapsibleTrigger className="group flex min-h-9 min-w-0 w-full flex-wrap items-center gap-2 px-3 text-left text-sm font-medium whitespace-normal focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4">
                   <ChevronDown className="size-4 shrink-0 transition-transform group-data-[closed]:-rotate-90" aria-hidden="true" />
-                  <span className="min-w-0 flex-1 break-words">{firstAttempt.name || firstAttempt.kind}</span>
+                  <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{firstAttempt.name || firstAttempt.kind}</span>
                   <Badge variant="outline" className="shrink-0 text-[0.65rem]">{attempts.length} attempts</Badge>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="border-l border-border/70">
@@ -291,7 +294,8 @@ function ExecutionSpanTreeRow({
   return (
     <div role="listitem" className="min-w-0 border-b border-border/60 last:border-b-0">
       <div className={cn(
-        "grid min-h-10 grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-x-2 gap-y-0.5 px-3 py-0.5 sm:min-h-9 sm:grid-cols-[minmax(12rem,1.2fr)_5rem_minmax(12rem,2fr)] sm:gap-x-3 sm:gap-y-0 sm:px-4 sm:py-0",
+        "grid min-h-10 items-center gap-x-2 gap-y-0.5 px-3 py-0.5 sm:min-h-9 sm:gap-x-3 sm:gap-y-0 sm:px-4 sm:py-0",
+        EXECUTION_GRID_COLUMNS,
         selectedSpanId === span.id && "bg-primary/5",
       )}>
         <div className="flex min-w-0 items-center gap-1" style={{ paddingInlineStart: `${Math.min(depth, 6) * 0.25}rem` }}>
@@ -312,18 +316,18 @@ function ExecutionSpanTreeRow({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-8 min-h-8 min-w-0 flex-1 justify-start gap-2 overflow-x-auto overscroll-x-contain rounded-sm px-1 text-left flex-nowrap whitespace-nowrap [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/40"
+            className="h-auto min-h-8 min-w-0 flex-1 flex-wrap justify-start gap-2 rounded-sm px-1 py-1 text-left whitespace-normal"
             aria-label={`${name}, ${executionStatusLabel(span.status)}, ${isRunning ? `Running, ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}`}
             title={`${name} · Status: ${executionStatusLabel(span.status)} (${span.status})`}
             aria-pressed={selectedSpanId === span.id}
             onClick={() => onSelect(span.id)}
           >
-            <span className="w-max shrink-0 whitespace-nowrap text-sm font-medium text-foreground">{name}</span>
+            <span className="min-w-0 flex-1 [overflow-wrap:anywhere] text-sm font-medium text-foreground">{name}</span>
             <SpanStatus status={span.status} />
             {span.attempt > 1 && <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[0.65rem]">Attempt {span.attempt}</Badge>}
           </Button>
         </div>
-        <span className="min-w-0 text-right font-mono text-xs tabular-nums text-muted-foreground" title={isRunning ? `Running · ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}>
+        <span className="min-w-0 text-right font-mono text-xs tabular-nums text-muted-foreground [overflow-wrap:anywhere]" title={isRunning ? `Running · ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}>
           {isRunning ? `Running · ${formatExecutionDuration(timelineRow.durationMillis)}` : formatExecutionDuration(timelineRow.durationMillis)}
         </span>
         <div className="col-span-2 h-3 min-w-0 sm:col-span-1" aria-hidden="true">
@@ -387,6 +391,10 @@ function ArtifactCapture({
   const sizeBytes = artifactMatchesRequest ? artifact?.sizeBytes ?? descriptor.sizeBytes : descriptor.sizeBytes;
   const reason = artifactMatchesRequest ? artifact?.reason ?? descriptor.reason : "The artifact response did not match this operation and is unavailable.";
   const content = artifactMatchesRequest ? artifact?.content : null;
+  const contentSizeBytes = typeof content === "string"
+    ? sizeBytes ?? new TextEncoder().encode(content).byteLength
+    : null;
+  const useArtifactDialog = contentSizeBytes !== null && contentSizeBytes > INLINE_ARTIFACT_SIZE_LIMIT_BYTES;
   const removed = fidelity === "removed";
 
   async function copySanitizedContent() {
@@ -417,10 +425,24 @@ function ArtifactCapture({
           <span className="font-mono text-[0.65rem] text-muted-foreground">{mediaType ?? "Media type unknown"} · {sizeBytes ?? "Unknown size"} bytes</span>
         </div>
         {typeof content === "string" && (
-          <Button type="button" variant="outline" size="sm" className="min-h-10" onClick={copySanitizedContent}>
-            {copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
-            {copied ? "Copied sanitized content" : "Copy sanitized content"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {useArtifactDialog && (
+              <Dialog>
+                <DialogTrigger render={<Button type="button" variant="outline" size="sm" className="min-h-10" />}>Open full artifact</DialogTrigger>
+                <DialogContent className="grid min-w-0 max-h-[90dvh] max-w-[calc(100%-2rem)] grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden sm:max-w-[calc(100%-2rem)] lg:max-w-5xl">
+                  <DialogHeader className="min-w-0 pr-10">
+                    <DialogTitle className="break-words">Full {descriptor.role.toLowerCase()} artifact</DialogTitle>
+                    <DialogDescription>The complete captured text is selectable and displayed as text, not HTML.</DialogDescription>
+                  </DialogHeader>
+                  <pre role="region" tabIndex={0} aria-label={`${descriptor.role.toLowerCase()} artifact content`} className="m-0 min-h-0 max-h-[70dvh] min-w-0 overflow-auto overscroll-contain rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] select-text">{content}</pre>
+                </DialogContent>
+              </Dialog>
+            )}
+            <Button type="button" variant="outline" size="sm" className="min-h-10" onClick={copySanitizedContent}>
+              {copied ? <Check className="size-3.5" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
+              {copied ? "Copied sanitized content" : "Copy sanitized content"}
+            </Button>
+          </div>
         )}
       </div>
       {reason && (typeof content === "string" || artifactQuery.isPending || artifactQuery.isError || removed) && <p className="m-0 text-sm text-muted-foreground">{reason}</p>}
@@ -432,8 +454,8 @@ function ArtifactCapture({
           {removed ? "This artifact was removed. Its captured content is no longer available." : reason ?? "No artifact content was captured for this operation."}
         </p>
       )}
-      {typeof content === "string" && !artifactQuery.isError && (
-        <pre className="max-h-80 overflow-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">{content}</pre>
+      {typeof content === "string" && !artifactQuery.isError && !useArtifactDialog && (
+        <pre className="max-h-80 overflow-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] select-text">{content}</pre>
       )}
       {artifact && artifactMatchesRequest && <p className="m-0 break-words font-mono text-[0.65rem] text-muted-foreground">Schema {artifact.schemaVersion ?? "unknown"} · Capture {artifact.captureVersion ?? "unknown"} · Sanitizer {artifact.sanitizerVersion ?? "unknown"}</p>}
       {hasArtifactId && fidelity !== "removed" && typeof content === "string" && (
@@ -763,7 +785,7 @@ export function AnalysisRunExecution({
         <dl className="m-0 flex flex-wrap items-baseline gap-x-6 gap-y-2 border-y border-border py-3 text-sm">
           <div className="flex items-baseline gap-2"><dt className="text-xs text-muted-foreground">Elapsed</dt><dd className="m-0 font-mono tabular-nums">{elapsedLabel}</dd></div>
           <div className="flex items-baseline gap-2"><dt className="text-xs text-muted-foreground">Recording</dt><dd className="m-0" aria-live="polite">{recordingStatusLabel}</dd></div>
-          <div className="flex items-baseline gap-2"><dt className="text-xs text-muted-foreground">Payload capture at start</dt><dd className="m-0">{summary.captureEnabled ? "Enabled" : "Disabled"}</dd></div>
+          <div className="flex items-baseline gap-2"><dt className="text-xs text-muted-foreground">Payload capture at start</dt><dd className="m-0">{summary.captureRequested === null ? "Unavailable" : summary.captureRequested ? "Enabled" : "Disabled"}</dd></div>
           {traceMayBeIncomplete && <div className="contents"><dt className="sr-only">Trace completeness</dt><dd className="m-0"><Badge variant="outline" className="border-warning/50 bg-warning/20 text-warning-foreground">Incomplete trace</Badge></dd></div>}
         </dl>
       </header>
@@ -847,8 +869,6 @@ export function AnalysisRunExecution({
                 const stageSpans = stageGroups.get(stageId) ?? [];
                 const stageKey = `stage:${stageId}`;
                 const stageOpen = openOverrides[stageKey] ?? expandedAll !== false;
-                const explicitStageRow = stageSpans.length === 1
-                  && stageSpans[0].name.toLowerCase() === stageName(stageId).toLowerCase();
                 const rowContext = {
                   depth: 0,
                   childrenByParent,
@@ -862,18 +882,15 @@ export function AnalysisRunExecution({
                   onDisclosureChange: updateDisclosure,
                   onSelect: selectSpan,
                 };
-                if (explicitStageRow) {
-                  return <ExecutionSpanRows key={stageSpans[0].id} spans={stageSpans} {...rowContext} />;
-                }
                 const operationCount = new Set(stageSpans.map((span) => span.operationId)).size;
                 return (
                   <div key={stageId} role="listitem" className="border-b border-border last:border-b-0">
                     <Collapsible open={stageOpen} onOpenChange={(open) => updateDisclosure(stageKey, open)}>
-                      <div className="flex min-h-9 items-center gap-2 bg-muted/25 px-3 sm:px-4">
-                        <CollapsibleTrigger className="group flex min-h-9 min-w-0 flex-1 items-center gap-2 text-left text-xs font-semibold text-muted-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                      <div className="flex min-h-9 min-w-0 items-center gap-2 bg-muted/25 px-3 sm:px-4">
+                        <CollapsibleTrigger className="group flex min-h-9 min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left text-xs font-semibold text-muted-foreground whitespace-normal focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
                           <ChevronDown className="size-3.5 shrink-0 transition-transform group-data-[closed]:-rotate-90" aria-hidden="true" />
-                          <span className="truncate">{stageName(stageId)}</span>
-                          <span className="font-mono text-[0.65rem] font-normal">{operationCount} {operationCount === 1 ? "operation" : "operations"}</span>
+                          <span className="min-w-0 [overflow-wrap:anywhere]">{stageId === "other" ? "Other operations" : `Pipeline stage: ${stageName(stageId)}`}</span>
+                          <span className="shrink-0 font-mono text-[0.65rem] font-normal">{operationCount} {operationCount === 1 ? "operation" : "operations"}</span>
                         </CollapsibleTrigger>
                       </div>
                       <CollapsibleContent>

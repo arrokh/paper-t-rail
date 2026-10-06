@@ -7,7 +7,9 @@ import java.util.UUID
 @Schema(description = "Run-level availability, capture choice, and elapsed interval for inspectable execution.")
 data class AnalysisRunExecutionSummary(
     val analysisRunId: UUID,
-    @field:Schema(description = "Whether future sanitized artifacts may be captured.")
+    @field:Schema(description = "Whether sanitized payload capture was requested when the Analysis Run was created; null when execution recording is unavailable.")
+    val captureRequested: Boolean?,
+    @field:Schema(description = "Whether payload capture remains enabled for this recording; recordingState separately indicates whether the run can still record operations.")
     val captureEnabled: Boolean,
     @field:Schema(allowableValues = ["RECORDING", "STOPPED", "NOT_RECORDED"], description = "Explicitly distinguishes legacy history from stopped capture.")
     val recordingState: String,

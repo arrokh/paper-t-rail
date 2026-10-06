@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
@@ -13,6 +14,9 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.web.client.RestClient
 import org.springframework.web.util.UriComponentsBuilder
+import java.io.ByteArrayInputStream
+import java.io.InputStream
+import java.io.SequenceInputStream
 import java.net.URI
 
 class CrossrefScholarlyMetadataLookup(
@@ -83,6 +87,7 @@ class CrossrefScholarlyMetadataLookup(
 
     private fun exchange(uri: URI, operationKey: String, route: String): JsonNode? {
         val request = {
+            executionService?.captureCurrentCrossrefRequest(uri)
             client.get()
                 .uri(uri)
                 .accept(MediaType.APPLICATION_JSON)
@@ -90,7 +95,7 @@ class CrossrefScholarlyMetadataLookup(
                     when {
                         response.statusCode == HttpStatus.NOT_FOUND -> null
                         !response.statusCode.is2xxSuccessful -> throw IllegalStateException("Crossref returned HTTP ${response.statusCode.value()}.")
-                        else -> objectMapper.readTree(response.body)
+                        else -> readCrossrefResponse(response.body)
                     }
                 }
         }
@@ -106,6 +111,16 @@ class CrossrefScholarlyMetadataLookup(
                 operation = request,
             )
         }
+    }
+
+    private fun readCrossrefResponse(body: InputStream): JsonNode {
+        val capturedPrefix = body.readNBytes(ExecutionCaptureSanitizer.DEFAULT_MAX_ARTIFACT_BYTES + 1)
+        if (capturedPrefix.size > ExecutionCaptureSanitizer.DEFAULT_MAX_ARTIFACT_BYTES) {
+            executionService?.omitCurrentBody("RESPONSE", "crossref-response-v1", "ARTIFACT_TOO_LARGE")
+            return objectMapper.readTree(SequenceInputStream(ByteArrayInputStream(capturedPrefix), body))
+        }
+        executionService?.captureCurrentCrossrefResponse(capturedPrefix)
+        return objectMapper.readTree(capturedPrefix)
     }
 
     private fun normalizeField(value: String): String? = value.trim().replace(WHITESPACE, " ").takeIf(String::isNotEmpty)

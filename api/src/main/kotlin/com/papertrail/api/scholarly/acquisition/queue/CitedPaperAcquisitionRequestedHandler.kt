@@ -87,8 +87,6 @@ class CitedPaperAcquisitionRequestedHandler(
                 executionService.captureCurrent(
                     ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1)),
                 )
-                executionService.omitCurrentBody("REQUEST", "cited-paper-access-request-v1", "UNSAFE_UNSTRUCTURED_CONTENT")
-                executionService.omitCurrentBody("RESPONSE", "cited-paper-access-response-v1", "UNSAFE_UNSTRUCTURED_CONTENT")
                 citedPaperAccessService.acquire(event.analysisRunId, event.payload.bibliographyEntryId).also {
                     executionService.captureCurrent(
                         ExecutionSpanArtifactSpec("RESULT", "run-stage-result-v1", mapOf("status" to "SUCCEEDED", "itemCount" to 1)),

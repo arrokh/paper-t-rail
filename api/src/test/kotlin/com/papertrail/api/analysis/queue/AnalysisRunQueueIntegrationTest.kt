@@ -312,6 +312,7 @@ class AnalysisRunQueueIntegrationTest {
         }
 
         val stopped = execution.stopCapture(firstRun.analysisRunId)
+        assertEquals(true, stopped.captureRequested)
         assertFalse(stopped.captureEnabled)
         assertEquals("STOPPED", stopped.recordingState)
         assertEquals(null, execution.startSpan(firstRun.analysisRunId, ExecutionSpanSpec("source", "INTERNAL", "Late operation")))
@@ -496,9 +497,9 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(listOf("INPUT", "REQUEST", "RESPONSE", "RESULT"), detail.artifactRoles.map { it.role })
         assertEquals("SANITIZED", detail.artifactRoles.single { it.role == "INPUT" }.fidelity)
         assertEquals("OMITTED", detail.artifactRoles.single { it.role == "REQUEST" }.fidelity)
-        assertEquals("UNSAFE_UNSTRUCTURED_CONTENT", detail.artifactRoles.single { it.role == "REQUEST" }.reason)
+        assertEquals("BINARY_ASSET_REFERENCE", detail.artifactRoles.single { it.role == "REQUEST" }.reason)
         assertEquals("OMITTED", detail.artifactRoles.single { it.role == "RESPONSE" }.fidelity)
-        assertEquals("UNSAFE_UNSTRUCTURED_CONTENT", detail.artifactRoles.single { it.role == "RESPONSE" }.reason)
+        assertEquals("UNSUPPORTED_OR_UNSAFE_FIELDS", detail.artifactRoles.single { it.role == "RESPONSE" }.reason)
         assertEquals("SANITIZED", detail.artifactRoles.single { it.role == "RESULT" }.fidelity)
 
         val storedArtifacts = jdbc.queryForList(
@@ -527,6 +528,7 @@ class AnalysisRunQueueIntegrationTest {
         eventHandler().handle(event)
 
         val summary = executionService().summary(run.analysisRunId)
+        assertEquals(false, summary.captureRequested)
         assertFalse(summary.captureEnabled)
         assertEquals("RECORDING", summary.recordingState)
         assertTrue(executionService().spans(run.analysisRunId, 100, null).items.isNotEmpty())
