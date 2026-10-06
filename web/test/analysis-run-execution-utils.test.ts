@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  executionGapReasonDescription,
   filterExecutionSpans,
   formatExecutionDuration,
   getExecutionAncestorContext,
@@ -41,6 +42,13 @@ describe("execution trace timeline and filtering", () => {
     expect(timeline.rows[2].leftPercent).toBeCloseTo(16.67, 1);
     expect(timeline.rows[2].widthPercent).toBeCloseTo(83.33, 1);
     expect(formatExecutionDuration(12_000)).toBe("12 sec");
+  });
+
+  it("explains a persisted trace-gap reason without conflating it with run status", () => {
+    expect(executionGapReasonDescription("UNSAFE_SPAN_METADATA_OMITTED")).toBe(
+      "An operation's provider or model metadata did not meet trace safety rules, so its span was omitted.",
+    );
+    expect(executionGapReasonDescription(null)).toBe("One or more operation spans could not be recorded.");
   });
 
   it("loads only bounded missing ancestor context for a selected deep link", () => {
@@ -176,6 +184,7 @@ describe("execution trace timeline and filtering", () => {
       startedAt: "2026-01-01T00:00:00.000Z",
       finishedAt: null,
       totalDurationMillis: null,
+      gapReason: null,
     } satisfies ExecutionSummary;
     const summaryPoll = executionSummaryQueryOptions("run", true).refetchInterval;
     const spansPoll = executionSpansQueryOptions("run", true, true).refetchInterval;

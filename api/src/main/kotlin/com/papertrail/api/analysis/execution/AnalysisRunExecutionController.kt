@@ -29,7 +29,7 @@ class AnalysisRunExecutionController(
 ) {
     @Operation(
         summary = "Get Analysis Run execution availability and elapsed interval",
-        description = "Legacy runs return NOT_RECORDED with null timing. Capture artifacts are limited to the same trusted-workspace boundary as existing run inspection; this unauthenticated local API does not provide per-user ownership checks.",
+        description = "Legacy runs return NOT_RECORDED with null timing. The summary includes the first safe gap reason when trace recording is incomplete. Capture artifacts are limited to the same trusted-workspace boundary as existing run inspection; this unauthenticated local API does not provide per-user ownership checks.",
     )
     @ApiResponses(
         value = [

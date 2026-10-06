@@ -63,6 +63,7 @@ const summary: ExecutionSummary = {
   startedAt: "2026-01-01T00:00:00.000Z",
   finishedAt: null,
   totalDurationMillis: 12_000,
+  gapReason: null,
 };
 
 const spans: ExecutionSpan[] = [
@@ -397,7 +398,7 @@ describe("Analysis Run Execution view", () => {
     expect(screen.getByText(/Execution recording was stopped/)).toBeTruthy();
   });
 
-  it("distinguishes a completed recording from a manual stop", async () => {
+  it("explains why a completed Analysis Run has an incomplete execution trace", async () => {
     configureExecutionMocks();
     executionMocks.useAnalysisRun.mockReturnValue({
       data: { ...run, status: "COMPLETED" },
@@ -412,6 +413,7 @@ describe("Analysis Run Execution view", () => {
         recordingState: "STOPPED",
         completeness: "INCOMPLETE",
         finishedAt: "2026-01-01T00:00:12.000Z",
+        gapReason: "UNSAFE_SPAN_METADATA_OMITTED",
       },
       isPending: false,
       isError: false,
@@ -424,7 +426,9 @@ describe("Analysis Run Execution view", () => {
     expect(screen.queryByText("Recording stopped")).toBeNull();
     expect(screen.queryByText(/Execution recording was stopped/)).toBeNull();
     expect(screen.getByText("Incomplete trace")).toBeTruthy();
-    expect(screen.getByText("The recording is marked incomplete. Missing spans are not reconstructed.")).toBeTruthy();
+    expect(screen.getByText(/provider or model metadata did not meet trace safety rules, so its span was omitted/)).toBeTruthy();
+    expect(screen.getByText(/This trace gap does not change the Analysis Run result/)).toBeTruthy();
+    expect(screen.getByText("UNSAFE_SPAN_METADATA_OMITTED")).toBeTruthy();
   });
 
   it("renders an omitted nullable descriptor without requesting content or crashing the inspector", async () => {

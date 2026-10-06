@@ -1,5 +1,17 @@
 export type ExecutionRecordingState = "RECORDING" | "STOPPED" | "NOT_RECORDED";
 export type ExecutionCompleteness = "COMPLETE" | "INCOMPLETE" | "RECORDING" | "NOT_RECORDED";
+export type ExecutionGapReason =
+  | "UNSAFE_SPAN_METADATA_OMITTED"
+  | "UNSAFE_SPAN_RESULT_OMITTED"
+  | "INTERVAL_TIMESTAMPS_UNAVAILABLE"
+  | "SPAN_STORAGE_UNAVAILABLE"
+  | "RETRY_SCHEDULE_TIMESTAMPS_UNAVAILABLE"
+  | "QUEUE_ENQUEUE_TIMESTAMP_UNAVAILABLE"
+  | "UNSAFE_ARTIFACT_METADATA_OMITTED"
+  | "ARTIFACT_STORAGE_UNAVAILABLE"
+  | "UNSAFE_SPAN_ATTRIBUTES_OMITTED"
+  | "CAPTURE_STOPPED"
+  | "INTERRUPTED_OPERATION";
 export type ExecutionArtifactRole = "INPUT" | "REQUEST" | "RESPONSE" | "RESULT";
 export type ExecutionArtifactFidelity = "COMPLETE" | "SANITIZED" | "PARTIAL" | "OMITTED" | "REMOVED" | "UNAVAILABLE";
 
@@ -12,6 +24,7 @@ export type ExecutionSummary = {
   startedAt: string | null;
   finishedAt: string | null;
   totalDurationMillis: number | null;
+  gapReason: ExecutionGapReason | null;
 };
 
 export type ExecutionSpan = {

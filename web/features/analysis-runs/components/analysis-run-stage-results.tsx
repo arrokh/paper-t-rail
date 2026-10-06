@@ -47,42 +47,6 @@ const VERIFICATION_STATUS_FILTERS = [
 const VERIFICATION_SUMMARY_FILTERS = ["ALL_PAIRS", "COMPLETED_PAIRS", "COMPARABLE_CONFLICTS"] as const;
 const VERIFICATION_RESULTS_FILTERS = ["ALL_PAIRS", "WITH_EVIDENCE_PASSAGES", "WITH_JUDGEMENTS", "INCOMPLETE_PAIRS"] as const;
 
-function scrollIntoViewAndWaitForCompletion(element: HTMLElement): Promise<void> {
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const scrollMarginTop = Number.parseFloat(window.getComputedStyle(element).scrollMarginTop) || 0;
-  const targetScrollTop = Math.max(0, element.getBoundingClientRect().top + window.scrollY - scrollMarginTop);
-  const alreadyAtTarget = Math.abs(targetScrollTop - window.scrollY) < 1;
-
-  if (reducedMotion || alreadyAtTarget) {
-    element.scrollIntoView({ behavior: "instant", block: "start" });
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve) => {
-    let idleTimeout = 0;
-    let fallbackTimeout = 0;
-    let settled = false;
-
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      window.removeEventListener("scroll", handleScroll);
-      window.clearTimeout(idleTimeout);
-      window.clearTimeout(fallbackTimeout);
-      resolve();
-    };
-
-    const handleScroll = () => {
-      window.clearTimeout(idleTimeout);
-      idleTimeout = window.setTimeout(finish, 120);
-    };
-
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    fallbackTimeout = window.setTimeout(finish, 2000);
-    element.scrollIntoView({ behavior: "smooth", block: "start" });
-  });
-}
-
 function ResultMetric({ label, value }: { label: string; value: number | string }) {
   return (
     <Card size="sm" className="shadow-none">
@@ -190,13 +154,25 @@ function providerLabel(provider: { provider: string; model?: string | null; vers
   return [provider.provider, provider.model, provider.version].filter(Boolean).join(" · ");
 }
 
+function persistedExecutionStatus(status: string | undefined, loading: boolean, error: string | null): string {
+  if (status) return status;
+  if (loading) return "Loading";
+  return error ? "Unavailable" : "Not reported";
+}
+
 function PipelineConfiguration({
   run,
   stageId,
+  report,
+  reportLoading,
+  reportError,
   stickyBoundaryRef,
 }: {
   run: AnalysisRun;
   stageId: PipelineStageId;
+  report: ReferenceResolutionReportResponse | null;
+  reportLoading: boolean;
+  reportError: string | null;
   stickyBoundaryRef: Ref<HTMLElement>;
 }) {
   const configuration = run.configuration;
@@ -213,7 +189,7 @@ function PipelineConfiguration({
     : stageId === "references"
       ? [
           ["Resolver", providerLabel(configuration.referenceResolution?.provider)],
-          ["Execution", configuration.referenceResolution?.executionStatus ?? "Not configured"],
+          ["Execution status", persistedExecutionStatus(report?.referenceResolution.executionStatus, reportLoading, reportError)],
           ["Score policy", configuration.referenceResolution?.scorePolicyVersion ?? "Not configured"],
           ["Match threshold", configuration.referenceResolution?.confidenceThreshold?.toFixed(3) ?? "Not configured"],
         ]
@@ -233,7 +209,7 @@ function PipelineConfiguration({
             ]
           : [
               ["System One", providerLabel(configuration.systemOne)],
-              ["Aggregation status", configuration.aggregation?.executionStatus ?? "Not configured"],
+              ["Aggregation status", persistedExecutionStatus(report?.evidenceCoverage.executionStatus, reportLoading, reportError)],
               ["Verification policy", configuration.aggregation?.verificationPolicyVersion ?? "Not configured"],
               ["Aggregation policy", configuration.aggregation?.aggregationPolicyVersion ?? "Not configured"],
               ["Pinned thresholds", thresholdLabel],
@@ -243,7 +219,7 @@ function PipelineConfiguration({
     <section ref={stickyBoundaryRef} className="space-y-3 rounded-lg border border-border bg-muted/20 p-4" aria-label={`${pipelineStage(stageId).label} configuration and persisted progress`}>
       <div>
         <h4 className="font-medium">Run-pinned configuration</h4>
-        <p className="mt-1 text-xs text-muted-foreground">Provider and policy selections saved with this immutable Analysis Run.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Provider and policy selections are pinned to this immutable Analysis Run. Execution statuses come from persisted results.</p>
       </div>
       <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
         {rows.map(([label, value]) => (
@@ -821,7 +797,6 @@ export function AnalysisRunStageResults({
   const resultsScopeRef = useRef<HTMLElement>(null);
   const stickyBoundaryRef = useRef<HTMLElement>(null);
   const stickyNavigationRef = useRef<HTMLDivElement>(null);
-  const stageSelectionRequestRef = useRef(0);
   const [showStickyNavigation, setShowStickyNavigation] = useState(false);
   const stage = PIPELINE_STAGES.find((candidate) => candidate.id === selectedStage) ?? PIPELINE_STAGES[0];
   const stageFilterReset = usePipelineStageFilterReset(stage.id);
@@ -837,18 +812,6 @@ export function AnalysisRunStageResults({
     { id: "claims", label: "Atomic Claims", description: "Claims extracted from citation contexts. Links from claims to references are inferred and provisional.", value: sourceClaimCount },
     { id: "bibliography", label: "Bibliography Entries", description: "Reference entries parsed from the document’s bibliography.", value: parsedDocument?.bibliographyEntries.length ?? 0 },
   ];
-
-  async function selectStageFromStickyNavigation(nextStage: PipelineStageId) {
-    const requestId = ++stageSelectionRequestRef.current;
-    const pipelineStages = document.getElementById("analysis-pipeline-stages");
-    if (pipelineStages) await scrollIntoViewAndWaitForCompletion(pipelineStages);
-
-    if (requestId === stageSelectionRequestRef.current) onSelectStage(nextStage);
-  }
-
-  useEffect(() => () => {
-    stageSelectionRequestRef.current += 1;
-  }, []);
 
   useEffect(() => {
     let frame = 0;
@@ -913,7 +876,7 @@ export function AnalysisRunStageResults({
             href={backHref}
             label="Back to Analysis Runs"
           />
-          <PipelineStageQuickNavigation run={run} selectedStage={stage.id} onSelectStage={selectStageFromStickyNavigation} />
+          <PipelineStageQuickNavigation run={run} selectedStage={stage.id} onSelectStage={onSelectStage} />
           {stageFilterReset.hasActiveFilters ? (
             <Button
               type="button"
@@ -930,7 +893,14 @@ export function AnalysisRunStageResults({
         </div>
       </div>
 
-      <PipelineConfiguration run={run} stageId={stage.id} stickyBoundaryRef={stickyBoundaryRef} />
+      <PipelineConfiguration
+        run={run}
+        stageId={stage.id}
+        report={report}
+        reportLoading={reportLoading}
+        reportError={reportError}
+        stickyBoundaryRef={stickyBoundaryRef}
+      />
 
       {loading && <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status"><Spinner aria-hidden="true" /> Loading persisted results…</p>}
       {error && <Alert variant="destructive"><AlertTitle>Results unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}

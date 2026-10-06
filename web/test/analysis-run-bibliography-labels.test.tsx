@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
@@ -37,6 +37,8 @@ const run: AnalysisRun = {
     systemOne: { provider: "mock", version: "v1" },
     sourceParser: { provider: "grobid", version: "v1" },
     languageDetector: { provider: "local", version: "v1" },
+    referenceResolution: { executionStatus: "PENDING", provider: null, scorePolicyVersion: null, confidenceThreshold: null },
+    aggregation: { executionStatus: "PENDING", verificationPolicyVersion: null, aggregationPolicyVersion: null, thresholds: null },
   },
   createdAt: "2026-01-01T00:00:00Z",
   startedAt: null,
@@ -78,8 +80,33 @@ const parsedDocument: ParsedDocument = {
 };
 
 const referenceReport = {
+  analysisRunId: run.id,
+  runStatus: "COMPLETED",
+  evidenceCoverage: {
+    executionStatus: "COMPLETED",
+    verificationPolicyVersion: null,
+    aggregationPolicyVersion: null,
+    thresholds: null,
+    summary: {
+      totalVerifications: 0,
+      completedVerifications: 0,
+      incompleteVerifications: 0,
+      evidenceConflicts: 0,
+      supported: 0,
+      partiallySupported: 0,
+      contradicted: 0,
+      insufficientEvidence: 0,
+      inaccessible: 0,
+      unresolved: 0,
+      unsupportedReferenceType: 0,
+    },
+    triageDisclaimer: "Research triage only.",
+  },
   referenceResolution: {
-    summary: { resolved: 1, unresolved: 0, unsupportedReferenceType: 0, notAttempted: 0, failed: 0 },
+    executionStatus: "COMPLETED",
+    scorePolicyVersion: null,
+    confidenceThreshold: null,
+    summary: { total: 1, resolved: 1, unresolved: 0, unsupportedReferenceType: 0, notAttempted: 0, failed: 0 },
     entries: [{
       entryOrder: 0,
       localReferenceKey: "b0",
@@ -101,7 +128,7 @@ const referenceReport = {
 } as unknown as ReferenceResolutionReportResponse;
 
 function renderStage(
-  selectedStage: "source" | "references",
+  selectedStage: "source" | "references" | "verification",
   selectedParsedDocument = parsedDocument,
   selectedReport = referenceReport,
 ) {
@@ -191,6 +218,19 @@ afterEach(() => {
 });
 
 describe("Analysis Run bibliography display keys", () => {
+  it("shows persisted stage outcomes instead of startup PENDING values from the run snapshot", () => {
+    const references = renderStage("references");
+    const referenceConfiguration = screen.getByRole("region", { name: /Resolve references configuration and persisted progress/ });
+    expect(within(referenceConfiguration).getByText("Execution status").nextElementSibling?.textContent).toBe("COMPLETED");
+    expect(within(referenceConfiguration).queryByText("PENDING")).toBeNull();
+    references.unmount();
+
+    renderStage("verification");
+    const verificationConfiguration = screen.getByRole("region", { name: /Assess evidence configuration and persisted progress/ });
+    expect(within(verificationConfiguration).getByText("Aggregation status").nextElementSibling?.textContent).toBe("COMPLETED");
+    expect(within(verificationConfiguration).queryByText("PENDING")).toBeNull();
+  });
+
   it.each([
     {
       convention: "current zero-based order with nonconsecutive TEI IDs",
