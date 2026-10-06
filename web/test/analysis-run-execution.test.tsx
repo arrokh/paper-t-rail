@@ -392,16 +392,46 @@ describe("Analysis Run Execution view", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
     renderRun();
 
-    expect(await screen.findByText("Capture stopped")).toBeTruthy();
+    expect(await screen.findByText("Recording stopped")).toBeTruthy();
     expect(screen.getByText("Payload capture at start").nextElementSibling?.textContent).toBe("Enabled");
-    expect(screen.getByText(/Future capture has stopped/)).toBeTruthy();
+    expect(screen.getByText(/Execution recording was stopped/)).toBeTruthy();
+  });
+
+  it("distinguishes a completed recording from a manual stop", async () => {
+    configureExecutionMocks();
+    executionMocks.useAnalysisRun.mockReturnValue({
+      data: { ...run, status: "COMPLETED" },
+      isPending: false,
+      error: null,
+    });
+    executionMocks.useExecutionSummary.mockReturnValue({
+      data: {
+        ...summary,
+        captureRequested: true,
+        captureEnabled: true,
+        recordingState: "STOPPED",
+        completeness: "INCOMPLETE",
+        finishedAt: "2026-01-01T00:00:12.000Z",
+      },
+      isPending: false,
+      isError: false,
+      error: null,
+    });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
+    renderRun();
+
+    expect(await screen.findByText("Recording complete")).toBeTruthy();
+    expect(screen.queryByText("Recording stopped")).toBeNull();
+    expect(screen.queryByText(/Execution recording was stopped/)).toBeNull();
+    expect(screen.getByText("Incomplete trace")).toBeTruthy();
+    expect(screen.getByText("The recording is marked incomplete. Missing spans are not reconstructed.")).toBeTruthy();
   });
 
   it("renders an omitted nullable descriptor without requesting content or crashing the inspector", async () => {
     configureExecutionMocks();
     const omittedDetail: ExecutionSpanDetail = {
       ...detail,
-      artifactRoles: [{ id: null, role: "REQUEST", fidelity: "OMITTED", reason: "CAPTURE_DISABLED", mediaType: null, sizeBytes: null }],
+      artifactRoles: [{ id: null, role: "REQUEST", fidelity: "OMITTED", reason: "UNSUPPORTED_OR_UNSAFE_FIELDS", mediaType: null, sizeBytes: null }],
     };
     executionMocks.useExecutionSpan.mockImplementation((analysisRunId: string, spanId: string | null) => {
       executionMocks.spanRequests(analysisRunId, spanId);
@@ -411,7 +441,8 @@ describe("Analysis Run Execution view", () => {
     renderRun();
 
     expect(await screen.findByText("Omitted")).toBeTruthy();
-    expect(screen.getAllByText("CAPTURE_DISABLED").length).toBeGreaterThan(0);
+    expect(screen.queryByText("UNSUPPORTED_OR_UNSAFE_FIELDS")).toBeNull();
+    expect(screen.getByText("No artifact content was captured for this operation.")).toBeTruthy();
     expect(screen.getByText("Media type unknown · Unknown size bytes")).toBeTruthy();
     expect(executionMocks.artifactRequests).toHaveBeenCalledWith(run.id, null, "model", "REQUEST");
     expect(screen.queryByLabelText("Loading captured artifact")).toBeNull();
@@ -641,5 +672,45 @@ describe("Analysis Run Execution view", () => {
       expect(within(stageGroup as HTMLElement).getByRole("button", { name: new RegExp(`${name}, Succeeded`) })).toBeTruthy();
     }
     expect(within(trace).queryByRole("button", { name: /Pipeline stage: Future analysis stage/ })).toBeNull();
+  });
+
+  it("shows canonical stage groups for nested operations that cross stage boundaries", async () => {
+    configureExecutionMocks();
+    const nestedStages = [
+      { id: "nested-source", stageId: "source", parentSpanId: null, name: "Source operation", label: "Read the PDF" },
+      { id: "nested-references", stageId: "references", parentSpanId: "nested-source", name: "Reference operation", label: "Resolve references" },
+      { id: "nested-access", stageId: "access", parentSpanId: "nested-references", name: "Access operation", label: "Acquire cited sources" },
+      { id: "nested-evidence", stageId: "evidence", parentSpanId: "nested-access", name: "Evidence operation", label: "Prepare evidence" },
+      { id: "nested-verification", stageId: "verification", parentSpanId: "nested-evidence", name: "Verification operation", label: "Assess evidence" },
+    ];
+    const nestedSpans: ExecutionSpan[] = nestedStages.map((stage) => ({
+      ...spans[0],
+      id: stage.id,
+      parentSpanId: stage.parentSpanId,
+      operationId: `${stage.id}-operation`,
+      stageId: stage.stageId,
+      kind: "INTERNAL",
+      name: stage.name,
+      status: "SUCCEEDED",
+    }));
+    executionMocks.useExecutionSpans.mockReturnValue({
+      data: { pages: [{ items: nestedSpans, nextCursor: null }] },
+      isPending: false,
+      isError: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+    });
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
+    renderRun();
+
+    const trace = await screen.findByRole("list", { name: "Execution operations" });
+    expect(within(trace).getAllByRole("button", { name: /^Pipeline stage:/ })).toHaveLength(5);
+    for (const { label, name } of nestedStages) {
+      const heading = within(trace).getByRole("button", { name: new RegExp(`Pipeline stage: ${label}`) });
+      const stageGroup = heading.closest('[role="listitem"]');
+      expect(stageGroup).toBeTruthy();
+      expect(within(stageGroup as HTMLElement).getByRole("button", { name: new RegExp(`${name}, Succeeded`) })).toBeTruthy();
+      expect(within(trace).getAllByRole("button", { name: new RegExp(`${name}, Succeeded`) })).toHaveLength(1);
+    }
   });
 });
