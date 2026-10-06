@@ -24,6 +24,8 @@ class CitedPaperIndexingQueue(
         sourceContentSha256: String,
         correlationId: UUID,
         causationId: UUID,
+        traceparent: String? = null,
+        tracestate: String? = null,
     ): EvidenceIndexingEnqueueResult {
         val eligible = jdbc.queryForObject(
             """
@@ -104,6 +106,8 @@ class CitedPaperIndexingQueue(
             occurredAt = Instant.now(),
             attempt = 0,
             payload = CitedPaperIndexingRequestedPayload(documentId, sourceContentSha256, bibliographyEntryId),
+            traceparent = traceparent,
+            tracestate = tracestate,
         )
         jdbc.update(
             """

@@ -2,6 +2,14 @@ package com.papertrail.api.evidence.verification.provider
 
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.CaptureFidelity
+import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.ExecutionOperationId
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.ExecutionSpanHandle
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.evidence.verification.domain.AtomicClaimForJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
@@ -16,9 +24,11 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.mockito.Mockito
 import org.slf4j.LoggerFactory
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Executors
 
@@ -77,6 +87,79 @@ class JevSystemOneProviderContractTest {
             assertEquals(0.3125, judgement.studyDesignQuality)
             assertEquals(1.0, judgement.relevance)
             assertEquals("jev-1.13.0", judgement.providerReportedModelId)
+        }
+    }
+
+    @Test
+    fun `Jev transport records sanitized actual request and response with a typed mapped result`() {
+        TestServer(responseBody = validResponse()).use { server ->
+            val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
+            val execution = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), objectMapper)
+            val runId = UUID.randomUUID()
+            val eventId = UUID.randomUUID()
+            val operationId = UUID.randomUUID()
+            val parentSpec = ExecutionSpanSpec("verification", "PROVIDER", "Assess evidence", attempt = 2, eventId = eventId)
+            val parent = ExecutionSpanHandle(UUID.randomUUID(), runId, operationId, Instant.now(), System.nanoTime(), "verification", 2, eventId)
+            val providerOperationId = ExecutionOperationId.forEvent(eventId, "provider-call:jev-call")
+            val providerSpec = ExecutionSpanSpec(
+                stageId = "verification",
+                kind = "PROVIDER",
+                name = "System One evidence evaluation",
+                attempt = 2,
+                eventId = eventId,
+                parentSpanId = parent.id,
+                providerId = JevSystemOneSettings.PROVIDER_ID,
+                modelId = JevSystemOneSettings.DEFAULT_MODEL_ID,
+                operationId = providerOperationId,
+            )
+            val providerSpan = ExecutionSpanHandle(
+                UUID.randomUUID(), runId, providerOperationId, Instant.now(), System.nanoTime(), "verification", 2, eventId,
+            )
+            Mockito.`when`(repository.startSpan(runId, parentSpec, "{}")).thenReturn(parent)
+            Mockito.`when`(repository.startSpan(runId, providerSpec, "{}")).thenReturn(providerSpan)
+            val provider = JevSystemOneProvider(settings(server.baseUrl), objectMapper, execution)
+            val request = SemanticJudgementRequest(
+                AtomicClaimForJudgement(UUID.randomUUID(), "participant P-0042 private@example.org"),
+                listOf(EvidencePassageForJudgement(UUID.randomUUID(), "apiKey=sk-private-value", "Results")),
+            )
+
+            val result = execution.record(runId, parentSpec) {
+                execution.recordCurrentProviderCall(
+                    operationKey = "jev-call",
+                    name = "System One evidence evaluation",
+                    providerId = provider.providerId,
+                    modelId = provider.modelId,
+                ) {
+                    execution.captureCurrent(
+                        ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1)),
+                    )
+                    provider.evaluate(request).also {
+                        execution.captureCurrent(
+                            ExecutionSpanArtifactSpec("RESULT", "run-stage-result-v1", mapOf("status" to "SUCCEEDED", "itemCount" to 1)),
+                        )
+                    }
+                }
+            }
+
+            assertEquals(1, result.evidenceJudgements.size)
+            assertTrue(server.requestBody.contains("private@example.org"))
+            assertTrue(server.requestBody.contains("sk-private-value"))
+            val artifacts = Mockito.mockingDetails(repository).invocations
+                .filter { it.method.name == "recordArtifact" }
+                .map {
+                    it.arguments[2] as ExecutionSpanArtifactSpec to
+                        it.arguments[3] as com.papertrail.api.analysis.execution.SanitizedExecutionArtifact
+                }
+            assertEquals(listOf("INPUT", "REQUEST", "RESPONSE", "RESULT"), artifacts.map { it.first.role })
+            assertEquals(CaptureFidelity.SANITIZED, artifacts.first().second.fidelity)
+            assertEquals(CaptureFidelity.PARTIAL, artifacts[1].second.fidelity)
+            assertEquals("ANSWER_CONTENT_OMITTED", artifacts[2].second.reason)
+            assertEquals(CaptureFidelity.PARTIAL, artifacts[2].second.fidelity)
+            assertEquals(CaptureFidelity.SANITIZED, artifacts.last().second.fidelity)
+            val captured = artifacts.mapNotNull { it.second.content }
+            assertTrue(captured.none { it.contains("private@example.org") || it.contains("P-0042") || it.contains("sk-private-value") })
+            assertTrue(captured[1].contains("claimAndEvidenceTextOmitted"))
+            assertTrue(captured[2].contains("answerContentOmitted"))
         }
     }
 

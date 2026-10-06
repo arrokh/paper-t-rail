@@ -4,11 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.papertrail.api.analysis.service.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.ExecutionOperationId
 import com.papertrail.api.document.service.isSourceDocumentDeleted
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.evidence.queue.EvidenceIndexingEnqueueResult
 import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
@@ -27,6 +32,7 @@ class CitedPaperAcquisitionRequestedHandler(
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
     private val evidenceVerificationService: EvidenceVerificationService? = null,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
@@ -37,6 +43,19 @@ class CitedPaperAcquisitionRequestedHandler(
     fun handle(serializedEvent: String): UUID {
         val event: PipelineEvent<CitedPaperAcquisitionRequestedPayload> = objectMapper.readValue(serializedEvent)
         require(event.eventType == CITED_PAPER_ACQUISITION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        executionService?.recordQueueIntervals(
+            event.analysisRunId, event.eventId, event.attempt, "access", event.queueWaitStartedAt,
+            event.retryScheduledAt, event.retryDueAt, event.causationId,
+        )
+        val operation = { handleEvent(event) }
+        return executionService?.record(
+            event.analysisRunId,
+            ExecutionSpanSpec("access", "QUEUE", "Cited-paper access attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId, causationEventId = event.causationId),
+            operation,
+        ) ?: operation()
+    }
+
+    private fun handleEvent(event: PipelineEvent<CitedPaperAcquisitionRequestedPayload>): UUID {
         if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
 
@@ -58,7 +77,23 @@ class CitedPaperAcquisitionRequestedHandler(
         if (run.status != "PROCESSING") throw IllegalStateException("Analysis Run is not accepting cited-paper access work.")
 
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId, "IN_PROGRESS")
-        citedPaperAccessService.acquire(event.analysisRunId, event.payload.bibliographyEntryId)
+        if (executionService == null) {
+            citedPaperAccessService.acquire(event.analysisRunId, event.payload.bibliographyEntryId)
+        } else {
+            executionService.record(
+                event.analysisRunId,
+                ExecutionSpanSpec("access", "INTERNAL", "Acquire cited-paper source", event.attempt + 1, event.eventId, operationId = ExecutionOperationId.forEvent(event.eventId, "source-acquisition")),
+            ) {
+                executionService.captureCurrent(
+                    ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1)),
+                )
+                citedPaperAccessService.acquire(event.analysisRunId, event.payload.bibliographyEntryId).also {
+                    executionService.captureCurrent(
+                        ExecutionSpanArtifactSpec("RESULT", "run-stage-result-v1", mapOf("status" to "SUCCEEDED", "itemCount" to 1)),
+                    )
+                }
+            }
+        }
         recordProcessed(event)
         return event.eventId
     }
@@ -67,6 +102,7 @@ class CitedPaperAcquisitionRequestedHandler(
         require(event.eventType == CITED_PAPER_ACQUISITION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
         if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return
         recordProcessed(event, reason)
+        executionService?.finishIfTerminal(event.analysisRunId)
     }
 
     private fun recordProcessed(
@@ -107,6 +143,8 @@ class CitedPaperAcquisitionRequestedHandler(
                     sourceContentSha256 = event.payload.sourceContentSha256,
                     correlationId = event.correlationId,
                     causationId = event.eventId,
+                    traceparent = W3CTraceContext.child(event.traceparent),
+                    tracestate = event.tracestate,
                 )
                 when (enqueueResult) {
                     EvidenceIndexingEnqueueResult.QUEUED -> Unit

@@ -17,6 +17,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
+import { LocalDateTime } from "@/components/local-date-time";
 import { AnalysisRunTableRowsSkeleton } from "@/features/analysis-runs/components/analysis-run-loading";
 import { useDeleteSourceDocument, useRecentAnalysisRuns } from "@/features/analysis-runs/queries/analysis-run-queries";
 import { ANALYSIS_RUN_STATUS_CLASS_NAMES, analysisRunStatusLabel } from "@/features/analysis-runs/run-status";
@@ -38,14 +39,6 @@ const EMPTY_RUNS: AnalysisRun[] = [];
 
 function isRunStatus(value: string | null): value is RunStatus {
   return STATUS_FILTERS.some(([status]) => status === value);
-}
-
-function formatCreatedAt(value: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Jakarta",
-  }).format(new Date(value));
 }
 
 function getListHref(runId: string, query: string, status: string, cursor: string | null): string {
@@ -326,7 +319,7 @@ export function AnalysisRunsTable({
                     <span className="block break-words">{run.filename}</span>
                   </th>
                   <td className="px-4 py-4 text-sm text-muted-foreground">
-                    <time dateTime={run.createdAt}>{formatCreatedAt(run.createdAt)}</time>
+                    <LocalDateTime value={run.createdAt} />
                   </td>
                   <td className="px-4 py-4">
                     <Badge variant="outline" className={cn("capitalize", ANALYSIS_RUN_STATUS_CLASS_NAMES[run.status])}>

@@ -1,6 +1,6 @@
 # Pipeline Implementation and Feature Traceability Matrix
 
-**Snapshot:** 2026-10-04
+**Snapshot:** 2026-10-05
 
 **Scope:** current repository implementation compared with [`paper-t-rail-tech-design.md`](./paper-t-rail-tech-design.md), especially sections 3, 14–16, 30, 57–59, and the accepted ADRs. This is a source review; it does not prove that a deployed environment is configured or that a full-system run has passed.
 
@@ -9,6 +9,12 @@
 The five persisted pipeline stages have corresponding code paths and progress records. The core V1 path is present, with run-level configuration determining whether the final assessment stage executes. Stage 01 supports document-level claim analysis: local Spring and Compose defaults select `openai-compatible-chat` with `google/gemma-4-e2b` and a 131072-token context, while the heuristic remains explicitly selectable. The provider extracts Atomic Claims and selects same-context Citation Targets in one operation; fresh runs preflight its `/v1/models` endpoint before reading or parsing the Source Document. It remains unavailable unless server-side settings make it selectable. The [implementation plan](./openai-compatible-provider-plan.md) records its contract and verification; disabled Google catalog entries for other provider roles remain non-callable.
 
 “LLM integration” refers to different jobs in the design. Paper T-Rail has local Ollama embeddings in Stage 04 and a local Laya System One provider for narrow Evidence Judgements in Stage 05. Neither is a generic chat-generation integration. The implemented OpenAI-compatible adapter serves Stage 01 only; Stage 04 embeddings and Stage 05 System One remain future consumers, not part of this implementation.
+
+## Execution Trace and known coverage limits
+
+The [Analysis Run Execution plan](analysis-run-execution-plan.md) describes the implemented user-facing Execution Trace: nested persisted spans, an aligned waterfall, automatic cursor-page loading, five-stage filtering, and separate inspection of sanitized run-linked artifacts. [ADR 0016](adr/0016-inspectable-analysis-run-execution.md) permits sanitized processing content in protected artifacts, while logs and exported telemetry remain content-free. Local live validation exercised trace capture, pagination, and the responsive inspector. In that run the verification stage was correctly skipped because no eligible evidence was available, so it does not prove assessment-call coverage. Current pipeline progress is not a recorded execution trace; historical spans or payloads must not be reconstructed and presented as recorded facts.
+
+Known implementation gaps remain: content-free OpenTelemetry diagnostics, separate GROBID/TEI/source-persistence spans, per-passage System One transport spans, and distinct assessment aggregation/result-persistence timing.
 
 ## Current five-stage flow and effective configuration
 

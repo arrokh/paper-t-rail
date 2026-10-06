@@ -3,6 +3,9 @@ import test from "node:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
   RECENT_ANALYSIS_RUNS_QUERY_KEY,
+  deleteSourceDocumentMutationOptions,
+  executionArtifactQueryKey,
+  executionArtifactQueryOptions,
   recentAnalysisRunsQueryOptions,
   referenceResolutionReportQueryKey,
   referenceResolutionReportQueryOptions,
@@ -147,6 +150,33 @@ test("upload mutation refreshes the active recent-run query without refetching i
   assert.equal(client.getQueryData([...RECENT_ANALYSIS_RUNS_QUERY_KEY, null, "", ""]).items[0].id, "run-created");
 });
 
+test("document deletion clears cached execution artifacts for its runs", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  const runPageKey = [...RECENT_ANALYSIS_RUNS_QUERY_KEY, null, "", ""];
+  const artifactKey = executionArtifactQueryKey("deleted-run", "artifact-1", "span-1", "RESPONSE");
+  client.setQueryData(runPageKey, {
+    items: [{ id: "deleted-run", documentId: "deleted-document" }],
+    nextCursor: null,
+  });
+  client.setQueryData(artifactKey, { content: "sanitized artifact body" });
+  globalThis.fetch = async (url, options = {}) => {
+    assert.equal(url, "/api/v1/documents/deleted-document");
+    assert.equal(options.method, "DELETE");
+    return jsonResponse(null);
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const mutation = client.getMutationCache().build(client, deleteSourceDocumentMutationOptions(client));
+  await mutation.execute("deleted-document");
+
+  assert.equal(client.getQueryData(artifactKey), undefined);
+  assert.deepEqual(client.getQueryData(runPageKey).items, []);
+});
+
 test("Human Review mutation appends a separate result and refreshes the active run report", async (context) => {
   const client = new QueryClient();
   const originalFetch = globalThis.fetch;
@@ -247,6 +277,39 @@ test("source PDF access query loads short-lived view and download URLs and repor
     client.fetchQuery({ ...sourceDocumentPdfAccessQueryOptions("run-2"), retry: false }),
     { message: "The stored Source Document is temporarily unavailable." },
   );
+});
+
+test("artifact reads request the selected run-span-role association", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  let request;
+  const artifact = {
+    id: "shared-artifact",
+    spanId: "another-linked-span",
+    role: "RESPONSE",
+    fidelity: "SANITIZED",
+    reason: null,
+    mediaType: null,
+    content: "association fixture",
+    schemaVersion: "v1",
+    captureVersion: "v1",
+    sanitizerVersion: "v1",
+    sizeBytes: null,
+  };
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify(artifact), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const result = await client.fetchQuery(executionArtifactQueryOptions("run-1", artifact.id, "selected-span", "RESPONSE"));
+
+  assert.equal(request.url, "/api/v1/analysis-runs/run-1/execution/artifacts/shared-artifact?spanId=selected-span&role=RESPONSE");
+  assert.deepEqual(result, artifact);
+  assert.equal(result.spanId, "another-linked-span");
 });
 
 test("source PDF access URLs stay stable until the user explicitly refreshes them", () => {

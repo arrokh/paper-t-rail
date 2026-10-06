@@ -128,6 +128,19 @@ The Next.js upload workspace keeps three task-oriented cards: **01 Source Docume
 
 Keep product copy factual and non-alarmist. Distinguish privacy/consent decisions from ordinary validation. Error, loading, empty, disabled, and success states are first-class designs, not afterthoughts.
 
+### Execution Trace
+
+The Analysis Run detail page exposes an **Execution Trace** tab, described as “Processing steps, timings, and service calls.” Follow the [implementation plan](analysis-run-execution-plan.md) for behavior and [ADR 0016](adr/0016-inspectable-analysis-run-execution.md) for protected payload capture. This is an observability-tool interaction pattern inside the existing light workspace, not a new dark dashboard theme.
+
+- Use a compact toolbar with equal-height search and filter controls, an expandable operation tree, shared run-relative time ruler and horizontally aligned waterfall bars. Keep operation/status/duration columns aligned; use compact rows and fine dividers instead of a card per span. Parallel bars visibly overlap; numeric durations remain readable without the graphic.
+- Select a row or bar to open a span inspector beside the waterfall on wide screens and below it on narrower screens. Keep the wide inspector sticky while scrolling the trace. Provide Overview, Input/Request, Response and Result tabs using the established selected-button treatment. Display sanitized JSON/text as selectable escaped content, with explicit capture fidelity/reason and safe provenance. Never render provider output as HTML.
+- Show waiting, retries, reuse, interruption and incomplete capture honestly. Active timing is elapsed time, not estimated percentage completion. Keep execution status separate from evidence outcome. Format timestamps in the client time zone.
+- Filter operation labels, one of the five canonical Analysis Pipeline stages, status and kind while preserving ancestor context. Search only safe labels/metadata, not payload text. Load every cursor page automatically; report pagination failures rather than silently hiding spans.
+- Reuse shadcn Tabs, Collapsible, Button, Badge, Input, NativeSelect, Alert, Skeleton and Separator; implement waterfall geometry as feature composition. Preserve shared paper/ink semantic colors, sans-serif labels and monospace technical values. No competing palette or pixel-art treatment.
+- Every row selection and disclosure works by keyboard and touch with visible focus. Include text status, numeric timing and expanded/selected semantics, not color-only bars. Preserve selected span and scroll position during live updates; announce meaningful status changes rather than every timer tick.
+- Execution remains usable on mobile: compact operation list with timing, inspector below selection, and local scrolling within oversized code/time panels. No horizontal page overflow. The Paper Review desktop-only restriction does not apply to Execution.
+- Include loading, empty, filtered-empty, API error, artifact permission denied, capture disabled, omitted/removed artifact, trace incomplete and historical recording unavailable states. Original document links retain normal access rules and are not labeled sanitized.
+
 ## Interaction and accessibility
 
 Target WCAG 2.2 AA for the rendered interface.

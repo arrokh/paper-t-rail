@@ -1,6 +1,8 @@
 package com.papertrail.api.evidence.service
 
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
 import com.papertrail.api.evidence.domain.EmbeddedEvidenceChunk
 import com.papertrail.api.evidence.domain.EmbeddingProfile
@@ -20,6 +22,7 @@ class EvidenceRetrievalService(
     private val chunker: SectionAwareEvidenceChunker,
     private val embeddingProviders: List<EmbeddingProvider>,
     private val repository: EvidenceRetrievalRepository,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) {
     fun retrieve(analysisRunId: UUID, bibliographyEntryId: UUID) {
         if (repository.isCompleted(analysisRunId, bibliographyEntryId)) return
@@ -38,20 +41,43 @@ class EvidenceRetrievalService(
         require(sha256Hex(content) == context.contentSha256) { "Stored Cited Paper failed its SHA-256 integrity check." }
         repository.requireActiveRun(analysisRunId)
         val selectedParser = context.configuration.citedPaperParserSelection()
-        val parsed = citedPaperParser.parse(content, context.mediaType, selectedParser)
+        val parse = { citedPaperParser.parse(content, context.mediaType, selectedParser) }
+        val parsed = executionService?.record(
+            analysisRunId,
+            ExecutionSpanSpec(
+                "evidence", "PROVIDER", "Parse cited-paper source",
+                providerId = selectedParser.provider,
+                modelId = selectedParser.version,
+            ),
+            parse,
+        ) ?: parse()
         if (context.mediaType == "application/pdf") {
             require(parsed.parserId == selectedParser.provider && parsed.parserVersion == selectedParser.version) {
                 "Cited Paper parser identity does not match the Analysis Run's pinned parser."
             }
         }
-        val chunks = chunker.chunk(parsed.sections)
+        val chunk = { chunker.chunk(parsed.sections) }
+        val chunks = executionService?.record(
+            analysisRunId,
+            ExecutionSpanSpec("evidence", "TRANSFORMATION", "Chunk cited-paper sections"),
+            chunk,
+        ) ?: chunk()
         require(chunks.isNotEmpty()) { "The Cited Paper parser returned no usable section paragraphs." }
         val provider = embeddingProviders.singleOrNull {
             it.providerId == profile.providerId && it.modelId == profile.modelId && it.version == profile.version && it.dimension == profile.dimension
         } ?: throw IllegalStateException("The pinned embedding profile is unavailable.")
+        var embeddingCallIndex = 0
         fun embed(text: String, category: DataCategory): FloatArray {
             repository.requireActiveRun(analysisRunId)
-            val vector = provider.embed(text, EmbeddingRequestContext(context.configuration, category))
+            val callIndex = embeddingCallIndex++
+            val embedding = { provider.embed(text, EmbeddingRequestContext(context.configuration, category)) }
+            val vector = executionService?.recordCurrentProviderCall(
+                operationKey = "evidence-embedding-$callIndex",
+                name = "Generate evidence embedding",
+                providerId = profile.providerId,
+                modelId = profile.modelId,
+                operation = embedding,
+            ) ?: embedding()
             require(vector.size == profile.dimension) {
                 "Embedding provider returned a vector dimension that does not match the Analysis Run profile."
             }
@@ -62,6 +88,11 @@ class EvidenceRetrievalService(
         val claimVectors = context.claims.associate { claim ->
             claim.verificationId to embed(claim.text, DataCategory.ATOMIC_CLAIMS)
         }
-        repository.persistAndRetrieve(context, parsed, embeddedChunks, claimVectors, profile)
+        val persistAndRetrieve = { repository.persistAndRetrieve(context, parsed, embeddedChunks, claimVectors, profile) }
+        executionService?.record(
+            analysisRunId,
+            ExecutionSpanSpec("evidence", "PERSISTENCE", "Persist vectors and retrieve evidence"),
+            persistAndRetrieve,
+        ) ?: persistAndRetrieve()
     }
 }

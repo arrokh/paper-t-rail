@@ -3,6 +3,15 @@ package com.papertrail.api.scholarly.acquisition.client
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.CaptureFidelity
+import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.ExecutionOperationId
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.ExecutionSpanHandle
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.SanitizedExecutionArtifact
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
@@ -14,7 +23,9 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import org.springframework.http.MediaType
 import org.springframework.test.web.client.ExpectedCount
 import org.springframework.test.web.client.MockRestServiceServer
@@ -23,6 +34,8 @@ import org.springframework.test.web.client.match.MockRestRequestMatchers.request
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
 import org.springframework.web.client.RestClient
 import org.hamcrest.Matchers.containsString
+import java.time.Instant
+import java.util.UUID
 
 class UnpaywallOpenAccessProviderFactoryTest {
     private val objectMapper = jacksonObjectMapper()
@@ -139,11 +152,37 @@ class UnpaywallOpenAccessProviderFactoryTest {
         discoveryServer.expect(requestTo(containsString("api.unpaywall.org/v2/")))
             .andExpect(queryParam("email", contactEmail))
             .andRespond(withSuccess(
-                """{"doi":"10.1234/open","abstract":"Summary","oa_locations":[{"url_for_pdf":"https://8.8.8.8/paper.txt","license":"cc-by","version":"publishedVersion","host_type":"repository"}]}""",
+                """{"doi":"10.1234/open","abstract":"Public summary","emailAddress":"private@example.org","apiKey":"sk-private-value","oa_locations":[{"url_for_pdf":"https://8.8.8.8/paper.txt","license":"cc-by","version":"publishedVersion","host_type":"repository"}]}""",
                 MediaType.APPLICATION_JSON,
             ))
         contentServer.expect(requestTo("https://8.8.8.8/paper.txt"))
             .andRespond(withSuccess("English full text fixture", MediaType.TEXT_PLAIN))
+        val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
+        val runId = UUID.randomUUID()
+        val eventId = UUID.randomUUID()
+        val parentSpec = ExecutionSpanSpec("access", "INTERNAL", "Acquire test paper", eventId = eventId)
+        val parentHandle = ExecutionSpanHandle(UUID.randomUUID(), runId, UUID.randomUUID(), Instant.now(), System.nanoTime(), "access", 1, eventId)
+        Mockito.`when`(repository.startSpan(runId, parentSpec, "{}")).thenReturn(parentHandle)
+        val childSpecs = listOf(
+            ExecutionSpanSpec(
+                "access", "PROVIDER", "Unpaywall discovery request", eventId = eventId,
+                parentSpanId = parentHandle.id, providerId = "unpaywall",
+                operationId = ExecutionOperationId.forEvent(eventId, "provider-call:unpaywall-discovery"),
+                attributes = mapOf("httpRoute" to "/v2"),
+            ),
+            ExecutionSpanSpec(
+                "access", "PROVIDER", "Acquire open-access full text", eventId = eventId,
+                parentSpanId = parentHandle.id, providerId = "unpaywall",
+                operationId = ExecutionOperationId.forEvent(eventId, "provider-call:unpaywall-full-text"),
+                attributes = mapOf("httpRoute" to "/open-access-content"),
+            ),
+        )
+        childSpecs.forEach { spec ->
+            val route = spec.attributes.getValue("httpRoute")
+            Mockito.`when`(repository.startSpan(runId, spec, """{"httpRoute":"$route"}"""))
+                .thenReturn(ExecutionSpanHandle(UUID.randomUUID(), runId, spec.operationId!!, Instant.now(), System.nanoTime(), "access", 1, eventId))
+        }
+        val executionService = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), objectMapper)
         val provider = UnpaywallOpenAccessProviderFactory(
             objectMapper,
             ProviderCallGate(catalog),
@@ -152,16 +191,49 @@ class UnpaywallOpenAccessProviderFactoryTest {
             contentBuilder.build(),
             contactEmail,
             1_000_000,
+            executionService,
         ).forRun(configuredRun())
 
-        val discovery = provider.discover(BibliographyReference("A legal open paper", listOf("A Researcher"), 2024, "10.1234/open", "JOURNAL_ARTICLE"))!!
-        val location = discovery.locations.single()
-        val acquired = provider.fetch(location)
+        val result = executionService.record(runId, parentSpec) {
+            val discovery = provider.discover(BibliographyReference("A legal open paper", listOf("A Researcher"), 2024, "10.1234/open", "JOURNAL_ARTICLE"))!!
+            val location = discovery.locations.single()
+            discovery to provider.fetch(location)
+        }
+        val discovery = result.first
+        val acquired = result.second
+        val capturedArtifacts = Mockito.mockingDetails(repository).invocations
+            .filter { it.method.name == "recordArtifact" }
+            .map { it.arguments[2] as ExecutionSpanArtifactSpec to it.arguments[3] as SanitizedExecutionArtifact }
+        val unpaywallRequest = capturedArtifacts[0].second.content!!
+        val unpaywallResponse = capturedArtifacts[1].second.content!!
+        val contentRequest = capturedArtifacts[2].second.content!!
+        val contentMetadata = capturedArtifacts[4].second.content!!
 
         assertEquals(true, discovery.abstractAvailable)
-        assertEquals("https://8.8.8.8/paper.txt", location.url)
+        assertEquals("https://8.8.8.8/paper.txt", discovery.locations.single().url)
         assertEquals("English full text fixture", acquired.bytes.toString(Charsets.UTF_8))
         assertEquals("cc-by", acquired.location.license)
+        assertEquals(listOf("REQUEST", "RESPONSE", "REQUEST", "RESPONSE", "RESULT"), capturedArtifacts.map { it.first.role })
+        assertEquals(CaptureFidelity.SANITIZED, capturedArtifacts[0].second.fidelity)
+        assertTrue(unpaywallRequest.contains("10.1234/open"))
+        assertTrue(unpaywallRequest.contains("contactParameterOmitted"))
+        assertFalse(unpaywallRequest.contains(contactEmail))
+        assertEquals(CaptureFidelity.PARTIAL, capturedArtifacts[1].second.fidelity)
+        assertTrue(unpaywallResponse.contains("\"abstractAvailable\":true"))
+        assertFalse(unpaywallResponse.contains("Public summary"))
+        assertFalse(unpaywallResponse.contains("private@example.org"))
+        assertFalse(unpaywallResponse.contains("sk-private-value"))
+        assertTrue(unpaywallResponse.contains("https://8.8.8.8/paper.txt"))
+        assertFalse(unpaywallResponse.contains("private-value"))
+        assertTrue(contentRequest.contains("https://8.8.8.8/paper.txt"))
+        assertFalse(contentRequest.contains("private-value"))
+        assertEquals(CaptureFidelity.OMITTED, capturedArtifacts[3].second.fidelity)
+        assertEquals("BINARY_ASSET_REFERENCE", capturedArtifacts[3].second.reason)
+        assertEquals(null, capturedArtifacts[3].second.content)
+        assertFalse(contentMetadata.contains("application/pdf"))
+        assertTrue(contentMetadata.contains("text/plain"))
+        assertTrue(contentMetadata.contains("200"))
+        assertFalse(contentMetadata.contains("English full text fixture"))
         discoveryServer.verify()
         contentServer.verify()
     }

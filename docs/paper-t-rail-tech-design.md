@@ -2739,7 +2739,7 @@ Validation:
 DELETE /api/v1/documents/{id}
 ```
 
-Deletion first tombstones the document and invalidates pending work, then removes all document-scoped content and derived data, including per-run provider-consent/configuration snapshots and content-bearing logs. Workers check the tombstone before starting new provider calls and before committing results; an already in-flight provider call cannot be retracted. Local data remains until explicit deletion (no automatic expiry). Shared cited-paper assets may remain only while referenced by another non-deleted document/run; otherwise they are purged. At most a content-free tombstone remains; deletion is an explicit privacy exception to the normal append-only/immutable analysis history.
+Deletion first tombstones the document and invalidates pending work, then removes all document-scoped content and derived data, including per-run provider-consent/configuration snapshots, execution spans, and protected execution artifacts. Application logs remain content-free. Workers check the tombstone before starting new provider calls and before committing results; an already in-flight provider call cannot be retracted. Local data remains until explicit deletion (no automatic expiry). Shared cited-paper assets may remain only while referenced by another non-deleted document/run; otherwise they are purged. At most a content-free tombstone remains; deletion is an explicit privacy exception to the normal append-only/immutable analysis history.
 
 ## 40.2 Analysis Runs
 
@@ -3154,6 +3154,10 @@ processing time per document
 
 # 49. Observability
 
+## 49.1 Operational telemetry
+
+Application logs, metrics and OpenTelemetry exports remain content-free. Protected user-facing execution artifacts follow §49.2 instead; permission to capture processing content there is not permission to log or export it.
+
 Spring Boot API/worker logs use Spring Boot's ECS-compatible structured JSON console format. The web API proxy emits one ECS-shaped JSON record per proxied request. Keep the same request ID across web and API logs for a request; include `service.name`, timestamp, severity, event/message, HTTP method/path/status, and duration where applicable. The API accepts a safe `X-Request-ID` (1–128 ASCII letters, digits, `.`, `_`, `:`, or `-`), returns it in the response, and generates a UUID when the header is missing or invalid. The web proxy performs the same validation/generation, forwards the ID to the API, and returns it to the caller.
 
 Worker records carry the parsed event's `analysisRunId`, `documentId`, `eventId`, `correlationId`, and `eventType`. The outbox publisher includes the available `analysisRunId`, `eventId`, and `correlationId` from its row. Include other domain IDs where the operation makes them available:
@@ -3203,6 +3207,18 @@ Grafana
 ```
 
 Do not block V1 delivery on a full observability stack.
+
+## 49.2 Inspectable Analysis Run execution
+
+The [Execution implementation plan](analysis-run-execution-plan.md) and [ADR 0016](adr/0016-inspectable-analysis-run-execution.md) define the implemented user-facing **Execution Trace** tab: durable nested spans, an aligned waterfall, safe operation metadata, and a separate inspector for sanitized artifacts. The trace API and Springdoc/OpenAPI contract tests are implemented; `/v3/api-docs` remains the generated contract.
+
+Persist content-free spans and separate protected execution artifacts linked to the Analysis Run. Artifacts may contain operation input/request/response/result data only after schema-based sanitization; credentials, private contact details, account identities and participant identifiers must be excluded before persistence. Public scholarly attribution needed for citations is allowed. Uncertain content is omitted with a safe reason; label complete, sanitized, partial, omitted, removed and unavailable captures accurately. Never copy artifacts into application logs, metrics, OpenTelemetry events/attributes or external observability backends.
+
+Capture defaults on for new runs with disclosure and per-run opt-out. Access inherits the existing trusted-workspace boundary for Analysis Run inspection: the unauthenticated local API asserts no owner identity and adds no separate artifact ACL. Do not introduce owner authorization or a dedicated artifact-view audit subsystem without a new product decision. Allow stopping prospective capture and removing artifacts. No automatic expiry initially; deletion of the owning run/document removes execution data and blocks late recreation.
+
+Instrument meaningful stages/sub-pipelines, internal transformations, retrieval and persistence batches, provider calls and retry attempts. Record safe provenance useful for later performance and quality investigation without inventing quality scores. Separate queue wait, retry backoff, processing and capture overhead; overlapping child durations are not summed into run elapsed time. Reused assets and interrupted attempts are explicit. Recording failures leave visible gaps but never fail analysis or trigger provider calls to repair traces.
+
+Current coverage is not exhaustive. Known gaps include separating GROBID transport from TEI transformation and source persistence, creating per-passage System One transport spans, distinguishing assessment from aggregation/result persistence, and adding content-free OpenTelemetry diagnostics. W3C trace context is propagated through asynchronous pipeline events, but it is not an OpenTelemetry SDK or exporter. Treat PostgreSQL as durable product history; add only low-cardinality safe developer telemetry, never payloads or document/run identifiers as metric labels.
 
 ---
 

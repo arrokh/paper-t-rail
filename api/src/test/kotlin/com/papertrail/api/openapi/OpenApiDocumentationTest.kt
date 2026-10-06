@@ -34,6 +34,9 @@ import com.papertrail.api.scholarly.references.service.CrossrefCacheInvalidation
 import com.papertrail.api.analysis.http.AnalysisRunPage
 import com.papertrail.api.analysis.http.AnalysisRunSourcePdfAccess
 import com.papertrail.api.analysis.http.AnalysisRunSummary
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionSummary
+import com.papertrail.api.analysis.execution.ExecutionArtifactResponse
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
 import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.document.service.SourceDocumentDeletionService
@@ -89,6 +92,9 @@ class OpenApiDocumentationTest {
     private lateinit var analysisRunService: AnalysisRunService
 
     @MockitoBean
+    private lateinit var analysisRunExecutionService: AnalysisRunExecutionService
+
+    @MockitoBean
     private lateinit var sourceDocumentDeletionService: SourceDocumentDeletionService
 
     @MockitoBean
@@ -111,6 +117,64 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var unpaywallDiscoveryCache: UnpaywallDiscoveryCache
+
+    @Test
+    fun `legacy execution summary returns an explicit unavailable state without invented timing`() {
+        val runId = UUID.randomUUID()
+        Mockito.`when`(analysisRunExecutionService.summary(runId)).thenReturn(
+            AnalysisRunExecutionSummary(runId, null, false, "NOT_RECORDED", "NOT_RECORDED", null, null, null),
+        )
+
+        val response = mockMvc.perform(get("/api/v1/analysis-runs/$runId/execution"))
+            .andExpect(status().isOk)
+            .andReturn()
+            .response
+        val body = objectMapper.readTree(response.contentAsString)
+
+        assertEquals(runId.toString(), body.path("analysisRunId").asText())
+        assertTrue(body.path("captureRequested").isNull || body.path("captureRequested").isMissingNode)
+        assertEquals(false, body.path("captureEnabled").asBoolean())
+        assertEquals("NOT_RECORDED", body.path("recordingState").asText())
+        assertTrue(body.path("startedAt").isNull)
+        assertTrue(body.path("finishedAt").isNull)
+        assertTrue(body.path("totalDurationMillis").isNull)
+    }
+
+    @Test
+    fun `execution artifact response is no-store and carries only sanitized content`() {
+        val runId = UUID.randomUUID()
+        val artifactId = UUID.randomUUID()
+        val spanId = UUID.randomUUID()
+        Mockito.`when`(analysisRunExecutionService.artifact(runId, artifactId, spanId, "RESULT")).thenReturn(
+            ExecutionArtifactResponse(
+                id = artifactId,
+                spanId = spanId,
+                role = "RESULT",
+                fidelity = "SANITIZED",
+                reason = null,
+                mediaType = "application/json",
+                content = """{"status":"SUCCEEDED"}""",
+                schemaVersion = "run-stage-result-v1",
+                captureVersion = "execution-capture-v1",
+                sanitizerVersion = "structured-redaction-sanitizer-v3",
+                sizeBytes = 22,
+            ),
+        )
+
+        val response = mockMvc.perform(
+            get("/api/v1/analysis-runs/$runId/execution/artifacts/$artifactId")
+                .param("spanId", spanId.toString())
+                .param("role", "RESULT"),
+        )
+            .andExpect(status().isOk)
+            .andReturn()
+            .response
+
+        assertEquals("no-store", response.getHeader("Cache-Control"))
+        assertEquals("SANITIZED", objectMapper.readTree(response.contentAsString).path("fidelity").asText())
+        assertEquals("""{"status":"SUCCEEDED"}""", objectMapper.readTree(response.contentAsString).path("content").asText())
+        Mockito.verify(analysisRunExecutionService).artifact(runId, artifactId, spanId, "RESULT")
+    }
 
     @Test
     fun `base Spring configuration enables experimental System One aggregation by default`() {
@@ -186,6 +250,8 @@ class OpenApiDocumentationTest {
         }
         assertTrue(uploadProperties.has("configuration"))
         assertTrue(uploadProperties.path("configuration").path("description").asText().contains("retentionDisclosureFingerprint"))
+        assertTrue(uploadProperties.path("configuration").path("description").asText().contains("captureExecution=false"))
+        assertTrue(uploadProperties.path("configuration").path("description").asText().contains("trusted local workspace"))
         assertEquals("string", uploadProperties.path("file").path("type").asText())
         assertEquals("binary", uploadProperties.path("file").path("format").asText())
 
@@ -316,6 +382,8 @@ class OpenApiDocumentationTest {
         assertTrue(configProperties.has("scholarlyMetadataProvider"))
         assertTrue(configProperties.has("openAccessProvider"))
         assertTrue(configProperties.has("externalProviderConsents"))
+        assertTrue(configProperties.has("captureExecution"))
+        assertTrue(configProperties.path("captureExecution").path("description").asText().contains("does not grant additional external-provider consent"))
         val consentRequestSchema = configProperties.path("externalProviderConsents").path("items").path("${'$'}ref").asText().substringAfterLast('/')
         val consentRequestProperties = document.path("components").path("schemas").path(consentRequestSchema).path("properties")
         assertTrue(consentRequestProperties.has("providerId"))
@@ -325,6 +393,53 @@ class OpenApiDocumentationTest {
         assertTrue(reanalysis.path("description").asText().contains("server-issued"))
         assertTrue(reanalysis.path("responses").has("201"))
         assertTrue(reanalysis.path("responses").has("404"))
+        val executionBase = "/api/v1/analysis-runs/{runId}/execution"
+        val executionSummary = paths.path(executionBase).path("get")
+        assertTrue(executionSummary.path("responses").has("200"))
+        assertTrue(executionSummary.path("responses").has("404"))
+        val executionSummarySchema = executionSummary.path("responses").path("200").path("content")
+            .path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val executionSummaryProperties = schemas.path(executionSummarySchema).path("properties")
+        listOf("analysisRunId", "captureRequested", "captureEnabled", "recordingState", "completeness", "startedAt", "finishedAt", "totalDurationMillis")
+            .forEach { assertTrue(executionSummaryProperties.has(it)) }
+        val spanList = paths.path("$executionBase/spans").path("get")
+        assertTrue(spanList.path("responses").path("200").path("content").has("application/json"))
+        assertTrue(spanList.path("parameters").any { it.path("name").asText() == "cursor" })
+        val spanPageSchemaName = spanList.path("responses").path("200").path("content").path("application/json")
+            .path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val spanPageProperties = schemas.path(spanPageSchemaName).path("properties")
+        assertTrue(spanPageProperties.has("items"))
+        assertTrue(spanPageProperties.has("nextCursor"))
+        val spanSchemaName = spanPageProperties.path("items").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val executionSpanProperties = schemas.path(spanSchemaName).path("properties")
+        listOf("id", "parentSpanId", "operationId", "stageId", "kind", "name", "startedAt", "endedAt", "durationMillis", "status", "attempt", "providerId", "modelId", "httpStatus", "safeErrorCode", "attributes", "trustBoundary", "httpRoute", "domainLinks", "artifactRoles")
+            .forEach { assertTrue(executionSpanProperties.has(it)) }
+        val spanDetail = paths.path("$executionBase/spans/{spanId}").path("get")
+        assertTrue(spanDetail.path("responses").has("200"))
+        assertTrue(spanDetail.path("responses").has("404"))
+        val executionArtifact = paths.path("$executionBase/artifacts/{artifactId}").path("get")
+        assertTrue(executionArtifact.path("responses").path("200").path("headers").has("Cache-Control"))
+        assertTrue(executionArtifact.path("responses").has("400"))
+        assertTrue(executionArtifact.path("responses").has("404"))
+        assertTrue(executionArtifact.path("parameters").any { it.path("name").asText() == "spanId" && it.path("in").asText() == "query" })
+        assertTrue(executionArtifact.path("parameters").any { it.path("name").asText() == "role" && it.path("in").asText() == "query" })
+        val artifactSchemaName = executionArtifact.path("responses").path("200").path("content")
+            .path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val artifactProperties = schemas.path(artifactSchemaName).path("properties")
+        listOf("id", "spanId", "role", "fidelity", "reason", "mediaType", "content", "schemaVersion", "captureVersion", "sanitizerVersion", "sizeBytes")
+            .forEach { assertTrue(artifactProperties.has(it)) }
+        val artifactDescriptorSchema = executionSpanProperties.path("artifactRoles").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val artifactDescriptorProperties = schemas.path(artifactDescriptorSchema).path("properties")
+        listOf("id", "role", "fidelity", "reason", "mediaType", "sizeBytes").forEach { assertTrue(artifactDescriptorProperties.has(it)) }
+        listOf("id", "mediaType", "sizeBytes").forEach { field ->
+            val property = artifactDescriptorProperties.path(field)
+            val nullableType = property.path("type").isArray && property.path("type").any { it.asText() == "null" }
+            assertTrue(property.path("nullable").asBoolean() || nullableType, "$field must allow null: $property")
+        }
+        assertEquals(setOf("INPUT", "REQUEST", "RESPONSE", "RESULT"), artifactDescriptorProperties.path("role").path("enum").map { it.asText() }.toSet())
+        assertFalse(executionSpanProperties.has("artifactDescriptors"))
+        assertTrue(paths.path("$executionBase/capture").path("patch").path("responses").has("409"))
+        assertTrue(paths.path("$executionBase/artifacts/{artifactId}").path("delete").path("responses").has("204"))
         assertTrue(paths.path("/api/v1/health").path("get").path("responses").path("200").path("content").has("application/json"))
         val invalidateCrossref = paths.path("/api/v1/operator/caches/crossref").path("delete")
         assertEquals("Invalidate one Crossref cache entry", invalidateCrossref.path("summary").asText())

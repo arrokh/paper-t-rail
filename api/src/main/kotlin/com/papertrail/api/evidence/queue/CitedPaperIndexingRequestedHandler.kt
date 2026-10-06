@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.papertrail.api.analysis.service.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.ExecutionOperationId
 import com.papertrail.api.document.service.isSourceDocumentDeleted
 import com.papertrail.api.evidence.service.EvidenceRetrievalService
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
@@ -26,6 +30,7 @@ class CitedPaperIndexingRequestedHandler(
     private val evidenceVerificationService: EvidenceVerificationService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
+    private val executionService: AnalysisRunExecutionService? = null,
 ) {
     fun isProcessed(eventId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM inbox_events WHERE event_id = ?)",
@@ -36,6 +41,19 @@ class CitedPaperIndexingRequestedHandler(
     fun handle(serializedEvent: String): UUID {
         val event: PipelineEvent<CitedPaperIndexingRequestedPayload> = objectMapper.readValue(serializedEvent)
         require(event.eventType == CITED_PAPER_INDEXING_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        executionService?.recordQueueIntervals(
+            event.analysisRunId, event.eventId, event.attempt, "evidence", event.queueWaitStartedAt,
+            event.retryScheduledAt, event.retryDueAt, event.causationId,
+        )
+        val operation = { handleEvent(event) }
+        return executionService?.record(
+            event.analysisRunId,
+            ExecutionSpanSpec("evidence", "QUEUE", "Evidence indexing attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId, causationEventId = event.causationId),
+            operation,
+        ) ?: operation()
+    }
+
+    private fun handleEvent(event: PipelineEvent<CitedPaperIndexingRequestedPayload>): UUID {
         if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
 
@@ -54,10 +72,55 @@ class CitedPaperIndexingRequestedHandler(
         if (run.status != "PROCESSING") throw IllegalStateException("Analysis Run is not accepting Cited Paper indexing work.")
 
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "evidence", "prepare-evidence", event.payload.bibliographyEntryId, "IN_PROGRESS")
-        evidenceRetrievalService.retrieve(event.analysisRunId, event.payload.bibliographyEntryId)
+        if (executionService == null) {
+            evidenceRetrievalService.retrieve(event.analysisRunId, event.payload.bibliographyEntryId)
+        } else {
+            executionService.record(
+                event.analysisRunId,
+                ExecutionSpanSpec("evidence", "INTERNAL", "Retrieve and rank evidence passages", event.attempt + 1, event.eventId, operationId = ExecutionOperationId.forEvent(event.eventId, "evidence-retrieval")),
+            ) {
+                executionService.captureCurrent(
+                    ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1)),
+                )
+                evidenceRetrievalService.retrieve(event.analysisRunId, event.payload.bibliographyEntryId).also {
+                    executionService.captureCurrent(
+                        ExecutionSpanArtifactSpec("RESULT", "run-stage-result-v1", mapOf("status" to "SUCCEEDED", "itemCount" to 1)),
+                    )
+                }
+            }
+        }
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "evidence", "prepare-evidence", event.payload.bibliographyEntryId, "COMPLETED")
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "verification", "assess-and-aggregate", event.payload.bibliographyEntryId, "IN_PROGRESS")
-        evidenceVerificationService.verifyReference(event.analysisRunId, event.payload.bibliographyEntryId)
+        if (executionService == null) {
+            evidenceVerificationService.verifyReference(event.analysisRunId, event.payload.bibliographyEntryId)
+        } else {
+            executionService.record(
+                event.analysisRunId,
+                ExecutionSpanSpec("verification", "PROVIDER", "Assess claim and aggregate result", event.attempt + 1, event.eventId, operationId = ExecutionOperationId.forEvent(event.eventId, "verification")),
+            ) {
+                executionService.captureCurrent(
+                    ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1)),
+                )
+                evidenceVerificationService.verifyReference(event.analysisRunId, event.payload.bibliographyEntryId)
+                val outcome = verificationOutcome(event.analysisRunId, event.payload.bibliographyEntryId)
+                val resultStatus = when {
+                    outcome.failureReason != null || outcome.pendingFullTextPairs > 0 -> "FAILED"
+                    outcome.completedPairs > 0 || outcome.hasJudgements || outcome.hasCompletedSpans -> "SUCCEEDED"
+                    else -> "SKIPPED"
+                }
+                executionService.captureCurrent(
+                    ExecutionSpanArtifactSpec(
+                        "RESULT",
+                        "run-stage-result-v1",
+                        mapOf(
+                            "status" to resultStatus,
+                            "itemCount" to outcome.completedPairs,
+                            "failedCount" to if (resultStatus == "FAILED") 1 else 0,
+                        ),
+                    ),
+                )
+            }
+        }
         val verificationOutcome = verificationOutcome(event.analysisRunId, event.payload.bibliographyEntryId)
         val verificationStatus = when {
             verificationOutcome.failureReason != null -> "FAILED"
@@ -87,6 +150,7 @@ class CitedPaperIndexingRequestedHandler(
         require(event.eventType == CITED_PAPER_INDEXING_REQUESTED) { "Unsupported event type '${event.eventType}'." }
         if (jdbc.isSourceDocumentDeleted(event.payload.documentId)) return
         recordProcessed(event, reason)
+        executionService?.finishIfTerminal(event.analysisRunId)
     }
 
     private fun recordProcessed(event: PipelineEvent<CitedPaperIndexingRequestedPayload>, failureReason: String? = null) {

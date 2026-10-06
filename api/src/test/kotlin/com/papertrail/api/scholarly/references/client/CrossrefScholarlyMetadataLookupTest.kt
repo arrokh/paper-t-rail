@@ -1,6 +1,7 @@
 package com.papertrail.api.scholarly.references.client
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
@@ -70,6 +71,27 @@ class CrossrefScholarlyMetadataLookupTest {
         assertEquals("Confirmed study", work?.title)
         assertEquals(listOf("Ada Researcher"), work?.authors)
         assertEquals(2024, work?.year)
+        server.verify()
+    }
+
+    @Test
+    fun `oversized Crossref responses remain parseable for metadata lookup`() {
+        val response = objectMapper.createObjectNode()
+        val message = response.putObject("message")
+        message.put("DOI", "10.1234/large-response")
+        message.putArray("title").add("Large response study")
+        message.put("abstract", "x".repeat(ExecutionCaptureSanitizer.DEFAULT_MAX_ARTIFACT_BYTES + 1))
+        val builder = RestClient.builder().baseUrl("https://api.crossref.org")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo(containsString("/works/10.1234")))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess(objectMapper.writeValueAsString(response), MediaType.APPLICATION_JSON))
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null, NoOpCrossrefLookupCache)
+
+        val work = lookup.byDoi("10.1234/large-response")
+
+        assertEquals("10.1234/large-response", work?.doi)
+        assertEquals("Large response study", work?.title)
         server.verify()
     }
 

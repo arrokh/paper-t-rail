@@ -12,6 +12,7 @@ import { AnalysisPipelineChart } from "@/features/analysis-runs/components/analy
 import { AnalysisRunPaperReview } from "@/features/analysis-runs/components/analysis-run-paper-review";
 import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/components/analysis-run-loading";
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
+import { AnalysisRunExecution } from "@/features/analysis-runs/components/analysis-run-execution";
 import { BackToTopFab } from "@/features/workspace/components/back-to-top-fab";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
 import { useWorkspaceShellState } from "@/features/workspace/components/workspace-shell-state";
@@ -27,10 +28,11 @@ import {
   useReferenceResolutionReport,
 } from "@/features/analysis-runs/queries/analysis-run-queries";
 import type { AnalysisRun } from "@/features/analysis-runs/types";
+import { LocalDateTime } from "@/components/local-date-time";
 import { cn } from "@/lib/utils";
 
 const ANALYSIS_RUN_VIEW_TAB_CLASS_NAME = cn(
-  "h-full min-w-32 px-4 font-semibold text-foreground/75",
+  "h-full min-w-fit shrink-0 px-2 text-xs font-semibold text-foreground/75 sm:min-w-32 sm:px-4 sm:text-sm",
   "hover:bg-accent hover:text-accent-foreground",
   "data-active:bg-primary data-active:text-primary-foreground data-active:shadow-sm",
   "data-active:hover:bg-primary data-active:hover:text-primary-foreground",
@@ -38,15 +40,6 @@ const ANALYSIS_RUN_VIEW_TAB_CLASS_NAME = cn(
 
 function isParsedDocumentReady(status: AnalysisRun["status"]): boolean {
   return status === "PARSED" || status === "COMPLETED" || status === "COMPLETED_WITH_WARNINGS";
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return "Not recorded";
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Asia/Jakarta",
-  }).format(new Date(value));
 }
 
 function homeHrefFor(searchParams: ReturnType<typeof useSearchParams>, focusRunId?: string): string {
@@ -101,8 +94,8 @@ function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
           <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
             <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Analysis Run ID</dt><dd className="m-0 break-all font-mono text-xs">{run.id}</dd></div>
             <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Source Document ID</dt><dd className="m-0 break-all font-mono text-xs">{run.documentId}</dd></div>
-            <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Created</dt><dd className="m-0 text-sm">{formatDate(run.createdAt)}</dd></div>
-            <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Started</dt><dd className="m-0 text-sm">{formatDate(run.startedAt)}</dd></div>
+            <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Created</dt><dd className="m-0 text-sm"><LocalDateTime value={run.createdAt} /></dd></div>
+            <div className="space-y-1"><dt className="font-mono text-xs uppercase text-muted-foreground">Started</dt><dd className="m-0 text-sm"><LocalDateTime value={run.startedAt} /></dd></div>
             <div className="min-w-0 space-y-1 sm:col-span-2"><dt className="font-mono text-xs uppercase text-muted-foreground">Source SHA-256</dt><dd className="m-0 break-all font-mono text-xs leading-relaxed">{run.sourceContentSha256}</dd></div>
             <div className="min-w-0 space-y-1 sm:col-span-2">
               <dt className="font-mono text-xs uppercase text-muted-foreground">Pinned providers</dt>
@@ -139,8 +132,16 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const run = runQuery.data ?? null;
   const stageParam = searchParams.get("step");
   const selectedStage = normalizePipelineStageId(stageParam);
-  const routeSelectedView = searchParams.get("view") === "review" ? "review" : "pipeline";
+  const routeViewParam = searchParams.get("view");
+  const routeSelectedView = routeViewParam === "review" ? "review" : routeViewParam === "execution" ? "execution" : "pipeline";
   const [selectedView, setSelectedView] = useState(routeSelectedView);
+  const urlSelectedSpanId = searchParams.get("span");
+  const [selectedExecutionSpanId, setSelectedExecutionSpanId] = useState(urlSelectedSpanId);
+  const [previousUrlSelectedSpanId, setPreviousUrlSelectedSpanId] = useState(urlSelectedSpanId);
+  if (urlSelectedSpanId !== previousUrlSelectedSpanId) {
+    setPreviousUrlSelectedSpanId(urlSelectedSpanId);
+    setSelectedExecutionSpanId(urlSelectedSpanId);
+  }
   const isPaperReviewActive = selectedView === "review" || routeSelectedView === "review";
   const previousRouteView = useRef(routeSelectedView);
   const previousSelectedView = useRef(selectedView);
@@ -179,10 +180,14 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
     if (previousSelectedView.current === selectedView) return;
     previousSelectedView.current = selectedView;
 
-    const cardId = selectedView === "review" ? "paper-review-card" : "analysis-pipeline-card";
+    const cardId = selectedView === "review" ? "paper-review-card" : selectedView === "execution" ? "execution-trace" : "analysis-pipeline-card";
     const panel = document.getElementById(cardId)?.closest<HTMLElement>(".analysis-run-view-panel");
     const scrollToSelectedView = () => {
       if (selectedView === "review") scrollToPaperReviewCard();
+      else if (selectedView === "execution") document.getElementById("execution-trace")?.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
       else scrollToAnalysisPipelineCard();
     };
 
@@ -272,6 +277,12 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
     updateQueryParameters({ view: "review", reviewDetail: detail });
   }
 
+  function selectExecutionSpan(spanId: string | null) {
+    setSelectedExecutionSpanId(spanId);
+    setSelectedView("execution");
+    updateQueryParameters({ view: "execution", span: spanId });
+  }
+
   return (
     <article className="analysis-run-detail space-y-6" aria-labelledby="analysis-run-heading">
       <WorkspaceBreadcrumb items={analysisRunBreadcrumbItems(run.filename, backHref)} />
@@ -281,7 +292,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             <p className="font-mono text-xs tracking-[0.13em] text-muted-foreground uppercase">Analysis Run details</p>
             <h1 id="analysis-run-heading" className="break-words font-serif text-2xl font-semibold tracking-tight sm:text-4xl">{run.filename}</h1>
             <p className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
-              <span>Created {formatDate(run.createdAt)}</span>
+              <span>Created <LocalDateTime value={run.createdAt} /></span>
               <RunStatusBadge status={run.status} />
             </p>
           </div>
@@ -299,16 +310,16 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
         value={selectedView}
         onValueChange={(value) => {
           if (typeof value !== "string") return;
-          const nextView = value === "review" ? "review" : "pipeline";
+          const nextView = value === "review" ? "review" : value === "execution" ? "execution" : "pipeline";
           if (value === "review") setHasOpenedPaperReview(true);
           setSelectedView(nextView);
-          updateQueryParameters({ view: nextView === "review" ? "review" : null });
+          updateQueryParameters({ view: nextView === "pipeline" ? null : nextView });
         }}
         className="gap-5"
       >
         <TabsList
           aria-label="Analysis Run views"
-          className="mx-auto h-12 w-fit max-w-full rounded-lg border border-border bg-muted/70 p-1 shadow-sm"
+          className="mx-auto flex h-12 w-fit max-w-full flex-nowrap overflow-x-auto rounded-lg border border-border bg-muted/70 p-1 shadow-sm"
         >
           <TabsTrigger value="pipeline" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
             Analysis Pipeline
@@ -320,6 +331,9 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}
           >
             Paper Review
+          </TabsTrigger>
+          <TabsTrigger value="execution" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
+            Execution Trace
           </TabsTrigger>
         </TabsList>
         <TabsContent value="pipeline" className="analysis-run-view-panel space-y-6">
@@ -353,6 +367,16 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
               </Card>
             </section>
           )}
+        </TabsContent>
+        <TabsContent value="execution" className="analysis-run-view-panel">
+          <div id="execution-trace">
+            <AnalysisRunExecution
+              analysisRunId={analysisRunId}
+              runStatus={run.status}
+              selectedSpanId={selectedExecutionSpanId}
+              onSelectSpan={selectExecutionSpan}
+            />
+          </div>
         </TabsContent>
         <TabsContent value="review" keepMounted={hasOpenedPaperReview || selectedView === "review"} className="analysis-run-view-panel">
           <AnalysisRunPaperReview

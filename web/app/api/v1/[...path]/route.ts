@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 const apiOrigin = process.env.PAPER_T_RAIL_API_ORIGIN ?? "http://127.0.0.1:8080";
 const requestIdPattern = /^[A-Za-z0-9._:-]{1,128}$/;
-const documentIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
@@ -74,8 +74,24 @@ export const POST = proxy;
 
 export async function DELETE(request: NextRequest, context: RouteContext): Promise<Response> {
   const { path } = await context.params;
-  if (path.length !== 2 || path[0] !== "documents" || !documentIdPattern.test(path[1])) {
-    return new Response(null, { status: 404 });
-  }
+  const isDocumentDeletion = path.length === 2 && path[0] === "documents" && uuidPattern.test(path[1]);
+  const isExecutionArtifactRemoval = path.length === 5
+    && path[0] === "analysis-runs"
+    && uuidPattern.test(path[1])
+    && path[2] === "execution"
+    && path[3] === "artifacts"
+    && uuidPattern.test(path[4]);
+  if (!isDocumentDeletion && !isExecutionArtifactRemoval) return new Response(null, { status: 404 });
+  return proxy(request, context);
+}
+
+export async function PATCH(request: NextRequest, context: RouteContext): Promise<Response> {
+  const { path } = await context.params;
+  const isCaptureStop = path.length === 4
+    && path[0] === "analysis-runs"
+    && uuidPattern.test(path[1])
+    && path[2] === "execution"
+    && path[3] === "capture";
+  if (!isCaptureStop) return new Response(null, { status: 404 });
   return proxy(request, context);
 }

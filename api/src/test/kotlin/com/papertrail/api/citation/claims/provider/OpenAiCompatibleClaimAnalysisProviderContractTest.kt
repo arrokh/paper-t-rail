@@ -10,6 +10,13 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.CaptureFidelity
+import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.ExecutionSpanHandle
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.citation.claims.domain.ClaimAnalysisContextInput
@@ -35,9 +42,12 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import org.slf4j.LoggerFactory
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
@@ -89,6 +99,75 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
         assertFalse(requests.single().contains("rawParserOutput"))
         assertFalse(requests.single().contains("rawText"))
         assertFalse(requests.single().contains("full Source Document"))
+    }
+
+    @Test
+    fun `real OpenAI claim provider records sanitized request response and typed result in one operation`() = withServer { server, requests ->
+        val settings = localSettings(server)
+        val catalog = ProviderCatalog.safeDefaults(openAiCompatibleClaimAnalysisSettings = settings)
+        val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
+        val execution = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), objectMapper)
+        val runId = UUID.randomUUID()
+        val spanSpec = ExecutionSpanSpec("source", "PROVIDER", "Analyze Atomic Claims")
+        val spanHandle = ExecutionSpanHandle(UUID.randomUUID(), runId, UUID.randomUUID(), Instant.now(), System.nanoTime())
+        Mockito.`when`(repository.startSpan(runId, spanSpec, "{}")).thenReturn(spanHandle)
+        val childOperationId = UUID.nameUUIDFromBytes("${spanHandle.operationId}:provider-call:openai-claim-batch-0".toByteArray())
+        val childSpec = ExecutionSpanSpec(
+            stageId = "source",
+            kind = "PROVIDER",
+            name = "OpenAI-compatible claim model call",
+            attempt = 1,
+            parentSpanId = spanHandle.id,
+            providerId = OpenAiCompatibleEndpointSettings.PROVIDER_ID,
+            modelId = settings.modelId,
+            operationId = childOperationId,
+            attributes = mapOf("httpRoute" to "/v1/chat/completions"),
+        )
+        val childHandle = ExecutionSpanHandle(
+            UUID.randomUUID(), runId, childOperationId, Instant.now(), System.nanoTime(), "source", 1, null,
+        )
+        Mockito.`when`(repository.startSpan(runId, childSpec, """{"httpRoute":"/v1/chat/completions"}""")).thenReturn(childHandle)
+        val provider = provider(settings, catalog, execution)
+        val request = requestFactory().from(documentWithOneContextAndTwoTargets())
+        val configuration = configuration(catalog)
+
+        val analyzed = execution.record(runId, spanSpec) {
+            execution.captureCurrent(
+                ExecutionSpanArtifactSpec(
+                    "INPUT",
+                    "run-stage-input-v1",
+                    mapOf("itemCount" to request.contexts.size, "candidateCount" to request.contexts.sumOf { it.targetCandidates.size }),
+                ),
+            )
+            provider.analyze(request, configuration).also { result ->
+                execution.captureCurrent(
+                    ExecutionSpanArtifactSpec(
+                        "RESULT",
+                        "run-stage-result-v1",
+                        mapOf("status" to "SUCCEEDED", "itemCount" to result.sumOf { it.claims.size }),
+                    ),
+                )
+            }
+        }
+
+        assertEquals(1, analyzed.single().claims.size)
+        assertTrue(requests.single().contains("Treatment reduced pain"))
+        val captured = Mockito.mockingDetails(repository).invocations
+            .filter { it.method.name == "recordArtifact" }
+            .map {
+                it.arguments[2] as ExecutionSpanArtifactSpec to
+                    it.arguments[3] as com.papertrail.api.analysis.execution.SanitizedExecutionArtifact
+            }
+        assertEquals(listOf("INPUT", "REQUEST", "RESPONSE", "RESULT"), captured.map { it.first.role })
+        assertEquals(CaptureFidelity.SANITIZED, captured.first().second.fidelity)
+        assertEquals(CaptureFidelity.PARTIAL, captured[1].second.fidelity)
+        assertEquals(CaptureFidelity.PARTIAL, captured[2].second.fidelity)
+        assertEquals(CaptureFidelity.SANITIZED, captured.last().second.fidelity)
+        val stored = captured.mapNotNull { it.second.content }
+        assertTrue(stored.none { it.contains("Treatment reduced pain") || it.contains("systemPrompt") })
+        assertTrue(stored[1].contains("promptContentOmitted"))
+        assertTrue(stored[2].contains("messageContentOmitted"))
+        assertTrue(stored.last().contains("\"itemCount\":1"))
     }
 
     @Test
@@ -612,12 +691,14 @@ class OpenAiCompatibleClaimAnalysisProviderContractTest {
     private fun provider(
         settings: OpenAiCompatibleClaimAnalysisSettings,
         catalog: ProviderCatalog,
+        executionService: AnalysisRunExecutionService? = null,
     ) = OpenAiCompatibleClaimAnalysisProvider(
         settings = settings,
         providerCallGate = ProviderCallGate(catalog),
-        chatClient = OpenAiCompatibleChatClient(settings.endpoint, objectMapper),
+        chatClient = OpenAiCompatibleChatClient(settings.endpoint, objectMapper, executionService),
         payloadFactory = OpenAiCompatibleClaimAnalysisPayloadFactory(objectMapper),
         objectMapper = objectMapper,
+        executionService = executionService,
     )
 
     private fun configuration(

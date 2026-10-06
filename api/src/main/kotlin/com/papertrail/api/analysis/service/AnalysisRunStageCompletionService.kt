@@ -9,6 +9,7 @@ import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_RE
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
@@ -311,8 +312,11 @@ class AnalysisRunStageCompletionService(
             analysisRunId,
         )
         if (updated != 1) throw IllegalStateException("Analysis Run could not complete its parsed stage.")
-        logger.atInfo()
-            .addKeyValue("analysisRunId", analysisRunId)
+        val completionLog = logger.atInfo()
+        if (MDC.get("analysisRunId") == null) {
+            completionLog.addKeyValue("analysisRunId", analysisRunId)
+        }
+        completionLog
             .addKeyValue("runStatus", finalStatus)
             .addKeyValue("systemOneProviderId", systemOneProviderId)
             .addKeyValue("systemOneMode", systemOneAggregationMode)

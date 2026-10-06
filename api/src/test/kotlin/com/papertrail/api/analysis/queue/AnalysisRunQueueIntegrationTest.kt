@@ -9,6 +9,12 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.analysis.configuration.AggregationPolicySnapshot
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.ExecutionOperationId
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.ProviderSelection
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
@@ -26,6 +32,7 @@ import com.papertrail.api.citation.claims.domain.CitationContextClaims
 import com.papertrail.api.citation.claims.domain.CitationTargetKey
 import com.papertrail.api.infrastructure.cache.RedisProviderCacheStore
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
@@ -174,6 +181,7 @@ import org.springframework.transaction.TransactionStatus
 import org.springframework.transaction.TransactionSystemException
 import org.springframework.transaction.support.SimpleTransactionStatus
 import org.springframework.transaction.support.TransactionTemplate
+import org.mockito.Mockito
 import org.hamcrest.Matchers.containsString
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.PostgreSQLContainer
@@ -195,6 +203,381 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @Testcontainers
 class AnalysisRunQueueIntegrationTest {
+    @Test
+    fun `execution artifacts are sanitized run-local deduplicated removable and deleted with their document`() {
+        val firstRun = createQueuedRun()
+        val otherRun = createQueuedRun()
+        val execution = executionService()
+        val logicalOperationId = ExecutionOperationId.forEvent(firstRun.eventId, "reference-resolution")
+        val firstSpan = execution.startSpan(
+            firstRun.analysisRunId,
+            ExecutionSpanSpec("references", "PROVIDER", "Resolve bibliography entry", attempt = 2, eventId = firstRun.eventId, operationId = logicalOperationId),
+        )!!
+        val secondSpan = execution.startSpan(
+            firstRun.analysisRunId,
+            ExecutionSpanSpec("references", "PROVIDER", "Resolve bibliography entry", attempt = 3, eventId = UUID.randomUUID(), operationId = logicalOperationId),
+        )!!
+        val attribution = ExecutionSpanArtifactSpec(
+            role = "REQUEST",
+            schemaVersion = "citation-metadata-v1",
+            fields = mapOf(
+                "title" to "Evidence-guided analysis",
+                "doi" to "10.1234/example.1",
+                "authors" to listOf("Ada Example"),
+                "publicationYear" to 2024,
+            ),
+        )
+        execution.capture(firstRun.analysisRunId, firstSpan.id, attribution)
+        execution.capture(
+            firstRun.analysisRunId,
+            firstSpan.id,
+            attribution.copy(role = "RESPONSE", fields = attribution.fields + ("title" to "Evidence synthesis study")),
+        )
+        execution.capture(
+            firstRun.analysisRunId,
+            firstSpan.id,
+            ExecutionSpanArtifactSpec(
+                role = "RESULT",
+                schemaVersion = "run-stage-result-v1",
+                fields = mapOf("status" to "SUCCEEDED", "itemCount" to 1, "completedCount" to 1, "failedCount" to 0),
+            ),
+        )
+        execution.capture(firstRun.analysisRunId, secondSpan.id, attribution)
+        execution.finishSpan(firstSpan, "SUCCEEDED")
+        execution.finishSpan(secondSpan, "FAILED", "PROVIDER_FAILURE")
+        val localProviderSpan = execution.startSpan(
+            firstRun.analysisRunId,
+            ExecutionSpanSpec("source", "PROVIDER", "Heuristic claim extraction", providerId = "heuristic"),
+        )!!
+        execution.finishSpan(localProviderSpan, "SUCCEEDED")
+        assertEquals("LOCAL", execution.span(firstRun.analysisRunId, localProviderSpan.id).trustBoundary)
+        assertEquals(
+            "number",
+            jdbc.queryForObject("SELECT jsonb_typeof(attributes -> 'captureOverheadMillis') FROM analysis_run_execution_spans WHERE id = ?", String::class.java, firstSpan.id),
+        )
+        val timelineStart = Instant.parse("2026-01-01T00:00:00Z")
+        jdbc.update(
+            "UPDATE analysis_run_execution SET started_at = ?, finished_at = ? WHERE analysis_run_id = ?",
+            Timestamp.from(timelineStart),
+            Timestamp.from(timelineStart.plusSeconds(12)),
+            firstRun.analysisRunId,
+        )
+        jdbc.update(
+            "UPDATE analysis_run_execution_spans SET started_at = ?, ended_at = ?, duration_millis = 10000 WHERE id = ?",
+            Timestamp.from(timelineStart), Timestamp.from(timelineStart.plusSeconds(10)), firstSpan.id,
+        )
+        jdbc.update(
+            "UPDATE analysis_run_execution_spans SET started_at = ?, ended_at = ?, duration_millis = 10000 WHERE id = ?",
+            Timestamp.from(timelineStart.plusSeconds(2)), Timestamp.from(timelineStart.plusSeconds(12)), secondSpan.id,
+        )
+        assertEquals(12_000L, execution.summary(firstRun.analysisRunId).totalDurationMillis)
+
+        val artifactId = jdbc.queryForObject(
+            "SELECT DISTINCT artifact.id FROM analysis_run_execution_artifacts artifact JOIN analysis_run_execution_span_artifacts link ON link.analysis_run_id = artifact.analysis_run_id AND link.artifact_id = artifact.id WHERE artifact.analysis_run_id = ? AND link.role = 'REQUEST' LIMIT 1",
+            UUID::class.java,
+            firstRun.analysisRunId,
+        )!!
+        assertEquals(3, jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_artifacts WHERE analysis_run_id = ?",
+            Int::class.java,
+            firstRun.analysisRunId,
+        ))
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_span_artifacts WHERE analysis_run_id = ? AND artifact_id = ?",
+            Int::class.java,
+            firstRun.analysisRunId,
+            artifactId,
+        ))
+        val storedContent = jdbc.queryForObject(
+            "SELECT content FROM analysis_run_execution_artifacts WHERE analysis_run_id = ? AND id = ?",
+            String::class.java,
+            firstRun.analysisRunId,
+            artifactId,
+        )!!
+        assertTrue(storedContent.contains("Ada Example"))
+        assertFalse(storedContent.contains("private@example.org"))
+        val firstSpanDetail = execution.span(firstRun.analysisRunId, firstSpan.id)
+        assertEquals(listOf("REQUEST", "RESPONSE", "RESULT"), firstSpanDetail.artifactRoles.map { it.role })
+        assertTrue(firstSpanDetail.artifactRoles.all { it.fidelity == "SANITIZED" })
+        assertEquals("FAILED", execution.span(firstRun.analysisRunId, secondSpan.id).status)
+        assertEquals(logicalOperationId, execution.span(firstRun.analysisRunId, firstSpan.id).operationId)
+        assertEquals(logicalOperationId, execution.span(firstRun.analysisRunId, secondSpan.id).operationId)
+        assertEquals(firstSpan.id, execution.artifact(firstRun.analysisRunId, artifactId).spanId)
+        assertEquals(secondSpan.id, execution.artifact(firstRun.analysisRunId, artifactId, secondSpan.id, "REQUEST").spanId)
+        assertThrows(ResponseStatusException::class.java) {
+            execution.artifact(firstRun.analysisRunId, artifactId, firstSpan.id, "RESPONSE")
+        }
+        assertThrows(ResponseStatusException::class.java) {
+            execution.artifact(otherRun.analysisRunId, artifactId, secondSpan.id, "REQUEST")
+        }
+
+        val stopped = execution.stopCapture(firstRun.analysisRunId)
+        assertEquals(true, stopped.captureRequested)
+        assertFalse(stopped.captureEnabled)
+        assertEquals("STOPPED", stopped.recordingState)
+        assertEquals(null, execution.startSpan(firstRun.analysisRunId, ExecutionSpanSpec("source", "INTERNAL", "Late operation")))
+        execution.removeArtifact(firstRun.analysisRunId, artifactId)
+        val metadataOnlyJdbc = Mockito.spy(jdbc)
+        val metadataOnlyRepository = AnalysisRunExecutionRepository(
+            metadataOnlyJdbc,
+            TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            objectMapper,
+        )
+        val listedSpan = metadataOnlyRepository.page(firstRun.analysisRunId, 100, null).items.single { it.id == firstSpan.id }
+        val detailedSpan = metadataOnlyRepository.span(firstRun.analysisRunId, firstSpan.id)!!
+        assertEquals("REMOVED", listedSpan.artifactRoles.single { it.role == "REQUEST" }.fidelity)
+        assertEquals("REMOVED", detailedSpan.artifactRoles.single { it.role == "REQUEST" }.fidelity)
+        val descriptorQueries = Mockito.mockingDetails(metadataOnlyJdbc).invocations
+            .filter { it.method.name == "query" }
+            .mapNotNull { it.arguments.firstOrNull() as? String }
+            .filter { it.contains("analysis_run_execution_span_artifacts") }
+        assertTrue(descriptorQueries.size >= 2)
+        assertTrue(descriptorQueries.none { it.contains("content", ignoreCase = true) })
+
+        val removed = execution.artifact(firstRun.analysisRunId, artifactId)
+        assertEquals("REMOVED", removed.fidelity)
+        assertEquals(null, removed.content)
+        execution.capture(firstRun.analysisRunId, firstSpan.id, attribution)
+        assertEquals("REMOVED", execution.artifact(firstRun.analysisRunId, artifactId).fidelity)
+        assertEquals(null, jdbc.queryForObject(
+            "SELECT content FROM analysis_run_execution_artifacts WHERE analysis_run_id = ? AND id = ?",
+            String::class.java,
+            firstRun.analysisRunId,
+            artifactId,
+        ))
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_span_artifacts WHERE analysis_run_id = ? AND artifact_id = ? AND fidelity = 'REMOVED'",
+            Int::class.java,
+            firstRun.analysisRunId,
+            artifactId,
+        ))
+
+        sourceDocumentDeletionService().delete(firstRun.documentId)
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM analysis_run_execution WHERE analysis_run_id = ?", Int::class.java, firstRun.analysisRunId))
+        assertEquals(null, execution.startSpan(firstRun.analysisRunId, ExecutionSpanSpec("source", "INTERNAL", "Late deleted-run operation")))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM analysis_run_execution WHERE analysis_run_id = ?", Int::class.java, firstRun.analysisRunId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM analysis_run_execution WHERE analysis_run_id = ?", Int::class.java, otherRun.analysisRunId))
+    }
+
+    @Test
+    fun `queue wait and retry backoff use persisted timestamps without estimated intervals`() {
+        val run = createQueuedRun()
+        val execution = executionService()
+        val queuedAt = Instant.now().minusSeconds(30)
+        val retryScheduledAt = Instant.now().minusSeconds(10)
+        val retryDueAt = retryScheduledAt.plusMillis(750)
+        val retryEventId = UUID.randomUUID()
+
+        execution.recordQueueIntervals(run.analysisRunId, run.eventId, 0, "source", queuedAt, null, null, null)
+        execution.recordQueueIntervals(run.analysisRunId, retryEventId, 1, "references", null, retryScheduledAt, retryDueAt, null)
+
+        val spans = execution.spans(run.analysisRunId, 100, null).items
+        val initialWait = spans.single { it.name == "Queue wait" && it.attempt == 1 }
+        assertEquals(queuedAt, initialWait.startedAt)
+        assertTrue(initialWait.endedAt!! >= queuedAt)
+        assertEquals(Duration.between(initialWait.startedAt, initialWait.endedAt).toMillis(), initialWait.durationMillis)
+
+        val retryBackoff = spans.single { it.name == "Retry backoff" }
+        assertEquals(retryScheduledAt, retryBackoff.startedAt)
+        assertEquals(retryDueAt, retryBackoff.endedAt)
+        assertEquals(750L, retryBackoff.durationMillis)
+        val retryQueueWait = spans.single { it.name == "Queue wait" && it.attempt == 2 }
+        assertEquals(retryDueAt, retryQueueWait.startedAt)
+        assertTrue(retryQueueWait.endedAt!! >= retryDueAt)
+    }
+
+    @Test
+    fun `span metadata exposes safe trust route and links but excludes arbitrary content`() {
+        val run = createQueuedRun()
+        val execution = executionService()
+        val safeSpan = execution.startSpan(
+            run.analysisRunId,
+            ExecutionSpanSpec(
+                "references", "PROVIDER", "Scholarly metadata lookup", eventId = run.eventId,
+                providerId = "crossref",
+                attributes = mapOf("httpRoute" to "/works", "prompt" to "private@example.org"),
+            ),
+        )!!
+        val unsafeRouteSpan = execution.startSpan(
+            run.analysisRunId,
+            ExecutionSpanSpec(
+                "references", "PROVIDER", "Unsafe route omitted", providerId = "crossref",
+                attributes = mapOf("httpRoute" to "/works?doi=private@example.org"),
+            ),
+        )!!
+
+        val safe = execution.span(run.analysisRunId, safeSpan.id)
+        assertEquals("EXTERNAL", safe.trustBoundary)
+        assertEquals("/works", safe.httpRoute)
+        assertFalse(safe.attributes.has("prompt"))
+        assertTrue(safe.domainLinks.any { it.type == "ANALYSIS_RUN" && it.id == run.analysisRunId })
+        assertTrue(safe.domainLinks.any { it.type == "SOURCE_DOCUMENT" && it.id == run.documentId })
+        val unsafe = execution.span(run.analysisRunId, unsafeRouteSpan.id)
+        assertNull(unsafe.httpRoute)
+        assertFalse(unsafe.attributes.has("httpRoute"))
+    }
+
+    @Test
+    fun `W3C trace context and causation links survive outbox events and queue workers`() {
+        val run = createQueuedRun()
+        val storedEnvelope = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            run.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        val initialEvent: PipelineEvent<JsonNode> = objectMapper.readValue<PipelineEvent<JsonNode>>(storedEnvelope).copy(
+            traceparent = W3CTraceContext.forTraceId(run.analysisRunId),
+        )
+        val initialSerialized = objectMapper.writeValueAsString(initialEvent)
+        jdbc.update("UPDATE outbox_events SET payload = ?::jsonb WHERE event_id = ?", initialSerialized, initialEvent.eventId)
+        assertTrue(W3CTraceContext.isValid(initialEvent.traceparent))
+        assertEquals(run.analysisRunId.toString().replace("-", ""), initialEvent.traceparent!!.split('-')[1])
+
+        val resolutionService = referenceResolutionService()
+        eventHandler(resolutionService = resolutionService).handle(initialSerialized)
+        val sourceAttemptId = jdbc.queryForObject(
+            "SELECT id FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND event_id = ? AND name = 'Source analysis attempt'",
+            UUID::class.java,
+            run.analysisRunId,
+            initialEvent.eventId,
+        )!!
+        val resolutionSerialized = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id LIMIT 1",
+            String::class.java,
+            run.analysisRunId,
+            REFERENCE_RESOLUTION_REQUESTED,
+        )!!
+        val resolutionEvent: PipelineEvent<JsonNode> = objectMapper.readValue(resolutionSerialized)
+        assertEquals(initialEvent.eventId, resolutionEvent.causationId)
+        assertTrue(W3CTraceContext.isValid(resolutionEvent.traceparent))
+        assertEquals(initialEvent.traceparent!!.split('-')[1], resolutionEvent.traceparent!!.split('-')[1])
+        assertNotEquals(initialEvent.traceparent!!.split('-')[2], resolutionEvent.traceparent!!.split('-')[2])
+
+        referenceResolutionEventHandler(resolutionService).handle(resolutionSerialized)
+        val resolutionAttempt = executionService().span(
+            run.analysisRunId,
+            jdbc.queryForObject(
+                "SELECT id FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND event_id = ? AND name = 'Reference resolution attempt'",
+                UUID::class.java,
+                run.analysisRunId,
+                resolutionEvent.eventId,
+            )!!,
+        )
+        assertEquals(sourceAttemptId, resolutionAttempt.parentSpanId)
+        val resolutionOperationId = jdbc.queryForObject(
+            "SELECT id FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND event_id = ? AND name = 'Resolve bibliography entry'",
+            UUID::class.java,
+            run.analysisRunId,
+            resolutionEvent.eventId,
+        )!!
+        val resolutionOperation = executionService().span(run.analysisRunId, resolutionOperationId)
+        assertEquals(resolutionAttempt.id, resolutionOperation.parentSpanId)
+        assertTrue(resolutionOperation.domainLinks.any { it.type == "BIBLIOGRAPHY_ENTRY" })
+    }
+
+    @Test
+    fun `source parser capture stores only safe provenance and typed result while omitting raw request and response`() {
+        val run = createQueuedRun()
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE event_id = ?",
+            String::class.java,
+            run.eventId,
+        )!!
+
+        eventHandler().handle(event)
+
+        val parserSpanId = jdbc.queryForObject(
+            "SELECT id FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND name = 'Parse Source Document'",
+            UUID::class.java,
+            run.analysisRunId,
+        )!!
+        val detail = executionService().span(run.analysisRunId, parserSpanId)
+        assertEquals("SUCCEEDED", detail.status)
+        assertEquals(listOf("INPUT", "REQUEST", "RESPONSE", "RESULT"), detail.artifactRoles.map { it.role })
+        assertEquals("SANITIZED", detail.artifactRoles.single { it.role == "INPUT" }.fidelity)
+        assertEquals("OMITTED", detail.artifactRoles.single { it.role == "REQUEST" }.fidelity)
+        assertEquals("BINARY_ASSET_REFERENCE", detail.artifactRoles.single { it.role == "REQUEST" }.reason)
+        assertEquals("OMITTED", detail.artifactRoles.single { it.role == "RESPONSE" }.fidelity)
+        assertEquals("UNSUPPORTED_OR_UNSAFE_FIELDS", detail.artifactRoles.single { it.role == "RESPONSE" }.reason)
+        assertEquals("SANITIZED", detail.artifactRoles.single { it.role == "RESULT" }.fidelity)
+
+        val storedArtifacts = jdbc.queryForList(
+            "SELECT content FROM analysis_run_execution_artifacts WHERE analysis_run_id = ?",
+            String::class.java,
+            run.analysisRunId,
+        )
+        assertTrue(storedArtifacts.size >= 2)
+        assertTrue(storedArtifacts.none { it.contains("integration pdf bytes") || it.contains("test GROBID output") })
+        assertTrue(storedArtifacts.any { it.contains("sourceSha256") })
+        assertTrue(storedArtifacts.any { it.contains("candidateCount") })
+    }
+
+    @Test
+    fun `capture opt-out keeps content artifacts out of storage while preserving operation timing`() {
+        val configuration = objectMapper.writeValueAsString(
+            configurationFactory().from(RunConfigurationRequest(captureExecution = false)),
+        )
+        val run = createQueuedRun(configurationJson = configuration)
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE event_id = ?",
+            String::class.java,
+            run.eventId,
+        )!!
+
+        eventHandler().handle(event)
+
+        val summary = executionService().summary(run.analysisRunId)
+        assertEquals(false, summary.captureRequested)
+        assertFalse(summary.captureEnabled)
+        assertEquals("RECORDING", summary.recordingState)
+        assertTrue(executionService().spans(run.analysisRunId, 100, null).items.isNotEmpty())
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_artifacts WHERE analysis_run_id = ?",
+            Int::class.java,
+            run.analysisRunId,
+        ))
+        assertTrue(jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_span_artifacts WHERE analysis_run_id = ? AND reason = 'CAPTURE_DISABLED'",
+            Int::class.java,
+            run.analysisRunId,
+        )!! > 0)
+    }
+
+    @Test
+    fun `PARSED is terminal for execution recording`() {
+        val run = createQueuedRun()
+        val execution = executionService()
+
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", run.analysisRunId)
+        jdbc.update("UPDATE analysis_runs SET status = 'PARSED' WHERE id = ?", run.analysisRunId)
+        execution.finishIfTerminal(run.analysisRunId)
+
+        val summary = execution.summary(run.analysisRunId)
+        assertEquals("STOPPED", summary.recordingState)
+        assertEquals("COMPLETE", summary.completeness)
+        assertTrue(summary.finishedAt != null)
+        assertEquals(null, execution.startSpan(run.analysisRunId, ExecutionSpanSpec("references", "INTERNAL", "Late operation")))
+    }
+
+    @Test
+    fun `capture stopped before PARSED completion remains incomplete after recording finishes`() {
+        val run = createQueuedRun()
+        val execution = executionService()
+        val stopped = execution.stopCapture(run.analysisRunId)
+        assertEquals("RECORDING", stopped.completeness)
+        assertEquals("STOPPED", stopped.recordingState)
+
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", run.analysisRunId)
+        jdbc.update("UPDATE analysis_runs SET status = 'PARSED' WHERE id = ?", run.analysisRunId)
+        execution.finishIfTerminal(run.analysisRunId)
+
+        val finished = execution.summary(run.analysisRunId)
+        assertEquals("STOPPED", finished.recordingState)
+        assertEquals("INCOMPLETE", finished.completeness)
+        assertTrue(finished.finishedAt != null)
+    }
+
     @Test
     fun `original source PDF links are available for a queued run and reject deleted or changed sources`() {
         val created = createQueuedRun()
@@ -2164,6 +2547,26 @@ class AnalysisRunQueueIntegrationTest {
             }
         }
         val resolutionService = referenceResolutionService()
+        val fixtureDiscoveryCalls = AtomicInteger()
+        val fixtureFetchCalls = AtomicInteger()
+        val fixtureProviderFactory = RecordedFixtureOpenAccessProviderFactory(
+            objectMapper,
+            ProviderCallGate(ProviderCatalog.safeDefaults()),
+        )
+        val observedFixtureFactory = object : OpenAccessProviderFactory {
+            override val providerId = fixtureProviderFactory.providerId
+
+            override fun forRun(configuration: AnalysisConfigurationSnapshot): OpenAccessProvider {
+                val delegate = fixtureProviderFactory.forRun(configuration)
+                return object : OpenAccessProvider {
+                    override fun discover(reference: BibliographyReference): OpenAccessDiscovery? =
+                        delegate.discover(reference).also { fixtureDiscoveryCalls.incrementAndGet() }
+
+                    override fun fetch(location: OpenAccessLocation): AcquiredFullText =
+                        delegate.fetch(location).also { fixtureFetchCalls.incrementAndGet() }
+                }
+            }
+        }
         val documentEvent = jdbc.queryForObject(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
             String::class.java,
@@ -2174,6 +2577,7 @@ class AnalysisRunQueueIntegrationTest {
 
         processReferenceResolutionEvents(
             analysisRunId = created.analysisRunId,
+            providerFactories = listOf(observedFixtureFactory),
             resolutionService = resolutionService,
             embeddingProviders = listOf(ollamaProvider),
         )
@@ -2205,6 +2609,21 @@ class AnalysisRunQueueIntegrationTest {
                 Long::class.java,
                 created.analysisRunId,
             )!! > 0,
+        )
+        assertTrue(fixtureDiscoveryCalls.get() > 0, "Recorded fixture discovery was not invoked")
+        assertTrue(fixtureFetchCalls.get() > 0, "Recorded fixture fetch was not invoked")
+        val instrumentedNames = jdbc.query(
+            "SELECT DISTINCT name FROM analysis_run_execution_spans WHERE analysis_run_id = ?",
+            { rs, _ -> rs.getString("name") },
+            created.analysisRunId,
+        ).toSet()
+        assertTrue(
+            instrumentedNames.containsAll(setOf(
+                "Discover cited-paper access", "Fetch cited-paper full text", "Extract cited-paper text",
+                "Parse cited-paper source", "Chunk cited-paper sections", "Generate evidence embedding",
+                "Persist vectors and retrieve evidence", "Resolve bibliography entry",
+            )),
+            "Recorded spans: $instrumentedNames; discovery=${fixtureDiscoveryCalls.get()}, fetch=${fixtureFetchCalls.get()}, gap=${jdbc.queryForObject("SELECT gap_reason FROM analysis_run_execution WHERE analysis_run_id = ?", String::class.java, created.analysisRunId)}",
         )
     }
 
@@ -2561,21 +2980,42 @@ class AnalysisRunQueueIntegrationTest {
         publisher.publishPending()
         val envelope = jdbc.queryForObject("SELECT payload::text FROM outbox_events WHERE analysis_run_id = ?", String::class.java, created.analysisRunId)
         operations.add(stream, mapOf("event" to envelope!!)) // Simulate a repeated at-least-once delivery.
-        val messages = operations.read(
-            Consumer.from(group, "duplicate-test"),
-            StreamReadOptions.empty().count(10),
-            StreamOffset.create(stream, ReadOffset.lastConsumed()),
-        ).orEmpty()
-        assertEquals(2, messages.size, "Unexpected stream entries: ${operations.range(stream, Range.unbounded<String>()).orEmpty().map { it.value }}")
+        val duplicateEntries = operations.range(stream, Range.unbounded<String>()).orEmpty()
+            .count { it.value.containsKey("event") }
+        assertEquals(2, duplicateEntries, "Unexpected stream entries: ${operations.range(stream, Range.unbounded<String>()).orEmpty().map { it.value }}")
 
-        val handler = eventHandler()
-        messages.forEach { record ->
-            handler.handle(record.value.getValue("event"))
-            operations.acknowledge(stream, group, record.id)
+        val worker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(),
+            referenceResolutionHandler = referenceResolutionEventHandler(),
+            objectMapper = objectMapper,
+            stream = stream,
+            group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
+            consumerName = "duplicate-test",
+            reclaimDelayMs = 0,
+            batchSize = 10,
+            maxAttempts = 3,
+            retryBackoffMs = "0,0,0",
+        )
+        worker.createConsumerGroup()
+        try {
+            worker.poll()
+        } finally {
+            worker.shutdownLeaseHeartbeat()
         }
         processReferenceResolutionEvents(created.analysisRunId)
 
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = (SELECT event_id FROM outbox_events WHERE analysis_run_id = ? AND event_type = 'DocumentAnalysisRequested')", Int::class.java, created.analysisRunId))
+        val attempts = jdbc.query(
+            "SELECT id, attempt, status FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND name = 'Source analysis attempt' ORDER BY attempt",
+            { rs, _ -> Triple(rs.getObject("id", UUID::class.java), rs.getInt("attempt"), rs.getString("status")) },
+            created.analysisRunId,
+        )
+        assertEquals(listOf(1, 2), attempts.map { it.second })
+        assertEquals(listOf("SUCCEEDED", "REUSED"), attempts.map { it.third })
+        assertEquals(2, attempts.map { it.first }.toSet().size)
         assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         assertNotEquals(null, jdbc.queryForObject("SELECT completed_at FROM analysis_runs WHERE id = ?", Timestamp::class.java, created.analysisRunId))
         assertEquals(
@@ -2712,7 +3152,7 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("application/xml", objectStore.contentType(rawTeiObjectKey))
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
         val processedEvent: PipelineEvent<DocumentAnalysisRequestedPayload> = objectMapper.readValue(envelope)
-        handler.markFailed(processedEvent, "A stale retry must not overwrite a committed success.")
+        eventHandler().markFailed(processedEvent, "A stale retry must not overwrite a committed success.")
         assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         assertTrue(jdbc.queryForObject("SELECT failure_reason IS NULL FROM analysis_runs WHERE id = ?", Boolean::class.java, created.analysisRunId) == true)
     }
@@ -3002,6 +3442,72 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `event attempt counters expire independently and preserve a live event redelivery count`() {
+        val created = createQueuedRun()
+        val stream = "ae:test:${UUID.randomUUID()}"
+        val group = "group-${UUID.randomUUID()}"
+        val operations = redis.opsForStream<String, String>()
+        operations.add(stream, mapOf("bootstrap" to "1"))
+        operations.createGroup(stream, ReadOffset.from("$"), group)
+        val firstEventId = UUID.randomUUID()
+        val liveEventId = UUID.randomUUID()
+
+        fun unsupportedEvent(eventId: UUID): String = objectMapper.writeValueAsString(
+            PipelineEvent(
+                eventId = eventId,
+                eventType = "UnsupportedAttemptCounterTestEvent",
+                schemaVersion = 1,
+                analysisRunId = created.analysisRunId,
+                correlationId = UUID.randomUUID(),
+                causationId = null,
+                occurredAt = Instant.now(),
+                attempt = 0,
+                payload = objectMapper.createObjectNode(),
+            ),
+        )
+
+        operations.add(stream, mapOf("event" to unsupportedEvent(firstEventId)))
+        operations.add(stream, mapOf("event" to unsupportedEvent(liveEventId)))
+        val worker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(),
+            referenceResolutionHandler = referenceResolutionEventHandler(),
+            objectMapper = objectMapper,
+            stream = stream,
+            group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
+            consumerName = "attempt-retention-test",
+            reclaimDelayMs = 0,
+            batchSize = 10,
+            maxAttempts = 3,
+            retryBackoffMs = "0,0,0",
+            eventAttemptRetentionMs = 2_000,
+        )
+        worker.createConsumerGroup()
+        try {
+            worker.poll()
+            val firstKey = "$stream:event-attempt:$firstEventId"
+            val liveKey = "$stream:event-attempt:$liveEventId"
+            assertEquals("1", redis.opsForValue().get(firstKey))
+            assertEquals("1", redis.opsForValue().get(liveKey))
+            assertTrue(requireNotNull(redis.getExpire(firstKey, TimeUnit.MILLISECONDS)) in 1..2_000)
+            assertTrue(requireNotNull(redis.getExpire(liveKey, TimeUnit.MILLISECONDS)) in 1..2_000)
+
+            Thread.sleep(1_500)
+            operations.add(stream, mapOf("event" to unsupportedEvent(liveEventId)))
+            worker.poll()
+            assertEquals("2", redis.opsForValue().get(liveKey), "The redelivery must continue the active event's attempt count")
+            Thread.sleep(700)
+
+            assertNull(redis.opsForValue().get(firstKey), "An inactive event counter must expire")
+            assertEquals("2", redis.opsForValue().get(liveKey), "Expiring one counter must not reset another active event")
+        } finally {
+            worker.shutdownLeaseHeartbeat()
+        }
+    }
+
+    @Test
     fun `marks a persistently failing queued run failed and dead-letters it after three deliveries`() {
         val created = createQueuedRun()
         objectStore.delete("source/${created.documentId}/${created.hash}.pdf")
@@ -3033,6 +3539,15 @@ class AnalysisRunQueueIntegrationTest {
 
         val message = operations.range(stream, Range.unbounded<String>()).orEmpty().single { it.value.containsKey("event") }
         val event = objectMapper.readTree(message.value.getValue("event"))
+        val eventId = UUID.fromString(event.path("eventId").asText())
+        val enqueuedAt = Instant.ofEpochMilli(message.id.value.substringBefore('-').toLong())
+        val initialQueueWait = jdbc.queryForObject(
+            "SELECT started_at FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND event_id = ? AND name = 'Queue wait' AND attempt = 1",
+            Timestamp::class.java,
+            created.analysisRunId,
+            eventId,
+        )!!.toInstant()
+        assertEquals(enqueuedAt, initialQueueWait)
         val retrySchedule = "$stream:retry-after"
         val workerLogger = LoggerFactory.getLogger(RedisStreamWorker::class.java) as Logger
         val appender = ListAppender<ILoggingEvent>().apply { start() }
@@ -3060,6 +3575,20 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("HANDLER_RETRIES_EXHAUSTED", deadLetter["errorCode"])
         assertEquals("3", deadLetter["attempts"])
         assertEquals(3, objectMapper.readTree(deadLetter.getValue("event")).get("attempt").asInt())
+        val attemptSpans = jdbc.query(
+            "SELECT id, attempt FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND event_id = ? AND name = 'Source analysis attempt' ORDER BY attempt",
+            { rs, _ -> rs.getObject("id", UUID::class.java) to rs.getInt("attempt") },
+            created.analysisRunId,
+            eventId,
+        )
+        assertEquals(listOf(1, 2, 3), attemptSpans.map { it.second })
+        assertEquals(3, attemptSpans.map { it.first }.toSet().size)
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT count(*) FROM analysis_run_execution_spans WHERE analysis_run_id = ? AND event_id = ? AND name = 'Retry backoff'",
+            Int::class.java,
+            created.analysisRunId,
+            eventId,
+        ))
         assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages ?: 0L)
     }
 
@@ -3315,6 +3844,11 @@ class AnalysisRunQueueIntegrationTest {
                VALUES (?, ?, ?, 'grobid', '0.9.1-crf', ?::jsonb, 'QUEUED', '{"stage":"QUEUED"}'::jsonb, ?)""",
             runId, documentId, hash, configurationJson, Timestamp.from(createdAt),
         )
+        val captureRequested = objectMapper.readTree(configurationJson).path("captureExecution").asBoolean(true)
+        jdbc.update(
+            "INSERT INTO analysis_run_execution (analysis_run_id, trace_id, capture_requested, capture_enabled, recording_state, completeness, started_at) VALUES (?, ?, ?, ?, 'RECORDING', 'RECORDING', ?)",
+            runId, runId, captureRequested, captureRequested, Timestamp.from(createdAt),
+        )
         val event = PipelineEvent(
             eventId,
             DOCUMENT_ANALYSIS_REQUESTED,
@@ -3345,6 +3879,20 @@ class AnalysisRunQueueIntegrationTest {
         objectStore = objectStore,
     )
 
+    private val sharedExecutionService: AnalysisRunExecutionService by lazy {
+        AnalysisRunExecutionService(
+            repository = AnalysisRunExecutionRepository(
+                jdbc,
+                TransactionTemplate(DataSourceTransactionManager(dataSource)),
+                objectMapper,
+            ),
+            sanitizer = ExecutionCaptureSanitizer(),
+            objectMapper = objectMapper,
+        )
+    }
+
+    private fun executionService() = sharedExecutionService
+
     private fun createQueuedRunForExistingDocument(documentId: UUID, hash: String): CreatedRunIds {
         val runId = UUID.randomUUID()
         val eventId = UUID.randomUUID()
@@ -3362,6 +3910,10 @@ class AnalysisRunQueueIntegrationTest {
             hash,
             objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest())),
             Timestamp.from(createdAt),
+        )
+        jdbc.update(
+            "INSERT INTO analysis_run_execution (analysis_run_id, trace_id, capture_requested, capture_enabled, recording_state, completeness, started_at) VALUES (?, ?, TRUE, TRUE, 'RECORDING', 'RECORDING', ?)",
+            runId, runId, Timestamp.from(createdAt),
         )
         val event = PipelineEvent(
             eventId,
@@ -3523,6 +4075,7 @@ class AnalysisRunQueueIntegrationTest {
         languageDetector = languageDetector,
         textExtractor = PdfBoxCitedPaperTextExtractor(5_000_000),
         providerFactories = providerFactories,
+        executionService = executionService(),
     )
 
     private fun citedPaperAccessEventHandler(
@@ -3539,6 +4092,7 @@ class AnalysisRunQueueIntegrationTest {
         citedPaperAccessService(providerFactories, languageDetector),
         CitedPaperIndexingQueue(jdbc, objectMapper),
         stageCompletionService(resolutionService),
+        executionService = executionService(),
     )
 
     private fun citedPaperIndexingEventHandler(
@@ -3560,6 +4114,7 @@ class AnalysisRunQueueIntegrationTest {
             SectionAwareEvidenceChunker(),
             embeddingProviders,
             repository,
+            executionService(),
         )
         return CitedPaperIndexingRequestedHandler(
             jdbc,
@@ -3576,8 +4131,10 @@ class AnalysisRunQueueIntegrationTest {
                 EvidencePassageSpanRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
                 LayaEvidencePassageSpanPlanner(),
                 claimReferenceVerificationRepository(),
+                executionService = executionService(),
             ),
             stageCompletionService(resolutionService),
+            executionService = executionService(),
         )
     }
 
@@ -3589,6 +4146,7 @@ class AnalysisRunQueueIntegrationTest {
         objectMapper,
         resolutionService,
         stageCompletionService(resolutionService),
+        executionService = executionService(),
     )
 
     private fun processReferenceResolutionEvents(
@@ -3720,6 +4278,7 @@ class AnalysisRunQueueIntegrationTest {
             claimReferenceVerificationRepository(),
             resolutionService,
             stageCompletionService(resolutionService),
+            executionService = executionService(),
         )
         return DocumentAnalysisRequestedHandler(objectMapper, processingService)
     }
@@ -3874,6 +4433,14 @@ class AnalysisRunQueueIntegrationTest {
             val pipelineProgressMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("persisted_analysis_run_pipeline.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(pipelineProgressMigrationVerification)) }
+            }
+            val executionMigration = migrationDirectory.resolve("analysis_run_execution.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(executionMigration)) }
+            }
+            val executionMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("analysis_run_execution.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(executionMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

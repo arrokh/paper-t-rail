@@ -270,8 +270,9 @@ describe("interactive workspace remote state", () => {
     });
   });
 
-  it("refreshes the run table after uploading a new Analysis Run", async () => {
+  it("refreshes the run table after uploading a new Analysis Run with execution capture enabled by default", async () => {
     const requests: Array<{ url: string; method: string }> = [];
+    let submittedConfiguration: Record<string, unknown> | null = null;
     let runs: ReturnType<typeof analysisRun>[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
       const path = String(url);
@@ -283,6 +284,7 @@ describe("interactive workspace remote state", () => {
       }
       if (path === "/api/v1/analysis-runs" && method === "POST") {
         expect(options.body instanceof FormData).toBe(true);
+        submittedConfiguration = JSON.parse(String((options.body as FormData).get("configuration"))) as Record<string, unknown>;
         runs = [analysisRun("run-upload", "The uploaded Analysis Run is selected.")];
         return jsonResponse({
           documentId: "document-1",
@@ -307,6 +309,7 @@ describe("interactive workspace remote state", () => {
 
     const uploadedRunLink = await screen.findByRole("link", { name: "Open Analysis Run for source.pdf" });
     expect(uploadedRunLink.getAttribute("href")).toContain("run-upload");
+    expect(submittedConfiguration).toMatchObject({ captureExecution: true });
     expect(requests.filter(({ url, method }) => url.startsWith("/api/v1/analysis-runs?") && method === "GET").length).toBeGreaterThanOrEqual(2);
     expect(requests.every(({ url }) => url.startsWith("/api/v1/"))).toBe(true);
   });
@@ -345,6 +348,7 @@ describe("interactive workspace remote state", () => {
     await clickContinue();
     await screen.findByRole("heading", { name: "Select your PDF" });
 
+    fireEvent.click(screen.getByRole("checkbox", { name: "Capture execution details" }));
     const fileInput = document.querySelector<HTMLInputElement>('input[name="file"]');
     expect(fileInput).toBeTruthy();
     fireEvent.change(fileInput!, {
@@ -355,6 +359,7 @@ describe("interactive workspace remote state", () => {
     await waitFor(() => expect(submittedConfiguration).toMatchObject({
       embeddingProvider: "ollama",
       externalProviderConsents: [],
+      captureExecution: false,
     }));
   });
 

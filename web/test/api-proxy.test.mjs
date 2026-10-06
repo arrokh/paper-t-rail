@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DELETE, GET, POST } from "../app/api/v1/[...path]/route.ts";
+import { DELETE, GET, PATCH, POST } from "../app/api/v1/[...path]/route.ts";
 
 test("DELETE is proxied only for a Source Document UUID, not other API operations", async (context) => {
   const originalFetch = globalThis.fetch;
@@ -34,6 +34,60 @@ test("DELETE is proxied only for a Source Document UUID, not other API operation
   assert.equal(response.status, 204);
   assert.equal(upstreamRequest.options.method, "DELETE");
   assert.equal(new URL(upstreamRequest.url).pathname, `/api/v1/documents/${documentId}`);
+});
+
+test("execution artifact DELETE and capture-stop PATCH are proxied only for valid Analysis Run paths", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const originalInfo = console.info;
+  const upstreamRequests = [];
+  globalThis.fetch = async (url, options) => {
+    upstreamRequests.push({ url, options });
+    return new Response(null, { status: options.method === "DELETE" ? 204 : 200 });
+  };
+  console.info = () => {};
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    console.info = originalInfo;
+  });
+
+  const runId = "e25a0c19-f13b-4d81-9d55-9755b770ca6e";
+  const artifactId = "91a9870f-14fb-4717-a967-ef8e10e925e5";
+  const request = (method, path, body = "") => ({
+    method,
+    headers: new Headers({ "content-type": "application/json" }),
+    nextUrl: new URL(`http://localhost/api/v1/${path.join("/")}`),
+    arrayBuffer: async () => new TextEncoder().encode(body).buffer,
+  });
+
+  const invalidDelete = await DELETE(
+    request("DELETE", ["analysis-runs", runId, "execution", "artifacts", "not-a-uuid"]),
+    { params: Promise.resolve({ path: ["analysis-runs", runId, "execution", "artifacts", "not-a-uuid"] }) },
+  );
+  const invalidPatch = await PATCH(
+    request("PATCH", ["analysis-runs", runId, "execution", "spans"]),
+    { params: Promise.resolve({ path: ["analysis-runs", runId, "execution", "spans"] }) },
+  );
+  assert.equal(invalidDelete.status, 404);
+  assert.equal(invalidPatch.status, 404);
+  assert.equal(upstreamRequests.length, 0);
+
+  const deletePath = ["analysis-runs", runId, "execution", "artifacts", artifactId];
+  const deleteResponse = await DELETE(request("DELETE", deletePath), {
+    params: Promise.resolve({ path: deletePath }),
+  });
+  assert.equal(deleteResponse.status, 204);
+
+  const patchPath = ["analysis-runs", runId, "execution", "capture"];
+  const patchResponse = await PATCH(request("PATCH", patchPath, JSON.stringify({ captureEnabled: false })), {
+    params: Promise.resolve({ path: patchPath }),
+  });
+  assert.equal(patchResponse.status, 200);
+  assert.equal(upstreamRequests.length, 2);
+  assert.equal(new URL(upstreamRequests[0].url).pathname, `/api/v1/${deletePath.join("/")}`);
+  assert.equal(upstreamRequests[0].options.method, "DELETE");
+  assert.equal(new URL(upstreamRequests[1].url).pathname, `/api/v1/${patchPath.join("/")}`);
+  assert.equal(upstreamRequests[1].options.method, "PATCH");
+  assert.deepEqual(JSON.parse(new TextDecoder().decode(upstreamRequests[1].options.body)), { captureEnabled: false });
 });
 
 test("API proxy forwards the request ID, returns it to the caller, and emits structured request logs", async (context) => {

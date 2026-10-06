@@ -3,6 +3,8 @@ package com.papertrail.api.scholarly.acquisition.client
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.OPEN_ACCESS_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
@@ -32,6 +34,7 @@ class UnpaywallOpenAccessProviderFactory(
     @Qualifier("openAccessContentRestClient") private val contentClient: RestClient,
     @Value("\${paper-trail.providers.unpaywall.contact-email:}") private val contactEmail: String,
     @Value("\${paper-trail.analysis.cited-paper-max-bytes:52428800}") private val maximumBytes: Int,
+    private val executionService: AnalysisRunExecutionService? = null,
 ) : OpenAccessProviderFactory {
     override val providerId: String = UNPAYWALL_PROVIDER
     private val locationPolicy = LegalOpenAccessLocationPolicy()
@@ -63,27 +66,46 @@ class UnpaywallOpenAccessProviderFactory(
                 val authorizedEmail = authorizedPayload.contentByCategory[DataCategory.PROVIDER_CONTACT_EMAIL]
                     ?.takeIf(JsonNode::isTextual)?.asText()
                 discoveryCache.findByDoi(authorizedDoi)?.let { return@call it.toDiscovery() }
-                val response = unpaywallClient.get()
-                    .uri { builder ->
-                        builder.pathSegment("v2", authorizedDoi)
-                        if (!authorizedEmail.isNullOrBlank()) builder.queryParam("email", authorizedEmail)
-                        builder.build()
-                    }
-                    .accept(MediaType.APPLICATION_JSON)
-                    .exchange { _, discoveryResponse ->
-                        if (discoveryResponse.statusCode.value() == 404) return@exchange null
-                        require(discoveryResponse.statusCode.is2xxSuccessful) {
-                            "Unpaywall returned HTTP ${discoveryResponse.statusCode.value()}."
+                val networkRequest = {
+                    unpaywallClient.get()
+                        .uri { builder ->
+                            builder.pathSegment("v2", authorizedDoi)
+                            if (!authorizedEmail.isNullOrBlank()) builder.queryParam("email", authorizedEmail)
+                            builder.build().also { executionService?.captureCurrentUnpaywallRequest(it) }
                         }
-                        require(discoveryResponse.headers.contentType?.isCompatibleWith(MediaType.APPLICATION_JSON) == true) {
-                            "Unpaywall discovery response must be JSON."
+                        .accept(MediaType.APPLICATION_JSON)
+                        .exchange { _, discoveryResponse ->
+                            val bytes = discoveryResponse.body.readNBytes(MAX_DISCOVERY_RESPONSE_BYTES + 1)
+                            if (bytes.size <= MAX_DISCOVERY_RESPONSE_BYTES) {
+                                executionService?.captureCurrentUnpaywallResponse(bytes)
+                            } else {
+                                executionService?.omitCurrentBody("RESPONSE", "unpaywall-response-v1", "ARTIFACT_TOO_LARGE")
+                            }
+                            if (discoveryResponse.statusCode.value() == 404) return@exchange null
+                            require(discoveryResponse.statusCode.is2xxSuccessful) {
+                                "Unpaywall returned HTTP ${discoveryResponse.statusCode.value()}."
+                            }
+                            require(discoveryResponse.headers.contentType?.isCompatibleWith(MediaType.APPLICATION_JSON) == true) {
+                                "Unpaywall discovery response must be JSON."
+                            }
+                            require(bytes.isNotEmpty() && bytes.size <= MAX_DISCOVERY_RESPONSE_BYTES) {
+                                "Unpaywall discovery response is empty or exceeds the configured limit."
+                            }
+                            objectMapper.readTree(bytes)
                         }
-                        val bytes = discoveryResponse.body.readNBytes(MAX_DISCOVERY_RESPONSE_BYTES + 1)
-                        require(bytes.isNotEmpty() && bytes.size <= MAX_DISCOVERY_RESPONSE_BYTES) {
-                            "Unpaywall discovery response is empty or exceeds the configured limit."
-                        }
-                        objectMapper.readTree(bytes)
-                    } ?: run {
+                }
+                val response = if (executionService == null) {
+                    networkRequest()
+                } else {
+                    executionService.recordCurrentProviderCall(
+                        operationKey = "unpaywall-discovery",
+                        name = "Unpaywall discovery request",
+                        providerId = providerId,
+                        modelId = null,
+                        attributes = mapOf("httpRoute" to "/v2"),
+                        operation = networkRequest,
+                    )
+                } ?: run {
                         discoveryCache.storeByDoi(authorizedDoi, null, Instant.now())
                         return@call null
                     }
@@ -120,23 +142,69 @@ class UnpaywallOpenAccessProviderFactory(
                     ?.path("url")?.takeIf(JsonNode::isTextual)?.asText()
                     ?: throw IllegalStateException("Authorized content-host request omitted its URL.")
                 requirePublicContentHost(authorizedUrl)
-                val acquired = contentClient.get()
-                    .uri(authorizedUrl)
-                    .accept(MediaType.APPLICATION_PDF, MediaType.TEXT_PLAIN)
-                    .exchange { _, response ->
-                        if (!response.statusCode.is2xxSuccessful) {
-                            throw IllegalStateException("Open-access content host returned HTTP ${response.statusCode.value()}.")
+                val networkRequest = {
+                    executionService?.captureCurrentOpenAccessRequest(URI(authorizedUrl))
+                    contentClient.get()
+                        .uri(authorizedUrl)
+                        .accept(MediaType.APPLICATION_PDF, MediaType.TEXT_PLAIN)
+                        .exchange { _, response ->
+                            val responseSchema = "open-access-content-metadata-v1"
+                            val httpStatus = response.statusCode.value()
+                            if (!response.statusCode.is2xxSuccessful) {
+                                executionService?.omitCurrentBody("RESPONSE", responseSchema, "UNSUPPORTED_OR_UNSAFE_FIELDS")
+                                executionService?.captureCurrent(
+                                    ExecutionSpanArtifactSpec("RESULT", responseSchema, mapOf("httpStatus" to httpStatus)),
+                                )
+                                throw IllegalStateException("Open-access content host returned HTTP $httpStatus.")
+                            }
+                            val mediaType = response.headers.contentType
+                                ?.let { "${it.type}/${it.subtype}" }
+                            if (mediaType == null || mediaType !in ALLOWED_MEDIA_TYPES) {
+                                executionService?.omitCurrentBody("RESPONSE", responseSchema, "UNSUPPORTED_OR_UNSAFE_FIELDS")
+                                executionService?.captureCurrent(
+                                    ExecutionSpanArtifactSpec("RESULT", responseSchema, mapOf("httpStatus" to httpStatus)),
+                                )
+                                throw IllegalStateException("Open-access content response must be a PDF or plain text file.")
+                            }
+                            val bytes = response.body.readNBytes(maximumBytes + 1)
+                            if (bytes.isEmpty() || bytes.size > maximumBytes) {
+                                executionService?.omitCurrentBody(
+                                    "RESPONSE",
+                                    responseSchema,
+                                    if (bytes.isEmpty()) "UNSUPPORTED_OR_UNSAFE_FIELDS" else "ARTIFACT_TOO_LARGE",
+                                )
+                                executionService?.captureCurrent(
+                                    ExecutionSpanArtifactSpec(
+                                        "RESULT",
+                                        responseSchema,
+                                        mapOf("httpStatus" to httpStatus, "mediaType" to mediaType),
+                                    ),
+                                )
+                                throw IllegalStateException("Open-access content is empty or exceeds the configured download limit.")
+                            }
+                            executionService?.omitCurrentBody("RESPONSE", responseSchema, "BINARY_ASSET_REFERENCE")
+                            executionService?.captureCurrent(
+                                ExecutionSpanArtifactSpec(
+                                    "RESULT",
+                                    responseSchema,
+                                    mapOf("httpStatus" to httpStatus, "mediaType" to mediaType, "byteCount" to bytes.size),
+                                ),
+                            )
+                            AcquiredFullText(bytes, mediaType, location)
                         }
-                        val mediaType = response.headers.contentType
-                            ?.let { "${it.type}/${it.subtype}" }
-                            ?: throw IllegalStateException("Open-access content response omitted its media type.")
-                        require(mediaType in ALLOWED_MEDIA_TYPES) { "Open-access content must be a PDF or plain text file." }
-                        val bytes = response.body.readNBytes(maximumBytes + 1)
-                        require(bytes.isNotEmpty() && bytes.size <= maximumBytes) {
-                            "Open-access content is empty or exceeds the configured download limit."
-                        }
-                        AcquiredFullText(bytes, mediaType, location)
-                    }
+                }
+                val acquired = if (executionService == null) {
+                    networkRequest()
+                } else {
+                    executionService.recordCurrentProviderCall(
+                        operationKey = "unpaywall-full-text",
+                        name = "Acquire open-access full text",
+                        providerId = providerId,
+                        modelId = null,
+                        attributes = mapOf("httpRoute" to "/open-access-content"),
+                        operation = networkRequest,
+                    )
+                }
                 acquired ?: throw IllegalStateException("Open-access content host returned no response.")
             }
         }

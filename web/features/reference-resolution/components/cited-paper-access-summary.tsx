@@ -1,5 +1,6 @@
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
 import { Badge } from "@/components/ui/badge";
+import { LocalDateTime } from "@/components/local-date-time";
 import { cn } from "@/lib/utils";
 
 type CitedPaperAccess = NonNullable<ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["citedPaperAccess"]>;
@@ -45,7 +46,7 @@ export function CitedPaperAccessSummary({ access }: { access: CitedPaperAccess |
         </div>
         <div className="space-y-1">
           <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Discovered</dt>
-          <dd className="m-0">{new Date(access.discoveredAt).toLocaleString()}</dd>
+          <dd className="m-0"><LocalDateTime value={access.discoveredAt} /></dd>
         </div>
         {access.sourceUrl && (
           <div className="min-w-0 space-y-1">

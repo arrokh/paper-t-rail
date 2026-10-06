@@ -79,6 +79,12 @@ _Avoid_: claim verification when the specific cited work is material.
 One analysis of a Source Document under a defined analysis configuration. Results are immutable during normal use; explicit user deletion is the privacy exception. Re-analysis creates a new run rather than replacing prior results.
 _Avoid_: analysis when referring to a specific execution.
 
+**Execution Span**:
+One timed operation or attempt within an Analysis Run, showing what processing occurred and its execution status. It is distinct from an Evidence Passage Span and does not establish whether evidence supports a claim.
+
+**Execution Artifact**:
+A captured input, request, response, or interpreted result associated with an Execution Span, available for authorized inspection with its capture fidelity and omissions identified. It is distinct from the analysis result itself.
+
 **Evidence Coverage Report**:
 A traceable summary and drilldown of Claim–Paper Verifications. It is a triage aid, not certification of truth or an assessment of the whole paper.
 _Avoid_: paper grade, citation certification.
