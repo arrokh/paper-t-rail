@@ -1,4 +1,4 @@
-package com.papertrail.api.analysis.execution
+package com.papertrail.api.analysis.execution.domain
 
 import java.nio.charset.StandardCharsets
 import java.util.UUID

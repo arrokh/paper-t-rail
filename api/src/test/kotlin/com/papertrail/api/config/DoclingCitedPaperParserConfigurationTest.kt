@@ -55,7 +55,6 @@ class DoclingCitedPaperParserConfigurationTest {
             val client = configuration.doclingRestClient("http://127.0.0.1:${server.address.port}", 10_000)
             val parser = DoclingCitedPaperPdfParser(
                 client = client,
-                objectMapper = jacksonObjectMapper(),
                 parserVersion = "1.30.0",
                 maximumResponseBytes = 64 * 1024,
                 maximumCharacters = 5_000,

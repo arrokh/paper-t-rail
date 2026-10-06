@@ -1,21 +1,23 @@
 package com.papertrail.api.scholarly.references.queue
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.repository.AnalysisRunProcessingRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
-import com.papertrail.api.analysis.execution.ExecutionSpanSpec
-import com.papertrail.api.analysis.execution.ExecutionOperationId
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionOperationId
 import com.papertrail.api.document.repository.SourceDocumentRepository
-import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
-import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedPayload
+import com.papertrail.api.scholarly.acquisition.events.CITED_PAPER_ACQUISITION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.events.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.infrastructure.messaging.repository.InboxRepository
 import com.papertrail.api.infrastructure.messaging.repository.OutboxRepository
+import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_HANDLER
+import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_REQUESTED
+import com.papertrail.api.scholarly.references.events.ReferenceResolutionRequestedPayload
 import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRepository
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import org.springframework.stereotype.Component
@@ -31,7 +33,6 @@ class ReferenceResolutionRequestedHandler(
     private val outboxRepository: OutboxRepository,
     private val referenceResolutionRepository: ReferenceResolutionRepository,
     private val transactionTemplate: TransactionTemplate,
-    private val objectMapper: ObjectMapper,
     private val referenceResolutionService: ReferenceResolutionService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
@@ -40,7 +41,7 @@ class ReferenceResolutionRequestedHandler(
     fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
 
     fun handle(serializedEvent: String): UUID {
-        val event: PipelineEvent<ReferenceResolutionRequestedPayload> = objectMapper.readValue(serializedEvent)
+        val event: PipelineEvent<ReferenceResolutionRequestedPayload> = JsonUtil.fromJson(serializedEvent)
         require(event.eventType == REFERENCE_RESOLUTION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
         executionService?.recordQueueIntervals(
             event.analysisRunId, event.eventId, event.attempt, "references", event.queueWaitStartedAt,

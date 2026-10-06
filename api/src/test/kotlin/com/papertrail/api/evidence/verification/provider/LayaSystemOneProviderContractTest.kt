@@ -382,14 +382,12 @@ class LayaSystemOneProviderContractTest {
 
     private fun provider(settings: LayaSystemOneSettings): LayaSystemOneProvider = LayaSystemOneProvider(
         settings = settings,
-        objectMapper = mapper,
     )
 
     private fun catalog(settings: LayaSystemOneSettings): ProviderCatalog =
         ProviderCatalog.safeDefaults(layaSystemOneSettings = settings)
 
     private fun configurationFactory(settings: LayaSystemOneSettings): RunConfigurationFactory = RunConfigurationFactory(
-        objectMapper = mapper,
         providerCatalog = catalog(settings),
         parserId = "grobid",
         parserVersion = "0.9.1-crf",

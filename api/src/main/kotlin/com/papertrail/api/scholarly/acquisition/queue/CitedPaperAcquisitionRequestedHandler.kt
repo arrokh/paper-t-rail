@@ -1,14 +1,13 @@
 package com.papertrail.api.scholarly.acquisition.queue
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.repository.AnalysisRunProcessingRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
-import com.papertrail.api.analysis.execution.ExecutionSpanSpec
-import com.papertrail.api.analysis.execution.ExecutionOperationId
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionOperationId
 import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.evidence.queue.EvidenceIndexingEnqueueResult
@@ -16,6 +15,9 @@ import com.papertrail.api.evidence.verification.service.EvidenceVerificationServ
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.infrastructure.messaging.repository.InboxRepository
+import com.papertrail.api.scholarly.acquisition.events.CITED_PAPER_ACQUISITION_HANDLER
+import com.papertrail.api.scholarly.acquisition.events.CITED_PAPER_ACQUISITION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.events.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
@@ -28,7 +30,6 @@ class CitedPaperAcquisitionRequestedHandler(
     private val sourceDocumentRepository: SourceDocumentRepository,
     private val inboxRepository: InboxRepository,
     private val transactionTemplate: TransactionTemplate,
-    private val objectMapper: ObjectMapper,
     private val citedPaperAccessService: CitedPaperAccessService,
     private val citedPaperIndexingQueue: CitedPaperIndexingQueue,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
@@ -39,7 +40,7 @@ class CitedPaperAcquisitionRequestedHandler(
     fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
 
     fun handle(serializedEvent: String): UUID {
-        val event: PipelineEvent<CitedPaperAcquisitionRequestedPayload> = objectMapper.readValue(serializedEvent)
+        val event: PipelineEvent<CitedPaperAcquisitionRequestedPayload> = JsonUtil.fromJson(serializedEvent)
         require(event.eventType == CITED_PAPER_ACQUISITION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
         executionService?.recordQueueIntervals(
             event.analysisRunId, event.eventId, event.attempt, "access", event.queueWaitStartedAt,

@@ -1,6 +1,6 @@
 package com.papertrail.api.analysis.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.http.AnalysisRunSummary
 import com.papertrail.api.analysis.pagination.AnalysisRunCursor
 import com.papertrail.api.analysis.pagination.Direction
@@ -14,7 +14,6 @@ import java.util.UUID
 @Repository
 class AnalysisRunRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
 ) {
     fun insertQueuedRun(
         runId: UUID,
@@ -156,8 +155,8 @@ class AnalysisRunRepository(
         filename = getString("filename"),
         sourceContentSha256 = getString("source_content_sha256"),
         status = getString("status"),
-        progress = objectMapper.readTree(getString("progress")),
-        configuration = objectMapper.readTree(getString("configuration")),
+        progress = JsonUtil.parseTree(getString("progress")),
+        configuration = JsonUtil.parseTree(getString("configuration")),
         createdAt = getTimestamp("created_at").toInstant(),
         startedAt = getTimestamp("started_at")?.toInstant(),
         failureReason = getString("failure_reason"),

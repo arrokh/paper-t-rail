@@ -63,7 +63,6 @@ class UnpaywallDiscoveryCacheIntegrationTest {
         unpaywallContactEmail = contactEmail,
     )
     private val configurationFactory = RunConfigurationFactory(
-        objectMapper = objectMapper,
         providerCatalog = providerCatalog,
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
@@ -280,7 +279,6 @@ class UnpaywallDiscoveryCacheIntegrationTest {
         val discoveryServer = MockRestServiceServer.bindTo(discoveryBuilder).build()
         val contentServer = MockRestServiceServer.bindTo(contentBuilder).build()
         val provider = UnpaywallOpenAccessProviderFactory(
-            objectMapper = objectMapper,
             providerCallGate = ProviderCallGate(providerCatalog),
             discoveryCache = cache,
             unpaywallClient = discoveryBuilder.build(),
@@ -294,7 +292,7 @@ class UnpaywallDiscoveryCacheIntegrationTest {
     private fun cache(
         positiveTtl: Duration = Duration.ofHours(24),
         negativeTtl: Duration = Duration.ofHours(1),
-    ) = RedisUnpaywallDiscoveryCache(RedisProviderCacheStore(redis), objectMapper, positiveTtl, negativeTtl)
+    ) = RedisUnpaywallDiscoveryCache(RedisProviderCacheStore(redis), positiveTtl, negativeTtl)
 
     private data class ProviderFixture(
         val provider: OpenAccessProvider,

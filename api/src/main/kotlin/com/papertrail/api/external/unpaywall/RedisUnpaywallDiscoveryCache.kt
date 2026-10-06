@@ -1,7 +1,7 @@
 package com.papertrail.api.external.unpaywall
 
 import com.fasterxml.jackson.core.JsonProcessingException
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.infrastructure.cache.ProviderCacheStore
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import org.slf4j.LoggerFactory
@@ -11,7 +11,6 @@ import java.time.Instant
 
 class RedisUnpaywallDiscoveryCache(
     private val cacheStore: ProviderCacheStore,
-    private val objectMapper: ObjectMapper,
     private val positiveTtl: Duration,
     private val negativeTtl: Duration,
 ) : UnpaywallDiscoveryCache {
@@ -27,7 +26,7 @@ class RedisUnpaywallDiscoveryCache(
         val key = UnpaywallCacheKeys.doi(doi) ?: return
         val entry = UnpaywallDiscoveryCacheEntry.from(discovery, fetchedAt)
         val ttl = if (entry.hasPositiveResult()) positiveTtl else negativeTtl
-        cacheStore.store(key, objectMapper.writeValueAsString(entry), ttl)
+        cacheStore.store(key, JsonUtil.toJson(entry), ttl)
     }
 
     override fun invalidateDoi(doi: String): Boolean =
@@ -36,7 +35,7 @@ class RedisUnpaywallDiscoveryCache(
     private fun find(key: String): UnpaywallDiscoveryCacheEntry? {
         val encoded = cacheStore.find(key) ?: return null
         return try {
-            val entry: UnpaywallDiscoveryCacheEntry? = objectMapper.readValue(encoded, UnpaywallDiscoveryCacheEntry::class.java)
+            val entry: UnpaywallDiscoveryCacheEntry? = JsonUtil.fromJson(encoded, UnpaywallDiscoveryCacheEntry::class.java)
             if (entry == null || entry.schemaVersion != UnpaywallDiscoveryCacheEntry.CURRENT_SCHEMA_VERSION ||
                 entry.locations.any { it.url.isBlank() }
             ) {

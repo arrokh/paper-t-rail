@@ -30,7 +30,6 @@ class EvidenceRetrievalServiceTest {
     fun `uses the Stage 04 parser pin before rejecting a wrong query-vector dimension`() {
         val bytes = "A cited paper section with several words.".toByteArray()
         val configuration = RunConfigurationFactory(
-            objectMapper = jacksonObjectMapper(),
             providerCatalog = ProviderCatalog.safeDefaults(),
             parserId = "grobid",
             parserVersion = "0.9.1-crf",

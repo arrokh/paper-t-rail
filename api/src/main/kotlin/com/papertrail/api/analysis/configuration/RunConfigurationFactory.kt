@@ -1,7 +1,7 @@
 package com.papertrail.api.analysis.configuration
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
@@ -24,7 +24,6 @@ import com.papertrail.api.external.jev.JevSystemOneSettings
 import com.papertrail.api.external.laya.LayaSystemOneSettings
 
 class RunConfigurationFactory(
-    private val objectMapper: ObjectMapper,
     private val providerCatalog: ProviderCatalog,
     private val parserId: String,
     private val parserVersion: String,
@@ -255,7 +254,7 @@ class RunConfigurationFactory(
         outputMappingVersion = outputMappingVersion,
     )
 
-    fun toJson(snapshot: AnalysisConfigurationSnapshot): String = objectMapper.writeValueAsString(snapshot)
+    fun toJson(snapshot: AnalysisConfigurationSnapshot): String = JsonUtil.toJson(snapshot)
 
     companion object {
         private val AGGREGATABLE_SYSTEM_ONE_PROVIDERS = setOf(

@@ -1,4 +1,4 @@
-package com.papertrail.api.analysis.execution
+package com.papertrail.api.analysis.execution.domain
 
 import java.time.Instant
 import java.util.UUID

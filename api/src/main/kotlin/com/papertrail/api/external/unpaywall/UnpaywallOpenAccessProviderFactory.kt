@@ -1,10 +1,10 @@
 package com.papertrail.api.external.unpaywall
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.OPEN_ACCESS_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
@@ -30,7 +30,6 @@ import com.papertrail.api.scholarly.acquisition.client.OpenAccessProviderFactory
 
 @Component
 class UnpaywallOpenAccessProviderFactory(
-    private val objectMapper: ObjectMapper,
     private val providerCallGate: ProviderCallGate,
     private val discoveryCache: UnpaywallDiscoveryCache,
     @Qualifier("unpaywallRestClient") private val unpaywallClient: RestClient,
@@ -53,9 +52,9 @@ class UnpaywallOpenAccessProviderFactory(
             val doi = DoiNormalizer.normalize(reference.doi) ?: return null
             val email = contactEmail.takeIf(String::isNotBlank)
             val actualPayload = mutableMapOf<DataCategory, JsonNode>(
-                DataCategory.BIBLIOGRAPHIC_METADATA to objectMapper.valueToTree(mapOf("doi" to doi)),
+                DataCategory.BIBLIOGRAPHIC_METADATA to JsonUtil.toTree(mapOf("doi" to doi)),
             )
-            if (email != null) actualPayload[DataCategory.PROVIDER_CONTACT_EMAIL] = objectMapper.valueToTree(email)
+            if (email != null) actualPayload[DataCategory.PROVIDER_CONTACT_EMAIL] = JsonUtil.toTree(email)
 
             return providerCallGate.call(
                 OPEN_ACCESS_ROLE,
@@ -94,7 +93,7 @@ class UnpaywallOpenAccessProviderFactory(
                             require(bytes.isNotEmpty() && bytes.size <= MAX_DISCOVERY_RESPONSE_BYTES) {
                                 "Unpaywall discovery response is empty or exceeds the configured limit."
                             }
-                            objectMapper.readTree(bytes)
+                            JsonUtil.parseTree(bytes)
                         }
                 }
                 val response = if (executionService == null) {
@@ -134,7 +133,7 @@ class UnpaywallOpenAccessProviderFactory(
         override fun fetch(location: OpenAccessLocation): AcquiredFullText {
             require(location.providerId == providerId) { "Open-access location belongs to a different discovery provider." }
             require(locationPolicy.isUsable(location)) { "Open-access location does not meet the legal acquisition policy." }
-            val target = objectMapper.valueToTree<JsonNode>(mapOf("url" to location.url))
+            val target = JsonUtil.toTree(mapOf("url" to location.url))
             return providerCallGate.call(
                 OPEN_ACCESS_ROLE,
                 providerId,

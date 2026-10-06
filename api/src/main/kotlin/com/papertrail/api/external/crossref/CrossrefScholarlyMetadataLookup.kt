@@ -1,7 +1,7 @@
 package com.papertrail.api.external.crossref
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
@@ -25,7 +25,6 @@ import com.papertrail.api.scholarly.references.client.ScholarlyWork
 
 class CrossrefScholarlyMetadataLookup(
     private val client: RestClient,
-    private val objectMapper: ObjectMapper,
     private val callGate: ProviderCallGate,
     private val configuration: AnalysisConfigurationSnapshot,
     private val contactEmail: String?,
@@ -34,7 +33,7 @@ class CrossrefScholarlyMetadataLookup(
 ) : ScholarlyMetadataLookup {
     override fun byDoi(doi: String): ScholarlyWork? {
         val payload = payload(
-            DataCategory.BIBLIOGRAPHIC_METADATA to objectMapper.valueToTree(mapOf("doi" to doi)),
+            DataCategory.BIBLIOGRAPHIC_METADATA to JsonUtil.toTree(mapOf("doi" to doi)),
         )
         return callGate.call(SCHOLARLY_METADATA_ROLE, "crossref", payload, configuration) { actualPayload ->
             val requestData = actualPayload.contentByCategory.getValue(DataCategory.BIBLIOGRAPHIC_METADATA)
@@ -61,9 +60,9 @@ class CrossrefScholarlyMetadataLookup(
         ).joinToString(" ").trim()
         if (searchText.isBlank()) return emptyList()
         val payloadCategories = mutableMapOf<DataCategory, JsonNode>(
-            DataCategory.BIBLIOGRAPHIC_METADATA to objectMapper.valueToTree<JsonNode>(mapOf("bibliographicQuery" to searchText)),
+            DataCategory.BIBLIOGRAPHIC_METADATA to JsonUtil.toTree(mapOf("bibliographicQuery" to searchText)),
         )
-        contactEmail?.let { payloadCategories[DataCategory.PROVIDER_CONTACT_EMAIL] = objectMapper.valueToTree<JsonNode>(it) }
+        contactEmail?.let { payloadCategories[DataCategory.PROVIDER_CONTACT_EMAIL] = JsonUtil.toTree(it) }
         val payload = ProviderCallPayload(payloadCategories)
         return callGate.call(SCHOLARLY_METADATA_ROLE, "crossref", payload, configuration) { actualPayload ->
             val query = actualPayload.contentByCategory.getValue(DataCategory.BIBLIOGRAPHIC_METADATA)
@@ -85,7 +84,7 @@ class CrossrefScholarlyMetadataLookup(
 
     private fun payload(vararg categories: Pair<DataCategory, JsonNode>): ProviderCallPayload {
         val content = categories.toMap().toMutableMap()
-        contactEmail?.let { content[DataCategory.PROVIDER_CONTACT_EMAIL] = objectMapper.valueToTree(it) }
+        contactEmail?.let { content[DataCategory.PROVIDER_CONTACT_EMAIL] = JsonUtil.toTree(it) }
         return ProviderCallPayload(content)
     }
 
@@ -121,10 +120,10 @@ class CrossrefScholarlyMetadataLookup(
         val capturedPrefix = body.readNBytes(ExecutionCaptureSanitizer.DEFAULT_MAX_ARTIFACT_BYTES + 1)
         if (capturedPrefix.size > ExecutionCaptureSanitizer.DEFAULT_MAX_ARTIFACT_BYTES) {
             executionService?.omitCurrentBody("RESPONSE", "crossref-response-v1", "ARTIFACT_TOO_LARGE")
-            return objectMapper.readTree(SequenceInputStream(ByteArrayInputStream(capturedPrefix), body))
+            return JsonUtil.parseTree(SequenceInputStream(ByteArrayInputStream(capturedPrefix), body))
         }
         executionService?.captureCurrentCrossrefResponse(capturedPrefix)
-        return objectMapper.readTree(capturedPrefix)
+        return JsonUtil.parseTree(capturedPrefix)
     }
 
     private fun normalizeField(value: String): String? = value.trim().replace(WHITESPACE, " ").takeIf(String::isNotEmpty)

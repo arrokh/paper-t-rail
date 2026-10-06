@@ -30,7 +30,6 @@ import org.junit.jupiter.api.Test
 
 class RunConfigurationFactoryTest {
     private val factory = RunConfigurationFactory(
-        objectMapper = jacksonObjectMapper(),
         providerCatalog = ProviderCatalog.safeDefaults(),
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
@@ -676,7 +675,6 @@ class RunConfigurationFactoryTest {
         defaultSystemOneProvider: String = "mock",
         defaultClaimExtractorProvider: String = "heuristic",
     ): RunConfigurationFactory = RunConfigurationFactory(
-        objectMapper = jacksonObjectMapper(),
         providerCatalog = providerCatalog,
         parserId = "grobid",
         parserVersion = "0.9.1-crf",

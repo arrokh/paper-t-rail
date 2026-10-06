@@ -81,7 +81,7 @@ private fun runLayaEvaluationCommand(args: Array<String>, environment: Map<Strin
         split = split,
         datasetSha256 = datasetSha256,
         applicationRevision = applicationRevision,
-        provider = LayaSystemOneProvider(settings, mapper),
+        provider = LayaSystemOneProvider(settings),
         plan = planAndHash?.first,
         planSha256 = planAndHash?.second,
     )

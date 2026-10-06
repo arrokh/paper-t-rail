@@ -2587,8 +2587,15 @@ com.papertrail.api/
 │   ├── domain/                     # Run state/provenance rules
 │   ├── configuration/              # Immutable run-pinned configuration snapshots
 │   ├── repository/                 # Run persistence and read projections
-│   ├── queue/                      # Analysis Run-specific event handlers
+│   ├── events/                     # Analysis Run event payload contracts
+│   ├── queue/                      # Queue handlers and queue-publishing components
+│   ├── pagination/                 # Analysis Run cursor semantics
 │   ├── execution/                  # Execution-trace feature and role packages
+│   │   ├── domain/
+│   │   ├── pagination/
+│   │   ├── http/
+│   │   ├── repository/
+│   │   └── service/
 │   └── report/                     # Composite Analysis Run report endpoint/read use case
 │       ├── controller/
 │       ├── http/
@@ -2619,11 +2626,12 @@ com.papertrail.api/
     ├── messaging/                  # Generic outbox, inbox, stream worker, event envelope
     ├── providers/                  # Shared provider catalog and consent gate
     ├── cache/
+    ├── pagination/                 # Shared opaque cursor-token encoding
     ├── crypto/
     └── logging/
 ```
 
-Within a feature, use `controller` for HTTP routing/binding, `service` for business operations/orchestration, `repository` for persistence adapters, `http` for our inbound/outbound API contracts, and focused `domain`/policy packages for business rules and values. Use `model` only for persistence records/projections. Feature `queue` packages own feature event payloads and handlers; generic broker/outbox mechanisms remain in `infrastructure`. Provider wire DTOs, communication, provider-specific configuration/cache mechanics, and provider integration factories live with that provider. A real provider-operator endpoint can have provider-local `controller`, `service`, and `http` roles; its request DTO is our operator API contract, not a remote wire type. For navigation, align HTTP adapters with stable public resource paths/OpenAPI groups, but keep domain rules and report projections with their owning features; a composite resource endpoint such as `/analysis-runs/{runId}/report` belongs in an `analysis/report` slice.
+Within a feature, use `controller` for HTTP routing/binding, `service` for business operations/orchestration, `repository` for persistence adapters, `http` for our inbound/outbound API contracts, and focused `domain`/policy packages for business rules and values. Use `model` only for persistence records/projections. Feature `events` packages own feature event payload contracts; `queue` packages own queue handlers and queue-publishing components. Generic broker/outbox mechanisms and opaque cursor-token encoding remain in `infrastructure`. Keep feature-specific cursor values, ordering, and pagination behavior with the owning feature. Provider wire DTOs, communication, provider-specific configuration/cache mechanics, and provider integration factories live with that provider. A real provider-operator endpoint can have provider-local `controller`, `service`, and `http` roles; its request DTO is our operator API contract, not a remote wire type. For navigation, align HTTP adapters with stable public resource paths/OpenAPI groups, but keep domain rules and report projections with their owning features; a composite resource endpoint such as `/analysis-runs/{runId}/report` belongs in an `analysis/report` slice.
 
 ### Relational database boundary
 

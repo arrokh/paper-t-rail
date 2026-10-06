@@ -1,4 +1,4 @@
-package com.papertrail.api.analysis.execution
+package com.papertrail.api.analysis.execution.domain
 
 data class ExecutionSpanArtifactSpec(
     val role: String,

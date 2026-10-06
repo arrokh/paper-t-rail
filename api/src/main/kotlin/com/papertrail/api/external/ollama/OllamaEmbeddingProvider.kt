@@ -1,7 +1,7 @@
 package com.papertrail.api.external.ollama
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.EMBEDDING_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
@@ -21,7 +21,6 @@ import com.papertrail.api.evidence.embedding.EmbeddingRequestContext
 class OllamaEmbeddingProvider(
     private val settings: OllamaEmbeddingSettings,
     private val providerCallGate: ProviderCallGate,
-    private val objectMapper: ObjectMapper,
 ) : EmbeddingProvider {
     override val providerId = OllamaEmbeddingSettings.PROVIDER_ID
     override val modelId: String = settings.modelId
@@ -41,8 +40,8 @@ class OllamaEmbeddingProvider(
 
         val payload = ProviderCallPayload(
             mapOf(
-                context.inputCategory to objectMapper.valueToTree<JsonNode>(text),
-                DataCategory.EMBEDDING_INPUT to objectMapper.valueToTree<JsonNode>(text),
+                context.inputCategory to JsonUtil.toTree(text),
+                DataCategory.EMBEDDING_INPUT to JsonUtil.toTree(text),
             ),
         )
         return providerCallGate.call(
@@ -58,7 +57,7 @@ class OllamaEmbeddingProvider(
     private fun requestEmbedding(text: String): FloatArray {
         val endpoint = settings.endpointUri ?: throw OllamaEmbeddingException("Ollama embedding endpoint is not configured.")
         val requestBody = try {
-            objectMapper.writeValueAsBytes(
+            JsonUtil.toJsonBytes(
                 mapOf(
                     "model" to settings.modelId,
                     "input" to listOf(text),
@@ -99,7 +98,7 @@ class OllamaEmbeddingProvider(
 
     private fun parseEmbeddingResponse(responseBody: ByteArray): FloatArray {
         val response = try {
-            objectMapper.readTree(responseBody)
+            JsonUtil.parseTree(responseBody)
         } catch (_: IOException) {
             throw OllamaEmbeddingException("Ollama returned a malformed embedding response.")
         }

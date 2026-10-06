@@ -31,7 +31,6 @@ class CrossrefScholarlyMetadataLookupTest {
     private val providerCatalog = configuredExternalProviderCatalog()
     private val gate = ProviderCallGate(providerCatalog)
     private val runConfigurationFactory = RunConfigurationFactory(
-        objectMapper = objectMapper,
         providerCatalog = providerCatalog,
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
@@ -45,7 +44,7 @@ class CrossrefScholarlyMetadataLookupTest {
         val server = MockRestServiceServer.bindTo(builder).build()
         server.expect(ExpectedCount.never(), requestTo(containsString("api.crossref.org")))
         val configuration = crossrefConfiguration().copy(externalProviderConsents = emptyList())
-        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, configuration, null, NoOpCrossrefLookupCache)
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), gate, configuration, null, NoOpCrossrefLookupCache)
 
         assertThrows(ProviderCallRejectedException::class.java) {
             lookup.byDoi("10.1234/unconsented")
@@ -64,7 +63,7 @@ class CrossrefScholarlyMetadataLookupTest {
                 """{"message":{"DOI":"10.1234/confirmed","title":["Confirmed study"],"author":[{"given":"Ada","family":"Researcher"}],"published-print":{"date-parts":[[2024]]}}}""",
                 MediaType.APPLICATION_JSON,
             ))
-        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null, NoOpCrossrefLookupCache)
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), gate, crossrefConfiguration(), null, NoOpCrossrefLookupCache)
 
         val work = lookup.byDoi("10.1234/confirmed")
 
@@ -87,7 +86,7 @@ class CrossrefScholarlyMetadataLookupTest {
         server.expect(requestTo(containsString("/works/10.1234")))
             .andExpect(method(HttpMethod.GET))
             .andRespond(withSuccess(objectMapper.writeValueAsString(response), MediaType.APPLICATION_JSON))
-        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null, NoOpCrossrefLookupCache)
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), gate, crossrefConfiguration(), null, NoOpCrossrefLookupCache)
 
         val work = lookup.byDoi("10.1234/large-response")
 
@@ -107,7 +106,7 @@ class CrossrefScholarlyMetadataLookupTest {
                 """{"message":{"items":[{"DOI":"10.1234/search-match","title":["A test title"],"author":[{"given":"Ada","family":"Researcher"}],"issued":{"date-parts":[[2024]]}}]}}""",
                 MediaType.APPLICATION_JSON,
             ))
-        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), objectMapper, gate, crossrefConfiguration(), null, NoOpCrossrefLookupCache)
+        val lookup = CrossrefScholarlyMetadataLookup(builder.build(), gate, crossrefConfiguration(), null, NoOpCrossrefLookupCache)
 
         val matches = lookup.search(BibliographyReference("A test title", listOf("Ada Researcher"), 2024, null, "JOURNAL_ARTICLE"))
 
@@ -122,7 +121,6 @@ class CrossrefScholarlyMetadataLookupTest {
         val contactEmail = "operator@example.invalid"
         val catalog = configuredExternalProviderCatalogWithContactEmail(contactEmail)
         val configurationFactory = RunConfigurationFactory(
-            objectMapper = objectMapper,
             providerCatalog = catalog,
             parserId = "grobid",
             parserVersion = "0.9.1-crf",
@@ -147,7 +145,6 @@ class CrossrefScholarlyMetadataLookupTest {
         server.expect(ExpectedCount.never(), requestTo(containsString("api.crossref.org")))
         val lookup = CrossrefScholarlyMetadataLookup(
             builder.build(),
-            objectMapper,
             ProviderCallGate(catalog),
             missingEmailConsent,
             contactEmail,
@@ -167,7 +164,6 @@ class CrossrefScholarlyMetadataLookupTest {
         val changedEmail = "changed@example.invalid"
         val originalCatalog = configuredExternalProviderCatalogWithContactEmail(originalEmail)
         val configuration = RunConfigurationFactory(
-            objectMapper = objectMapper,
             providerCatalog = originalCatalog,
             parserId = "grobid",
             parserVersion = "0.9.1-crf",
@@ -186,7 +182,6 @@ class CrossrefScholarlyMetadataLookupTest {
         server.expect(ExpectedCount.never(), requestTo(containsString("api.crossref.org")))
         val lookup = CrossrefScholarlyMetadataLookup(
             builder.build(),
-            objectMapper,
             ProviderCallGate(configuredExternalProviderCatalogWithContactEmail(changedEmail)),
             configuration,
             changedEmail,

@@ -1,6 +1,5 @@
 package com.papertrail.api.config
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
@@ -133,7 +132,6 @@ class RunConfigurationFactoryConfiguration {
 
     @Bean
     fun runConfigurationFactory(
-        objectMapper: ObjectMapper,
         providerCatalog: ProviderCatalog,
         validator: PdfDocumentValidator,
         @Value("\${paper-trail.analysis.parser-id}") parserId: String,
@@ -163,7 +161,6 @@ class RunConfigurationFactoryConfiguration {
             comparabilityMargin = comparabilityMargin,
         )
         return RunConfigurationFactory(
-            objectMapper = objectMapper,
             providerCatalog = providerCatalog,
             parserId = parserId,
             parserVersion = parserVersion,

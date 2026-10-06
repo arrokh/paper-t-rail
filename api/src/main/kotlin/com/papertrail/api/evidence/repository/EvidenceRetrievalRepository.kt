@@ -1,13 +1,12 @@
 package com.papertrail.api.evidence.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.evidence.domain.EmbeddedEvidenceChunk
 import com.papertrail.api.evidence.domain.EmbeddingProfile
 import com.papertrail.api.evidence.domain.EvidenceClaim
 import com.papertrail.api.evidence.domain.EvidenceIndexingContext
 import com.papertrail.api.evidence.domain.RankedEvidenceChunk
-import com.papertrail.api.evidence.embedding.toPostgresVectorLiteral
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.document.repository.SourceDocumentRepository
 import org.springframework.jdbc.core.JdbcTemplate
@@ -19,7 +18,6 @@ import java.util.UUID
 @Repository
 class EvidenceRetrievalRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
     private val transactionTemplate: TransactionTemplate,
     private val retriever: PostgresHybridEvidenceRetriever,
     private val sourceDocumentRepository: SourceDocumentRepository,
@@ -330,7 +328,7 @@ class EvidenceRetrievalRepository(
     }
 
     private fun ResultSet.toIndexingContext(analysisRunId: UUID, bibliographyEntryId: UUID): EvidenceIndexingContext {
-        val configuration = objectMapper.readValue(getString("configuration"), AnalysisConfigurationSnapshot::class.java)
+        val configuration = JsonUtil.fromJson(getString("configuration"), AnalysisConfigurationSnapshot::class.java)
         return EvidenceIndexingContext(
             analysisRunId = analysisRunId,
             bibliographyEntryId = bibliographyEntryId,

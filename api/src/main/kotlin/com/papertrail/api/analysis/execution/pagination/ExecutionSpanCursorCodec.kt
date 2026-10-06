@@ -1,8 +1,7 @@
-package com.papertrail.api.analysis.execution
+package com.papertrail.api.analysis.execution.pagination
 
-import java.nio.charset.StandardCharsets
+import com.papertrail.api.infrastructure.pagination.OpaqueCursorTokenCodec
 import java.time.Instant
-import java.util.Base64
 import java.util.UUID
 
 internal data class ExecutionSpanCursor(val startedAt: Instant, val id: UUID)
@@ -11,16 +10,10 @@ internal object ExecutionSpanCursorCodec {
     private const val MAX_CURSOR_LENGTH = 256
     private const val SEPARATOR = '|'
 
-    fun encode(startedAt: Instant, id: UUID): String = Base64.getUrlEncoder().withoutPadding()
-        .encodeToString("$startedAt$SEPARATOR$id".toByteArray(StandardCharsets.UTF_8))
+    fun encode(startedAt: Instant, id: UUID): String = OpaqueCursorTokenCodec.encode("$startedAt$SEPARATOR$id")
 
     fun decode(value: String): ExecutionSpanCursor {
-        if (value.isBlank() || value.length > MAX_CURSOR_LENGTH) invalidCursor()
-        val decoded = try {
-            String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8)
-        } catch (_: IllegalArgumentException) {
-            invalidCursor()
-        }
+        val decoded = OpaqueCursorTokenCodec.decode(value, MAX_CURSOR_LENGTH, INVALID_CURSOR_MESSAGE)
         val fields = decoded.split(SEPARATOR)
         if (fields.size != 2) invalidCursor()
         val timestamp = try {
@@ -37,5 +30,7 @@ internal object ExecutionSpanCursorCodec {
         return ExecutionSpanCursor(timestamp, id)
     }
 
-    private fun invalidCursor(): Nothing = throw IllegalArgumentException("Execution span cursor is invalid.")
+    private fun invalidCursor(): Nothing = throw IllegalArgumentException(INVALID_CURSOR_MESSAGE)
+
+    private const val INVALID_CURSOR_MESSAGE = "Execution span cursor is invalid."
 }

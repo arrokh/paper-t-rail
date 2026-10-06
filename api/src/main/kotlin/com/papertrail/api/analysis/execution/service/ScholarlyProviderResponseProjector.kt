@@ -1,29 +1,27 @@
 package com.papertrail.api.analysis.execution.service
 
-import com.papertrail.api.analysis.execution.*
-
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.fasterxml.jackson.databind.node.ObjectNode
 
 /** Projects external scholarly responses to bounded, operation-relevant metadata before generic redaction. */
-class ScholarlyProviderResponseProjector(private val objectMapper: ObjectMapper) {
+class ScholarlyProviderResponseProjector {
     fun crossref(body: ByteArray): ObjectNode? {
         val response = parseJson(body) ?: return null
         val message = response.path("message")
         if (!response.isObject || !message.isObject) return null
 
-        val projected = objectMapper.createObjectNode()
+        val projected = JsonUtil.objectNode()
         copyText(response, projected, "status", 32)
         copyText(response, projected, "message-type", 64)
         copyText(response, projected, "message-version", 32)
 
-        val projectedMessage = objectMapper.createObjectNode()
+        val projectedMessage = JsonUtil.objectNode()
         val items = message.path("items")
         if (items.isArray) {
             copyNonNegativeLong(message, projectedMessage, "total-results")
             copyNonNegativeLong(message, projectedMessage, "items-per-page")
-            val projectedItems = objectMapper.createArrayNode()
+            val projectedItems = JsonUtil.arrayNode()
             items.take(MAX_METADATA_ITEMS).forEach { item -> projectCrossrefWork(item)?.let(projectedItems::add) }
             projectedMessage.set<JsonNode>("items", projectedItems)
         } else {
@@ -39,7 +37,7 @@ class ScholarlyProviderResponseProjector(private val objectMapper: ObjectMapper)
         val doi = response.path("doi").takeIf(JsonNode::isTextual)?.asText()
         if (!response.isObject || doi == null || !DOI.matches(doi)) return null
 
-        val projected = objectMapper.createObjectNode()
+        val projected = JsonUtil.objectNode()
             .put("doi", doi)
             .put("abstractAvailable", response.path("abstract").takeIf(JsonNode::isTextual)?.asText()?.isNotBlank() == true)
         copyBoolean(response, projected, "is_oa")
@@ -53,7 +51,7 @@ class ScholarlyProviderResponseProjector(private val objectMapper: ObjectMapper)
             ?.let { projected.set<ObjectNode>("best_oa_location", it) }
         val locations = response.path("oa_locations")
         if (locations.isArray) {
-            val safeLocations = objectMapper.createArrayNode()
+            val safeLocations = JsonUtil.arrayNode()
             locations.take(MAX_OA_LOCATIONS).forEach { location ->
                 projectUnpaywallLocation(location)?.let(safeLocations::add)
             }
@@ -67,10 +65,10 @@ class ScholarlyProviderResponseProjector(private val objectMapper: ObjectMapper)
         val doi = work.path("DOI").takeIf(JsonNode::isTextual)?.asText() ?: return null
         if (!DOI.matches(doi)) return null
 
-        val projected = objectMapper.createObjectNode().put("DOI", doi)
+        val projected = JsonUtil.objectNode().put("DOI", doi)
         val titles = work.path("title")
         if (titles.isArray) {
-            val safeTitles = objectMapper.createArrayNode()
+            val safeTitles = JsonUtil.arrayNode()
             titles.take(MAX_TITLES).forEach { title ->
                 title.takeIf(JsonNode::isTextual)?.asText()?.takeIf(::isSafeTitle)?.let(safeTitles::add)
             }
@@ -78,10 +76,10 @@ class ScholarlyProviderResponseProjector(private val objectMapper: ObjectMapper)
         }
         val authors = work.path("author")
         if (authors.isArray) {
-            val safeAuthors = objectMapper.createArrayNode()
+            val safeAuthors = JsonUtil.arrayNode()
             authors.take(MAX_AUTHORS).forEach { author ->
                 if (!author.isObject) return@forEach
-                val safeAuthor = objectMapper.createObjectNode()
+                val safeAuthor = JsonUtil.objectNode()
                 listOf("name", "given", "family").forEach { field ->
                     copyText(author, safeAuthor, field, MAX_AUTHOR_NAME_LENGTH)
                 }
@@ -105,7 +103,7 @@ class ScholarlyProviderResponseProjector(private val objectMapper: ObjectMapper)
         ).forEach { (field, maximumLength) -> copyText(work, projected, field, maximumLength) }
         val containers = work.path("container-title")
         if (containers.isArray) {
-            val safeContainers = objectMapper.createArrayNode()
+            val safeContainers = JsonUtil.arrayNode()
             containers.take(MAX_TITLES).forEach { container ->
                 container.takeIf(JsonNode::isTextual)?.asText()?.takeIf(::isSafeTitle)?.let(safeContainers::add)
             }
@@ -116,7 +114,7 @@ class ScholarlyProviderResponseProjector(private val objectMapper: ObjectMapper)
 
     private fun projectUnpaywallLocation(location: JsonNode): ObjectNode? {
         if (!location.isObject) return null
-        val projected = objectMapper.createObjectNode()
+        val projected = JsonUtil.objectNode()
         listOf("url_for_pdf", "url").forEach { field ->
             location.path(field).takeIf(JsonNode::isTextual)?.asText()?.takeIf(String::isNotBlank)
                 ?.let { projected.put(field, it) }
@@ -147,7 +145,7 @@ class ScholarlyProviderResponseProjector(private val objectMapper: ObjectMapper)
     private fun isSafeTitle(value: String): Boolean =
         value.isNotBlank() && value.length <= MAX_TITLE_LENGTH
 
-    private fun parseJson(body: ByteArray): JsonNode? = runCatching { objectMapper.readTree(body) }.getOrNull()
+    private fun parseJson(body: ByteArray): JsonNode? = runCatching { JsonUtil.parseTree(body) }.getOrNull()
 
     companion object {
         private val DOI = Regex("^10\\.[0-9]{4,9}/[-._;()/:A-Z0-9]+$", RegexOption.IGNORE_CASE)

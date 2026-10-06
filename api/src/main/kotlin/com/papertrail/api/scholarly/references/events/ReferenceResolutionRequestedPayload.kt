@@ -1,4 +1,4 @@
-package com.papertrail.api.scholarly.references.queue
+package com.papertrail.api.scholarly.references.events
 
 import java.util.UUID
 

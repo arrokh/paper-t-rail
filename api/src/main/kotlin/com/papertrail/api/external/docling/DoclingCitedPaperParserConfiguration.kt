@@ -1,6 +1,5 @@
 package com.papertrail.api.external.docling
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.external.docling.DoclingCitedPaperPdfParser
 import com.papertrail.api.evidence.parsing.CitedPaperPdfParser
 import org.springframework.beans.factory.annotation.Qualifier
@@ -40,13 +39,11 @@ class DoclingCitedPaperParserConfiguration {
     @Bean
     fun doclingCitedPaperPdfParser(
         @Qualifier("doclingRestClient") client: RestClient,
-        objectMapper: ObjectMapper,
         @Value("\${paper-trail.analysis.cited-paper-parser-version}") parserVersion: String,
         @Value("\${paper-trail.analysis.docling-response-max-bytes}") maximumResponseBytes: Int,
         @Value("\${paper-trail.analysis.cited-paper-max-extracted-characters}") maximumCharacters: Int,
     ): CitedPaperPdfParser = DoclingCitedPaperPdfParser(
         client = client,
-        objectMapper = objectMapper,
         parserVersion = parserVersion,
         maximumResponseBytes = maximumResponseBytes,
         maximumCharacters = maximumCharacters,

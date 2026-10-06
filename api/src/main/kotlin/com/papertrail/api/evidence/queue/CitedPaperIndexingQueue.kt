@@ -1,5 +1,7 @@
 package com.papertrail.api.evidence.queue
 
+import com.papertrail.api.evidence.events.CITED_PAPER_INDEXING_REQUESTED
+import com.papertrail.api.evidence.events.CitedPaperIndexingRequestedPayload
 import com.papertrail.api.evidence.domain.EmbeddingProfile
 import com.papertrail.api.evidence.repository.CitedPaperIndexingRepository
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
@@ -7,8 +9,6 @@ import com.papertrail.api.infrastructure.messaging.repository.OutboxRepository
 import org.springframework.stereotype.Component
 import java.time.Instant
 import java.util.UUID
-
-enum class EvidenceIndexingEnqueueResult { QUEUED, NOT_ELIGIBLE, FAILED }
 
 @Component
 class CitedPaperIndexingQueue(

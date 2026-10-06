@@ -1,6 +1,6 @@
 package com.papertrail.api.analysis.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -9,7 +9,6 @@ import java.util.UUID
 @Repository
 class AnalysisRunProcessingRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
 ) {
     fun sourceObject(documentId: UUID): StoredSource? = jdbc.query(
         "SELECT object_key, sha256 FROM source_documents WHERE id = ?",
@@ -29,7 +28,7 @@ class AnalysisRunProcessingRepository(
                 sourceHash = rs.getString("source_content_sha256"),
                 parserId = rs.getString("source_parser_id"),
                 parserVersion = rs.getString("source_parser_version"),
-                configuration = objectMapper.readValue(
+                configuration = JsonUtil.fromJson(
                     rs.getString("configuration_snapshot"),
                     AnalysisConfigurationSnapshot::class.java,
                 ),

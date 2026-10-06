@@ -1,9 +1,9 @@
 package com.papertrail.api.evidence.verification.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
 import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
@@ -32,7 +32,6 @@ import java.util.UUID
 @Service
 class EvidenceVerificationService(
     private val sourceDocumentRepository: SourceDocumentRepository,
-    private val objectMapper: ObjectMapper,
     private val providerCallGate: ProviderCallGate,
     private val systemOneProviders: List<SystemOneProvider>,
     private val judgementRepository: EvidenceJudgementRepository,
@@ -469,8 +468,8 @@ class EvidenceVerificationService(
 
     private fun payload(request: SemanticJudgementRequest): ProviderCallPayload = ProviderCallPayload(
         mapOf(
-            DataCategory.ATOMIC_CLAIMS to objectMapper.valueToTree(request.atomicClaim),
-            DataCategory.EVIDENCE_PASSAGES to objectMapper.valueToTree(request.evidencePassages),
+            DataCategory.ATOMIC_CLAIMS to JsonUtil.toTree(request.atomicClaim),
+            DataCategory.EVIDENCE_PASSAGES to JsonUtil.toTree(request.evidencePassages),
         ),
     )
 

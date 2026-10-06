@@ -1,7 +1,7 @@
 package com.papertrail.api.external.docling
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.citation.parsing.ParsedBibliographyEntry
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
@@ -16,7 +16,6 @@ import com.papertrail.api.evidence.parsing.CitedPaperPdfParser
 
 class DoclingCitedPaperPdfParser(
     private val client: RestClient,
-    private val objectMapper: ObjectMapper,
     private val parserVersion: String,
     private val maximumResponseBytes: Int,
     private val maximumCharacters: Int,
@@ -70,7 +69,7 @@ class DoclingCitedPaperPdfParser(
     }
 
     private fun parseResponse(responseBytes: ByteArray): JsonNode = runCatching {
-        objectMapper.readTree(responseBytes)
+        JsonUtil.parseTree(responseBytes)
     }.getOrElse {
         throw IllegalArgumentException("Docling returned invalid JSON.")
     }

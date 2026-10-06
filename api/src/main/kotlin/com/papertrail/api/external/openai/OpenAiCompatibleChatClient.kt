@@ -1,7 +1,7 @@
 package com.papertrail.api.external.openai
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
@@ -21,7 +21,6 @@ import java.util.concurrent.TimeoutException
 @Component
 class OpenAiCompatibleChatClient(
     private val settings: OpenAiCompatibleEndpointSettings,
-    private val objectMapper: ObjectMapper,
     private val executionService: AnalysisRunExecutionService? = null,
 ) {
     private val httpClient = HttpClient.newBuilder()
@@ -36,18 +35,18 @@ class OpenAiCompatibleChatClient(
         systemPrompt: String,
         userJson: String,
     ): ByteArray {
-        val root = objectMapper.createObjectNode()
+        val root = JsonUtil.objectNode()
         root.put("model", modelId)
         root.put("temperature", 0)
         root.put("max_tokens", maxCompletionTokens)
         root.put("stream", false)
         root.set<JsonNode>("response_format", responseFormat.deepCopy())
-        root.set<JsonNode>("messages", objectMapper.createArrayNode().apply {
-            add(objectMapper.createObjectNode().put("role", "system").put("content", systemPrompt))
-            add(objectMapper.createObjectNode().put("role", "user").put("content", userJson))
+        root.set<JsonNode>("messages", JsonUtil.arrayNode().apply {
+            add(JsonUtil.objectNode().put("role", "system").put("content", systemPrompt))
+            add(JsonUtil.objectNode().put("role", "user").put("content", userJson))
         })
         return try {
-            objectMapper.writeValueAsBytes(root)
+            JsonUtil.toJsonBytes(root)
         } catch (exception: Exception) {
             throw OpenAiCompatibleProviderException("The OpenAI-compatible request could not be serialized.")
         }

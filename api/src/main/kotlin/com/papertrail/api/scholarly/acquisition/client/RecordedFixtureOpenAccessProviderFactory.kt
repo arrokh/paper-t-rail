@@ -1,7 +1,7 @@
 package com.papertrail.api.scholarly.acquisition.client
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.OPEN_ACCESS_ROLE
@@ -17,10 +17,9 @@ import java.time.Instant
 
 @Component
 class RecordedFixtureOpenAccessProviderFactory(
-    private val objectMapper: ObjectMapper,
     private val providerCallGate: ProviderCallGate,
 ) : OpenAccessProviderFactory {
-    private val records = objectMapper.readTree(ClassPathResource("provider-fixtures/open-access-records.json").inputStream)
+    private val records = JsonUtil.parseTree(ClassPathResource("provider-fixtures/open-access-records.json").inputStream)
 
     override val providerId: String = RECORDED_FIXTURES_PROVIDER
 
@@ -55,7 +54,7 @@ class RecordedFixtureOpenAccessProviderFactory(
         }
 
         override fun fetch(location: OpenAccessLocation): AcquiredFullText {
-            val payload = objectMapper.valueToTree<JsonNode>(mapOf("url" to location.url))
+            val payload = JsonUtil.toTree(mapOf("url" to location.url))
             return providerCallGate.call(
                 OPEN_ACCESS_ROLE,
                 providerId,
@@ -76,10 +75,10 @@ class RecordedFixtureOpenAccessProviderFactory(
     }
 
     private fun bibliographicMetadata(reference: BibliographyReference): JsonNode {
-        val node = objectMapper.createObjectNode()
+        val node = JsonUtil.objectNode()
         reference.doi?.takeIf(String::isNotBlank)?.let { node.put("doi", it) }
         reference.title?.takeIf(String::isNotBlank)?.let { node.put("title", it) }
-        if (reference.authors.isNotEmpty()) node.set<JsonNode>("authors", objectMapper.valueToTree(reference.authors))
+        if (reference.authors.isNotEmpty()) node.set<JsonNode>("authors", JsonUtil.toTree(reference.authors))
         reference.year?.let { node.put("year", it) }
         return node
     }

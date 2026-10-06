@@ -1,7 +1,5 @@
 package com.papertrail.api.analysis.execution.controller
 
-import com.papertrail.api.analysis.execution.*
-
 import com.papertrail.api.http.ApiError
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter

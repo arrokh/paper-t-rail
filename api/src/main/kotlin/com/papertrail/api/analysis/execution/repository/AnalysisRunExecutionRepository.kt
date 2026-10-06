@@ -1,9 +1,9 @@
 package com.papertrail.api.analysis.execution.repository
 
-import com.papertrail.api.analysis.execution.*
+import com.papertrail.api.analysis.execution.domain.*
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.ConnectionCallback
 import org.springframework.jdbc.core.JdbcTemplate
@@ -14,6 +14,8 @@ import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import com.papertrail.api.analysis.execution.pagination.ExecutionSpanCursor
+import com.papertrail.api.analysis.execution.pagination.ExecutionSpanCursorCodec
 import com.papertrail.api.analysis.execution.http.AnalysisRunExecutionSummary
 import com.papertrail.api.analysis.execution.http.ExecutionArtifactDescriptor
 import com.papertrail.api.analysis.execution.http.ExecutionArtifactResponse
@@ -25,7 +27,6 @@ import com.papertrail.api.analysis.execution.http.ExecutionSpanResponse
 class AnalysisRunExecutionRepository(
     private val jdbc: JdbcTemplate,
     private val transactionTemplate: TransactionTemplate,
-    private val objectMapper: ObjectMapper,
 ) {
     fun insertRecordingBestEffort(runId: UUID, captureEnabled: Boolean, startedAt: Instant) {
         jdbc.execute(ConnectionCallback { connection ->
@@ -369,7 +370,7 @@ class AnalysisRunExecutionRepository(
         val configuration = if (selected.isEmpty()) null else runConfigurationSnapshot(analysisRunId)
         val items = selected.map {
             it.toResponse(
-                objectMapper.readTree(it.attributes),
+                JsonUtil.parseTree(it.attributes),
                 descriptors[it.id].orEmpty(),
                 links[it.id].orEmpty(),
                 configuration?.let { snapshot -> executionTrustBoundary(it, snapshot) } ?: fallbackTrustBoundary(it),
@@ -397,7 +398,7 @@ class AnalysisRunExecutionRepository(
         ).firstOrNull() ?: return null
         val configuration = runConfigurationSnapshot(analysisRunId)
         return row.toResponse(
-            objectMapper.readTree(row.attributes),
+            JsonUtil.parseTree(row.attributes),
             descriptors(analysisRunId, listOf(spanId))[spanId].orEmpty(),
             domainLinks(analysisRunId, listOf(spanId))[spanId].orEmpty(),
             executionTrustBoundary(row, configuration),
@@ -591,15 +592,15 @@ class AnalysisRunExecutionRepository(
 
     private fun runConfigurationSnapshot(analysisRunId: UUID): JsonNode = jdbc.query(
         "SELECT configuration_snapshot::text AS configuration_snapshot FROM analysis_runs WHERE id = ?",
-        { rs, _ -> objectMapper.readTree(rs.getString("configuration_snapshot")) },
+        { rs, _ -> JsonUtil.parseTree(rs.getString("configuration_snapshot")) },
         analysisRunId,
-    ).firstOrNull() ?: objectMapper.createObjectNode()
+    ).firstOrNull() ?: JsonUtil.objectNode()
 
     private fun executionTrustBoundary(row: ExecutionSpanRow, configuration: JsonNode): String {
         if (row.kind in setOf("INTERNAL", "PERSISTENCE", "TRANSFORMATION")) return "INTERNAL"
         if (row.kind == "QUEUE") return "LOCAL"
         val configured = configuredProviderTrustBoundary(configuration, row.stageId, row.providerId)
-            ?: row.providerId?.let { normalizeTrustBoundary(objectMapper.readTree(row.attributes).path("trustBoundary")) }
+            ?: row.providerId?.let { normalizeTrustBoundary(JsonUtil.parseTree(row.attributes).path("trustBoundary")) }
         return configured ?: fallbackTrustBoundary(row)
     }
 

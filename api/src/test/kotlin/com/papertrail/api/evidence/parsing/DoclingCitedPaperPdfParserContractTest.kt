@@ -35,7 +35,6 @@ class DoclingCitedPaperPdfParserContractTest {
             )
         val parser = DoclingCitedPaperPdfParser(
             client = builder.build(),
-            objectMapper = jacksonObjectMapper(),
             parserVersion = "1.30.0",
             maximumResponseBytes = 64 * 1024,
             maximumCharacters = 5_000,
@@ -71,7 +70,6 @@ class DoclingCitedPaperPdfParserContractTest {
             )
         val parser = DoclingCitedPaperPdfParser(
             client = builder.build(),
-            objectMapper = jacksonObjectMapper(),
             parserVersion = "1.30.0",
             maximumResponseBytes = 64 * 1024,
             maximumCharacters = 5_000,
@@ -94,7 +92,6 @@ class DoclingCitedPaperPdfParserContractTest {
             )
         val parser = DoclingCitedPaperPdfParser(
             client = builder.build(),
-            objectMapper = jacksonObjectMapper(),
             parserVersion = "1.30.0",
             maximumResponseBytes = 16,
             maximumCharacters = 5_000,

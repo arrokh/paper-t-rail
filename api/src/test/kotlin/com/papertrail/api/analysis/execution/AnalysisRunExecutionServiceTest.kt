@@ -1,5 +1,6 @@
 package com.papertrail.api.analysis.execution
 
+import com.papertrail.api.analysis.execution.domain.*
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -40,7 +41,7 @@ class AnalysisRunExecutionServiceTest {
     @Test
     fun `span persistence failure does not fail analysis or attach child artifacts to parent`() {
         val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
-        val service = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), ObjectMapper())
+        val service = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer())
         val analysisRunId = UUID.randomUUID()
         val parentSpec = ExecutionSpanSpec("source", "INTERNAL", "Parent operation")
         val childSpec = ExecutionSpanSpec("source", "PROVIDER", "Provider operation")
@@ -69,7 +70,7 @@ class AnalysisRunExecutionServiceTest {
     @Test
     fun `versioned embedding model IDs remain valid provider span metadata`() {
         val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
-        val service = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), ObjectMapper())
+        val service = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer())
         val analysisRunId = UUID.randomUUID()
         val parentSpec = ExecutionSpanSpec("evidence", "INTERNAL", "Index cited paper")
         val parentHandle = ExecutionSpanHandle(
@@ -140,13 +141,13 @@ class AnalysisRunExecutionServiceTest {
         Mockito.`when`(repository.startSpan(runId, spec, "{}")).thenReturn(handle)
         val artifacts = mutableListOf<Pair<String, SanitizedExecutionArtifact>>()
         val sanitizer = ExecutionCaptureSanitizer()
-        val service = AnalysisRunExecutionService(repository, sanitizer, mapper)
+        val service = AnalysisRunExecutionService(repository, sanitizer)
         val settings = OpenAiCompatibleEndpointSettings(
             enabled = true,
             baseUrl = "http://127.0.0.1:${server.address.port}",
             trustedHosts = setOf("127.0.0.1"),
         )
-        val client = OpenAiCompatibleChatClient(settings, mapper, service)
+        val client = OpenAiCompatibleChatClient(settings, service)
         val requestBody = client.requestBody(
             modelId = "gpt-public",
             maxCompletionTokens = 64,
@@ -195,7 +196,6 @@ class AnalysisRunExecutionServiceTest {
         val mapper = jacksonObjectMapper()
         val catalog = configuredExternalProviderCatalog()
         val configuration = RunConfigurationFactory(
-            objectMapper = mapper,
             providerCatalog = catalog,
             parserId = "grobid",
             parserVersion = "0.9.1-crf",
@@ -236,10 +236,9 @@ class AnalysisRunExecutionServiceTest {
         val providerHandle = ExecutionSpanHandle(UUID.randomUUID(), runId, providerSpec.operationId!!, Instant.now(), System.nanoTime(), eventId = eventId)
         Mockito.`when`(repository.startSpan(runId, parent, "{}")).thenReturn(parentHandle)
         Mockito.`when`(repository.startSpan(runId, providerSpec, """{"httpRoute":"/works"}""")).thenReturn(providerHandle)
-        val execution = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), mapper)
+        val execution = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer())
         val lookup = CrossrefScholarlyMetadataLookup(
             client = builder.build(),
-            objectMapper = mapper,
             callGate = ProviderCallGate(catalog),
             configuration = configuration,
             contactEmail = null,

@@ -1,7 +1,7 @@
 package com.papertrail.api.analysis.service
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.http.AnalysisRunPage
@@ -13,10 +13,10 @@ import com.papertrail.api.analysis.pagination.AnalysisRunCursorCodec
 import com.papertrail.api.analysis.pagination.Direction
 import com.papertrail.api.analysis.repository.AnalysisRunRepository
 import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
-import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
-import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
+import com.papertrail.api.analysis.events.DOCUMENT_ANALYSIS_REQUESTED
+import com.papertrail.api.analysis.events.DocumentAnalysisRequestedPayload
 import com.papertrail.api.citation.repository.ParsedDocumentRepository
-import com.papertrail.api.citation.repository.ParsedDocumentView
+import com.papertrail.api.analysis.http.ParsedDocumentView
 import com.papertrail.api.document.domain.SourceDocumentDeletedException
 import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.document.validation.PdfDocumentValidator
@@ -49,7 +49,6 @@ class AnalysisRunService(
     private val objectStore: SourceDocumentObjectStore,
     private val configurationFactory: RunConfigurationFactory,
     private val parsedDocumentRepository: ParsedDocumentRepository,
-    private val objectMapper: ObjectMapper,
     @Value("\${paper-trail.analysis.parser-id}") private val parserId: String,
     @Value("\${paper-trail.analysis.parser-version}") private val parserVersion: String,
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
@@ -59,7 +58,7 @@ class AnalysisRunService(
     fun parseConfigurationRequest(configuration: String?): RunConfigurationRequest {
         if (configuration.isNullOrBlank()) return configurationFactory.parseRequest(null)
         val node = try {
-            objectMapper.readTree(configuration)
+            JsonUtil.parseTree(configuration)
         } catch (exception: Exception) {
             throw IllegalArgumentException("Analysis configuration must be valid JSON.")
         }

@@ -1,24 +1,23 @@
 package com.papertrail.api.infrastructure.messaging.redis
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedHandler
-import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
+import com.papertrail.api.evidence.events.CITED_PAPER_INDEXING_REQUESTED
+import com.papertrail.api.evidence.events.CitedPaperIndexingRequestedPayload
 import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedHandler
-import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedPayload
-import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.events.CITED_PAPER_ACQUISITION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.events.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
-import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedPayload
-import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
-import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_HANDLER
+import com.papertrail.api.analysis.events.DOCUMENT_ANALYSIS_HANDLER
+import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_HANDLER
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedHandler
-import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
-import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
+import com.papertrail.api.analysis.events.DOCUMENT_ANALYSIS_REQUESTED
+import com.papertrail.api.analysis.events.DocumentAnalysisRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.NonRetryablePipelineException
-import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
-import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedPayload
+import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_REQUESTED
+import com.papertrail.api.scholarly.references.events.ReferenceResolutionRequestedPayload
 import jakarta.annotation.PostConstruct
 import jakarta.annotation.PreDestroy
 import org.slf4j.LoggerFactory
@@ -50,7 +49,6 @@ class RedisStreamWorker(
     private val referenceResolutionHandler: ReferenceResolutionRequestedHandler,
     private val citedPaperAcquisitionHandler: CitedPaperAcquisitionRequestedHandler,
     private val citedPaperIndexingHandler: CitedPaperIndexingRequestedHandler,
-    private val objectMapper: ObjectMapper,
     @Value("\${paper-trail.queue.stream}") private val stream: String,
     @Value("\${paper-trail.queue.group}") private val group: String,
     @Value("\${paper-trail.queue.consumer}") private val consumerName: String,
@@ -150,7 +148,7 @@ class RedisStreamWorker(
             return
         }
         val event: PipelineEvent<JsonNode> = try {
-            objectMapper.readValue(serialized)
+            JsonUtil.fromJson(serialized)
         } catch (exception: Exception) {
             deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The stream event envelope could not be parsed.")
             return
@@ -169,7 +167,7 @@ class RedisStreamWorker(
             retryScheduledAt = retrySchedule?.let { Instant.ofEpochMilli(it.scheduledAtMillis) },
             retryDueAt = retrySchedule?.let { Instant.ofEpochMilli(it.dueAtMillis) },
         )
-        val deliveryEnvelope = objectMapper.writeValueAsString(deliveryEvent)
+        val deliveryEnvelope = JsonUtil.toJson(deliveryEvent)
         val previousContext = MDC.getCopyOfContextMap()
         MDC.put("analysisRunId", event.analysisRunId.toString())
         MDC.put("eventId", event.eventId.toString())
@@ -191,7 +189,7 @@ class RedisStreamWorker(
         when (event.eventType) {
             DOCUMENT_ANALYSIS_REQUESTED -> {
                 val typedEvent: PipelineEvent<DocumentAnalysisRequestedPayload> = try {
-                    objectMapper.readValue(serialized)
+                    JsonUtil.fromJson(serialized)
                 } catch (exception: Exception) {
                     deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The document-analysis event payload could not be parsed.")
                     return
@@ -206,7 +204,7 @@ class RedisStreamWorker(
             }
             REFERENCE_RESOLUTION_REQUESTED -> {
                 val typedEvent: PipelineEvent<ReferenceResolutionRequestedPayload> = try {
-                    objectMapper.readValue(serialized)
+                    JsonUtil.fromJson(serialized)
                 } catch (exception: Exception) {
                     deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The reference-resolution event payload could not be parsed.")
                     return
@@ -221,7 +219,7 @@ class RedisStreamWorker(
             }
             CITED_PAPER_INDEXING_REQUESTED -> {
                 val typedEvent: PipelineEvent<CitedPaperIndexingRequestedPayload> = try {
-                    objectMapper.readValue(serialized)
+                    JsonUtil.fromJson(serialized)
                 } catch (exception: Exception) {
                     deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The cited-paper indexing event payload could not be parsed.")
                     return
@@ -236,7 +234,7 @@ class RedisStreamWorker(
             }
             CITED_PAPER_ACQUISITION_REQUESTED -> {
                 val typedEvent: PipelineEvent<CitedPaperAcquisitionRequestedPayload> = try {
-                    objectMapper.readValue(serialized)
+                    JsonUtil.fromJson(serialized)
                 } catch (exception: Exception) {
                     deadLetter(record, "MALFORMED_EVENT_ENVELOPE", "The cited-paper access event payload could not be parsed.")
                     return
@@ -315,8 +313,8 @@ class RedisStreamWorker(
             val originalEnvelope = record.value["event"] ?: ""
             val deadLetterEnvelope = attempts?.let { deliveryCount ->
                 runCatching {
-                    val event: PipelineEvent<JsonNode> = objectMapper.readValue(originalEnvelope)
-                    objectMapper.writeValueAsString(event.copy(attempt = deliveryCount.toInt()))
+                    val event: PipelineEvent<JsonNode> = JsonUtil.fromJson(originalEnvelope)
+                    JsonUtil.toJson(event.copy(attempt = deliveryCount.toInt()))
                 }.getOrNull()
             } ?: originalEnvelope
             redis.opsForStream<String, String>().add(
@@ -359,7 +357,7 @@ class RedisStreamWorker(
 
     private fun retryBackoffSchedule(messageId: String): RetryBackoffSchedule? = redis.opsForHash<String, String>()
         .get(retryBackoffKey, messageId)
-        ?.let { value -> runCatching { objectMapper.readValue(value, RetryBackoffSchedule::class.java) }.getOrNull() }
+        ?.let { value -> runCatching { JsonUtil.fromJson(value, RetryBackoffSchedule::class.java) }.getOrNull() }
 
     private fun streamEnqueuedAt(messageId: String): Instant? = messageId.substringBefore('-').toLongOrNull()?.let(Instant::ofEpochMilli)
 
@@ -425,7 +423,7 @@ class RedisStreamWorker(
         redis.opsForHash<String, String>().put(
             retryBackoffKey,
             messageId,
-            objectMapper.writeValueAsString(RetryBackoffSchedule(scheduledAt, dueAt)),
+            JsonUtil.toJson(RetryBackoffSchedule(scheduledAt, dueAt)),
         )
         refreshEventAttemptExpiry(eventId, eventAttemptRetentionMs + (dueAt - scheduledAt))
     }

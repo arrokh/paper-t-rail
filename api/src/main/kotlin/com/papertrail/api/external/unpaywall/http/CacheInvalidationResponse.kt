@@ -1,4 +1,4 @@
-package com.papertrail.api.infrastructure.cache
+package com.papertrail.api.external.unpaywall.http
 
 import io.swagger.v3.oas.annotations.media.Schema
 

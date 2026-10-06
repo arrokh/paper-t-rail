@@ -1,7 +1,7 @@
 package com.papertrail.api.external.unpaywall.controller
 
 import com.papertrail.api.http.ApiError
-import com.papertrail.api.infrastructure.cache.CacheInvalidationResponse
+import com.papertrail.api.external.unpaywall.http.CacheInvalidationResponse
 import com.papertrail.api.external.unpaywall.http.UnpaywallCacheInvalidationRequest
 import com.papertrail.api.external.unpaywall.service.UnpaywallCacheInvalidationService
 import io.swagger.v3.oas.annotations.Operation

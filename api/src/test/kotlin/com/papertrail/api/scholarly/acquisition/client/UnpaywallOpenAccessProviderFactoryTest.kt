@@ -5,13 +5,13 @@ import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.CaptureFidelity
+import com.papertrail.api.analysis.execution.domain.CaptureFidelity
 import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
-import com.papertrail.api.analysis.execution.ExecutionOperationId
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
-import com.papertrail.api.analysis.execution.ExecutionSpanHandle
-import com.papertrail.api.analysis.execution.ExecutionSpanSpec
-import com.papertrail.api.analysis.execution.SanitizedExecutionArtifact
+import com.papertrail.api.analysis.execution.domain.ExecutionOperationId
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanHandle
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.domain.SanitizedExecutionArtifact
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
@@ -47,7 +47,6 @@ class UnpaywallOpenAccessProviderFactoryTest {
         unpaywallContactEmail = contactEmail,
     )
     private val factory = RunConfigurationFactory(
-        objectMapper = objectMapper,
         providerCatalog = catalog,
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
@@ -78,7 +77,6 @@ class UnpaywallOpenAccessProviderFactoryTest {
         val server = MockRestServiceServer.bindTo(discoveryBuilder).build()
         server.expect(ExpectedCount.never(), requestTo(containsString("api.unpaywall.org")))
         val provider = UnpaywallOpenAccessProviderFactory(
-            objectMapper,
             ProviderCallGate(changedCatalog),
             NoOpUnpaywallDiscoveryCache(),
             discoveryBuilder.build(),
@@ -100,7 +98,6 @@ class UnpaywallOpenAccessProviderFactoryTest {
         server.expect(ExpectedCount.never(), requestTo(containsString("api.unpaywall.org")))
         val configuration = configuredRun().copy(externalProviderConsents = emptyList())
         val provider = UnpaywallOpenAccessProviderFactory(
-            objectMapper,
             ProviderCallGate(catalog),
             NoOpUnpaywallDiscoveryCache(),
             discoveryBuilder.build(),
@@ -128,7 +125,6 @@ class UnpaywallOpenAccessProviderFactoryTest {
             ),
         )
         val provider = UnpaywallOpenAccessProviderFactory(
-            objectMapper,
             ProviderCallGate(catalog),
             NoOpUnpaywallDiscoveryCache(),
             RestClient.builder().build(),
@@ -183,9 +179,8 @@ class UnpaywallOpenAccessProviderFactoryTest {
             Mockito.`when`(repository.startSpan(runId, spec, """{"httpRoute":"$route"}"""))
                 .thenReturn(ExecutionSpanHandle(UUID.randomUUID(), runId, spec.operationId!!, Instant.now(), System.nanoTime(), "access", 1, eventId))
         }
-        val executionService = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer(), objectMapper)
+        val executionService = AnalysisRunExecutionService(repository, ExecutionCaptureSanitizer())
         val provider = UnpaywallOpenAccessProviderFactory(
-            objectMapper,
             ProviderCallGate(catalog),
             NoOpUnpaywallDiscoveryCache(),
             discoveryBuilder.build(),

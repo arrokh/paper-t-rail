@@ -1,7 +1,7 @@
 package com.papertrail.api.external.laya
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
@@ -26,7 +26,6 @@ import com.papertrail.api.evidence.verification.provider.SystemOneRequestPreflig
 @Component
 class LayaSystemOneProvider(
     private val settings: LayaSystemOneSettings,
-    private val objectMapper: ObjectMapper,
     private val executionService: AnalysisRunExecutionService? = null,
 ) : LayaEvaluationProvider, SystemOneRequestPreflight {
     override val providerId = LayaSystemOneSettings.PROVIDER_ID
@@ -48,7 +47,7 @@ class LayaSystemOneProvider(
             throw LayaSystemOneProviderException("Laya System One preflight returned HTTP ${response.statusCode()}.")
         }
         val body = try {
-            objectMapper.readTree(response.body())
+            JsonUtil.parseTree(response.body())
         } catch (_: IOException) {
             throw LayaSystemOneProviderException("Laya System One preflight returned a malformed response.")
         }
@@ -134,7 +133,7 @@ class LayaSystemOneProvider(
     }
 
     private fun rejectionDetails(body: ByteArray): RejectionDetails {
-        val response = runCatching { objectMapper.readTree(body) }.getOrNull()
+        val response = runCatching { JsonUtil.parseTree(body) }.getOrNull()
         return if (containsContextLimitRejection(response)) {
             RejectionDetails(
                 failureReasonCode = LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED,
@@ -173,7 +172,7 @@ class LayaSystemOneProvider(
         val state = linkedMapOf("claim" to claim, "evidence" to passage.text)
         passage.sectionHeading?.takeIf(String::isNotBlank)?.let { state["section"] = it }
         val requestBody = try {
-            objectMapper.writeValueAsBytes(
+            JsonUtil.toJsonBytes(
                 linkedMapOf(
                     "model" to LayaSystemOneSettings.REQUEST_MODEL_ALIAS,
                     "state" to state,
@@ -217,7 +216,7 @@ class LayaSystemOneProvider(
         requireTokenUsage: Boolean,
     ): MappedResponse {
         val response = try {
-            objectMapper.readTree(body)
+            JsonUtil.parseTree(body)
         } catch (_: IOException) {
             throw LayaSystemOneProviderException("Laya System One returned a malformed response.")
         }

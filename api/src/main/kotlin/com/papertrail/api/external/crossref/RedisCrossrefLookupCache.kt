@@ -3,7 +3,7 @@ package com.papertrail.api.external.crossref
 import com.papertrail.api.scholarly.references.client.ScholarlyWork
 
 import com.fasterxml.jackson.core.JsonProcessingException
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.infrastructure.cache.ProviderCacheStore
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import org.slf4j.LoggerFactory
@@ -12,7 +12,6 @@ import java.time.Duration
 
 class RedisCrossrefLookupCache(
     private val cacheStore: ProviderCacheStore,
-    private val objectMapper: ObjectMapper,
     private val positiveTtl: Duration,
     private val negativeTtl: Duration,
 ) : CrossrefLookupCache {
@@ -41,8 +40,8 @@ class RedisCrossrefLookupCache(
         val encoded = cacheStore.find(key) ?: return null
 
         return try {
-            val collectionType = objectMapper.typeFactory.constructCollectionType(List::class.java, ScholarlyWork::class.java)
-            val works: List<ScholarlyWork>? = objectMapper.readValue(encoded, collectionType)
+            val collectionType = JsonUtil.collectionType(List::class.java, ScholarlyWork::class.java)
+            val works: List<ScholarlyWork>? = JsonUtil.fromJson(encoded, collectionType)
             if (works == null) {
                 removeInvalidEntry(key)
                 null
@@ -61,7 +60,7 @@ class RedisCrossrefLookupCache(
     private fun store(key: String, works: List<ScholarlyWork>) {
         val normalized = normalizeWorks(works)
         val ttl = if (normalized.isEmpty()) negativeTtl else positiveTtl
-        cacheStore.store(key, objectMapper.writeValueAsString(normalized), ttl)
+        cacheStore.store(key, JsonUtil.toJson(normalized), ttl)
     }
 
     private fun delete(key: String): Boolean = cacheStore.invalidate(key)

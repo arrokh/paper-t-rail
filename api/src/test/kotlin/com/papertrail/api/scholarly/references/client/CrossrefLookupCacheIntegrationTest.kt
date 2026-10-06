@@ -184,7 +184,6 @@ class CrossrefLookupCacheIntegrationTest {
             val gatedServer = MockRestServiceServer.bindTo(builder).build()
             val gatedLookup = CrossrefScholarlyMetadataLookup(
                 client = builder.build(),
-                objectMapper = objectMapper,
                 callGate = ProviderCallGate(fixture.catalog),
                 configuration = configuration,
                 contactEmail = null,
@@ -239,7 +238,6 @@ class CrossrefLookupCacheIntegrationTest {
         val server = MockRestServiceServer.bindTo(builder).build()
         return CrossrefScholarlyMetadataLookup(
             client = builder.build(),
-            objectMapper = objectMapper,
             callGate = ProviderCallGate(fixture.catalog),
             configuration = fixture.configuration,
             contactEmail = fixture.contactEmail,
@@ -258,7 +256,6 @@ class CrossrefLookupCacheIntegrationTest {
             DataCategory.PROVIDER_CONTACT_EMAIL.id.takeIf { !contactEmail.isNullOrBlank() },
         )
         val configuration = RunConfigurationFactory(
-            objectMapper = objectMapper,
             providerCatalog = catalog,
             parserId = "grobid",
             parserVersion = "0.9.1-crf",
@@ -276,7 +273,7 @@ class CrossrefLookupCacheIntegrationTest {
     private fun cache(
         positiveTtl: Duration = Duration.ofDays(30),
         negativeTtl: Duration = Duration.ofHours(1),
-    ) = RedisCrossrefLookupCache(RedisProviderCacheStore(redis), objectMapper, positiveTtl, negativeTtl)
+    ) = RedisCrossrefLookupCache(RedisProviderCacheStore(redis), positiveTtl, negativeTtl)
 
     private data class ProviderFixture(
         val catalog: ProviderCatalog,

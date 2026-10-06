@@ -1,4 +1,4 @@
-package com.papertrail.api.citation.repository
+package com.papertrail.api.analysis.http
 
 import java.util.UUID
 

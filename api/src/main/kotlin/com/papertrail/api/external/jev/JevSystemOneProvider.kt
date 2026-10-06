@@ -1,7 +1,7 @@
 package com.papertrail.api.external.jev
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
@@ -25,7 +25,6 @@ import com.papertrail.api.evidence.verification.provider.SystemOneProvider
 @Component
 class JevSystemOneProvider(
     private val settings: JevSystemOneSettings,
-    private val objectMapper: ObjectMapper,
     private val executionService: AnalysisRunExecutionService? = null,
 ) : SystemOneProvider {
     override val providerId = JevSystemOneSettings.PROVIDER_ID
@@ -237,7 +236,7 @@ class JevSystemOneProvider(
         val state = linkedMapOf("claim" to claim, "evidence" to passage.text)
         passage.sectionHeading?.takeIf(String::isNotBlank)?.let { state["section"] = it }
         val requestBody = try {
-            objectMapper.writeValueAsBytes(
+            JsonUtil.toJsonBytes(
                 linkedMapOf(
                     "model" to settings.modelId,
                     "state" to state,
@@ -272,7 +271,7 @@ class JevSystemOneProvider(
 
     private fun mapResponse(body: ByteArray, evidenceCandidateId: UUID): EvidenceJudgement {
         val response = try {
-            objectMapper.readTree(body)
+            JsonUtil.parseTree(body)
         } catch (_: IOException) {
             throw invalidResponse(
                 "Jev System One returned a malformed response.",

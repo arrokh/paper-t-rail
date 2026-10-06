@@ -1,8 +1,7 @@
 package com.papertrail.api.analysis.pagination
 
-import java.nio.charset.StandardCharsets
+import com.papertrail.api.infrastructure.pagination.OpaqueCursorTokenCodec
 import java.time.Instant
-import java.util.Base64
 import java.util.UUID
 
 internal data class AnalysisRunCursor(
@@ -18,20 +17,14 @@ internal object AnalysisRunCursorCodec {
     private const val SEPARATOR = '|'
 
     fun encode(createdAt: Instant, id: UUID, direction: Direction): String {
-        val payload = "$direction$SEPARATOR$createdAt$SEPARATOR$id".toByteArray(StandardCharsets.UTF_8)
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(payload)
+        val payload = "$direction$SEPARATOR$createdAt$SEPARATOR$id"
+        return OpaqueCursorTokenCodec.encode(payload)
     }
 
     fun encode(createdAt: Instant, id: UUID): String = encode(createdAt, id, Direction.NEXT)
 
     fun decode(value: String): AnalysisRunCursor {
-        if (value.isBlank() || value.length > MAX_CURSOR_LENGTH) invalidCursor()
-
-        val payload = try {
-            String(Base64.getUrlDecoder().decode(value), StandardCharsets.UTF_8)
-        } catch (_: IllegalArgumentException) {
-            invalidCursor()
-        }
+        val payload = OpaqueCursorTokenCodec.decode(value, MAX_CURSOR_LENGTH, INVALID_CURSOR_MESSAGE)
         val fields = payload.split(SEPARATOR)
         val (direction, timestampText, idText) = when (fields.size) {
             // Keep cursors issued by the older one-way API usable as next-page cursors.
@@ -58,5 +51,7 @@ internal object AnalysisRunCursorCodec {
         return AnalysisRunCursor(createdAt, id, direction)
     }
 
-    private fun invalidCursor(): Nothing = throw IllegalArgumentException("Analysis Run cursor is invalid.")
+    private fun invalidCursor(): Nothing = throw IllegalArgumentException(INVALID_CURSOR_MESSAGE)
+
+    private const val INVALID_CURSOR_MESSAGE = "Analysis Run cursor is invalid."
 }

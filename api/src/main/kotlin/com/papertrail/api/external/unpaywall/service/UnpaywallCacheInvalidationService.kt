@@ -1,6 +1,6 @@
 package com.papertrail.api.external.unpaywall.service
 
-import com.papertrail.api.infrastructure.cache.CacheInvalidationResponse
+import com.papertrail.api.external.unpaywall.http.CacheInvalidationResponse
 import com.papertrail.api.infrastructure.cache.OperatorCredentialVerifier
 import com.papertrail.api.external.unpaywall.UnpaywallDiscoveryCache
 import com.papertrail.api.external.unpaywall.http.UnpaywallCacheInvalidationRequest

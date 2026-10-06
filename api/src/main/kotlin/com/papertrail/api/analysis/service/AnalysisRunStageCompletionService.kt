@@ -3,11 +3,11 @@ package com.papertrail.api.analysis.service
 import com.papertrail.api.analysis.repository.AnalysisRunStageCompletionRepository
 import com.papertrail.api.citation.repository.ParsedDocumentRepository
 import com.papertrail.api.document.repository.SourceDocumentRepository
-import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
+import com.papertrail.api.evidence.events.CITED_PAPER_INDEXING_REQUESTED
 import com.papertrail.api.external.jev.JevSystemOneSettings
 import com.papertrail.api.external.laya.LayaSystemOneSettings
-import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
-import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
+import com.papertrail.api.scholarly.acquisition.events.CITED_PAPER_ACQUISITION_REQUESTED
+import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC

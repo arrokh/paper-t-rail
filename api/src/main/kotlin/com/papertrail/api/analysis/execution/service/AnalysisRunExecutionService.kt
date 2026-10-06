@@ -1,8 +1,8 @@
 package com.papertrail.api.analysis.execution.service
 
-import com.papertrail.api.analysis.execution.*
+import com.papertrail.api.analysis.execution.domain.*
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
@@ -11,6 +11,7 @@ import java.net.URI
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
+import com.papertrail.api.analysis.execution.pagination.ExecutionSpanCursorCodec
 import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
 import com.papertrail.api.analysis.execution.http.AnalysisRunExecutionSummary
 import com.papertrail.api.analysis.execution.http.ExecutionArtifactResponse
@@ -21,7 +22,6 @@ import com.papertrail.api.analysis.execution.http.ExecutionSpanResponse
 class AnalysisRunExecutionService(
     private val repository: AnalysisRunExecutionRepository,
     private val sanitizer: ExecutionCaptureSanitizer,
-    private val objectMapper: ObjectMapper,
 ) {
     private val activeSpan = ThreadLocal<ExecutionSpanHandle?>()
     private val captureNanosBySpan = ThreadLocal.withInitial { mutableMapOf<UUID, Long>() }
@@ -370,7 +370,7 @@ class AnalysisRunExecutionService(
             }
         }
         if (safe.size != attributes.size) markGap(analysisRunId, "UNSAFE_SPAN_ATTRIBUTES_OMITTED")
-        return objectMapper.writeValueAsString(safe)
+        return JsonUtil.toJson(safe)
     }
 
     private fun markGap(analysisRunId: UUID, reason: String) {

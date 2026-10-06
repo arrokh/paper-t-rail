@@ -1,15 +1,17 @@
 package com.papertrail.api.evidence.queue
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.repository.AnalysisRunProcessingRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
-import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
-import com.papertrail.api.analysis.execution.ExecutionSpanSpec
-import com.papertrail.api.analysis.execution.ExecutionOperationId
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
+import com.papertrail.api.analysis.execution.domain.ExecutionOperationId
 import com.papertrail.api.document.repository.SourceDocumentRepository
+import com.papertrail.api.evidence.events.CITED_PAPER_INDEXING_HANDLER
+import com.papertrail.api.evidence.events.CITED_PAPER_INDEXING_REQUESTED
+import com.papertrail.api.evidence.events.CitedPaperIndexingRequestedPayload
 import com.papertrail.api.evidence.service.EvidenceRetrievalService
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.repository.InboxRepository
@@ -26,7 +28,6 @@ class CitedPaperIndexingRequestedHandler(
     private val sourceDocumentRepository: SourceDocumentRepository,
     private val inboxRepository: InboxRepository,
     private val transactionTemplate: TransactionTemplate,
-    private val objectMapper: ObjectMapper,
     private val evidenceRetrievalService: EvidenceRetrievalService,
     private val evidenceRetrievalRepository: EvidenceRetrievalRepository,
     private val evidenceVerificationService: EvidenceVerificationService,
@@ -37,7 +38,7 @@ class CitedPaperIndexingRequestedHandler(
     fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
 
     fun handle(serializedEvent: String): UUID {
-        val event: PipelineEvent<CitedPaperIndexingRequestedPayload> = objectMapper.readValue(serializedEvent)
+        val event: PipelineEvent<CitedPaperIndexingRequestedPayload> = JsonUtil.fromJson(serializedEvent)
         require(event.eventType == CITED_PAPER_INDEXING_REQUESTED) { "Unsupported event type '${event.eventType}'." }
         executionService?.recordQueueIntervals(
             event.analysisRunId, event.eventId, event.attempt, "evidence", event.queueWaitStartedAt,

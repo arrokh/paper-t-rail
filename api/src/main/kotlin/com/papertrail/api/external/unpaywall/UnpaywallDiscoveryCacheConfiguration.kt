@@ -1,6 +1,5 @@
 package com.papertrail.api.external.unpaywall
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.infrastructure.cache.ProviderCacheStore
 import com.papertrail.api.external.unpaywall.RedisUnpaywallDiscoveryCache
 import com.papertrail.api.external.unpaywall.UnpaywallDiscoveryCache
@@ -14,8 +13,7 @@ class UnpaywallDiscoveryCacheConfiguration {
     @Bean
     fun unpaywallDiscoveryCache(
         cacheStore: ProviderCacheStore,
-        objectMapper: ObjectMapper,
         @Value("\${paper-trail.providers.unpaywall.cache.positive-ttl:24h}") positiveTtl: Duration,
         @Value("\${paper-trail.providers.unpaywall.cache.negative-ttl:1h}") negativeTtl: Duration,
-    ): UnpaywallDiscoveryCache = RedisUnpaywallDiscoveryCache(cacheStore, objectMapper, positiveTtl, negativeTtl)
+    ): UnpaywallDiscoveryCache = RedisUnpaywallDiscoveryCache(cacheStore, positiveTtl, negativeTtl)
 }

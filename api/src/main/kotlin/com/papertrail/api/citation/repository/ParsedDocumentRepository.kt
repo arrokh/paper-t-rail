@@ -1,6 +1,14 @@
 package com.papertrail.api.citation.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
+import com.papertrail.api.analysis.http.ParsedAtomicClaimView
+import com.papertrail.api.analysis.http.ParsedBibliographyEntryView
+import com.papertrail.api.analysis.http.ParsedCitationContextView
+import com.papertrail.api.analysis.http.ParsedCitationOccurrenceView
+import com.papertrail.api.analysis.http.ParsedClaimCitationTargetView
+import com.papertrail.api.analysis.http.ParsedDocumentView
+import com.papertrail.api.analysis.http.ParsedParserProvenance
+import com.papertrail.api.analysis.http.ParsedSectionView
 import com.papertrail.api.citation.claims.domain.CitationContextClaims
 import com.papertrail.api.citation.claims.domain.CitationTargetKey
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
@@ -12,7 +20,6 @@ import java.util.UUID
 @Repository
 class ParsedDocumentRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
 ) {
     fun save(
         analysisRunId: UUID,
@@ -72,7 +79,7 @@ class ParsedDocumentRepository(
                 entry.localReferenceKey,
                 entry.rawText,
                 entry.title,
-                objectMapper.writeValueAsString(entry.authors),
+                JsonUtil.toJson(entry.authors),
                 entry.year,
                 entry.doi,
                 entry.referenceType,
@@ -340,7 +347,7 @@ class ParsedDocumentRepository(
         localReferenceKey = getString("local_reference_key"),
         rawText = getString("raw_text"),
         title = getString("parsed_title"),
-        authors = objectMapper.readValue(getString("parsed_authors"), objectMapper.typeFactory.constructCollectionType(List::class.java, String::class.java)),
+        authors = JsonUtil.fromJson(getString("parsed_authors"), JsonUtil.collectionType(List::class.java, String::class.java)),
         year = getObject("parsed_year", Integer::class.java)?.toInt(),
         doi = getString("parsed_doi"),
         referenceType = getString("reference_type"),

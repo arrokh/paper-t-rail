@@ -8,7 +8,7 @@ import com.papertrail.api.analysis.http.CreatedAnalysisRunResponse
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.analysis.http.UploadAnalysisRunRequest
 import com.papertrail.api.analysis.service.AnalysisRunService
-import com.papertrail.api.citation.repository.ParsedDocumentView
+import com.papertrail.api.analysis.http.ParsedDocumentView
 import com.papertrail.api.document.validation.DocumentValidationException
 import com.papertrail.api.http.ApiError
 import io.swagger.v3.oas.annotations.Operation

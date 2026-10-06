@@ -1,9 +1,9 @@
 package com.papertrail.api.analysis.execution.service
 
-import com.papertrail.api.analysis.execution.*
+import com.papertrail.api.analysis.execution.domain.*
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.fasterxml.jackson.databind.node.ObjectNode
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
@@ -15,8 +15,7 @@ class ExecutionCaptureSanitizer(
     @Value("\${paper-trail.analysis.execution.max-artifact-bytes}")
     private val maxArtifactBytes: Int = DEFAULT_MAX_ARTIFACT_BYTES,
 ) {
-    private val objectMapper = ObjectMapper()
-    private val scholarlyResponseProjector = ScholarlyProviderResponseProjector(objectMapper)
+    private val scholarlyResponseProjector = ScholarlyProviderResponseProjector()
 
     init {
         require(maxArtifactBytes in 1..DEFAULT_MAX_ARTIFACT_BYTES) {
@@ -180,10 +179,10 @@ class ExecutionCaptureSanitizer(
         ) return omitted(schemaVersion, "UNSUPPORTED_OR_UNSAFE_FIELDS")
 
         var omittedFields = response.fieldNames().asSequence().toSet() != setOf("model", "answers", "usage")
-        val sanitizedAnswers = objectMapper.createObjectNode()
+        val sanitizedAnswers = JsonUtil.objectNode()
         answers.fields().asSequence().forEach { (question, answer) ->
             val answerType = answer.path("type").takeIf(JsonNode::isTextual)?.asText()
-            val supportedAnswer = objectMapper.createObjectNode()
+            val supportedAnswer = JsonUtil.objectNode()
             when (answerType) {
                 "choice" -> {
                     val expectedChoices = when (question) {
@@ -228,7 +227,7 @@ class ExecutionCaptureSanitizer(
             }
             sanitizedAnswers.set<ObjectNode>(question, supportedAnswer)
         }
-        val supported = objectMapper.createObjectNode()
+        val supported = JsonUtil.objectNode()
             .put("model", model)
         supported.set<ObjectNode>("answers", sanitizedAnswers)
         supported.set<JsonNode>("usage", usage)
@@ -246,7 +245,7 @@ class ExecutionCaptureSanitizer(
             !tokenCounts.isArray || tokenCounts.isEmpty || tokenCounts.size() > MAX_SYSTEM_ONE_QUESTIONS ||
             tokenCounts.any { !it.isIntegralNumber || !it.canConvertToLong() || it.asLong() < 0 }
         ) return omitted(schemaVersion, "UNSUPPORTED_OR_UNSAFE_FIELDS")
-        val supported = objectMapper.createObjectNode()
+        val supported = JsonUtil.objectNode()
             .put("contextLimit", contextLimit.asInt())
         supported.set<JsonNode>("tokenCounts", tokenCounts)
         val sanitized = sanitizeJsonTree(schemaVersion, supported)
@@ -285,10 +284,10 @@ class ExecutionCaptureSanitizer(
         value.isNumber && value.doubleValue().isFinite() && value.doubleValue() in 0.0..1.0
 
     fun sanitizeCrossrefRequest(uri: URI): SanitizedExecutionArtifact {
-        val pathParameters = objectMapper.createObjectNode()
+        val pathParameters = JsonUtil.objectNode()
         val doi = uri.path.removePrefix("/works/").takeIf { it != uri.path && DOI.matches(it) }
         doi?.let { pathParameters.put("doi", it) }
-        val queryParameters = objectMapper.createObjectNode()
+        val queryParameters = JsonUtil.objectNode()
         var emailOmitted = false
         var bibliographicQueryOmitted = false
         var unsupportedParameterOmitted = false
@@ -305,7 +304,7 @@ class ExecutionCaptureSanitizer(
                 else -> unsupportedParameterOmitted = true
             }
         }
-        val request = objectMapper.createObjectNode()
+        val request = JsonUtil.objectNode()
             .put("method", "GET")
             .put("route", "/works")
             .put("contactParameterOmitted", emailOmitted)
@@ -334,7 +333,7 @@ class ExecutionCaptureSanitizer(
             ?: return omitted("unpaywall-request-v1", "UNSUPPORTED_OR_UNSAFE_FIELDS")
         val contactEmailOmitted = query.containsKey("email")
         val unsupportedParameterOmitted = query.keys.any { it != "email" }
-        val request = objectMapper.createObjectNode()
+        val request = JsonUtil.objectNode()
             .put("method", "GET")
             .put("route", "/v2/{doi}")
             .put("doi", doi)
@@ -357,7 +356,7 @@ class ExecutionCaptureSanitizer(
         val rawUrl = uri.toASCIIString()
         val safeUrl = sanitizeUrl(rawUrl)
         if (safeUrl == REDACTED) return omitted("open-access-content-request-v1", "UNSUPPORTED_OR_UNSAFE_FIELDS")
-        val request = objectMapper.createObjectNode()
+        val request = JsonUtil.objectNode()
             .put("method", "GET")
             .put("url", safeUrl)
             .put("queryOmitted", uri.rawQuery != null)
@@ -396,7 +395,7 @@ class ExecutionCaptureSanitizer(
         }
 
         val content = try {
-            objectMapper.writeValueAsString(sanitized)
+            JsonUtil.toJson(sanitized)
         } catch (_: Exception) {
             return omitted(schemaVersion, "SANITIZATION_FAILED")
         }
@@ -420,19 +419,19 @@ class ExecutionCaptureSanitizer(
     }
 
     private fun serializePartial(schemaVersion: String, reason: String, fields: Map<String, Any?>): SanitizedExecutionArtifact {
-        val content = runCatching { objectMapper.writeValueAsString(fields) }.getOrNull()
+        val content = runCatching { JsonUtil.toJson(fields) }.getOrNull()
             ?: return omitted(schemaVersion, "SANITIZATION_FAILED")
         if (content.toByteArray(Charsets.UTF_8).size > maxArtifactBytes) return omitted(schemaVersion, "ARTIFACT_TOO_LARGE")
         return SanitizedExecutionArtifact(content, CaptureFidelity.PARTIAL, reason, schemaVersion)
     }
 
-    private fun parseJson(body: ByteArray): JsonNode? = runCatching { objectMapper.readTree(body) }.getOrNull()
+    private fun parseJson(body: ByteArray): JsonNode? = runCatching { JsonUtil.parseTree(body) }.getOrNull()
 
     private fun sanitizeJsonTree(schemaVersion: String, source: JsonNode): SanitizedExecutionArtifact {
         var changed = false
         fun scrub(node: JsonNode): JsonNode? = when {
             node.isObject -> {
-                val safe = objectMapper.createObjectNode()
+                val safe = JsonUtil.objectNode()
                 node.fields().forEachRemaining { (name, value) ->
                     if (isSensitiveFieldName(name)) {
                         changed = true
@@ -444,21 +443,21 @@ class ExecutionCaptureSanitizer(
                 safe
             }
             node.isArray -> {
-                val safe = objectMapper.createArrayNode()
-                node.forEach { value -> safe.add(scrub(value) ?: objectMapper.nullNode().also { changed = true }) }
+                val safe = JsonUtil.arrayNode()
+                node.forEach { value -> safe.add(scrub(value) ?: JsonUtil.nullNode().also { changed = true }) }
                 safe
             }
             node.isTextual -> {
                 val original = node.asText()
                 val sanitized = sanitizeText(original)
                 if (sanitized != original) changed = true
-                objectMapper.nodeFactory.textNode(sanitized)
+                JsonUtil.textNode(sanitized)
             }
             node.isBinary -> null
             else -> node.deepCopy<JsonNode>()
         }
         val sanitized = scrub(source) ?: return omitted(schemaVersion, "UNSUPPORTED_OR_UNSAFE_FIELDS")
-        val content = runCatching { objectMapper.writeValueAsString(sanitized) }.getOrNull()
+        val content = runCatching { JsonUtil.toJson(sanitized) }.getOrNull()
             ?: return omitted(schemaVersion, "SANITIZATION_FAILED")
         if (content.toByteArray(Charsets.UTF_8).size > maxArtifactBytes) return omitted(schemaVersion, "ARTIFACT_TOO_LARGE")
         return SanitizedExecutionArtifact(

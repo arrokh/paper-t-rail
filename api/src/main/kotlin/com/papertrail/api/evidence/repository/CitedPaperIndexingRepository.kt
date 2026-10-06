@@ -1,6 +1,6 @@
 package com.papertrail.api.evidence.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -9,7 +9,6 @@ import java.util.UUID
 @Repository
 class CitedPaperIndexingRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
 ) {
     fun isEligible(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
         """
@@ -35,7 +34,7 @@ class CitedPaperIndexingRepository(
 
     fun configuration(analysisRunId: UUID): AnalysisConfigurationSnapshot? = jdbc.query(
         "SELECT configuration_snapshot::text FROM analysis_runs WHERE id = ?",
-        { rs, _ -> objectMapper.readValue(rs.getString(1), AnalysisConfigurationSnapshot::class.java) },
+        { rs, _ -> JsonUtil.fromJson(rs.getString(1), AnalysisConfigurationSnapshot::class.java) },
         analysisRunId,
     ).firstOrNull()
 

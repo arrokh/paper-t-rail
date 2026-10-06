@@ -1,4 +1,4 @@
-package com.papertrail.api.evidence.queue
+package com.papertrail.api.evidence.events
 
 import java.util.UUID
 

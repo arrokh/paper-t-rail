@@ -1,6 +1,6 @@
 package com.papertrail.api.infrastructure.messaging.repository
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -11,10 +11,9 @@ import java.util.UUID
 @Repository
 class OutboxRepository(
     private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
 ) {
     fun insert(event: PipelineEvent<*>, createdAt: Instant? = null) {
-        val serializedEvent = objectMapper.writeValueAsString(event)
+        val serializedEvent = JsonUtil.toJson(event)
         val persistedAt = createdAt ?: Instant.now()
         jdbc.update(
             """

@@ -31,7 +31,7 @@ class OllamaEmbeddingProviderContractTest {
             val settings = settings(server.baseUrl, apiKey = "server-only-secret")
             val factory = configurationFactory(settings)
             val configuration = factory.from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.PROVIDER_ID))
-            val provider = OllamaEmbeddingProvider(settings, ProviderCallGate(factoryCatalog(settings)), mapper)
+            val provider = OllamaEmbeddingProvider(settings, ProviderCallGate(factoryCatalog(settings)))
 
             val chunkVector = provider.embed(
                 "a private cited-paper chunk",
@@ -99,7 +99,6 @@ class OllamaEmbeddingProviderContractTest {
             val provider = OllamaEmbeddingProvider(
                 settings,
                 ProviderCallGate(catalog),
-                mapper,
             )
             val requiredCategories = listOf("atomic_claims", "cited_paper_chunks", "embedding_input")
 
@@ -236,11 +235,9 @@ class OllamaEmbeddingProviderContractTest {
     private fun provider(settings: OllamaEmbeddingSettings): OllamaEmbeddingProvider = OllamaEmbeddingProvider(
         settings,
         ProviderCallGate(factoryCatalog(settings)),
-        mapper,
     )
 
     private fun configurationFactory(settings: OllamaEmbeddingSettings): RunConfigurationFactory = RunConfigurationFactory(
-        objectMapper = mapper,
         providerCatalog = factoryCatalog(settings),
         parserId = "grobid",
         parserVersion = "0.9.1-crf",
