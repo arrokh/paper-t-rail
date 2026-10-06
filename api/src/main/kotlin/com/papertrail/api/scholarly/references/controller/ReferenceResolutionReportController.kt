@@ -1,7 +1,7 @@
 package com.papertrail.api.scholarly.references.controller
 
 import com.papertrail.api.http.ApiError
-import com.papertrail.api.scholarly.references.report.ReferenceResolutionReportResponse
+import com.papertrail.api.scholarly.references.http.ReferenceResolutionReportResponse
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.media.Content

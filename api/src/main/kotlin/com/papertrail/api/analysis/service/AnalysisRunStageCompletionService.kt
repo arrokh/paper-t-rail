@@ -1,10 +1,10 @@
 package com.papertrail.api.analysis.service
 
-import com.papertrail.api.citation.parsing.ParsedDocumentRepository
+import com.papertrail.api.citation.repository.ParsedDocumentRepository
 import com.papertrail.api.document.service.lockActiveAnalysisRun
 import com.papertrail.api.evidence.queue.CITED_PAPER_INDEXING_REQUESTED
-import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.jev.JevSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import com.papertrail.api.scholarly.acquisition.queue.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService

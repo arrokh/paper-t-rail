@@ -15,13 +15,13 @@ import com.papertrail.api.infrastructure.providers.OPEN_ACCESS_ROLE
 import com.papertrail.api.infrastructure.providers.SCHOLARLY_METADATA_ROLE
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
 import com.papertrail.api.evidence.domain.EmbeddingProfile
-import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
+import com.papertrail.api.external.ollama.OllamaEmbeddingSettings
 import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
-import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.jev.JevSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 
 class RunConfigurationFactory(
     private val objectMapper: ObjectMapper,

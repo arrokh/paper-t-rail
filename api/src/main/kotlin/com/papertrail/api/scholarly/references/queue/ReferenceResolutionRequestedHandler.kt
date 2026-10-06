@@ -2,9 +2,9 @@ package com.papertrail.api.scholarly.references.queue
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
-import com.papertrail.api.analysis.service.AnalysisRunPipelineProgressRepository
+import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
 import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.analysis.execution.ExecutionOperationId

@@ -5,7 +5,7 @@ import com.papertrail.api.scholarly.references.client.BibliographyReference
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookupFactory
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
-import com.papertrail.api.scholarly.references.report.ReferenceResolutionReportResponse
+import com.papertrail.api.scholarly.references.http.ReferenceResolutionReportResponse
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
 import com.papertrail.api.scholarly.references.resolver.ReferenceResolutionStatus
 import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRepository

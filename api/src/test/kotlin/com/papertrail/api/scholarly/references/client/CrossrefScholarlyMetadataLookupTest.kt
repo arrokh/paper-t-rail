@@ -1,7 +1,7 @@
 package com.papertrail.api.scholarly.references.client
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
@@ -24,6 +24,7 @@ import org.springframework.test.web.client.match.MockRestRequestMatchers.request
 import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
 import org.springframework.web.client.RestClient
 import org.hamcrest.Matchers.containsString
+import com.papertrail.api.external.crossref.CrossrefScholarlyMetadataLookup
 
 class CrossrefScholarlyMetadataLookupTest {
     private val objectMapper = jacksonObjectMapper()

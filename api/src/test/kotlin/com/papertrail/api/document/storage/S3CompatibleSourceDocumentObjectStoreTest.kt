@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import com.papertrail.api.external.s3.S3CompatibleSourceDocumentObjectStore
 
 class S3CompatibleSourceDocumentObjectStoreTest {
     @Test

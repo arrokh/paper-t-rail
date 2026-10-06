@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.citation.claims.domain.AnalyzedAtomicClaim
 import com.papertrail.api.citation.claims.domain.AtomicClaimCandidate
 import com.papertrail.api.citation.claims.domain.ClaimAnalysisContextInput
@@ -15,9 +15,9 @@ import com.papertrail.api.citation.claims.domain.CitationContextClaims
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleChatClient
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleProviderException
+import com.papertrail.api.external.openai.OpenAiCompatibleChatClient
+import com.papertrail.api.external.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.external.openai.OpenAiCompatibleProviderException
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 

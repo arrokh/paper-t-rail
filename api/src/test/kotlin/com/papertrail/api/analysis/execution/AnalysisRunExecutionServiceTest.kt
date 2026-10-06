@@ -6,14 +6,14 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
-import com.papertrail.api.scholarly.references.client.CrossrefScholarlyMetadataLookup
+import com.papertrail.api.external.crossref.CrossrefScholarlyMetadataLookup
 import com.papertrail.api.scholarly.references.client.NoOpCrossrefLookupCache
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
 import com.papertrail.api.infrastructure.providers.externalProviderConsent
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleChatClient
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.external.openai.OpenAiCompatibleChatClient
+import com.papertrail.api.external.openai.OpenAiCompatibleEndpointSettings
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -32,6 +32,9 @@ import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
 
 class AnalysisRunExecutionServiceTest {
     @Test

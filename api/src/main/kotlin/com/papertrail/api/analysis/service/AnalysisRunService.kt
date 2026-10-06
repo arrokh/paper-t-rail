@@ -11,10 +11,11 @@ import com.papertrail.api.analysis.http.CreatedAnalysisRunResponse
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.analysis.pagination.AnalysisRunCursorCodec
 import com.papertrail.api.analysis.pagination.Direction
+import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
-import com.papertrail.api.citation.parsing.ParsedDocumentRepository
-import com.papertrail.api.citation.parsing.ParsedDocumentView
+import com.papertrail.api.citation.repository.ParsedDocumentRepository
+import com.papertrail.api.citation.repository.ParsedDocumentView
 import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.document.service.SourceDocumentDeletedException
 import com.papertrail.api.document.service.lockActiveSourceDocument

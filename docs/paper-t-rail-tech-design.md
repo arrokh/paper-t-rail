@@ -2569,58 +2569,71 @@ This hybrid approach is easier to reason about than pure choreography.
 
 # 37. Suggested Backend Package Structure
 
-Keep one Spring Boot project initially. Group code by business capability first; within each feature, use role packages that make the execution path easy to follow. The names below are a guide, not a requirement to create empty packages before their behavior exists.
+Keep one Spring Boot project and group business code by capability first. Inside each feature, use role packages that make the execution path easy to follow. Group external integration mechanics by provider under `external/<provider>`. The names below are a guide, not a requirement to create empty packages before their behavior exists.
 
 ```text
-api/
-├── bootstrap/
+com.papertrail.api/
+├── PaperTrailApplication.kt        # Stable application/scanning root
+├── config/                         # Cross-feature Spring composition
+├── openapi/                        # Generated-contract framework wiring
+├── http/                           # Shared HTTP contracts (for example ApiError)
 ├── document/
-│   ├── controller/       # Only if document-specific HTTP routes exist
-│   ├── service/          # Upload, validation, retention/deletion use cases
-│   ├── domain/           # Source Document rules and value types
-│   ├── repository/       # Document metadata persistence
-│   └── storage/          # Source object-store port and adapter
+│   ├── controller/                 # Document HTTP entry points
+│   ├── service/                    # Upload, validation, retention/deletion use cases
+│   ├── domain/                     # Source Document rules and value types
+│   ├── repository/                 # Document metadata persistence
+│   └── storage/                    # Feature contract and storage ownership
 ├── analysis/
-│   ├── controller/       # Analysis Run HTTP entry points
-│   ├── service/          # Create, process, query, and lifecycle use cases
-│   ├── domain/           # Run state/provenance rules
-│   ├── configuration/    # Immutable run-pinned configuration snapshots
-│   ├── repository/       # Run persistence and read projections
-│   └── queue/            # Analysis Run-specific event handlers
+│   ├── controller/                 # Analysis Run HTTP entry points
+│   ├── service/                    # Create, process, query, and lifecycle use cases
+│   ├── domain/                     # Run state/provenance rules
+│   ├── configuration/              # Immutable run-pinned configuration snapshots
+│   ├── repository/                 # Run persistence and read projections
+│   ├── queue/                      # Analysis Run-specific event handlers
+│   └── execution/                  # Execution-trace feature and role packages
 ├── citation/
-│   ├── parsing/          # Parser contract, GROBID adapter, parsed structures
-│   ├── claims/           # Atomic Claim extraction and citation associations
-│   ├── domain/           # Citation Context, Bibliography Entry, and claim rules
-│   └── repository/       # Run-scoped parsed citation persistence
+│   ├── parsing/                    # Parser contracts and parsed structures
+│   ├── claims/                     # Claim extraction and citation associations
+│   ├── domain/                     # Citation Context, Bibliography Entry, and rules
+│   └── repository/                 # Run-scoped parsed citation persistence
 ├── scholarly/
-│   └── references/
-│       ├── controller/
-│       ├── service/      # Resolve-entry and report use cases
-│       ├── resolver/     # Pure conservative matching policy
-│       ├── repository/   # Resolution outcomes and Canonical Paper persistence
-│       ├── client/       # Scholarly metadata provider adapters
-│       ├── report/       # Reference Resolution Report projections
-│       └── queue/        # Per-Bibliography-Entry resolution handler
-├── evidence/             # Run-scoped Cited Paper parsing, chunking, embedding, retrieval, and indexing
-├── review/               # Add when Human Review is implemented
-├── infrastructure/
-│   ├── messaging/        # Generic outbox, inbox, stream worker, event envelope
-│   ├── providers/        # Shared provider catalog and consent gate
-│   ├── logging/
-│   └── observability/
-└── config/               # Composition root and framework configuration
+│   ├── references/                 # Resolution, matching, reporting, queue flows
+│   └── acquisition/                # Access policy and acquisition use cases
+├── evidence/                       # Parsing, chunking, retrieval, and indexing use cases
+├── review/                         # Human Review business capability
+├── external/
+│   ├── crossref/                   # Provider communication, cache, wiring, operator API
+│   ├── unpaywall/
+│   ├── grobid/
+│   ├── docling/
+│   ├── openai/                     # Shared transport; feature prompts remain feature-owned
+│   ├── ollama/
+│   ├── jev/
+│   ├── laya/
+│   └── s3/
+└── infrastructure/
+    ├── http/                       # Generic operational HTTP (health/error advice)
+    ├── messaging/                  # Generic outbox, inbox, stream worker, event envelope
+    ├── providers/                  # Shared provider catalog and consent gate
+    ├── cache/
+    ├── crypto/
+    └── logging/
 ```
+
+Within a feature, use `controller` for HTTP routing/binding, `service` for business operations/orchestration, `repository` for persistence adapters, `http` for our inbound/outbound API contracts, and focused `domain`/policy packages for business rules and values. Use `model` only for persistence records/projections. Feature `queue` packages own feature event payloads and handlers; generic broker/outbox mechanisms remain in `infrastructure`. Provider wire DTOs, communication, provider-specific configuration/cache mechanics, and provider integration factories live with that provider. A real provider-operator endpoint can have provider-local `controller`, `service`, and `http` roles; its request DTO is our operator API contract, not a remote wire type.
 
 The intended call paths are explicit and short:
 
 ```text
-HTTP controller → feature service/use case → domain policy + repository/client adapter
-Generic message worker → feature queue handler → the same feature service/use case
+HTTP controller or feature queue handler → feature service/use case
+feature service → domain policy + repository and/or external client
 ```
 
-Keep feature-specific adapters and policies beside the feature they serve. Only genuinely reusable mechanisms—such as the generic Redis worker, outbox publisher, provider consent gate, and logging—belong in shared infrastructure. Do not create global `controllers/`, `services/`, or `repositories/` packages, and do not use `model` as a general-purpose bucket: reserve it for persistence entities/projections; keep HTTP contracts, run configuration snapshots, and domain types in their own focused packages. Put Spring-managed application services/components in a feature's `service/`; framework adapters remain in their role packages. Prefer one named production type per focused file.
+Not every operation needs every layer. A feature service can consume an integration contract; a replacement integration implements that contract, while contextual feature behavior normally composes the client. Do not add interfaces, wrappers, or inheritance only for package consistency. Keep business interpretation, prompts, matching policies, lifecycle decisions, and outcomes with the owning feature. Provider code may retain existing imports of feature contracts/configuration where moving it is part of a behavior-preserving organization change; package names alone do not imply module isolation, trust classification, or context-neutral lifetimes.
 
-Migrate incrementally by end-to-end flow. Keep the public HTTP contract, persisted schema, event envelope, retry/idempotency behavior, and transaction boundaries unchanged during structural refactors. Keep the behavior tests beside the owning feature; async integration tests should exercise the real message-to-terminal-state flow.
+Keep genuinely generic mechanisms—such as the Redis worker, outbox publisher, shared provider gate/catalog, cache, crypto, and logging—in `infrastructure`. Do not create global `controllers/`, `services/`, or `repositories/` packages, or use `model` as a general-purpose bucket. Prefer one meaningful named production type per focused file, with cohesive private-helper exceptions; do not create empty packages or extract behavior merely to satisfy a file-size convention.
+
+Migrate incrementally with rename-aware review. During organization-only changes, preserve class names/signatures/visibility, Spring bean wiring and lifetimes, public HTTP/OpenAPI contracts, persisted schema/SQL/transactions, event envelopes/retries/idempotency, provider consent/configuration fingerprints, cache formats/keys/TTLs, and resource locations. If a move requires a behavior, API, visibility, or lifetime change, stop and design that change separately. Keep behavior tests with their owning feature; async integration checks should exercise the real role wiring and message-to-terminal-state flow.
 ---
 
 # 38. Repository Layout

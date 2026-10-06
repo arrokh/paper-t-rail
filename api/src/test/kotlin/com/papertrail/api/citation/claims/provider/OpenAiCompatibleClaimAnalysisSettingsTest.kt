@@ -1,7 +1,7 @@
 package com.papertrail.api.citation.claims.provider
 
 import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.external.openai.OpenAiCompatibleEndpointSettings
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals

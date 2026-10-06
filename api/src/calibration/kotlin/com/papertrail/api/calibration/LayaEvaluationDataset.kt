@@ -8,7 +8,7 @@ import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresh
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidenceRole
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import com.papertrail.api.scholarly.references.resolver.ReferenceResolutionStatus
 import java.net.URI
 import java.security.MessageDigest

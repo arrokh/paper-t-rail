@@ -20,6 +20,9 @@ import org.junit.jupiter.api.assertThrows
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
+import com.papertrail.api.external.ollama.OllamaEmbeddingException
+import com.papertrail.api.external.ollama.OllamaEmbeddingProvider
+import com.papertrail.api.external.ollama.OllamaEmbeddingSettings
 
 class OllamaEmbeddingProviderContractTest {
     @Test

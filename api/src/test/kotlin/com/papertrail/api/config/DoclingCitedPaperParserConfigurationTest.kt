@@ -1,7 +1,7 @@
 package com.papertrail.api.config
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.papertrail.api.evidence.parsing.DoclingCitedPaperPdfParser
+import com.papertrail.api.external.docling.DoclingCitedPaperPdfParser
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicBoolean
+import com.papertrail.api.external.docling.DoclingCitedPaperParserConfiguration
 
 class DoclingCitedPaperParserConfigurationTest {
     private val configuration = DoclingCitedPaperParserConfiguration()

@@ -2,7 +2,7 @@ package com.papertrail.api.evidence.verification.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
 import com.papertrail.api.document.service.requireActiveAnalysisRun
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
@@ -12,8 +12,8 @@ import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
 import com.papertrail.api.evidence.verification.domain.LayaEvidencePassageSpanPlanner
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementRequest
-import com.papertrail.api.evidence.verification.provider.JevSystemOneProviderException
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.jev.JevSystemOneProviderException
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import com.papertrail.api.evidence.verification.provider.SystemOneProvider
 import com.papertrail.api.evidence.verification.provider.SystemOneProviderException
 import com.papertrail.api.evidence.verification.provider.SystemOneRequestPreflight

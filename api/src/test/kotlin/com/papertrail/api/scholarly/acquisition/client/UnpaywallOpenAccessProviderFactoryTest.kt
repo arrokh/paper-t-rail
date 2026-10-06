@@ -3,10 +3,10 @@ package com.papertrail.api.scholarly.acquisition.client
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionRepository
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.CaptureFidelity
-import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
 import com.papertrail.api.analysis.execution.ExecutionOperationId
 import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
 import com.papertrail.api.analysis.execution.ExecutionSpanHandle
@@ -36,6 +36,7 @@ import org.springframework.web.client.RestClient
 import org.hamcrest.Matchers.containsString
 import java.time.Instant
 import java.util.UUID
+import com.papertrail.api.external.unpaywall.UnpaywallOpenAccessProviderFactory
 
 class UnpaywallOpenAccessProviderFactoryTest {
     private val objectMapper = jacksonObjectMapper()

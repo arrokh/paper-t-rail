@@ -8,9 +8,9 @@ import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgeme
 import com.papertrail.api.evidence.verification.domain.EvidenceRole
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementRequest
 import com.papertrail.api.evidence.verification.domain.SemanticJudgementResult
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneProviderException
-import com.papertrail.api.evidence.verification.provider.LayaEvaluationProvider
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneProviderException
+import com.papertrail.api.external.laya.LayaEvaluationProvider
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull

@@ -19,6 +19,7 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import com.papertrail.api.external.s3.S3CompatibleSourceDocumentObjectStore
 
 /** Set PAPER_TRAIL_STORAGE_TEST_ENDPOINT to run against an already-started isolated service. */
 class S3CompatibleSourceDocumentObjectStoreIntegrationTest {

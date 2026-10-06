@@ -3,8 +3,8 @@ package com.papertrail.api.calibration
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidenceRole
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneProviderException
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneProviderException
+import com.papertrail.api.external.laya.LayaSystemOneSettings
 import com.papertrail.api.scholarly.references.resolver.ReferenceResolutionStatus
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test

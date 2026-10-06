@@ -2,7 +2,7 @@ package com.papertrail.api.scholarly.acquisition.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.service.lockActiveAnalysisRun

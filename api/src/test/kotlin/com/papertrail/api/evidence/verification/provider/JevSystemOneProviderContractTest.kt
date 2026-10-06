@@ -2,10 +2,10 @@ package com.papertrail.api.evidence.verification.provider
 
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionRepository
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.CaptureFidelity
-import com.papertrail.api.analysis.execution.ExecutionCaptureSanitizer
+import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
 import com.papertrail.api.analysis.execution.ExecutionOperationId
 import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
 import com.papertrail.api.analysis.execution.ExecutionSpanHandle
@@ -31,6 +31,9 @@ import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Executors
+import com.papertrail.api.external.jev.JevSystemOneProvider
+import com.papertrail.api.external.jev.JevSystemOneProviderException
+import com.papertrail.api.external.jev.JevSystemOneSettings
 
 class JevSystemOneProviderContractTest {
     private val objectMapper = jacksonObjectMapper()

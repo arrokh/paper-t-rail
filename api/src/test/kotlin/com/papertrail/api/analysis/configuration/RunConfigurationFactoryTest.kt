@@ -5,9 +5,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
-import com.papertrail.api.evidence.verification.provider.JevSystemOneSettings
-import com.papertrail.api.evidence.verification.provider.LayaSystemOneSettings
-import com.papertrail.api.evidence.embedding.OllamaEmbeddingSettings
+import com.papertrail.api.external.jev.JevSystemOneSettings
+import com.papertrail.api.external.laya.LayaSystemOneSettings
+import com.papertrail.api.external.ollama.OllamaEmbeddingSettings
 import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.DataCategory
@@ -21,7 +21,7 @@ import com.papertrail.api.infrastructure.providers.ProviderTrustBoundary
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
 import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
-import com.papertrail.api.infrastructure.providers.openai.OpenAiCompatibleEndpointSettings
+import com.papertrail.api.external.openai.OpenAiCompatibleEndpointSettings
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows

@@ -40,6 +40,9 @@ import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
 import java.time.Duration
 import java.util.concurrent.TimeUnit
+import com.papertrail.api.external.crossref.CrossrefLookupCache
+import com.papertrail.api.external.crossref.RedisCrossrefLookupCache
+import com.papertrail.api.external.crossref.CrossrefScholarlyMetadataLookup
 
 @Testcontainers
 class CrossrefLookupCacheIntegrationTest {
@@ -66,6 +69,19 @@ class CrossrefLookupCacheIntegrationTest {
         assertFalse(cachedValue.contains("operator@example.invalid"))
         assertEquals(setOf("doi", "title", "authors", "year"), objectMapper.readTree(cachedValue).single().fieldNames().asSequence().toSet())
         assertEquals(setOf("crossref:doi:v1:10.1234/cache-hit"), redis.keys("crossref:doi:*").toSet())
+    }
+
+    @Test
+    fun `reads DOI cache JSON written before provider files were relocated`() {
+        redis.opsForValue().set(
+            "crossref:doi:v1:10.1234/legacy",
+            """[{"doi":"10.1234/legacy","title":"Previously cached study","authors":["Ada Example"],"year":2021}]""",
+        )
+
+        assertEquals(
+            listOf(ScholarlyWork("10.1234/legacy", "Previously cached study", listOf("Ada Example"), 2021)),
+            cache().findByDoi("10.1234/legacy"),
+        )
     }
 
     @Test

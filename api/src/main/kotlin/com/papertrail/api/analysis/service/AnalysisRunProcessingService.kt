@@ -3,7 +3,7 @@ package com.papertrail.api.analysis.service
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.citation.claims.service.ClaimAnalysisService
 import com.papertrail.api.citation.claims.service.ClaimCitationPairCounter
-import com.papertrail.api.citation.parsing.ParsedDocumentRepository
+import com.papertrail.api.citation.repository.ParsedDocumentRepository
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.service.isSourceDocumentDeleted
@@ -14,10 +14,11 @@ import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
-import com.papertrail.api.analysis.execution.AnalysisRunExecutionService
+import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
 import com.papertrail.api.analysis.execution.ExecutionOperationId
+import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.scholarly.references.queue.REFERENCE_RESOLUTION_REQUESTED
