@@ -781,7 +781,7 @@ export function AnalysisRunExecution({
   const recordingStatusLabel = summary.recordingState === "RECORDING"
     ? terminalRun ? "Run ended; recording state not finalized" : "Recording"
     : summary.recordingState === "STOPPED"
-      ? terminalRun && !captureWasStopped ? "Recording complete" : "Capture stopped"
+      ? terminalRun && !captureWasStopped ? "Recording complete" : "Recording stopped"
       : "Not recorded";
   const stageName = (stageId: string) => stageId === "other" ? "Other operations" : stageLabel(stageId);
 
@@ -858,7 +858,7 @@ export function AnalysisRunExecution({
         {stopCapture.isError && <p role="alert" className="m-0 basis-full text-sm text-destructive">{permissionError(stopCapture.error)}</p>}
       </div>
 
-      {captureWasStopped && <p className="m-0 text-sm text-muted-foreground">Payload capture was stopped; artifacts already recorded remain available.</p>}
+      {captureWasStopped && <p className="m-0 text-sm text-muted-foreground">Execution recording was stopped; operations and artifacts already recorded remain available.</p>}
 
       {spansQuery.isPending && (
         <div className="space-y-2" aria-label="Loading operations"><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /></div>

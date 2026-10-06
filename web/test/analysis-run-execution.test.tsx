@@ -392,12 +392,12 @@ describe("Analysis Run Execution view", () => {
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=execution`);
     renderRun();
 
-    expect(await screen.findByText("Capture stopped")).toBeTruthy();
+    expect(await screen.findByText("Recording stopped")).toBeTruthy();
     expect(screen.getByText("Payload capture at start").nextElementSibling?.textContent).toBe("Enabled");
-    expect(screen.getByText(/Payload capture was stopped/)).toBeTruthy();
+    expect(screen.getByText(/Execution recording was stopped/)).toBeTruthy();
   });
 
-  it("distinguishes finished recording from stopping payload capture", async () => {
+  it("distinguishes a completed recording from a manual stop", async () => {
     configureExecutionMocks();
     executionMocks.useAnalysisRun.mockReturnValue({
       data: { ...run, status: "COMPLETED" },
@@ -421,8 +421,8 @@ describe("Analysis Run Execution view", () => {
     renderRun();
 
     expect(await screen.findByText("Recording complete")).toBeTruthy();
-    expect(screen.queryByText("Capture stopped")).toBeNull();
-    expect(screen.queryByText(/Future capture has stopped/)).toBeNull();
+    expect(screen.queryByText("Recording stopped")).toBeNull();
+    expect(screen.queryByText(/Execution recording was stopped/)).toBeNull();
     expect(screen.getByText("Incomplete trace")).toBeTruthy();
     expect(screen.getByText("The recording is marked incomplete. Missing spans are not reconstructed.")).toBeTruthy();
   });
