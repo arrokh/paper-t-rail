@@ -1,8 +1,7 @@
-package com.papertrail.api.scholarly.references.http
-
-import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
+package com.papertrail.api.analysis.report.http
 
 import com.papertrail.api.evidence.report.EvidenceCoverageReport
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
 import java.util.UUID
 
 data class ReferenceResolutionReportResponse(

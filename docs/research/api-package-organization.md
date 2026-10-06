@@ -8,7 +8,7 @@ The intended business flow is `controller/queue handler → service → reposito
 
 **Phase A was organization-only:** split focused files, move existing declarations, and update references without changing implementation behavior. At that time, Phase B (including repository-only SQL enforcement) was planned as a separate follow-up. The maintainer later authorized issue [#82](https://github.com/arrokh/paper-t-rail/issues/82) to be implemented in PR #81 alongside the #79 work. The repository-only relational rule is now documented in `api/AGENTS.md` and technical-design §37; this document's Phase A record remains historical and does not limit the authorized #82 scope.
 
-The user approved the refined package structure on 2026-10-06 and authorized Phase A implementation tracked in [issue #79](https://github.com/arrokh/paper-t-rail/issues/79). This document records the #79 scope and implementation evidence; issue #82 defines the additional persistence-ownership work.
+The user approved the refined package structure on 2026-10-06 and authorized Phase A implementation tracked in [issue #79](https://github.com/arrokh/paper-t-rail/issues/79). This document records the #79 scope and implementation evidence; issue #82 defines the additional persistence-ownership work. A later navigation review moved the provider-neutral object-storage contract from `document/storage` to `infrastructure/storage`, because analysis, evidence, acquisition, and deletion features all consume it; the S3 adapter remains in `external/s3`. It also aligned the `/analysis-runs/{runId}/report` HTTP adapter and read orchestration under `analysis/report`, while keeping reference/evidence report projections with their owning features.
 
 **Behavior preservation is an acceptance criterion, not a zero-risk guarantee.** Package changes can affect discovery and contracts even when bodies are unchanged. Use independently reversible commits and stop at the first unexplained difference.
 
@@ -108,13 +108,15 @@ com.papertrail.api/
   http/                       # Shared API contracts: ApiError, HealthResponse
 
   document/
-    controller/  service/  storage/  validation/
+    controller/  service/  validation/
   analysis/
     controller/  http/  service/  repository/
     configuration/            # Immutable run-pinned data, not Spring wiring
     pagination/  queue/
     execution/
       controller/  http/  service/  repository/
+    report/
+      controller/  http/  service/
   citation/
     parsing/  repository/  claims/
   scholarly/
@@ -138,11 +140,11 @@ com.papertrail.api/
     laya/
     s3/
 
-  infrastructure/             # Keep generic mechanisms in this phase
-    messaging/  cache/  crypto/  logging/  http/  providers/
+  infrastructure/             # Shared mechanisms and cross-feature contracts
+    storage/  messaging/  cache/  crypto/  logging/  http/  providers/
 ```
 
-The feature `client`/parser/provider/storage packages retain existing provider-neutral contracts, local implementations, and feature-specific interpretation. They do not retain the provider integration files listed below. Keep business policies, run snapshots, application orchestration, repositories, and queue contracts feature-owned.
+Feature `client`/parser/provider packages retain provider-neutral feature contracts, local implementations, and feature-specific interpretation. Shared object-storage contracts used across features live in `infrastructure.storage`; concrete object-storage adapters remain provider-owned under `external/<provider>`. Keep business policies, run snapshots, application orchestration, repositories, and queue contracts feature-owned.
 
 `external` means an integration outside the application process; it does **not** assign the `EXTERNAL` provider trust classification. Self-hosted GROBID, Docling, or Ollama remain local/trusted or consent-gated exactly as before. Renaming generic `infrastructure` to `shared` is not required here; `shared` must not become an alternative provider dumping ground.
 
@@ -185,7 +187,7 @@ Paths are relative to the production root. Class names and interfaces stay uncha
 
 Crossref's existing client/factory is bound to `AnalysisConfigurationSnapshot`, `ProviderCallGate`, execution capture, and scholarly lookup types. Unpaywall's factory also applies legal-access/public-address checks and creates a per-run implementation. **Phase A preserves those dependencies and per-run lifetimes, even after moving files.** It does not turn either into an unrestricted/global singleton or claim that they are context-neutral modules. Existing feature imports from `external` are a documented transitional condition, not a new dependency-enforcement failure.
 
-Keep these feature-owned examples where they are: `ScholarlyMetadataLookup`/`ScholarlyMetadataLookupFactory`, `BibliographyReference`/`ScholarlyWork`, conservative resolver/DOI rules, `OpenAccessProvider`/`OpenAccessProviderFactory`, legal/public-address policies, parser contracts and parsed structures, `DefaultCitedPaperParser`, embedding/System One contracts and mocks, `LayaEvidencePassageSpanPlanner`, and source-object-store contracts. Keep claim-analysis prompts, payload/response semantics, use-case settings and `OpenAiCompatibleClaimAnalysisProvider` with claim analysis per ADR 0011; that feature implementation composes the shared `external.openai` transport. “All Crossref-related integration files together” is not permission to move scholarly matching or Analysis Run business rules into that provider.
+Keep these feature-owned examples where they are: `ScholarlyMetadataLookup`/`ScholarlyMetadataLookupFactory`, `BibliographyReference`/`ScholarlyWork`, conservative resolver/DOI rules, `OpenAccessProvider`/`OpenAccessProviderFactory`, legal/public-address policies, parser contracts and parsed structures, `DefaultCitedPaperParser`, embedding/System One contracts and mocks, and `LayaEvidencePassageSpanPlanner`. The source-object-store contract initially remained feature-owned in Phase A; the later owner decision moves it to `infrastructure.storage` because multiple features depend on the capability. Keep claim-analysis prompts, payload/response semantics, use-case settings and `OpenAiCompatibleClaimAnalysisProvider` with claim analysis per ADR 0011; that feature implementation composes the shared `external.openai` transport. “All Crossref-related integration files together” is not permission to move scholarly matching or Analysis Run business rules into that provider.
 
 Move corresponding provider tests/fixtures together only when needed for navigation; preserve assertions and class names. Update imports in main, test, and calibration sources, and configuration-test imports. Do not move resource files or regenerate fixtures.
 

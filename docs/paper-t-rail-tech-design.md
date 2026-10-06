@@ -2580,8 +2580,7 @@ com.papertrail.api/
 │   ├── controller/                 # Document HTTP entry points
 │   ├── service/                    # Upload, validation, retention/deletion use cases
 │   ├── domain/                     # Source Document rules and value types
-│   ├── repository/                 # Document metadata persistence
-│   └── storage/                    # Feature contract and storage ownership
+│   └── repository/                 # Document metadata persistence
 ├── analysis/
 │   ├── controller/                 # Analysis Run HTTP entry points
 │   ├── service/                    # Create, process, query, and lifecycle use cases
@@ -2589,7 +2588,11 @@ com.papertrail.api/
 │   ├── configuration/              # Immutable run-pinned configuration snapshots
 │   ├── repository/                 # Run persistence and read projections
 │   ├── queue/                      # Analysis Run-specific event handlers
-│   └── execution/                  # Execution-trace feature and role packages
+│   ├── execution/                  # Execution-trace feature and role packages
+│   └── report/                     # Composite Analysis Run report endpoint/read use case
+│       ├── controller/
+│       ├── http/
+│       └── service/
 ├── citation/
 │   ├── parsing/                    # Parser contracts and parsed structures
 │   ├── claims/                     # Claim extraction and citation associations
@@ -2611,6 +2614,7 @@ com.papertrail.api/
 │   ├── laya/
 │   └── s3/
 └── infrastructure/
+    ├── storage/                    # Shared provider-neutral object-storage contracts
     ├── http/                       # Generic operational HTTP (health/error advice)
     ├── messaging/                  # Generic outbox, inbox, stream worker, event envelope
     ├── providers/                  # Shared provider catalog and consent gate
@@ -2619,7 +2623,7 @@ com.papertrail.api/
     └── logging/
 ```
 
-Within a feature, use `controller` for HTTP routing/binding, `service` for business operations/orchestration, `repository` for persistence adapters, `http` for our inbound/outbound API contracts, and focused `domain`/policy packages for business rules and values. Use `model` only for persistence records/projections. Feature `queue` packages own feature event payloads and handlers; generic broker/outbox mechanisms remain in `infrastructure`. Provider wire DTOs, communication, provider-specific configuration/cache mechanics, and provider integration factories live with that provider. A real provider-operator endpoint can have provider-local `controller`, `service`, and `http` roles; its request DTO is our operator API contract, not a remote wire type.
+Within a feature, use `controller` for HTTP routing/binding, `service` for business operations/orchestration, `repository` for persistence adapters, `http` for our inbound/outbound API contracts, and focused `domain`/policy packages for business rules and values. Use `model` only for persistence records/projections. Feature `queue` packages own feature event payloads and handlers; generic broker/outbox mechanisms remain in `infrastructure`. Provider wire DTOs, communication, provider-specific configuration/cache mechanics, and provider integration factories live with that provider. A real provider-operator endpoint can have provider-local `controller`, `service`, and `http` roles; its request DTO is our operator API contract, not a remote wire type. For navigation, align HTTP adapters with stable public resource paths/OpenAPI groups, but keep domain rules and report projections with their owning features; a composite resource endpoint such as `/analysis-runs/{runId}/report` belongs in an `analysis/report` slice.
 
 ### Relational database boundary
 
@@ -2634,7 +2638,7 @@ feature service → domain policy + repository and/or external client
 
 Not every operation needs every layer. A feature service can consume an integration contract; a replacement integration implements that contract, while contextual feature behavior normally composes the client. Do not add interfaces, wrappers, or inheritance only for package consistency. Keep business interpretation, prompts, matching policies, lifecycle decisions, and outcomes with the owning feature. Provider code may retain existing imports of feature contracts/configuration where moving it is part of a behavior-preserving organization change; package names alone do not imply module isolation, trust classification, or context-neutral lifetimes.
 
-Keep genuinely generic mechanisms—such as the Redis worker, outbox publisher, shared provider gate/catalog, cache, crypto, and logging—in `infrastructure`. Do not create global `controllers/`, `services/`, or `repositories/` packages, or use `model` as a general-purpose bucket. Prefer one meaningful named production type per focused file, with cohesive private-helper exceptions; do not create empty packages or extract behavior merely to satisfy a file-size convention.
+Keep genuinely shared mechanisms—such as the Redis worker, outbox publisher, shared provider gate/catalog, cache, crypto, logging, and provider-neutral object-storage contracts—in `infrastructure`. Concrete object-storage provider adapters remain under `external/<provider>`. Do not create global `controllers/`, `services/`, or `repositories/` packages, or use `model` as a general-purpose bucket. Prefer one meaningful named production type per focused file, with cohesive private-helper exceptions; do not create empty packages or extract behavior merely to satisfy a file-size convention.
 
 Migrate incrementally with rename-aware review. During organization-only changes, preserve class names/signatures/visibility, Spring bean wiring and lifetimes, public HTTP/OpenAPI contracts, persisted schema/SQL/transactions, event envelopes/retries/idempotency, provider consent/configuration fingerprints, cache formats/keys/TTLs, and resource locations. If a move requires a behavior, API, visibility, or lifetime change, stop and design that change separately. Keep behavior tests with their owning feature; async integration checks should exercise the real role wiring and message-to-terminal-state flow.
 ---

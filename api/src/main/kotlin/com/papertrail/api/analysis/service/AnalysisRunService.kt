@@ -20,8 +20,8 @@ import com.papertrail.api.citation.repository.ParsedDocumentView
 import com.papertrail.api.document.domain.SourceDocumentDeletedException
 import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.document.validation.PdfDocumentValidator
-import com.papertrail.api.document.storage.SourceDocumentObjectStore
-import com.papertrail.api.document.storage.SourceObjectMetadata
+import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
+import com.papertrail.api.infrastructure.storage.SourceObjectMetadata
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext

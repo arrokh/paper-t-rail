@@ -2,7 +2,7 @@ package com.papertrail.api.scholarly.acquisition.service
 
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.ExecutionSpanSpec
-import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException

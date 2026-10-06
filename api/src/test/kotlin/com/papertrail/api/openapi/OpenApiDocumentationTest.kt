@@ -9,7 +9,8 @@ import com.papertrail.api.citation.repository.ParsedClaimCitationTargetView
 import com.papertrail.api.citation.repository.ParsedCitationContextView
 import com.papertrail.api.citation.repository.ParsedCitationOccurrenceView
 import com.papertrail.api.citation.repository.ParsedParserProvenance
-import com.papertrail.api.scholarly.references.http.ReferenceResolutionReportResponse
+import com.papertrail.api.analysis.report.http.ReferenceResolutionReportResponse
+import com.papertrail.api.analysis.report.service.AnalysisRunReportService
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
@@ -108,6 +109,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var referenceResolutionService: ReferenceResolutionService
+
+    @MockitoBean
+    private lateinit var analysisRunReportService: AnalysisRunReportService
 
     @MockitoBean
     private lateinit var humanReviewService: HumanReviewService
@@ -877,7 +881,7 @@ class OpenApiDocumentationTest {
             evidenceConflict = false,
             aggregatorVersion = "conflict-aware-evidence-strength-v1",
         )
-        Mockito.`when`(referenceResolutionService.report(runId)).thenReturn(
+        Mockito.`when`(analysisRunReportService.report(runId)).thenReturn(
             ReferenceResolutionReportResponse(
                 analysisRunId = runId,
                 runStatus = "COMPLETED",

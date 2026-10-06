@@ -1,12 +1,12 @@
-package com.papertrail.api.document.storage
+package com.papertrail.api.external.s3
 
+import com.papertrail.api.infrastructure.storage.SourceObjectMetadata
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
-import com.papertrail.api.external.s3.S3CompatibleSourceDocumentObjectStore
 
 class S3CompatibleSourceDocumentObjectStoreTest {
     @Test

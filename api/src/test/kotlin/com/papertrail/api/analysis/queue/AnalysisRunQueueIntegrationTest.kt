@@ -116,6 +116,7 @@ import com.papertrail.api.external.openai.RetryableOpenAiCompatibleProviderExcep
 import com.papertrail.api.citation.claims.service.HeuristicClaimExtractor
 import com.papertrail.api.citation.claims.service.HeuristicClaimAnalysisProvider
 import com.papertrail.api.document.validation.PdfDocumentValidator
+import com.papertrail.api.analysis.report.service.AnalysisRunReportService
 import com.papertrail.api.citation.parsing.ParsedBibliographyEntry
 import com.papertrail.api.citation.parsing.ParsedCitationContext
 import com.papertrail.api.citation.parsing.ParsedCitationOccurrence
@@ -139,8 +140,8 @@ import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRep
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
-import com.papertrail.api.document.storage.SourceDocumentObjectStore
-import com.papertrail.api.document.storage.SourceObjectMetadata
+import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
+import com.papertrail.api.infrastructure.storage.SourceObjectMetadata
 import com.papertrail.api.document.service.SourceDocumentDeletionService
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
@@ -1104,7 +1105,7 @@ class AnalysisRunQueueIntegrationTest {
             Int::class.java,
             created.analysisRunId,
         ))
-        val entry = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val entry = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }
         assertEquals("RESOLVED", entry.status)
         assertNull(entry.citedPaperAccess)
@@ -1130,7 +1131,7 @@ class AnalysisRunQueueIntegrationTest {
             created.analysisRunId,
         ))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
-        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val report = analysisRunReportService().report(created.analysisRunId)!!
         assertEquals("NOT_RUN", report.referenceResolution.executionStatus)
         assertEquals(null, report.referenceResolution.scorePolicyVersion)
         assertEquals(null, report.referenceResolution.confidenceThreshold)
@@ -1324,7 +1325,7 @@ class AnalysisRunQueueIntegrationTest {
         val parsed = service.getParsedDocument(created.analysisRunId)
         assertEquals("grobid", parsed.parser.provider)
         assertEquals(created.hash, parsed.sourceContentSha256)
-        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val reference = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }
         val access = reference.citedPaperAccess!!
         assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
@@ -1372,8 +1373,7 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(HttpStatus.CONFLICT, pendingConflict.statusCode)
 
         processReferenceResolutionEvents(created.analysisRunId)
-        val resolutionService = referenceResolutionService()
-        val before = resolutionService.report(created.analysisRunId)!!.referenceResolution.entries
+        val before = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.verificationOutcomes.first()
         val machineBefore = jdbc.queryForMap(
             "SELECT processing_status, final_status, evidence_conflict, aggregator_version FROM claim_paper_verifications WHERE id = ?",
@@ -1403,7 +1403,7 @@ class AnalysisRunQueueIntegrationTest {
             overrideStatus = null,
             note = null,
         )
-        val after = resolutionService.report(created.analysisRunId)!!.referenceResolution.entries
+        val after = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.verificationOutcomes.first()
 
         assertEquals(machineStatus.name, after.finalStatus)
@@ -1500,7 +1500,7 @@ class AnalysisRunQueueIntegrationTest {
             citedPaperParser = citedPaperParser,
         )
 
-        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val reference = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }
         val outcomes = reference.verificationOutcomes
         assertEquals(1, fetchCalls.get())
@@ -1540,14 +1540,14 @@ class AnalysisRunQueueIntegrationTest {
 
         processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
 
-        val access = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val access = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
         assertEquals(1, fetchCalls.get())
         assertEquals("ABSTRACT_ONLY", access.accessStatus)
         assertEquals("FULL_TEXT_ACQUISITION_FAILED", access.accessReason)
         assertEquals(failedLocation.url, access.sourceUrl)
         assertEquals("CC0-1.0", access.license)
-        val outcomes = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val outcomes = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertTrue(outcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
     }
@@ -1584,7 +1584,7 @@ class AnalysisRunQueueIntegrationTest {
 
         processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
 
-        val access = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val access = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
         assertEquals(2, fetchCalls.get())
         assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
@@ -1709,7 +1709,7 @@ class AnalysisRunQueueIntegrationTest {
 
         processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
 
-        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val reference = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }
         val access = reference.citedPaperAccess!!
         assertEquals("ABSTRACT_ONLY", access.accessStatus)
@@ -1739,11 +1739,11 @@ class AnalysisRunQueueIntegrationTest {
 
         processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
 
-        val access = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val access = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
         assertEquals("METADATA_ONLY", access.accessStatus)
         assertEquals("NO_LEGAL_FULL_TEXT_LOCATION", access.accessReason)
-        val outcomes = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val outcomes = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertTrue(outcomes.isNotEmpty())
         assertTrue(outcomes.all { it.finalStatus == "INACCESSIBLE" })
@@ -1764,12 +1764,12 @@ class AnalysisRunQueueIntegrationTest {
 
         processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
 
-        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val reference = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }
         val access = reference.citedPaperAccess!!
         assertEquals("UNAVAILABLE", access.accessStatus)
         assertEquals("NO_ACCESSIBLE_METADATA", access.accessReason)
-        val outcomes = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val outcomes = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertTrue(outcomes.isNotEmpty())
         assertTrue(outcomes.all { it.finalStatus == "INACCESSIBLE" })
@@ -1799,7 +1799,7 @@ class AnalysisRunQueueIntegrationTest {
 
         processReferenceResolutionEvents(created.analysisRunId, listOf(factory), frenchDetector)
 
-        val reference = referenceResolutionService().report(created.analysisRunId)!!.referenceResolution.entries
+        val reference = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }
         val access = reference.citedPaperAccess!!
         assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
@@ -1873,7 +1873,7 @@ class AnalysisRunQueueIntegrationTest {
             providerCatalog = catalog,
         )
 
-        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val report = analysisRunReportService().report(created.analysisRunId)!!
         val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertTrue(jevCalls.get() > 0)
         assertEquals("COMPLETED", report.runStatus)
@@ -1960,7 +1960,7 @@ class AnalysisRunQueueIntegrationTest {
             retryIndexingOnce = true,
         )
 
-        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val report = analysisRunReportService().report(created.analysisRunId)!!
         val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertEquals(3, jevCalls.get())
         assertEquals("COMPLETED", report.runStatus)
@@ -2041,7 +2041,7 @@ class AnalysisRunQueueIntegrationTest {
             stageAppender.stop()
         }
 
-        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val report = analysisRunReportService().report(created.analysisRunId)!!
         val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertTrue(jevCalls.get() > 0)
         val startedLog = appender.list.first { it.message == "System One verification started" }
@@ -2161,7 +2161,7 @@ class AnalysisRunQueueIntegrationTest {
             appender.stop()
         }
 
-        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val report = analysisRunReportService().report(created.analysisRunId)!!
         val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertTrue(jevCalls.get() > 0)
         val persistedLog = appender.list.first { it.message == "System One judgements persisted" }
@@ -2185,7 +2185,7 @@ class AnalysisRunQueueIntegrationTest {
     @Test
     fun `runs selected Laya for eligible passages when local aggregation is disabled`() {
         val (analysisRunId, layaCallCount) = runLayaPipeline(systemOneAggregationEnabled = false)
-        val report = referenceResolutionService().report(analysisRunId)!!
+        val report = analysisRunReportService().report(analysisRunId)!!
         val reference = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }
         val passages = reference.verificationOutcomes.flatMap { it.evidencePassages }
 
@@ -2217,7 +2217,7 @@ class AnalysisRunQueueIntegrationTest {
             systemOneAggregationEnabled = false,
             providerFailureReasonCode = LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED,
         )
-        val report = referenceResolutionService().report(analysisRunId)!!
+        val report = analysisRunReportService().report(analysisRunId)!!
         val failedPairs = report.referenceResolution.entries.flatMap { it.verificationOutcomes }
             .filter { it.processingFailureReason == LayaSystemOneProviderException.CONTEXT_LIMIT_EXCEEDED }
         val progressMessage = jdbc.queryForObject(
@@ -2245,7 +2245,7 @@ class AnalysisRunQueueIntegrationTest {
     @Test
     fun `explicit local Laya aggregation persists final statuses and labels them experimental`() {
         val (analysisRunId, layaCallCount) = runLayaPipeline(systemOneAggregationEnabled = true)
-        val report = referenceResolutionService().report(analysisRunId)!!
+        val report = analysisRunReportService().report(analysisRunId)!!
         val reference = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }
         val semanticOutcomes = reference.verificationOutcomes.filter { it.verificationScope == "FULL_TEXT" }
 
@@ -2280,7 +2280,7 @@ class AnalysisRunQueueIntegrationTest {
             systemOneAggregationEnabled = true,
             metadataOnly = true,
         )
-        val report = referenceResolutionService().report(analysisRunId)!!
+        val report = analysisRunReportService().report(analysisRunId)!!
         val outcomes = report.referenceResolution.entries.flatMap { it.verificationOutcomes }
         val accessOutcomes = report.referenceResolution.entries.mapNotNull { it.citedPaperAccess }
         val progressMessage = jdbc.queryForObject(
@@ -2436,7 +2436,7 @@ class AnalysisRunQueueIntegrationTest {
             tokenCountForPassage = { LayaSystemOneSettings.MODEL_CONTEXT_TOKENS },
             paperText = text,
         )
-        val outcomes = referenceResolutionService().report(analysisRunId)!!
+        val outcomes = analysisRunReportService().report(analysisRunId)!!
             .referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
         val passages = outcomes.flatMap { it.evidencePassages }
 
@@ -2460,7 +2460,7 @@ class AnalysisRunQueueIntegrationTest {
             tokenCountForPassage = { LayaSystemOneSettings.MODEL_CONTEXT_TOKENS + 1 },
             paperText = text,
         )
-        val outcomes = referenceResolutionService().report(analysisRunId)!!
+        val outcomes = analysisRunReportService().report(analysisRunId)!!
             .referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
         val spans = outcomes.flatMap { it.evidencePassages }.flatMap { it.diagnosticSpans }
 
@@ -2474,7 +2474,7 @@ class AnalysisRunQueueIntegrationTest {
                 it.processingFailureReason == "SYSTEM_ONE_INCOMPLETE" &&
                 it.finalStatus == null
         })
-        assertEquals("COMPLETED_WITH_WARNINGS", referenceResolutionService().report(analysisRunId)!!.runStatus)
+        assertEquals("COMPLETED_WITH_WARNINGS", analysisRunReportService().report(analysisRunId)!!.runStatus)
         assertTrue(jdbc.queryForObject(
             "SELECT progress ->> 'message' FROM analysis_runs WHERE id = ?",
             String::class.java,
@@ -2496,7 +2496,7 @@ class AnalysisRunQueueIntegrationTest {
             retryIndexingOnce = true,
             paperText = text,
         )
-        val report = referenceResolutionService().report(analysisRunId)!!
+        val report = analysisRunReportService().report(analysisRunId)!!
         val outcomes = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
         val diagnosticPassages = outcomes.flatMap { it.evidencePassages }.filter { it.diagnosticSpans.isNotEmpty() }
         val spans = diagnosticPassages.flatMap { it.diagnosticSpans }
@@ -2592,7 +2592,7 @@ class AnalysisRunQueueIntegrationTest {
             embeddingProviders = listOf(ollamaProvider),
         )
 
-        val report = resolutionService.report(created.analysisRunId)!!
+        val report = analysisRunReportService().report(created.analysisRunId)!!
         val reference = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }
         val retrievalProfile = requireNotNull(reference.citedPaperAccess?.evidenceIndexing).retrievalProfile
         assertEquals("PARSED", report.runStatus)
@@ -2739,7 +2739,7 @@ class AnalysisRunQueueIntegrationTest {
             resolutionService = resolutionService,
         )
 
-        val entries = resolutionService.report(created.analysisRunId)!!.referenceResolution.entries.associateBy { it.localReferenceKey }
+        val entries = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries.associateBy { it.localReferenceKey }
         val alpha = entries.getValue("ref-alpha")
         val beta = entries.getValue("ref-beta")
         assertEquals("COMPLETED", alpha.citedPaperAccess?.evidenceIndexing?.status)
@@ -2832,7 +2832,7 @@ class AnalysisRunQueueIntegrationTest {
         assertThrows(IllegalStateException::class.java) { indexingHandler.handle(serializedIndexingEvent) }
         indexingHandler.markFailed(indexingEvent, "System One retry limit reached.")
 
-        val report = resolutionService.report(created.analysisRunId)!!
+        val report = analysisRunReportService().report(created.analysisRunId)!!
         val failedPairs = report.referenceResolution.entries.single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertEquals(2, failedPairs.size)
         assertTrue(failedPairs.all { it.processingStatus == "INCOMPLETE" })
@@ -3116,7 +3116,7 @@ class AnalysisRunQueueIntegrationTest {
                 parsed.citationContexts[1].atomicClaims.single().citationTargets.single().id,
             )
         }
-        val report = referenceResolutionService().report(created.analysisRunId)!!
+        val report = analysisRunReportService().report(created.analysisRunId)!!
         assertEquals("COMPLETED", report.referenceResolution.executionStatus)
         assertEquals("title-author-year-weighted-edit-similarity-v1", report.referenceResolution.scorePolicyVersion)
         assertEquals(0.25, report.referenceResolution.confidenceThreshold)
@@ -3439,7 +3439,7 @@ class AnalysisRunQueueIntegrationTest {
                 Int::class.java,
                 created.analysisRunId,
             ))
-            val report = resolutionService.report(created.analysisRunId)!!
+            val report = analysisRunReportService().report(created.analysisRunId)!!
             assertEquals("COMPLETED_WITH_WARNINGS", report.referenceResolution.executionStatus)
             assertEquals(1, report.referenceResolution.summary.failed)
             assertEquals(0, report.referenceResolution.summary.notAttempted)
@@ -4017,6 +4017,25 @@ class AnalysisRunQueueIntegrationTest {
 
     private fun humanReviewService(): HumanReviewService = HumanReviewService(humanReviewRepository())
 
+    private fun evidenceCoverageReportRepository() = EvidenceCoverageReportRepository(
+        jdbc,
+        EvidenceReportRepository(
+            jdbc,
+            EvidencePassageSpanRepository(
+                jdbc,
+                objectMapper,
+                TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            ),
+        ),
+        humanReviewRepository(),
+    )
+
+    private fun analysisRunReportService() = AnalysisRunReportService(
+        referenceResolutionRepository = ReferenceResolutionRepository(jdbc, objectMapper),
+        citedPaperAccessRepository = CitedPaperAccessRepository(jdbc, objectMapper),
+        evidenceCoverageReportRepository = evidenceCoverageReportRepository(),
+    )
+
     private fun referenceResolutionService(
         lookupFactories: List<ScholarlyMetadataLookupFactory> = listOf(RecordedFixtureScholarlyMetadataLookupFactory(objectMapper)),
     ) = ReferenceResolutionService(
@@ -4024,19 +4043,6 @@ class AnalysisRunQueueIntegrationTest {
         transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
         claimReferenceVerificationRepository = claimReferenceVerificationRepository(),
         repository = ReferenceResolutionRepository(jdbc, objectMapper),
-        citedPaperAccessRepository = CitedPaperAccessRepository(jdbc, objectMapper),
-        evidenceCoverageReportRepository = EvidenceCoverageReportRepository(
-            jdbc,
-            EvidenceReportRepository(
-                jdbc,
-                EvidencePassageSpanRepository(
-                    jdbc,
-                    objectMapper,
-                    TransactionTemplate(DataSourceTransactionManager(dataSource)),
-                ),
-            ),
-            humanReviewRepository(),
-        ),
         lookupFactories = lookupFactories,
     )
 

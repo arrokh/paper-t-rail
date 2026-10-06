@@ -7,8 +7,8 @@ import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
-import com.papertrail.api.document.storage.SourceDocumentObjectStore
-import com.papertrail.api.document.storage.SourceObjectMetadata
+import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
+import com.papertrail.api.infrastructure.storage.SourceObjectMetadata
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
 import com.papertrail.api.evidence.domain.EvidenceClaim
 import com.papertrail.api.evidence.domain.EvidenceIndexingContext

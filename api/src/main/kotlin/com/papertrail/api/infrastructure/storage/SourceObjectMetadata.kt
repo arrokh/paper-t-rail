@@ -1,4 +1,4 @@
-package com.papertrail.api.document.storage
+package com.papertrail.api.infrastructure.storage
 
 data class SourceObjectMetadata(
     val size: Long,

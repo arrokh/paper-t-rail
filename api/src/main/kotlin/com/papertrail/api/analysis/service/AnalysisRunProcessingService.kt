@@ -4,7 +4,7 @@ import com.papertrail.api.citation.claims.service.ClaimAnalysisService
 import com.papertrail.api.citation.claims.service.ClaimCitationPairCounter
 import com.papertrail.api.citation.repository.ParsedDocumentRepository
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
-import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.infrastructure.crypto.sha256Hex

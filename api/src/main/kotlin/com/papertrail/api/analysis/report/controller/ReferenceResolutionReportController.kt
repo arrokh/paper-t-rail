@@ -1,8 +1,8 @@
-package com.papertrail.api.scholarly.references.controller
+package com.papertrail.api.analysis.report.controller
 
+import com.papertrail.api.analysis.report.http.ReferenceResolutionReportResponse
+import com.papertrail.api.analysis.report.service.AnalysisRunReportService
 import com.papertrail.api.http.ApiError
-import com.papertrail.api.scholarly.references.http.ReferenceResolutionReportResponse
-import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.media.Content
 import io.swagger.v3.oas.annotations.media.Schema
@@ -22,7 +22,7 @@ import java.util.UUID
 @RequestMapping("/api/v1")
 @Tag(name = "Analysis Runs", description = "Upload Source Documents and inspect immutable Analysis Runs.")
 class ReferenceResolutionReportController(
-    private val referenceResolutionService: ReferenceResolutionService,
+    private val analysisRunReportService: AnalysisRunReportService,
 ) {
     @Operation(
         summary = "Get the Reference Resolution Report",
@@ -35,6 +35,6 @@ class ReferenceResolutionReportController(
         ],
     )
     @GetMapping("/analysis-runs/{runId}/report", produces = [MediaType.APPLICATION_JSON_VALUE])
-    fun getReport(@PathVariable runId: UUID): ReferenceResolutionReportResponse = referenceResolutionService.report(runId)
+    fun getReport(@PathVariable runId: UUID): ReferenceResolutionReportResponse = analysisRunReportService.report(runId)
         ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
 }

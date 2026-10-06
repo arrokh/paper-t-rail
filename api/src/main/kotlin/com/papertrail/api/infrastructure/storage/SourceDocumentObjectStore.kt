@@ -1,4 +1,4 @@
-package com.papertrail.api.document.storage
+package com.papertrail.api.infrastructure.storage
 
 interface SourceDocumentObjectStore {
     fun put(objectKey: String, content: ByteArray, contentType: String = "application/pdf")

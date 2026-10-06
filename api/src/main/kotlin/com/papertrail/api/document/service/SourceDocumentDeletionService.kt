@@ -1,7 +1,7 @@
 package com.papertrail.api.document.service
 
 import com.papertrail.api.document.repository.SourceDocumentDeletionRepository
-import com.papertrail.api.document.storage.SourceDocumentObjectStore
+import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
