@@ -272,7 +272,10 @@ function ExecutionSpanTreeRow({
   span: ExecutionSpan;
   timelineRow: ReturnType<typeof getExecutionTimeline>["rows"][number];
 }) {
-  const children = (childrenByParent.get(span.id) ?? []).filter((child) => visibleIds.has(child.id));
+  const stageGroupId = normalizePipelineStageId(span.stageId) ?? "other";
+  const children = (childrenByParent.get(span.id) ?? []).filter((child) =>
+    visibleIds.has(child.id) && (normalizePipelineStageId(child.stageId) ?? "other") === stageGroupId,
+  );
   const hasChildren = children.length > 0;
   const isRunning = isActiveExecutionSpan(span);
   const stageOpen = span.kind.toLowerCase() === "stage"
@@ -390,6 +393,7 @@ function ArtifactCapture({
   const mediaType = artifactMatchesRequest ? artifact?.mediaType ?? descriptor.mediaType : descriptor.mediaType;
   const sizeBytes = artifactMatchesRequest ? artifact?.sizeBytes ?? descriptor.sizeBytes : descriptor.sizeBytes;
   const reason = artifactMatchesRequest ? artifact?.reason ?? descriptor.reason : "The artifact response did not match this operation and is unavailable.";
+  const displayReason = reason === "UNSUPPORTED_OR_UNSAFE_FIELDS" ? null : reason;
   const content = artifactMatchesRequest ? artifact?.content : null;
   const contentSizeBytes = typeof content === "string"
     ? sizeBytes ?? new TextEncoder().encode(content).byteLength
@@ -445,13 +449,13 @@ function ArtifactCapture({
           </div>
         )}
       </div>
-      {reason && (typeof content === "string" || artifactQuery.isPending || artifactQuery.isError || removed) && <p className="m-0 text-sm text-muted-foreground">{reason}</p>}
+      {displayReason && (typeof content === "string" || artifactQuery.isPending || artifactQuery.isError || removed) && <p className="m-0 text-sm text-muted-foreground">{displayReason}</p>}
       {copyFailed && <p className="m-0 text-sm text-destructive" role="alert">Could not copy this sanitized artifact to the clipboard.</p>}
       {hasArtifactId && artifactQuery.isPending && <Skeleton className="h-24 w-full" aria-label="Loading captured artifact" />}
       {hasArtifactId && artifactQuery.isError && <Alert variant="destructive"><AlertTitle>Artifact unavailable</AlertTitle><AlertDescription>{permissionError(artifactQuery.error)}</AlertDescription></Alert>}
       {(!hasArtifactId || (!artifactQuery.isPending && !artifactQuery.isError)) && (removed || content == null) && (
         <p className="m-0 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-          {removed ? "This artifact was removed. Its captured content is no longer available." : reason ?? "No artifact content was captured for this operation."}
+          {removed ? "This artifact was removed. Its captured content is no longer available." : displayReason ?? "No artifact content was captured for this operation."}
         </p>
       )}
       {typeof content === "string" && !artifactQuery.isError && !useArtifactDialog && (
@@ -718,10 +722,13 @@ export function AnalysisRunExecution({
   const visibleRows = timeline.rows.filter((row) => filteredIds.has(row.span.id));
   const stageGroups = useMemo(() => {
     const groups = new Map<string, ExecutionSpan[]>();
-    const loadedSpanIds = new Set(spans.map((span) => span.id));
+    const spansById = new Map(spans.map((span) => [span.id, span]));
     for (const span of spans) {
-      if (!filteredIds.has(span.id) || (span.parentSpanId && loadedSpanIds.has(span.parentSpanId))) continue;
+      if (!filteredIds.has(span.id)) continue;
       const groupId = normalizePipelineStageId(span.stageId) ?? "other";
+      const parent = span.parentSpanId ? spansById.get(span.parentSpanId) : undefined;
+      const parentGroupId = parent ? normalizePipelineStageId(parent.stageId) ?? "other" : null;
+      if (parentGroupId === groupId) continue;
       const group = groups.get(groupId) ?? [];
       group.push(span);
       groups.set(groupId, group);
@@ -770,9 +777,12 @@ export function AnalysisRunExecution({
 
   const elapsedLabel = formatElapsed(summary, terminalRun, executionNow);
   const traceMayBeIncomplete = summary.completeness === "INCOMPLETE" || (terminalRun && summary.recordingState === "RECORDING");
+  const captureWasStopped = summary.captureRequested === true && !summary.captureEnabled;
   const recordingStatusLabel = summary.recordingState === "RECORDING"
     ? terminalRun ? "Run ended; recording state not finalized" : "Recording"
-    : summary.recordingState === "STOPPED" ? "Capture stopped" : "Not recorded";
+    : summary.recordingState === "STOPPED"
+      ? terminalRun && !captureWasStopped ? "Recording complete" : "Capture stopped"
+      : "Not recorded";
   const stageName = (stageId: string) => stageId === "other" ? "Other operations" : stageLabel(stageId);
 
   return (
@@ -848,7 +858,7 @@ export function AnalysisRunExecution({
         {stopCapture.isError && <p role="alert" className="m-0 basis-full text-sm text-destructive">{permissionError(stopCapture.error)}</p>}
       </div>
 
-      {summary.recordingState === "STOPPED" && <p className="m-0 text-sm text-muted-foreground">Future capture has stopped; this did not remove artifacts already recorded.</p>}
+      {captureWasStopped && <p className="m-0 text-sm text-muted-foreground">Payload capture was stopped; artifacts already recorded remain available.</p>}
 
       {spansQuery.isPending && (
         <div className="space-y-2" aria-label="Loading operations"><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /><Skeleton className="h-12 w-full" /></div>
