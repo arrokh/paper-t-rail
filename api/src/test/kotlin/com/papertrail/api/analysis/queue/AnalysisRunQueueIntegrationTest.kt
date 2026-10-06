@@ -10,6 +10,10 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.papertrail.api.analysis.configuration.AggregationPolicySnapshot
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
+import com.papertrail.api.analysis.repository.AnalysisRunProcessingRepository
+import com.papertrail.api.analysis.repository.AnalysisRunRepository
+import com.papertrail.api.analysis.repository.AnalysisRunStageCompletionRepository
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.service.ExecutionCaptureSanitizer
 import com.papertrail.api.analysis.execution.ExecutionOperationId
@@ -42,9 +46,10 @@ import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedHandler
 import com.papertrail.api.evidence.queue.CitedPaperIndexingRequestedPayload
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.evidence.service.EvidenceRetrievalService
+import com.papertrail.api.evidence.repository.CitedPaperIndexingRepository
 import com.papertrail.api.evidence.repository.EvidenceRetrievalRepository
 import com.papertrail.api.evidence.repository.EvidenceReportRepository
-import com.papertrail.api.evidence.report.EvidenceCoverageReportRepository
+import com.papertrail.api.evidence.repository.EvidenceCoverageReportRepository
 import com.papertrail.api.evidence.verification.domain.LayaEvidencePassageSpanPlanner
 import com.papertrail.api.review.domain.HumanReviewAction
 import com.papertrail.api.review.repository.HumanReviewRepository
@@ -75,7 +80,7 @@ import com.papertrail.api.evidence.embedding.EmbeddingRequestContext
 import com.papertrail.api.evidence.embedding.FeatureHashEmbeddingProvider
 import com.papertrail.api.external.ollama.OllamaEmbeddingSettings
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
-import com.papertrail.api.evidence.retrieval.PostgresHybridEvidenceRetriever
+import com.papertrail.api.evidence.repository.PostgresHybridEvidenceRetriever
 import com.papertrail.api.evidence.retrieval.ReciprocalRankFusion
 import com.papertrail.api.evidence.parsing.CitedPaperParser
 import com.papertrail.api.evidence.parsing.DefaultCitedPaperParser
@@ -92,8 +97,12 @@ import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
 import com.papertrail.api.scholarly.acquisition.service.PdfBoxCitedPaperTextExtractor
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedPayload
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
+import com.papertrail.api.infrastructure.messaging.repository.InboxRepository
+import com.papertrail.api.infrastructure.messaging.repository.OutboxRepository
 import com.papertrail.api.infrastructure.messaging.redis.RedisStreamWorker
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedHandler
+import com.papertrail.api.document.repository.SourceDocumentDeletionRepository
+import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.document.validation.DocumentLanguageDetector
 import com.papertrail.api.document.validation.LanguageDetection
 import com.papertrail.api.document.validation.OptimaizeDocumentLanguageDetector
@@ -835,7 +844,7 @@ class AnalysisRunQueueIntegrationTest {
             }
         }
         val deletionService = SourceDocumentDeletionService(
-            jdbc,
+            SourceDocumentDeletionRepository(jdbc),
             TransactionTemplate(DataSourceTransactionManager(dataSource)),
             flakyObjectStore,
         )
@@ -2977,7 +2986,7 @@ class AnalysisRunQueueIntegrationTest {
         operations.add(stream, mapOf("bootstrap" to "1"))
         operations.createGroup(stream, ReadOffset.from("$"), group)
 
-        val publisher = OutboxPublisher(jdbc, redis, stream)
+        val publisher = OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream)
         publisher.publishPending()
         val envelope = jdbc.queryForObject("SELECT payload::text FROM outbox_events WHERE analysis_run_id = ?", String::class.java, created.analysisRunId)
         operations.add(stream, mapOf("event" to envelope!!)) // Simulate a repeated at-least-once delivery.
@@ -3166,7 +3175,7 @@ class AnalysisRunQueueIntegrationTest {
         val operations = redis.opsForStream<String, String>()
         operations.add(stream, mapOf("bootstrap" to "1"))
         operations.createGroup(stream, ReadOffset.from("$"), group)
-        OutboxPublisher(jdbc, redis, stream).publishPending()
+        OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
 
         val abandoned = operations.read(
             Consumer.from(group, "crashed-worker"),
@@ -3200,11 +3209,11 @@ class AnalysisRunQueueIntegrationTest {
             workerLogger.detachAppender(appender)
         }
 
-        OutboxPublisher(jdbc, redis, stream).publishPending()
+        OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
         replacement.poll()
-        OutboxPublisher(jdbc, redis, stream).publishPending()
+        OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
         replacement.poll()
-        OutboxPublisher(jdbc, redis, stream).publishPending()
+        OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
         replacement.poll()
         assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
         val processedEvent = objectMapper.readTree(abandoned.value.getValue("event"))
@@ -3227,7 +3236,7 @@ class AnalysisRunQueueIntegrationTest {
         val operations = redis.opsForStream<String, String>()
         operations.add(stream, mapOf("bootstrap" to "1"))
         operations.createGroup(stream, ReadOffset.from("$"), group)
-        OutboxPublisher(jdbc, redis, stream).publishPending()
+        OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
 
         val parserStarted = CountDownLatch(1)
         val continueParsing = CountDownLatch(1)
@@ -3279,12 +3288,12 @@ class AnalysisRunQueueIntegrationTest {
         }
 
         assertFalse(activePoll.isAlive, "Active worker did not finish after parsing was released.")
-        OutboxPublisher(jdbc, redis, stream).publishPending()
+        OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
         try {
             replacementWorker.poll()
-            OutboxPublisher(jdbc, redis, stream).publishPending()
+            OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
             replacementWorker.poll()
-            OutboxPublisher(jdbc, redis, stream).publishPending()
+            OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
             replacementWorker.poll()
         } finally {
             replacementWorker.shutdownLeaseHeartbeat()
@@ -3321,7 +3330,7 @@ class AnalysisRunQueueIntegrationTest {
         worker.createConsumerGroup()
 
         try {
-            OutboxPublisher(jdbc, redis, stream).publishPending()
+            OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
             worker.poll()
             assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
             assertEquals(4, jdbc.queryForObject(
@@ -3331,7 +3340,7 @@ class AnalysisRunQueueIntegrationTest {
                 REFERENCE_RESOLUTION_REQUESTED,
             ))
 
-            OutboxPublisher(jdbc, redis, stream).publishPending()
+            OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
             worker.poll()
             assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
             assertEquals(3, jdbc.queryForObject(
@@ -3353,9 +3362,9 @@ class AnalysisRunQueueIntegrationTest {
             }
             redis.opsForHash<String, String>().put("$stream:retry-after", failedMessage.id.value, "0")
             worker.poll()
-            OutboxPublisher(jdbc, redis, stream).publishPending()
+            OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
             worker.poll()
-            OutboxPublisher(jdbc, redis, stream).publishPending()
+            OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
             worker.poll()
 
             assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
@@ -3399,9 +3408,9 @@ class AnalysisRunQueueIntegrationTest {
         worker.createConsumerGroup()
 
         try {
-            OutboxPublisher(jdbc, redis, stream).publishPending()
+            OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
             worker.poll()
-            OutboxPublisher(jdbc, redis, stream).publishPending()
+            OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
             worker.poll()
             assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, created.analysisRunId))
 
@@ -3517,7 +3526,7 @@ class AnalysisRunQueueIntegrationTest {
         val operations = redis.opsForStream<String, String>()
         operations.add(stream, mapOf("bootstrap" to "1"))
         operations.createGroup(stream, ReadOffset.from("$"), group)
-        OutboxPublisher(jdbc, redis, stream).publishPending()
+        OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
 
         val worker = RedisStreamWorker(
             redis = redis,
@@ -3613,7 +3622,7 @@ class AnalysisRunQueueIntegrationTest {
         val operations = redis.opsForStream<String, String>()
         operations.add(stream, mapOf("bootstrap" to "1"))
         operations.createGroup(stream, ReadOffset.from("$"), group)
-        OutboxPublisher(jdbc, redis, stream).publishPending()
+        OutboxPublisher(OutboxRepository(jdbc, objectMapper), redis, stream).publishPending()
         var providerCalls = 0
         val failingProvider = object : ClaimAnalysisProvider {
             override val providerId = OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID
@@ -3875,7 +3884,7 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     private fun sourceDocumentDeletionService() = SourceDocumentDeletionService(
-        jdbc = jdbc,
+        repository = SourceDocumentDeletionRepository(jdbc),
         transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
         objectStore = objectStore,
     )
@@ -3963,15 +3972,19 @@ class AnalysisRunQueueIntegrationTest {
         )
         val factory = configurationFactory(providerCatalog)
         return AnalysisRunService(
-            jdbc,
-            transactionTemplate,
-            validator,
-            objectStore,
-            factory,
-            ParsedDocumentRepository(jdbc, objectMapper),
-            objectMapper,
-            "grobid",
-            "0.9.1-crf",
+            analysisRunRepository = AnalysisRunRepository(jdbc, objectMapper),
+            sourceDocumentRepository = SourceDocumentRepository(jdbc),
+            analysisRunExecutionRepository = AnalysisRunExecutionRepository(jdbc, transactionTemplate, objectMapper),
+            outboxRepository = OutboxRepository(jdbc, objectMapper),
+            transactionTemplate = transactionTemplate,
+            validator = validator,
+            objectStore = objectStore,
+            configurationFactory = factory,
+            parsedDocumentRepository = ParsedDocumentRepository(jdbc, objectMapper),
+            objectMapper = objectMapper,
+            parserId = "grobid",
+            parserVersion = "0.9.1-crf",
+            pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
         )
     }
 
@@ -4007,13 +4020,12 @@ class AnalysisRunQueueIntegrationTest {
     private fun referenceResolutionService(
         lookupFactories: List<ScholarlyMetadataLookupFactory> = listOf(RecordedFixtureScholarlyMetadataLookupFactory(objectMapper)),
     ) = ReferenceResolutionService(
-        jdbc,
-        objectMapper,
-        TransactionTemplate(DataSourceTransactionManager(dataSource)),
-        claimReferenceVerificationRepository(),
-        ReferenceResolutionRepository(jdbc, objectMapper),
-        CitedPaperAccessRepository(jdbc, objectMapper),
-        EvidenceCoverageReportRepository(
+        sourceDocumentRepository = SourceDocumentRepository(jdbc),
+        transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        claimReferenceVerificationRepository = claimReferenceVerificationRepository(),
+        repository = ReferenceResolutionRepository(jdbc, objectMapper),
+        citedPaperAccessRepository = CitedPaperAccessRepository(jdbc, objectMapper),
+        evidenceCoverageReportRepository = EvidenceCoverageReportRepository(
             jdbc,
             EvidenceReportRepository(
                 jdbc,
@@ -4025,16 +4037,17 @@ class AnalysisRunQueueIntegrationTest {
             ),
             humanReviewRepository(),
         ),
-        lookupFactories,
+        lookupFactories = lookupFactories,
     )
 
     private fun stageCompletionService(
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
     ) = AnalysisRunStageCompletionService(
-        jdbc,
-        TransactionTemplate(DataSourceTransactionManager(dataSource)),
-        ParsedDocumentRepository(jdbc, objectMapper),
-        resolutionService,
+        stageCompletionRepository = AnalysisRunStageCompletionRepository(jdbc),
+        sourceDocumentRepository = SourceDocumentRepository(jdbc),
+        transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        parsedDocumentRepository = ParsedDocumentRepository(jdbc, objectMapper),
+        referenceResolutionService = resolutionService,
     )
 
     private fun controlledOpenAccessFactory(
@@ -4067,8 +4080,7 @@ class AnalysisRunQueueIntegrationTest {
         )),
         languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
     ) = CitedPaperAccessService(
-        jdbc = jdbc,
-        objectMapper = objectMapper,
+        sourceDocumentRepository = SourceDocumentRepository(jdbc),
         transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
         claimReferenceVerificationRepository = claimReferenceVerificationRepository(),
         repository = CitedPaperAccessRepository(jdbc, objectMapper),
@@ -4087,12 +4099,18 @@ class AnalysisRunQueueIntegrationTest {
         )),
         languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
     ) = CitedPaperAcquisitionRequestedHandler(
-        jdbc,
-        TransactionTemplate(DataSourceTransactionManager(dataSource)),
-        objectMapper,
-        citedPaperAccessService(providerFactories, languageDetector),
-        CitedPaperIndexingQueue(jdbc, objectMapper),
-        stageCompletionService(resolutionService),
+        processingRepository = AnalysisRunProcessingRepository(jdbc, objectMapper),
+        sourceDocumentRepository = SourceDocumentRepository(jdbc),
+        inboxRepository = InboxRepository(jdbc),
+        transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        objectMapper = objectMapper,
+        citedPaperAccessService = citedPaperAccessService(providerFactories, languageDetector),
+        citedPaperIndexingQueue = CitedPaperIndexingQueue(
+            CitedPaperIndexingRepository(jdbc, objectMapper),
+            OutboxRepository(jdbc, objectMapper),
+        ),
+        analysisRunStageCompletionService = stageCompletionService(resolutionService),
+        pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
         executionService = executionService(),
     )
 
@@ -4108,6 +4126,7 @@ class AnalysisRunQueueIntegrationTest {
             objectMapper,
             TransactionTemplate(DataSourceTransactionManager(dataSource)),
             PostgresHybridEvidenceRetriever(jdbc, ReciprocalRankFusion()),
+            SourceDocumentRepository(jdbc),
         )
         val retrievalService = EvidenceRetrievalService(
             objectStore,
@@ -4118,23 +4137,26 @@ class AnalysisRunQueueIntegrationTest {
             executionService(),
         )
         return CitedPaperIndexingRequestedHandler(
-            jdbc,
-            TransactionTemplate(DataSourceTransactionManager(dataSource)),
-            objectMapper,
-            retrievalService,
-            repository,
-            EvidenceVerificationService(
-                jdbc,
-                objectMapper,
-                ProviderCallGate(providerCatalog),
-                listOf(systemOneProvider),
-                EvidenceJudgementRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
-                EvidencePassageSpanRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
-                LayaEvidencePassageSpanPlanner(),
-                claimReferenceVerificationRepository(),
+            processingRepository = AnalysisRunProcessingRepository(jdbc, objectMapper),
+            sourceDocumentRepository = SourceDocumentRepository(jdbc),
+            inboxRepository = InboxRepository(jdbc),
+            transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
+            objectMapper = objectMapper,
+            evidenceRetrievalService = retrievalService,
+            evidenceRetrievalRepository = repository,
+            evidenceVerificationService = EvidenceVerificationService(
+                sourceDocumentRepository = SourceDocumentRepository(jdbc),
+                objectMapper = objectMapper,
+                providerCallGate = ProviderCallGate(providerCatalog),
+                systemOneProviders = listOf(systemOneProvider),
+                judgementRepository = EvidenceJudgementRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+                spanRepository = EvidencePassageSpanRepository(jdbc, objectMapper, TransactionTemplate(DataSourceTransactionManager(dataSource))),
+                spanPlanner = LayaEvidencePassageSpanPlanner(),
+                verificationRepository = claimReferenceVerificationRepository(),
                 executionService = executionService(),
             ),
-            stageCompletionService(resolutionService),
+            analysisRunStageCompletionService = stageCompletionService(resolutionService),
+            pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
             executionService = executionService(),
         )
     }
@@ -4142,11 +4164,16 @@ class AnalysisRunQueueIntegrationTest {
     private fun referenceResolutionEventHandler(
         resolutionService: ReferenceResolutionService = referenceResolutionService(),
     ) = ReferenceResolutionRequestedHandler(
-        jdbc,
-        TransactionTemplate(DataSourceTransactionManager(dataSource)),
-        objectMapper,
-        resolutionService,
-        stageCompletionService(resolutionService),
+        processingRepository = AnalysisRunProcessingRepository(jdbc, objectMapper),
+        sourceDocumentRepository = SourceDocumentRepository(jdbc),
+        inboxRepository = InboxRepository(jdbc),
+        outboxRepository = OutboxRepository(jdbc, objectMapper),
+        referenceResolutionRepository = ReferenceResolutionRepository(jdbc, objectMapper),
+        transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
+        objectMapper = objectMapper,
+        referenceResolutionService = resolutionService,
+        analysisRunStageCompletionService = stageCompletionService(resolutionService),
+        pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
         executionService = executionService(),
     )
 
@@ -4265,20 +4292,23 @@ class AnalysisRunQueueIntegrationTest {
         providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
     ): DocumentAnalysisRequestedHandler {
         val processingService = AnalysisRunProcessingService(
-            jdbc,
-            transactionTemplate,
-            objectMapper,
-            objectStore,
-            parser,
-            ParsedDocumentRepository(jdbc, objectMapper),
-            ClaimAnalysisService(
+            processingRepository = AnalysisRunProcessingRepository(jdbc, objectMapper),
+            sourceDocumentRepository = SourceDocumentRepository(jdbc),
+            inboxRepository = InboxRepository(jdbc),
+            outboxRepository = OutboxRepository(jdbc, objectMapper),
+            transactionTemplate = transactionTemplate,
+            objectStore = objectStore,
+            scientificDocumentParser = parser,
+            parsedDocumentRepository = ParsedDocumentRepository(jdbc, objectMapper),
+            claimAnalysisService = ClaimAnalysisService(
                 providerCatalog,
                 claimAnalysisProviders,
                 ClaimAnalysisRequestFactory(),
             ),
-            claimReferenceVerificationRepository(),
-            resolutionService,
-            stageCompletionService(resolutionService),
+            claimReferenceVerificationRepository = claimReferenceVerificationRepository(),
+            referenceResolutionService = resolutionService,
+            analysisRunStageCompletionService = stageCompletionService(resolutionService),
+            pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
             executionService = executionService(),
         )
         return DocumentAnalysisRequestedHandler(objectMapper, processingService)

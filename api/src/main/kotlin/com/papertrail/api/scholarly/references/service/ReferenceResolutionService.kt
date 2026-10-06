@@ -1,6 +1,5 @@
 package com.papertrail.api.scholarly.references.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.scholarly.references.client.BibliographyReference
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookupFactory
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
@@ -12,22 +11,18 @@ import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRep
 import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepository
 import com.papertrail.api.scholarly.references.resolver.ConservativeReferenceResolver
 import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
-import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.ReferenceResolutionSnapshot
 import com.papertrail.api.evidence.report.EvidenceCoverageReport
-import com.papertrail.api.evidence.report.EvidenceCoverageReportRepository
+import com.papertrail.api.evidence.repository.EvidenceCoverageReportRepository
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
-import com.papertrail.api.document.service.lockActiveAnalysisRun
-import com.papertrail.api.document.service.requireActiveAnalysisRun
-import org.springframework.jdbc.core.JdbcTemplate
+import com.papertrail.api.document.repository.SourceDocumentRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 
 @Service
 class ReferenceResolutionService(
-    private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
+    private val sourceDocumentRepository: SourceDocumentRepository,
     private val transactionTemplate: TransactionTemplate,
     private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val repository: ReferenceResolutionRepository,
@@ -62,12 +57,12 @@ class ReferenceResolutionService(
                 ambiguityMargin = ScholarlyMetadataMatcher.AMBIGUITY_MARGIN,
             ),
         )
-        jdbc.requireActiveAnalysisRun(analysisRunId)
+        sourceDocumentRepository.requireActiveAnalysisRun(analysisRunId)
         val decision = resolver.resolve(
             BibliographyReference(stored.title, stored.authors, stored.year, stored.doi, stored.referenceType),
         )
         transactionTemplate.executeWithoutResult {
-            jdbc.lockActiveAnalysisRun(analysisRunId)
+            sourceDocumentRepository.lockActiveAnalysisRun(analysisRunId)
             val canonicalPaperId = repository.save(analysisRunId, stored, decision, providerId)
             claimReferenceVerificationRepository.applyResolution(
                 analysisRunId = analysisRunId,
@@ -149,31 +144,5 @@ class ReferenceResolutionService(
     private fun ReferenceResolutionSnapshot.isConfigured(): Boolean =
         provider?.provider != null && !scorePolicyVersion.isNullOrBlank() && confidenceThreshold != null && executionStatus != "NOT_RUN"
 
-    private fun loadRun(analysisRunId: UUID): RunResolutionContext? = jdbc.query(
-        """
-        SELECT status,
-               configuration_snapshot::text AS configuration,
-               analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot) AS semantic_pipeline_configured
-          FROM analysis_runs run
-          JOIN source_documents document ON document.id = run.document_id
-         WHERE run.id = ?
-           AND NOT EXISTS (
-               SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = document.id
-           )
-        """.trimIndent(),
-        { rs, _ ->
-            RunResolutionContext(
-                runStatus = rs.getString("status"),
-                configuration = objectMapper.readValue(rs.getString("configuration"), AnalysisConfigurationSnapshot::class.java),
-                semanticPipelineConfigured = rs.getBoolean("semantic_pipeline_configured"),
-            )
-        },
-        analysisRunId,
-    ).firstOrNull()
-
-    private data class RunResolutionContext(
-        val runStatus: String,
-        val configuration: AnalysisConfigurationSnapshot,
-        val semanticPipelineConfigured: Boolean,
-    )
+    private fun loadRun(analysisRunId: UUID): ReferenceResolutionRepository.RunResolutionContext? = repository.loadRun(analysisRunId)
 }

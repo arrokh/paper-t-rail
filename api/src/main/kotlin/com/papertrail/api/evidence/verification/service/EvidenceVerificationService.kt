@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.ExecutionSpanArtifactSpec
-import com.papertrail.api.document.service.requireActiveAnalysisRun
+import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationPolicy
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.AtomicClaimForJudgement
@@ -26,13 +26,12 @@ import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
 import org.slf4j.LoggerFactory
-import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import java.util.UUID
 
 @Service
 class EvidenceVerificationService(
-    private val jdbc: JdbcTemplate,
+    private val sourceDocumentRepository: SourceDocumentRepository,
     private val objectMapper: ObjectMapper,
     private val providerCallGate: ProviderCallGate,
     private val systemOneProviders: List<SystemOneProvider>,
@@ -120,7 +119,7 @@ class EvidenceVerificationService(
             val providerJudgements = if (requestedIds.isEmpty()) {
                 emptyList()
             } else {
-                jdbc.requireActiveAnalysisRun(analysisRunId)
+                sourceDocumentRepository.requireActiveAnalysisRun(analysisRunId)
                 try {
                     evaluateThroughProviderGate(provider, configuration, pending.request)
                 } catch (exception: SystemOneProviderException) {
@@ -303,7 +302,7 @@ class EvidenceVerificationService(
         )
         val unjudgedFittingPassages = fittingPassages.filterNot { it.id in alreadyJudgedIds }
         if (unjudgedFittingPassages.isNotEmpty()) {
-            jdbc.requireActiveAnalysisRun(analysisRunId)
+            sourceDocumentRepository.requireActiveAnalysisRun(analysisRunId)
             val fittingRequest = request.copy(evidencePassages = unjudgedFittingPassages)
             val judgements = evaluateThroughProviderGate(provider, configuration, fittingRequest)
             val expectedIds = unjudgedFittingPassages.map(EvidencePassageForJudgement::id).toSet()
@@ -350,7 +349,7 @@ class EvidenceVerificationService(
     ) {
         spans.forEach { span ->
             if (span.status == "COMPLETED" || span.status == "INCOMPLETE") return@forEach
-            jdbc.requireActiveAnalysisRun(analysisRunId)
+            sourceDocumentRepository.requireActiveAnalysisRun(analysisRunId)
             if (span.status == "FAILED") spanRepository.retryFailed(span.id)
             val definition = span.definition
             val request = SemanticJudgementRequest(
@@ -394,7 +393,7 @@ class EvidenceVerificationService(
         claim: AtomicClaimForJudgement,
         passage: EvidencePassageForJudgement,
     ): List<Int> {
-        jdbc.requireActiveAnalysisRun(analysisRunId)
+        sourceDocumentRepository.requireActiveAnalysisRun(analysisRunId)
         val request = SemanticJudgementRequest(
             atomicClaim = claim,
             evidencePassages = listOf(passage),
@@ -505,11 +504,8 @@ class EvidenceVerificationService(
         )
     }
 
-    private fun loadConfiguration(analysisRunId: UUID): AnalysisConfigurationSnapshot = jdbc.query(
-        "SELECT configuration_snapshot::text FROM analysis_runs WHERE id = ? AND status = 'PROCESSING'",
-        { rs, _ -> objectMapper.readValue(rs.getString(1), AnalysisConfigurationSnapshot::class.java) },
-        analysisRunId,
-    ).firstOrNull() ?: throw IllegalStateException("Analysis Run is not available for semantic verification.")
+    private fun loadConfiguration(analysisRunId: UUID): AnalysisConfigurationSnapshot =
+        judgementRepository.loadProcessingConfiguration(analysisRunId)
 
     companion object {
         private val logger = LoggerFactory.getLogger(EvidenceVerificationService::class.java)

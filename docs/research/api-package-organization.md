@@ -6,9 +6,9 @@
 
 The intended business flow is `controller/queue handler → service → repository and/or external client`. Services own orchestration and domain decisions; integration implementations own provider communication. Services consume integration contracts; only replacement implementations implement those contracts. Do not add interfaces, wrappers, or inheritance merely for folder consistency.
 
-**Phase A is organization-only:** split focused files, move existing declarations, and update references without changing implementation behavior. **Phase B is a separate future design task:** extracting context-neutral shared clients or enforcing repository-only SQL where current code does not already follow that rule. Phase A does not claim to complete Phase B.
+**Phase A was organization-only:** split focused files, move existing declarations, and update references without changing implementation behavior. At that time, Phase B (including repository-only SQL enforcement) was planned as a separate follow-up. The maintainer later authorized issue [#82](https://github.com/arrokh/paper-t-rail/issues/82) to be implemented in PR #81 alongside the #79 work. The repository-only relational rule is now documented in `api/AGENTS.md` and technical-design §37; this document's Phase A record remains historical and does not limit the authorized #82 scope.
 
-The user approved this refined structure on 2026-10-06 and authorized Phase A implementation tracked in [issue #79](https://github.com/arrokh/paper-t-rail/issues/79). This document records the approved scope and implementation evidence; Phase B remains separately designed and out of scope.
+The user approved the refined package structure on 2026-10-06 and authorized Phase A implementation tracked in [issue #79](https://github.com/arrokh/paper-t-rail/issues/79). This document records the #79 scope and implementation evidence; issue #82 defines the additional persistence-ownership work.
 
 **Behavior preservation is an acceptance criterion, not a zero-risk guarantee.** Package changes can affect discovery and contracts even when bodies are unchanged. Use independently reversible commits and stop at the first unexplained difference.
 

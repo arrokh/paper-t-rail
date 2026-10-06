@@ -11,37 +11,39 @@ import com.papertrail.api.analysis.http.CreatedAnalysisRunResponse
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.analysis.pagination.AnalysisRunCursorCodec
 import com.papertrail.api.analysis.pagination.Direction
+import com.papertrail.api.analysis.repository.AnalysisRunRepository
 import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.queue.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.queue.DocumentAnalysisRequestedPayload
 import com.papertrail.api.citation.repository.ParsedDocumentRepository
 import com.papertrail.api.citation.repository.ParsedDocumentView
+import com.papertrail.api.document.domain.SourceDocumentDeletedException
+import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.document.validation.PdfDocumentValidator
-import com.papertrail.api.document.service.SourceDocumentDeletedException
-import com.papertrail.api.document.service.lockActiveSourceDocument
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.storage.SourceObjectMetadata
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
+import com.papertrail.api.infrastructure.messaging.repository.OutboxRepository
+import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.ContentDisposition
 import org.springframework.http.HttpStatus
-import org.springframework.jdbc.core.ConnectionCallback
-import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.server.ResponseStatusException
 import java.nio.charset.StandardCharsets
-import java.sql.ResultSet
-import java.sql.Timestamp
 import java.time.Instant
 import java.util.UUID
 
 @Service
 class AnalysisRunService(
-    private val jdbc: JdbcTemplate,
+    private val analysisRunRepository: AnalysisRunRepository,
+    private val sourceDocumentRepository: SourceDocumentRepository,
+    private val analysisRunExecutionRepository: AnalysisRunExecutionRepository,
+    private val outboxRepository: OutboxRepository,
     private val transactionTemplate: TransactionTemplate,
     private val validator: PdfDocumentValidator,
     private val objectStore: SourceDocumentObjectStore,
@@ -50,7 +52,7 @@ class AnalysisRunService(
     private val objectMapper: ObjectMapper,
     @Value("\${paper-trail.analysis.parser-id}") private val parserId: String,
     @Value("\${paper-trail.analysis.parser-version}") private val parserVersion: String,
-    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
+    private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
 ) {
     fun maxUploadBytes(): Long = validator.limits.maxBytes
 
@@ -92,23 +94,13 @@ class AnalysisRunService(
         var transactionBodyCompleted = false
         try {
             transactionTemplate.executeWithoutResult {
-                jdbc.update(
-                    """
-                    INSERT INTO source_documents (
-                        id, filename, content_type, object_key, sha256, language,
-                        page_count, extracted_character_count, parser_id, parser_version, created_at
-                    ) VALUES (?, ?, 'application/pdf', ?, ?, ?, ?, ?, ?, ?, ?)
-                    """.trimIndent(),
-                    documentId,
-                    validPdf.sanitizedFilename,
-                    objectKey,
-                    validPdf.sha256,
-                    validPdf.language,
-                    validPdf.pageCount,
-                    validPdf.extractedCharacterCount,
-                    validator.parserId,
-                    validator.parserVersion,
-                    Timestamp.from(createdAt),
+                sourceDocumentRepository.insert(
+                    documentId = documentId,
+                    objectKey = objectKey,
+                    pdf = validPdf,
+                    parserId = validator.parserId,
+                    parserVersion = validator.parserVersion,
+                    createdAt = createdAt,
                 )
                 insertRunAndOutbox(
                     documentId = documentId,
@@ -151,7 +143,8 @@ class AnalysisRunService(
     }
 
     fun createReanalysis(documentId: UUID, configurationNode: JsonNode?): CreatedAnalysisRunResponse {
-        val document = findDocument(documentId) ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Source Document not found.")
+        val document = sourceDocumentRepository.findActive(documentId)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Source Document not found.")
         val content = try {
             objectStore.get(document.objectKey)
         } catch (exception: Exception) {
@@ -188,19 +181,8 @@ class AnalysisRunService(
         )
     }
 
-    fun get(runId: UUID): AnalysisRunSummary? = jdbc.query(
-        """
-        SELECT r.id, r.document_id, d.filename, r.source_content_sha256, r.status,
-               r.progress::text AS progress, r.configuration_snapshot::text AS configuration,
-               r.created_at, r.started_at, r.failure_reason
-          FROM analysis_runs r
-          JOIN source_documents d ON d.id = r.document_id
-         WHERE r.id = ?
-           AND NOT EXISTS (SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = d.id)
-        """.trimIndent(),
-        { resultSet, _ -> resultSet.toRunSummary() },
-        runId,
-    ).firstOrNull()?.let { it.copy(pipeline = pipelineProgressRepository.find(runId)) }
+    fun get(runId: UUID): AnalysisRunSummary? = analysisRunRepository.findSummary(runId)
+        ?.let { it.copy(pipeline = pipelineProgressRepository.find(runId)) }
 
     fun getParsedDocument(runId: UUID): ParsedDocumentView {
         if (get(runId) == null) throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
@@ -209,28 +191,8 @@ class AnalysisRunService(
     }
 
     fun getSourcePdfAccess(runId: UUID): AnalysisRunSourcePdfAccess {
-        val source = jdbc.query(
-            """
-            SELECT document.id AS document_id, document.filename, document.object_key, document.sha256 AS document_sha256,
-                   run.source_content_sha256
-              FROM analysis_runs run
-              JOIN source_documents document ON document.id = run.document_id
-             WHERE run.id = ?
-               AND NOT EXISTS (
-                   SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = document.id
-               )
-            """.trimIndent(),
-            { resultSet, _ ->
-                StoredRunSourceDocument(
-                    documentId = resultSet.getObject("document_id", UUID::class.java),
-                    filename = resultSet.getString("filename"),
-                    objectKey = resultSet.getString("object_key"),
-                    documentSha256 = resultSet.getString("document_sha256"),
-                    runSourceSha256 = resultSet.getString("source_content_sha256"),
-                )
-            },
-            runId,
-        ).firstOrNull() ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
+        val source = analysisRunRepository.findSourcePdf(runId)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Analysis Run not found.")
 
         if (source.documentSha256 != source.runSourceSha256 || source.objectKey != "source/${source.documentId}/${source.runSourceSha256}.pdf") {
             throw ResponseStatusException(HttpStatus.CONFLICT, "The stored Source Document does not match this Analysis Run.")
@@ -275,7 +237,11 @@ class AnalysisRunService(
         )
     }
 
-    private fun verifyLegacySourceObject(runId: UUID, source: StoredRunSourceDocument, metadata: SourceObjectMetadata) {
+    private fun verifyLegacySourceObject(
+        runId: UUID,
+        source: AnalysisRunRepository.StoredRunSourceDocument,
+        metadata: SourceObjectMetadata,
+    ) {
         val content = try {
             objectStore.get(source.objectKey)
         } catch (exception: Exception) {
@@ -301,69 +267,16 @@ class AnalysisRunService(
         if (status != null && status !in RUN_STATUSES) {
             throw IllegalArgumentException("Analysis Run status filter is invalid.")
         }
-        val where = mutableListOf(
-            "NOT EXISTS (SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = d.id)",
-        )
-        val parameters = mutableListOf<Any>()
-        status?.let {
-            where += "r.status = ?"
-            parameters += it
-        }
-        filenameQuery?.let {
-            where += "d.filename ILIKE ? ESCAPE '!'"
-            parameters += "%${it.replace("!", "!!").replace("%", "!%").replace("_", "!_")}%"
-        }
-        val baseQuery = """
-            FROM analysis_runs r
-            JOIN source_documents d ON d.id = r.document_id
-            WHERE ${where.joinToString(" AND ")}
-        """.trimIndent()
-        val mapper = { resultSet: ResultSet, _: Int -> resultSet.toRunSummary() }
-        val cursorClause = when (cursor?.direction) {
-            Direction.NEXT -> "AND (r.created_at, r.id) < (?, ?)"
-            Direction.PREVIOUS -> "AND (r.created_at, r.id) > (?, ?)"
-            null -> ""
-        }
-        val queryParameters = parameters.toMutableList()
-        if (cursor != null) {
-            queryParameters += Timestamp.from(cursor.createdAt)
-            queryParameters += cursor.id
-        }
-        queryParameters += pageSize
-        val order = if (cursor?.direction == Direction.PREVIOUS) "ASC" else "DESC"
-        val queriedRows = jdbc.query(
-            """
-            SELECT r.id, r.document_id, d.filename, r.source_content_sha256, r.status,
-                   r.progress::text AS progress, r.configuration_snapshot::text AS configuration,
-                   r.created_at, r.started_at, r.failure_reason
-              $baseQuery
-              $cursorClause
-             ORDER BY r.created_at $order, r.id $order
-             LIMIT ?
-            """.trimIndent(),
-            mapper,
-            *queryParameters.toTypedArray(),
-        )
-        val items = if (cursor?.direction == Direction.PREVIOUS) queriedRows.asReversed() else queriedRows
-        val first = items.firstOrNull()
-        val last = items.lastOrNull()
-        val hasPrevious = first != null && cursor != null && existsAtBoundary(baseQuery, parameters, first, ">")
-        val hasNext = last != null && existsAtBoundary(baseQuery, parameters, last, "<")
+        val rows = analysisRunRepository.list(pageSize, cursor, filenameQuery, status)
+        val first = rows.items.firstOrNull()
+        val last = rows.items.lastOrNull()
         return AnalysisRunPage(
-            items = items,
-            nextCursor = last?.takeIf { hasNext }?.let { AnalysisRunCursorCodec.encode(it.createdAt, it.id, Direction.NEXT) },
-            previousCursor = first?.takeIf { hasPrevious }?.let { AnalysisRunCursorCodec.encode(it.createdAt, it.id, Direction.PREVIOUS) },
+            items = rows.items,
+            nextCursor = last?.takeIf { rows.hasNext }
+                ?.let { AnalysisRunCursorCodec.encode(it.createdAt, it.id, Direction.NEXT) },
+            previousCursor = first?.takeIf { rows.hasPrevious }
+                ?.let { AnalysisRunCursorCodec.encode(it.createdAt, it.id, Direction.PREVIOUS) },
         )
-    }
-
-    private fun existsAtBoundary(baseQuery: String, parameters: List<Any>, run: AnalysisRunSummary, comparison: String): Boolean {
-        require(comparison == "<" || comparison == ">")
-        val existsParameters = parameters + listOf(Timestamp.from(run.createdAt), run.id)
-        return jdbc.queryForObject(
-            "SELECT EXISTS (SELECT 1 $baseQuery AND (r.created_at, r.id) $comparison (?, ?))",
-            Boolean::class.java,
-            *existsParameters.toTypedArray(),
-        ) == true
     }
 
     private fun insertRunAndOutbox(
@@ -375,29 +288,21 @@ class AnalysisRunService(
         createdAt: Instant,
     ) {
         try {
-            jdbc.lockActiveSourceDocument(documentId)
+            sourceDocumentRepository.lockActiveSourceDocument(documentId)
         } catch (_: SourceDocumentDeletedException) {
             throw ResponseStatusException(HttpStatus.NOT_FOUND, "Source Document not found.")
         }
-        val snapshotJson = configurationFactory.toJson(configuration)
-        jdbc.update(
-            """
-            INSERT INTO analysis_runs (
-                id, document_id, source_content_sha256, source_parser_id, source_parser_version,
-                configuration_snapshot, status, progress, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?::jsonb, 'QUEUED', ?::jsonb, ?)
-            """.trimIndent(),
-            runId,
-            documentId,
-            sourceHash,
-            parserId,
-            parserVersion,
-            snapshotJson,
-            """{"stage":"QUEUED","percent":0,"message":"Waiting for worker."}""",
-            Timestamp.from(createdAt),
+        analysisRunRepository.insertQueuedRun(
+            runId = runId,
+            documentId = documentId,
+            sourceHash = sourceHash,
+            parserId = parserId,
+            parserVersion = parserVersion,
+            configurationJson = configurationFactory.toJson(configuration),
+            createdAt = createdAt,
         )
         pipelineProgressRepository.initializeRun(runId)
-        insertExecutionRecordingBestEffort(runId, configuration.captureExecution, createdAt)
+        analysisRunExecutionRepository.insertRecordingBestEffort(runId, configuration.captureExecution, createdAt)
         val event = PipelineEvent(
             eventId = eventId,
             eventType = DOCUMENT_ANALYSIS_REQUESTED,
@@ -410,100 +315,8 @@ class AnalysisRunService(
             payload = DocumentAnalysisRequestedPayload(documentId, sourceHash),
             traceparent = W3CTraceContext.forTraceId(runId),
         )
-        jdbc.update(
-            """
-            INSERT INTO outbox_events (
-                event_id, event_type, schema_version, analysis_run_id,
-                correlation_id, occurred_at, payload, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?)
-            """.trimIndent(),
-            eventId,
-            event.eventType,
-            event.schemaVersion,
-            runId,
-            event.correlationId,
-            Timestamp.from(createdAt),
-            objectMapper.writeValueAsString(event),
-            Timestamp.from(createdAt),
-        )
+        outboxRepository.insert(event, createdAt)
     }
-
-    private fun insertExecutionRecordingBestEffort(runId: UUID, captureEnabled: Boolean, startedAt: Instant) {
-        jdbc.execute(ConnectionCallback { connection ->
-            val savepoint = try {
-                connection.setSavepoint()
-            } catch (exception: Exception) {
-                logExecutionRecordingFailure(runId, exception)
-                return@ConnectionCallback null
-            }
-            try {
-                connection.prepareStatement(
-                    """
-                    INSERT INTO analysis_run_execution (
-                        analysis_run_id, trace_id, capture_requested, capture_enabled,
-                        recording_state, completeness, started_at
-                    ) VALUES (?, ?, ?, ?, 'RECORDING', 'RECORDING', ?)
-                    """.trimIndent(),
-                ).use { statement ->
-                    statement.setObject(1, runId)
-                    statement.setObject(2, runId)
-                    statement.setBoolean(3, captureEnabled)
-                    statement.setBoolean(4, captureEnabled)
-                    statement.setTimestamp(5, Timestamp.from(startedAt))
-                    statement.executeUpdate()
-                }
-            } catch (exception: Exception) {
-                runCatching { connection.rollback(savepoint) }
-                logExecutionRecordingFailure(runId, exception)
-            } finally {
-                runCatching { connection.releaseSavepoint(savepoint) }
-            }
-            null
-        })
-    }
-
-    private fun logExecutionRecordingFailure(runId: UUID, exception: Exception) {
-        logger.atWarn()
-            .addKeyValue("analysisRunId", runId)
-            .addKeyValue("errorType", exception.javaClass.simpleName)
-            .log("Analysis Run was queued without an execution recording")
-    }
-
-    private fun findDocument(id: UUID): StoredDocument? = jdbc.query(
-        """
-        SELECT document.id, document.filename, document.object_key, document.sha256
-          FROM source_documents document
-         WHERE document.id = ?
-           AND NOT EXISTS (
-               SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = document.id
-           )
-        """.trimIndent(),
-        { rs, _ -> StoredDocument(rs.getObject("id", UUID::class.java), rs.getString("filename"), rs.getString("object_key"), rs.getString("sha256")) },
-        id,
-    ).firstOrNull()
-
-    private fun ResultSet.toRunSummary(): AnalysisRunSummary = AnalysisRunSummary(
-        id = getObject("id", UUID::class.java),
-        documentId = getObject("document_id", UUID::class.java),
-        filename = getString("filename"),
-        sourceContentSha256 = getString("source_content_sha256"),
-        status = getString("status"),
-        progress = objectMapper.readTree(getString("progress")),
-        configuration = objectMapper.readTree(getString("configuration")),
-        createdAt = getTimestamp("created_at").toInstant(),
-        startedAt = getTimestamp("started_at")?.toInstant(),
-        failureReason = getString("failure_reason"),
-    )
-
-    private data class StoredDocument(val id: UUID, val filename: String, val objectKey: String, val sha256: String)
-
-    private data class StoredRunSourceDocument(
-        val documentId: UUID,
-        val filename: String,
-        val objectKey: String,
-        val documentSha256: String,
-        val runSourceSha256: String,
-    )
 
     companion object {
         private const val MAX_FILENAME_QUERY_LENGTH = 200

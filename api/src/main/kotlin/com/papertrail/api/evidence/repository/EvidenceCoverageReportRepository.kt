@@ -1,6 +1,9 @@
-package com.papertrail.api.evidence.report
+package com.papertrail.api.evidence.repository
 
-import com.papertrail.api.evidence.repository.EvidenceReportRepository
+import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
+import com.papertrail.api.evidence.report.EvidenceCoverageSummary
+import com.papertrail.api.evidence.report.EvidenceIndexingReport
+import com.papertrail.api.evidence.report.EvidencePassageReport
 import com.papertrail.api.review.domain.HumanReview
 import com.papertrail.api.review.repository.HumanReviewRepository
 import org.springframework.jdbc.core.JdbcTemplate

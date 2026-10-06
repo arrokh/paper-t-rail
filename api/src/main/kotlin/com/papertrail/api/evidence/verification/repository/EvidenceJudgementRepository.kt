@@ -1,6 +1,7 @@
 package com.papertrail.api.evidence.verification.repository
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgement
 import com.papertrail.api.evidence.verification.domain.EvidenceJudgementKind
 import com.papertrail.api.evidence.verification.domain.EvidencePassageForJudgement
@@ -18,6 +19,12 @@ class EvidenceJudgementRepository(
     private val objectMapper: ObjectMapper,
     private val transactionTemplate: TransactionTemplate,
 ) {
+    fun loadProcessingConfiguration(analysisRunId: UUID): AnalysisConfigurationSnapshot = jdbc.query(
+        "SELECT configuration_snapshot::text FROM analysis_runs WHERE id = ? AND status = 'PROCESSING'",
+        { rs, _ -> objectMapper.readValue(rs.getString(1), AnalysisConfigurationSnapshot::class.java) },
+        analysisRunId,
+    ).firstOrNull() ?: throw IllegalStateException("Analysis Run is not available for semantic verification.")
+
     fun pendingRequests(analysisRunId: UUID, bibliographyEntryId: UUID): List<PendingJudgement> {
         val rows = jdbc.query(
             """

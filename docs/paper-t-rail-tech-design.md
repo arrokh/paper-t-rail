@@ -2621,6 +2621,10 @@ com.papertrail.api/
 
 Within a feature, use `controller` for HTTP routing/binding, `service` for business operations/orchestration, `repository` for persistence adapters, `http` for our inbound/outbound API contracts, and focused `domain`/policy packages for business rules and values. Use `model` only for persistence records/projections. Feature `queue` packages own feature event payloads and handlers; generic broker/outbox mechanisms remain in `infrastructure`. Provider wire DTOs, communication, provider-specific configuration/cache mechanics, and provider integration factories live with that provider. A real provider-operator endpoint can have provider-local `controller`, `service`, and `http` roles; its request DTO is our operator API contract, not a remote wire type.
 
+### Relational database boundary
+
+For PostgreSQL/JDBC, only repository classes in a feature's `repository` package or an infrastructure-owned repository package may hold relational database APIs (`JdbcTemplate`, `DataSource`, JDBC connections/statements) or issue SQL. Controllers, services, queue handlers, health endpoints, and publishers call repository operations instead. Existing `TransactionTemplate` boundaries may remain in services and handlers to preserve atomic workflows; transaction orchestration is not direct database access. Preserve query semantics, locks, ordering, idempotency, rollback behavior, and observable outcomes while extracting persistence. This rule does not reclassify Redis Streams/caches or S3 object storage; retain their existing infrastructure/external adapters.
+
 The intended call paths are explicit and short:
 
 ```text

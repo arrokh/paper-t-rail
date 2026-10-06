@@ -1,6 +1,7 @@
 package com.papertrail.api.scholarly.acquisition.repository
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessDecision
@@ -19,6 +20,18 @@ class CitedPaperAccessRepository(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
 ) {
+    fun loadRun(analysisRunId: UUID): AccessRunContext? = jdbc.query(
+        "SELECT document_id, status, configuration_snapshot::text AS configuration FROM analysis_runs WHERE id = ?",
+        { rs, _ ->
+            AccessRunContext(
+                documentId = rs.getObject("document_id", UUID::class.java),
+                status = rs.getString("status"),
+                configuration = objectMapper.readValue(rs.getString("configuration"), AnalysisConfigurationSnapshot::class.java),
+            )
+        },
+        analysisRunId,
+    ).firstOrNull()
+
     fun accessExists(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM cited_paper_access WHERE analysis_run_id = ? AND bibliography_entry_id = ?)",
         Boolean::class.java,
@@ -123,6 +136,12 @@ class CitedPaperAccessRepository(
         """.trimIndent(),
         { rs, _ -> rs.toAccessReportEntry() },
         analysisRunId,
+    )
+
+    data class AccessRunContext(
+        val documentId: UUID,
+        val status: String,
+        val configuration: AnalysisConfigurationSnapshot,
     )
 
     private fun ResultSet.toAccessReportEntry(): CitedPaperAccessReportEntry = CitedPaperAccessReportEntry(

@@ -1,12 +1,9 @@
 package com.papertrail.api.scholarly.acquisition.service
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.ExecutionSpanSpec
 import com.papertrail.api.document.storage.SourceDocumentObjectStore
-import com.papertrail.api.document.service.lockActiveAnalysisRun
-import com.papertrail.api.document.service.requireActiveSourceDocument
+import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProvider
@@ -23,7 +20,6 @@ import com.papertrail.api.scholarly.acquisition.repository.ResolvedCitedReferenc
 import com.papertrail.api.scholarly.references.client.BibliographyReference
 import com.papertrail.api.document.validation.DocumentLanguageDetector
 import org.slf4j.LoggerFactory
-import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
@@ -31,8 +27,7 @@ import java.util.UUID
 
 @Service
 class CitedPaperAccessService(
-    private val jdbc: JdbcTemplate,
-    private val objectMapper: ObjectMapper,
+    private val sourceDocumentRepository: SourceDocumentRepository,
     private val transactionTemplate: TransactionTemplate,
     private val claimReferenceVerificationRepository: ClaimReferenceVerificationRepository,
     private val repository: CitedPaperAccessRepository,
@@ -66,7 +61,7 @@ class CitedPaperAccessService(
             doi = reference.doi,
             referenceType = reference.referenceType,
         )
-        jdbc.requireActiveSourceDocument(context.documentId)
+        sourceDocumentRepository.requireActiveSourceDocument(context.documentId)
         val discover = { provider.discover(metadata) }
         val discovery = if (executionService == null) {
             discover()
@@ -122,7 +117,7 @@ class CitedPaperAccessService(
         try {
             if (acquired != null && objectKey != null) objectStore.put(objectKey, acquired.bytes, acquired.mediaType)
             val inserted = transactionTemplate.execute {
-                jdbc.lockActiveAnalysisRun(analysisRunId)
+                sourceDocumentRepository.lockActiveAnalysisRun(analysisRunId)
                 val saved = repository.save(
                     analysisRunId = analysisRunId,
                     reference = reference,
@@ -168,7 +163,7 @@ class CitedPaperAccessService(
     ): Pair<AcquiredFullText, String>? {
         for ((index, location) in locations.take(MAX_LOCATIONS_TO_TRY).withIndex()) {
             try {
-                jdbc.requireActiveSourceDocument(documentId)
+                sourceDocumentRepository.requireActiveSourceDocument(documentId)
                 val fetch = { provider.fetch(location) }
                 val acquired = executionService?.recordCurrentProviderCall(
                     operationKey = "open-access-fulltext-fetch-$index",
@@ -195,17 +190,7 @@ class CitedPaperAccessService(
         return null
     }
 
-    private fun loadRun(analysisRunId: UUID): AccessRunContext? = jdbc.query(
-        "SELECT document_id, status, configuration_snapshot::text AS configuration FROM analysis_runs WHERE id = ?",
-        { rs, _ ->
-            AccessRunContext(
-                documentId = rs.getObject("document_id", UUID::class.java),
-                status = rs.getString("status"),
-                configuration = objectMapper.readValue(rs.getString("configuration"), AnalysisConfigurationSnapshot::class.java),
-            )
-        },
-        analysisRunId,
-    ).firstOrNull()
+    private fun loadRun(analysisRunId: UUID): CitedPaperAccessRepository.AccessRunContext? = repository.loadRun(analysisRunId)
 
     private fun cleanupObjectIfUnreferenced(analysisRunId: UUID, objectKey: String?) {
         if (objectKey == null) return
@@ -225,12 +210,6 @@ class CitedPaperAccessService(
                     .log("Failed to clean up an unreferenced cited full-text object")
             }
     }
-
-    private data class AccessRunContext(
-        val documentId: UUID,
-        val status: String,
-        val configuration: AnalysisConfigurationSnapshot,
-    )
 
     companion object {
         private const val MAX_LOCATIONS_TO_TRY = 5

@@ -1,6 +1,7 @@
 package com.papertrail.api.scholarly.references.repository
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.scholarly.references.client.ScholarlyWork
 import com.papertrail.api.scholarly.references.model.StoredBibliographyReference
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
@@ -19,6 +20,28 @@ class ReferenceResolutionRepository(
     private val jdbc: JdbcTemplate,
     private val objectMapper: ObjectMapper,
 ) {
+    fun loadRun(analysisRunId: UUID): RunResolutionContext? = jdbc.query(
+        """
+        SELECT status,
+               configuration_snapshot::text AS configuration,
+               analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot) AS semantic_pipeline_configured
+          FROM analysis_runs run
+          JOIN source_documents document ON document.id = run.document_id
+         WHERE run.id = ?
+           AND NOT EXISTS (
+               SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = document.id
+           )
+        """.trimIndent(),
+        { rs, _ ->
+            RunResolutionContext(
+                runStatus = rs.getString("status"),
+                configuration = objectMapper.readValue(rs.getString("configuration"), AnalysisConfigurationSnapshot::class.java),
+                semanticPipelineConfigured = rs.getBoolean("semantic_pipeline_configured"),
+            )
+        },
+        analysisRunId,
+    ).firstOrNull()
+
     fun pendingEntry(analysisRunId: UUID, bibliographyEntryId: UUID): StoredBibliographyReference? = jdbc.query(
         """
         SELECT b.id, b.entry_order, b.local_reference_key, b.raw_text, b.parsed_title,
@@ -32,6 +55,21 @@ class ReferenceResolutionRepository(
         analysisRunId,
         bibliographyEntryId,
     ).firstOrNull()
+
+    fun isResolved(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
+        "SELECT EXISTS (SELECT 1 FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND status = 'RESOLVED')",
+        Boolean::class.java,
+        analysisRunId,
+        bibliographyEntryId,
+    ) == true
+
+    fun hasOutboxRequest(analysisRunId: UUID, eventType: String, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
+        "SELECT EXISTS (SELECT 1 FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? AND payload -> 'payload' ->> 'bibliographyEntryId' = ?)",
+        Boolean::class.java,
+        analysisRunId,
+        eventType,
+        bibliographyEntryId.toString(),
+    ) == true
 
     fun entryExists(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM bibliography_entries WHERE analysis_run_id = ? AND id = ?)",
@@ -150,6 +188,12 @@ class ReferenceResolutionRepository(
             .joinToString("") { "%02x".format(it.toInt() and 0xff) }
         return "metadata:$digest"
     }
+
+    data class RunResolutionContext(
+        val runStatus: String,
+        val configuration: AnalysisConfigurationSnapshot,
+        val semanticPipelineConfigured: Boolean,
+    )
 
     private fun ResultSet.toStoredReference() = StoredBibliographyReference(
         id = getObject("id", UUID::class.java),

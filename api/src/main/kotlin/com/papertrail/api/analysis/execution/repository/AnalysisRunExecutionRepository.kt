@@ -4,6 +4,8 @@ import com.papertrail.api.analysis.execution.*
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.slf4j.LoggerFactory
+import org.springframework.jdbc.core.ConnectionCallback
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.support.TransactionTemplate
@@ -25,6 +27,47 @@ class AnalysisRunExecutionRepository(
     private val transactionTemplate: TransactionTemplate,
     private val objectMapper: ObjectMapper,
 ) {
+    fun insertRecordingBestEffort(runId: UUID, captureEnabled: Boolean, startedAt: Instant) {
+        jdbc.execute(ConnectionCallback { connection ->
+            val savepoint = try {
+                connection.setSavepoint()
+            } catch (exception: Exception) {
+                logExecutionRecordingFailure(runId, exception)
+                return@ConnectionCallback null
+            }
+            try {
+                connection.prepareStatement(
+                    """
+                    INSERT INTO analysis_run_execution (
+                        analysis_run_id, trace_id, capture_requested, capture_enabled,
+                        recording_state, completeness, started_at
+                    ) VALUES (?, ?, ?, ?, 'RECORDING', 'RECORDING', ?)
+                    """.trimIndent(),
+                ).use { statement ->
+                    statement.setObject(1, runId)
+                    statement.setObject(2, runId)
+                    statement.setBoolean(3, captureEnabled)
+                    statement.setBoolean(4, captureEnabled)
+                    statement.setTimestamp(5, Timestamp.from(startedAt))
+                    statement.executeUpdate()
+                }
+            } catch (exception: Exception) {
+                runCatching { connection.rollback(savepoint) }
+                logExecutionRecordingFailure(runId, exception)
+            } finally {
+                runCatching { connection.releaseSavepoint(savepoint) }
+            }
+            null
+        })
+    }
+
+    private fun logExecutionRecordingFailure(runId: UUID, exception: Exception) {
+        logger.atWarn()
+            .addKeyValue("analysisRunId", runId)
+            .addKeyValue("errorType", exception.javaClass.simpleName)
+            .log("Analysis Run was queued without an execution recording")
+    }
+
     fun terminalStatus(analysisRunId: UUID): String? = jdbc.query(
         "SELECT status FROM analysis_runs WHERE id = ? AND status IN ('PARSED', 'COMPLETED', 'COMPLETED_WITH_WARNINGS', 'FAILED')",
         { rs, _ -> rs.getString("status") },
@@ -622,6 +665,7 @@ class AnalysisRunExecutionRepository(
     }
 
     companion object {
+        private val logger = LoggerFactory.getLogger(AnalysisRunExecutionRepository::class.java)
         private val LOCAL_PROVIDERS = setOf("mock", "ollama", "grobid", "local", "recorded-fixtures", "feature-hash")
     }
 

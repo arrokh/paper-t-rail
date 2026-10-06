@@ -1,8 +1,9 @@
-package com.papertrail.api.evidence.retrieval
+package com.papertrail.api.evidence.repository
 
 import com.papertrail.api.analysis.configuration.RetrievalConfigurationSnapshot
 import com.papertrail.api.evidence.domain.EmbeddingProfile
 import com.papertrail.api.evidence.domain.RankedEvidenceChunk
+import com.papertrail.api.evidence.retrieval.ReciprocalRankFusion
 import com.papertrail.api.evidence.embedding.toPostgresVectorLiteral
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository

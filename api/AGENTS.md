@@ -12,6 +12,10 @@ Use focused roles such as `controller`, `service`, `repository`, `http`, `domain
 
 For organization-only refactors, preserve class names, signatures, visibility, Spring wiring, public HTTP/OpenAPI contracts, database schema/SQL/transactions, event envelopes/retries/idempotency, provider consent/configuration fingerprints, cache formats/keys/TTLs, and resource locations. Change package/import references only; stop and separately design any move that requires a behavior, signature, visibility, or lifetime change.
 
+## Relational database access
+
+Apply the repository-only rule to PostgreSQL/JDBC. Only repository classes in a feature's `repository` package, or an infrastructure-owned repository package, may hold `JdbcTemplate`, `DataSource`, JDBC connections/statements, or issue SQL. Controllers, services, queue handlers, health endpoints, and publishers must call repository operations instead. Services and handlers may retain existing `TransactionTemplate` boundaries to preserve atomicity; transaction orchestration does not permit direct SQL. Preserve current query semantics, locks, ordering, idempotency, rollback behavior, and observable outcomes. This rule does not reclassify Redis Streams/caches or S3 object storage; keep their existing infrastructure/external adapters.
+
 ## OpenAPI contract — always maintain
 
 OpenAPI documentation is part of every public endpoint's contract. Keep the generated contract complete and current in the same change as the implementation; no endpoint is exempt, including health checks and provider-directory endpoints. When adding or changing a route, method, request/response schema, validation rule, consent behavior, or observable status/error response:
