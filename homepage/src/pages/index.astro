@@ -9,32 +9,37 @@ const setupUrl = "https://github.com/arrokh/paper-t-rail";
 const architecture = [
   {
     name: "Read the PDF",
-    system: "Source parsing · claim extraction",
+    system: "PDF parsing · LLM claim extraction",
     detail: "Parse the uploaded PDF and persist its structure, citations, and Atomic Claims.",
+    technologies: "PDFBox 3.0.5 · GROBID 0.9.1-crf · OpenAI-compatible LLM (Gemma 4 E2B local default; heuristic selectable).",
     asset: "/images/architecture/stage-source.svg",
   },
   {
     name: "Resolve references",
-    system: "Bibliography · identity matching",
+    system: "Bibliography · optional Crossref lookup",
     detail: "Resolve supported bibliography entries to canonical scholarly papers.",
+    technologies: "Crossref when selected with per-run consent; recorded fixtures are the API fallback.",
     asset: "/images/architecture/stage-references.svg",
   },
   {
     name: "Acquire cited sources",
-    system: "Legal full-text access",
+    system: "Eligible access · optional Unpaywall lookup",
     detail: "Discover eligible cited-paper sources and record their access provenance.",
+    technologies: "Unpaywall when selected with per-run consent; recorded fixtures are the API fallback.",
     asset: "/images/architecture/stage-sources.svg",
   },
   {
     name: "Prepare evidence",
-    system: "Parsing · chunking · retrieval",
+    system: "Docling · embedding model · hybrid retrieval",
     detail: "Prepare eligible cited full text and retrieve candidate Evidence Passages.",
+    technologies: "Docling 1.30.0 · Ollama nomic-embed-text:v1.5 embedding model or local feature-hash-384-v1 lexical fallback · PostgreSQL full-text search + pgvector.",
     asset: "/images/architecture/stage-evidence.svg",
   },
   {
     name: "Assess evidence",
-    system: "Passage judgement · aggregation",
-    detail: "Record evidence judgements and aggregate Claim–Reference outcomes for review.",
+    system: "System One LLM · evidence judgement",
+    detail: "Record evidence judgements and aggregate Claim–Reference outcomes for researcher review.",
+    technologies: "System One LLM: configured Jev preference (hosted, per-run consent), local Laya alternative, or mock v1 fallback. Judgements are uncalibrated.",
     asset: "/images/architecture/stage-assessment.svg",
   },
 ];
@@ -297,6 +302,20 @@ const questions = [
           </p>
         </noscript>
       </div>
+      <section class="architecture-integrations" aria-labelledby="architecture-integrations-heading">
+        <header class="architecture-integrations__heading">
+          <h3 id="architecture-integrations-heading">Technologies currently implemented</h3>
+          <p>Provider availability depends on deployment and run selection. External services require per-run consent.</p>
+        </header>
+        <dl class="architecture-integrations__list">
+          {architecture.map((step, index) => (
+            <div class="architecture-integrations__row">
+              <dt><span>{String(index + 1).padStart(2, "0")}</span>{step.name}</dt>
+              <dd>{step.technologies}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
       <div class="architecture-notes">
         <article class="architecture-note architecture-note--consent">
           <p class="pixel-label">Consent stays with the run</p>
@@ -316,7 +335,7 @@ const questions = [
     </div>
   </section>
 
-  <InteractiveDemo />
+  <InteractiveDemo stages={architecture} />
 
   <section id="how-it-works" class="landing-section how-it-works-section" aria-labelledby="how-it-works-heading">
     <div class="landing-container">
@@ -568,10 +587,22 @@ const questions = [
       const stampDuration = prefersReducedMotion ? 0 : 420;
       let isTransitioning = false;
 
-      const transitionToTicket = (offset: number, stamp: boolean) => {
+      const focusInteractiveDemo = () => {
+        const demoSection = document.querySelector<HTMLElement>("#interactive-demo");
+        if (!demoSection) return;
+
+        demoSection.scrollIntoView({
+          behavior: prefersReducedMotion ? "auto" : "smooth",
+          block: "start",
+        });
+        demoSection.querySelector<HTMLButtonElement>("[data-demo-step='0']")?.focus({ preventScroll: true });
+      };
+
+      const transitionToTicket = (offset: number, stamp: boolean, afterTransition?: () => void) => {
         if (isTransitioning) return;
         if (!stamp || stampDuration === 0) {
           updateActiveTicket(activeTicketIndex + offset);
+          afterTransition?.();
           return;
         }
 
@@ -584,6 +615,7 @@ const questions = [
         window.setTimeout(() => {
           delete outgoingTicket.dataset.stamping;
           updateActiveTicket(activeTicketIndex + offset);
+          afterTransition?.();
           window.setTimeout(() => {
             previousButton.disabled = false;
             nextButton.disabled = false;
@@ -593,7 +625,10 @@ const questions = [
       };
 
       previousButton.addEventListener("click", () => transitionToTicket(-1, false));
-      nextButton.addEventListener("click", () => transitionToTicket(1, true));
+      nextButton.addEventListener("click", () => {
+        const wrapsToFirst = activeTicketIndex === tickets.length - 1;
+        transitionToTicket(1, true, wrapsToFirst ? focusInteractiveDemo : undefined);
+      });
       updateActiveTicket(activeTicketIndex);
     }
   }

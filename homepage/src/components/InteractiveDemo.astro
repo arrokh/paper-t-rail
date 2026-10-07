@@ -1,3 +1,11 @@
+---
+interface Props {
+  stages: { name: string }[];
+}
+
+const { stages } = Astro.props;
+---
+
 <section id="interactive-demo" class="landing-section interactive-demo-section" aria-labelledby="interactive-demo-heading">
   <div class="landing-container interactive-demo">
     <header class="section-heading section-heading--split">
@@ -16,67 +24,77 @@
     </aside>
 
     <div class="demo-story" data-demo-story>
-      <ol class="demo-story__steps" aria-label="Claim-to-evidence walkthrough" hidden>
-        <li><button type="button" data-demo-step="0" aria-pressed="true">Claim</button></li>
-        <li><button type="button" data-demo-step="1" aria-pressed="false">Citation</button></li>
-        <li><button type="button" data-demo-step="2" aria-pressed="false">Cited paper</button></li>
-        <li><button type="button" data-demo-step="3" aria-pressed="false">Candidate passage</button></li>
+      <ol class="demo-story__steps" aria-label="Five-stage Analysis Run pipeline walkthrough" hidden>
+        {stages.map((stage, index) => (
+          <li><button type="button" data-demo-step={index} aria-pressed={index === 0 ? "true" : "false"}>{stage.name}</button></li>
+        ))}
       </ol>
-      <output class="demo-story__status" data-demo-step-status role="status" aria-live="polite" aria-atomic="true" hidden>Step 1 of 4 · Claim</output>
+      <output class="demo-story__status" data-demo-step-status role="status" aria-live="polite" aria-atomic="true" hidden>Step 1 of {stages.length} · {stages[0]?.name ?? "Read the PDF"}</output>
 
       <div class="demo-story__details">
         <article class="demo-story__panel" data-demo-story-panel="0">
-          <p class="demo-story__kind">Atomic Claim · synthetic source document</p>
+          <p class="demo-story__kind">Stage 01 · {stages[0]?.name} · synthetic source document</p>
           <h3>A weekly planning routine helped first-year students complete more reading assignments.</h3>
-          <p>This is the proposition Paper T-Rail traces back through the source document’s citation.</p>
+          <p>This fictional claim is traced from a text-based source PDF; the demo does not run the claim-analysis LLM.</p>
         </article>
         <article class="demo-story__panel" data-demo-story-panel="1">
-          <p class="demo-story__kind">Citation Context · synthetic source document</p>
+          <p class="demo-story__kind">Stage 02 · {stages[1]?.name} · synthetic citation context</p>
           <h3>A weekly planning routine helped first-year students complete more reading assignments <mark>(Rivera &amp; Holm, 2024)</mark>.</h3>
-          <p>The Citation Marker points to a bibliography entry in the same context.</p>
+          <p>The citation marker points to a fictional bibliography entry; the demo does not query Crossref.</p>
         </article>
         <article class="demo-story__panel" data-demo-story-panel="2">
-          <p class="demo-story__kind">Cited Paper · synthetic bibliography entry</p>
+          <p class="demo-story__kind">Stage 03 · {stages[2]?.name} · synthetic cited paper</p>
           <h3>Planning routines and undergraduate reading completion</h3>
           <p>A. Rivera and M. Holm · 2024 · fictional study</p>
-          <p>The reference is the source Paper T-Rail searches for candidate evidence.</p>
+          <p>This fictional source stands in for eligible cited-paper text; the demo does not retrieve a paper.</p>
         </article>
         <article class="demo-story__panel" data-demo-story-panel="3">
-          <p class="demo-story__kind">Candidate Evidence Passage · synthetic cited paper</p>
-          <blockquote>“Participants assigned to weekly planning completed a higher share of reading assignments than those who received the usual course guidance.”</blockquote>
-          <p>Results · page 6. A candidate passage is for researcher inspection; retrieval does not decide what it supports.</p>
+          <p class="demo-story__kind">Stage 04 · {stages[3]?.name} · synthetic candidate passage</p>
+          <blockquote>“First-year students assigned to weekly planning completed a higher share of reading assignments than first-year students who received the usual course guidance.”</blockquote>
+          <p>Results · page 6. Retrieval surfaces this candidate for inspection; it does not decide whether the claim is supported.</p>
+        </article>
+        <article class="demo-story__panel" data-demo-story-panel="4">
+          <p class="demo-story__kind">Stage 05 · {stages[4]?.name} · fictional assessment</p>
+          <h3>Illustrative judgement: Direct support</h3>
+          <p>The real System One LLM returns a typed Evidence Judgement. This sample is uncalibrated, not a verdict, and no model runs in this demo; researchers decide.</p>
         </article>
       </div>
     </div>
 
-    <div class="demo-review-intro">
-      <h3>Now inspect the trail in Paper Review.</h3>
-      <p>Choose a detail view, then highlight its claim or citation in the sample source document.</p>
-    </div>
+    <header class="demo-review-intro">
+      <div>
+        <h3>Paper Review</h3>
+        <p>Inspect a source document alongside citations, bibliography details, and illustrative AI results.</p>
+      </div>
+      <span class="demo-review-intro__badge">Synthetic data</span>
+    </header>
 
     <div class="demo-review-shell" data-demo-review>
-      <header class="demo-review-shell__header">
-        <div>
-          <p class="demo-review-shell__eyebrow">Paper Review · sample Analysis Run</p>
-          <h3>weekly-planning-study.pdf</h3>
-        </div>
-        <span class="demo-review-shell__badge">Synthetic data</span>
-      </header>
-
       <div class="demo-review-layout">
         <section class="demo-pdf" aria-labelledby="demo-pdf-heading">
-          <header class="demo-pdf__toolbar">
-            <h4 id="demo-pdf-heading">Original source document</h4>
-            <span>Page 3 of 8</span>
+          <header class="demo-pdf__document-header">
+            <div>
+              <h4 id="demo-pdf-heading">Original source document</h4>
+              <p>weekly-planning-study.pdf</p>
+            </div>
           </header>
-          <article class="demo-pdf__page" aria-label="Fictional source document page 3">
-            <p class="demo-pdf__notice">Synthetic source document</p>
-            <h5>Digital reading and weekly planning</h5>
-            <p class="demo-pdf__byline">A fictional research draft · Introduction</p>
-            <p>Reading routines can help students plan their study time. Researchers have explored how small changes to weekly schedules affect course participation and assignment completion.</p>
-            <p><span data-demo-pdf-text="claim">A weekly planning routine helped first-year students complete more reading assignments</span> <span data-demo-pdf-text="citation">(Rivera &amp; Holm, 2024)</span>. These findings suggest that regular planning may support students as they organize course work.</p>
-            <p>Further research could examine how these routines work across different courses and student groups.</p>
-          </article>
+          <div class="demo-pdf__toolbar"><span>Excerpts from pages 3 and 8 of an 8-page paper</span></div>
+          <div class="demo-pdf__pages" data-demo-pdf-pages role="region" tabindex="0" aria-label="Fictional PDF excerpts, pages 3 and 8">
+            <article class="demo-pdf__page" aria-label="Fictional source document page 3">
+              <p class="demo-pdf__notice">Synthetic source document</p>
+              <h5>Digital reading and weekly planning</h5>
+              <p class="demo-pdf__byline">A fictional research draft · Introduction</p>
+              <p>Reading routines can help students plan their study time. Researchers have explored how small changes to weekly schedules affect course participation and assignment completion.</p>
+              <p><span data-demo-pdf-text="claim">A weekly planning routine helped first-year students complete more reading assignments</span> <span data-demo-pdf-text="citation">(Rivera &amp; Holm, 2024)</span>. These findings suggest that regular planning may support students as they organize course work.</p>
+              <p>Further research could examine how these routines work across different courses and student groups.</p>
+            </article>
+            <article class="demo-pdf__page demo-pdf__page--references" aria-label="Fictional source document page 8, bibliography">
+              <p class="demo-pdf__notice">Page 8 · synthetic reference list</p>
+              <h5>References</h5>
+              <p class="demo-pdf__byline">Fictional bibliography entry</p>
+              <p class="demo-pdf__reference-entry" data-demo-pdf-text="bibliography">Rivera, A., &amp; Holm, M. (2024). Planning routines and undergraduate reading completion. <em>Synthetic Journal of Learning Studies, 12</em>(2), 45–61.</p>
+            </article>
+          </div>
         </section>
 
         <aside class="demo-review-details" aria-label="Paper Review details">
@@ -86,33 +104,37 @@
           </div>
 
           <section class="demo-review-details__panel" data-demo-review-panel="results" aria-labelledby="demo-results-heading">
-            <div class="demo-review-details__title-row">
-              <h4 id="demo-results-heading">Claim results</h4>
-              <span>1 pair</span>
+            <div class="demo-review-details__claim-card">
+              <div class="demo-review-details__claim-card-header">
+                <h4 class="demo-review-details__label" id="demo-results-heading">Atomic Claim</h4>
+                <div class="demo-review-details__actions" data-demo-pdf-controls hidden>
+                  <button type="button" data-demo-pdf-highlight="claim" aria-pressed="false">Show claim in PDF</button>
+                </div>
+              </div>
+              <p class="demo-review-details__claim">A weekly planning routine helped first-year students complete more reading assignments.</p>
             </div>
-            <p class="demo-review-details__label">Atomic Claim</p>
-            <p class="demo-review-details__claim">A weekly planning routine helped first-year students complete more reading assignments.</p>
             <div class="demo-review-details__outcome">
-              <span>Illustrative AI result</span>
-              <strong>Partially supported</strong>
+              <span>Illustrative Claim–Paper result</span>
+              <strong>Supported</strong>
             </div>
             <p class="demo-review-details__caveat">Example status only. Candidate passages are for inspection; the report is a human triage aid, not a truth certification.</p>
-            <h5>Candidate passage</h5>
-            <blockquote>“Participants assigned to weekly planning completed a higher share of reading assignments than those who received the usual course guidance.”</blockquote>
-            <p class="demo-review-details__provenance">Fictional cited paper · Results, page 6</p>
-            <div class="demo-review-details__actions" data-demo-pdf-controls hidden>
-              <button type="button" data-demo-pdf-highlight="claim" aria-pressed="false">Show claim in PDF</button>
+            <div class="demo-review-details__evidence-heading">
+              <h5>Evidence passage</h5>
+              <span class="demo-review-details__judgement">Direct support</span>
             </div>
+            <blockquote>“First-year students assigned to weekly planning completed a higher share of reading assignments than first-year students who received the usual course guidance.”</blockquote>
+            <p class="demo-review-details__provenance">Fictional cited paper · Results, page 6</p>
           </section>
 
           <section class="demo-review-details__panel" data-demo-review-panel="citations" aria-labelledby="demo-citations-heading">
             <h4 id="demo-citations-heading">Citation context</h4>
             <blockquote>A weekly planning routine helped first-year students complete more reading assignments <span>(Rivera &amp; Holm, 2024)</span>.</blockquote>
             <h5>Bibliography entry</h5>
-            <p>Rivera, A., &amp; Holm, M. (2024). <em>Planning routines and undergraduate reading completion</em>. Fictional study.</p>
+            <p>Rivera, A., &amp; Holm, M. (2024). Planning routines and undergraduate reading completion. <em>Synthetic Journal of Learning Studies, 12</em>(2), 45–61.</p>
             <p class="demo-review-details__caveat">This citation and bibliography entry are invented for the demo.</p>
             <div class="demo-review-details__actions" data-demo-pdf-controls hidden>
               <button type="button" data-demo-pdf-highlight="citation" aria-pressed="false">Show citation in PDF</button>
+              <button type="button" data-demo-pdf-highlight="bibliography" aria-pressed="false">Show bibliography in PDF</button>
             </div>
           </section>
           <output class="demo-review-details__status" data-demo-pdf-status role="status" aria-live="polite" aria-atomic="true"></output>
@@ -160,6 +182,7 @@
     const reviewPanels = Array.from(review.querySelectorAll<HTMLElement>("[data-demo-review-panel]"));
     const pdfButtons = Array.from(review.querySelectorAll<HTMLButtonElement>("[data-demo-pdf-highlight]"));
     const pdfText = Array.from(review.querySelectorAll<HTMLElement>("[data-demo-pdf-text]"));
+    const pdfPages = review.querySelector<HTMLElement>("[data-demo-pdf-pages]");
     const pdfStatus = review.querySelector<HTMLOutputElement>("[data-demo-pdf-status]");
 
     if (reviewButtons.length === reviewPanels.length) {
@@ -180,7 +203,25 @@
       review.querySelector<HTMLElement>("[data-demo-review-controls]")?.removeAttribute("hidden");
     }
 
-    if (pdfButtons.length > 0 && pdfText.length > 0 && pdfStatus) {
+    if (pdfButtons.length > 0 && pdfText.length > 0 && pdfPages && pdfStatus) {
+      const scrollPdfToText = (target: HTMLElement) => {
+        const pagesRect = pdfPages.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const currentScrollTop = pdfPages.scrollTop;
+        const targetTop = currentScrollTop + targetRect.top - pagesRect.top - pdfPages.clientTop;
+        const targetBottom = targetTop + targetRect.height;
+        const visibleBottom = currentScrollTop + pdfPages.clientHeight;
+
+        if (targetTop >= currentScrollTop && targetBottom <= visibleBottom) return;
+
+        const centeredScrollTop = targetTop - (pdfPages.clientHeight - targetRect.height) / 2;
+        const maxScrollTop = Math.max(0, pdfPages.scrollHeight - pdfPages.clientHeight);
+        const scrollTop = Math.max(0, Math.min(centeredScrollTop, maxScrollTop));
+        const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+
+        pdfPages.scrollTo({ top: scrollTop, behavior });
+      };
+
       pdfButtons.forEach((button) => {
         button.addEventListener("click", () => {
           const selectedText = button.dataset.demoPdfHighlight;
@@ -192,9 +233,15 @@
           pdfText.forEach((text) => {
             text.classList.toggle("is-highlighted", text.dataset.demoPdfText === selectedText);
           });
-          pdfStatus.textContent = selectedText === "claim"
-            ? "Claim highlighted in the synthetic source PDF, page 3."
-            : "Citation highlighted in the synthetic source PDF, page 3.";
+          const highlightedText = pdfText.find((text) => text.dataset.demoPdfText === selectedText);
+          if (highlightedText) scrollPdfToText(highlightedText);
+          const selectedLabel = selectedText === "claim"
+            ? "Claim"
+            : selectedText === "citation"
+              ? "Citation"
+              : "Bibliography entry";
+          const pageNumber = selectedText === "bibliography" ? 8 : 3;
+          pdfStatus.textContent = `${selectedLabel} highlighted in the synthetic source PDF, page ${pageNumber}.`;
         });
       });
       review.querySelectorAll<HTMLElement>("[data-demo-pdf-controls]").forEach((controls) => {
@@ -224,8 +271,7 @@
     border-block: 1px solid var(--ptr-border);
   }
 
-  .demo-data-note strong,
-  .demo-review-shell__badge {
+  .demo-data-note strong {
     color: var(--ptr-teal-deep);
     font-size: 12px;
     font-weight: 700;
@@ -248,7 +294,7 @@
 
   .demo-story__steps {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     margin: 0;
     padding: 0;
     list-style: none;
@@ -301,11 +347,16 @@
     color: var(--ptr-paper-bright);
   }
 
-  .demo-story__steps button:focus-visible,
-  .demo-review-details__switcher button:focus-visible,
-  .demo-review-details__actions button:focus-visible {
+  .demo-story__steps button:focus-visible {
     outline: 3px solid var(--ptr-focus);
     outline-offset: 3px;
+  }
+
+  .demo-review-details__switcher button:focus-visible,
+  .demo-review-details__actions button:focus-visible {
+    outline: none;
+    border-color: var(--ptr-focus);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ptr-focus) 50%, transparent);
   }
 
   .demo-story__status {
@@ -330,7 +381,6 @@
   }
 
   .demo-story__kind,
-  .demo-review-shell__eyebrow,
   .demo-review-details__label {
     margin: 0 0 10px;
     color: var(--ptr-teal-deep);
@@ -373,96 +423,142 @@
   }
 
   .demo-review-intro {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+  }
+
+  .demo-review-intro > div {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 34rem);
-    align-items: end;
-    gap: 16px 32px;
-    padding-top: 10px;
+    gap: 4px;
   }
 
   .demo-review-intro h3 {
     margin: 0;
     color: var(--ptr-ink);
-    font-family: var(--ptr-font-display);
-    font-size: clamp(26px, 3.4vw, 40px);
-    line-height: 1.08;
+    font-family: var(--ptr-font-body);
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .demo-review-intro p {
+    margin: 0;
+    color: var(--ptr-muted);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .demo-review-intro__badge {
+    display: inline-flex;
+    height: 20px;
+    flex: none;
+    align-items: center;
+    align-self: center;
+    padding: 2px 8px;
+    border: 1px solid var(--ptr-border);
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--ptr-ink);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: normal;
+    text-transform: none;
+    white-space: nowrap;
   }
 
   .demo-review-shell {
     overflow: hidden;
     border: 1px solid var(--ptr-border);
-    background: var(--ptr-paper);
-  }
-
-  .demo-review-shell__header {
-    display: flex;
-    min-height: 76px;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--ptr-border);
-    background: var(--ptr-paper-soft);
-  }
-
-  .demo-review-shell__eyebrow {
-    margin-bottom: 5px;
-  }
-
-  .demo-review-shell__header h3 {
-    margin: 0;
-    color: var(--ptr-ink);
-    font-size: 18px;
-    font-weight: 650;
-    overflow-wrap: anywhere;
-  }
-
-  .demo-review-shell__badge {
-    flex: none;
-    padding: 5px 8px;
-    border: 1px solid var(--ptr-teal);
-    background: var(--ptr-paper-teal);
-    font-size: 10px;
+    border-radius: calc(var(--ptr-radius-control) * 1.4);
+    background: var(--ptr-paper-bright);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ptr-ink) 10%, transparent), 0 1px 2px color-mix(in srgb, var(--ptr-ink) 8%, transparent);
   }
 
   .demo-review-layout {
     display: grid;
     grid-template-columns: minmax(0, 1.35fr) minmax(19rem, 0.9fr);
-    gap: 20px;
+    gap: 16px;
     min-height: 560px;
-    padding: 20px;
+    padding: 12px 16px;
   }
 
   .demo-pdf {
     display: flex;
     min-width: 0;
     flex-direction: column;
+    overflow: hidden;
     border: 1px solid var(--ptr-border);
-    background: var(--ptr-paper-soft);
+    border-radius: calc(var(--ptr-radius-control) * 0.8);
+    background: var(--ptr-paper);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--ptr-ink) 8%, transparent);
+  }
+
+  .demo-pdf__document-header {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--ptr-paper-bright);
+  }
+
+  .demo-pdf__document-header h4 {
+    margin: 0;
+    color: var(--ptr-ink);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .demo-pdf__document-header p {
+    margin: 2px 0 0;
+    color: var(--ptr-muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
   }
 
   .demo-pdf__toolbar {
     display: flex;
-    min-height: 42px;
+    min-height: 32px;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 12px;
+    gap: 8px;
+    padding: 6px 8px;
     background: var(--ptr-ink);
     color: var(--ptr-paper-bright);
     font-size: 12px;
   }
 
-  .demo-pdf__toolbar h4 {
-    margin: 0;
-    font-size: inherit;
-    font-weight: 600;
-  }
-
   .demo-pdf__toolbar span {
     flex: none;
     font-family: var(--ptr-font-mono);
-    font-size: 10px;
+    font-size: 12px;
+  }
+
+  .demo-pdf__pages {
+    display: grid;
+    justify-items: center;
+    align-content: start;
+    gap: 16px;
+    max-height: 520px;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 16px 8px;
+    overscroll-behavior: contain;
+    scroll-behavior: smooth;
+    scrollbar-color: var(--ptr-border) var(--ptr-paper-soft);
+    scrollbar-width: thin;
+  }
+
+  .demo-pdf__pages:focus-visible {
+    outline: 3px solid var(--ptr-focus);
+    outline-offset: -3px;
+  }
+
+  .demo-pdf__pages .demo-pdf__page {
+    margin: 0 auto;
   }
 
   .demo-pdf__page {
@@ -475,6 +571,15 @@
     color: var(--ptr-ink);
     font-family: var(--ptr-font-display);
     box-shadow: 0 2px 8px color-mix(in srgb, var(--ptr-ink) 10%, transparent);
+  }
+
+  .demo-pdf__page--references {
+    min-height: 260px;
+  }
+
+  .demo-pdf__reference-entry {
+    padding-left: 1.5em;
+    text-indent: -1.5em;
   }
 
   .demo-pdf__notice {
@@ -523,68 +628,97 @@
 
   .demo-review-details {
     min-width: 0;
-    padding: 4px 0;
+    padding: 0;
   }
 
   .demo-review-details__switcher {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 4px;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     padding: 4px;
     border: 1px solid var(--ptr-border);
-    background: var(--ptr-paper-muted);
+    border-radius: calc(var(--ptr-radius-control) * 1.4);
+    background: color-mix(in srgb, var(--ptr-paper-muted) 60%, transparent);
   }
 
   .demo-review-details__switcher button {
-    min-height: 40px;
-    padding: 7px 8px;
+    min-width: 0;
+    min-height: 36px;
+    padding: 8px;
     border: 1px solid transparent;
+    border-radius: calc(var(--ptr-radius-control) * 0.8);
     background: transparent;
     color: var(--ptr-ink);
     font: inherit;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.25;
+    white-space: normal;
     cursor: pointer;
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  .demo-review-details__switcher button:hover {
+    background: color-mix(in srgb, var(--ptr-ink) 6%, var(--ptr-paper-muted));
   }
 
   .demo-review-details__switcher button[aria-pressed="true"] {
-    border-color: var(--ptr-border);
-    background: var(--ptr-paper-bright);
+    background: var(--ptr-red);
+    color: var(--ptr-paper-bright);
+    font-weight: 600;
     box-shadow: 0 1px 2px color-mix(in srgb, var(--ptr-ink) 10%, transparent);
   }
 
-  .demo-review-details__title-row {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--ptr-border);
+  .demo-review-details__switcher button[aria-pressed="true"]:hover {
+    background: var(--ptr-red-hover);
   }
 
-  .demo-review-details__title-row h4,
   .demo-review-details__panel > h4 {
     margin: 0;
     color: var(--ptr-ink);
-    font-size: 15px;
-    font-weight: 700;
+    font-size: 16px;
+    font-weight: 600;
   }
 
-  .demo-review-details__title-row > span {
-    color: var(--ptr-muted);
-    font-family: var(--ptr-font-mono);
-    font-size: 10px;
+  .demo-review-details__claim-card {
+    padding: 12px;
+    border: 1px solid var(--ptr-border);
+    border-radius: calc(var(--ptr-radius-control) * 1.4);
+    background: var(--ptr-paper-bright);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ptr-ink) 10%, transparent);
+  }
+
+  .demo-review-details__claim-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
   }
 
   .demo-review-details__label {
-    margin-top: 16px;
-    margin-bottom: 6px;
+    margin: 0;
+    color: var(--ptr-muted);
     font-size: 10px;
+    font-weight: 500;
   }
 
-  .demo-review-details__claim,
-  .demo-review-details__panel > p,
+  .demo-review-details__claim {
+    margin: 0;
+    color: var(--ptr-ink);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.55;
+  }
+
+  .demo-review-details__panel > p {
+    margin: 0;
+    color: var(--ptr-ink);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
   .demo-review-details__caveat {
     margin: 0;
     color: var(--ptr-ink);
@@ -597,9 +731,11 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin-top: 14px;
-    padding-block: 10px;
-    border-block: 1px solid var(--ptr-border);
+    margin-top: 12px;
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--ptr-teal) 28%, transparent);
+    border-radius: calc(var(--ptr-radius-control) * 1.4);
+    background: color-mix(in srgb, var(--ptr-paper-teal) 65%, var(--ptr-paper-bright));
     font-size: 12px;
   }
 
@@ -623,9 +759,36 @@
     font-size: 13px;
   }
 
+  .demo-review-details__evidence-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 18px 0 8px;
+  }
+
+  .demo-review-details__evidence-heading h5 {
+    margin: 0;
+    color: var(--ptr-ink);
+    font-size: 13px;
+  }
+
+  .demo-review-details__judgement {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    border: 1px solid color-mix(in srgb, var(--ptr-teal-deep) 30%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--ptr-teal) 12%, var(--ptr-paper-bright));
+    color: var(--ptr-teal-deep);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
   .demo-review-details__panel blockquote {
     padding: 12px;
     border: 1px solid var(--ptr-border);
+    border-radius: calc(var(--ptr-radius-control) * 1.4);
     background: var(--ptr-paper-bright);
     font-size: 13px;
   }
@@ -637,24 +800,28 @@
   }
 
   .demo-review-details__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
     margin-top: 12px;
   }
 
   .demo-review-details__actions button {
-    min-height: 40px;
-    padding: 8px 12px;
-    border: 1px solid var(--ptr-border);
-    border-radius: var(--ptr-radius-control);
-    background: var(--ptr-paper-bright);
+    min-height: 28px;
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: calc(var(--ptr-radius-control) * 0.8);
+    background: var(--ptr-paper-soft);
     color: var(--ptr-ink);
     font: inherit;
-    font-size: 12px;
-    font-weight: 650;
+    font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
+    transition: background-color 140ms ease;
   }
 
   .demo-review-details__actions button:hover {
-    background: var(--ptr-paper-gold);
+    background: color-mix(in srgb, var(--ptr-paper-soft) 95%, var(--ptr-ink) 5%);
   }
 
   .demo-review-details__actions button[aria-pressed="true"] {
@@ -699,6 +866,10 @@
       padding: 12px;
     }
 
+    .demo-review-intro {
+      gap: 12px;
+    }
+
     .demo-pdf__page {
       width: calc(100% - 20px);
       padding: 22px;
@@ -739,11 +910,6 @@
       font-size: 14px;
     }
 
-    .demo-review-intro {
-      grid-template-columns: 1fr;
-      gap: 10px;
-    }
-
     .demo-review-shell {
       display: none;
     }
@@ -754,6 +920,10 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .demo-pdf__pages {
+      scroll-behavior: auto;
+    }
+
     .demo-pdf__page [data-demo-pdf-text] {
       transition: none;
     }
