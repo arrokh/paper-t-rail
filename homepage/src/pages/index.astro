@@ -1,6 +1,7 @@
 ---
 import "../styles/global.css";
 import HeroScene from "../components/hero/HeroScene.astro";
+import InteractiveDemo from "../components/InteractiveDemo.astro";
 import CloudflareWebAnalytics from "../components/CloudflareWebAnalytics.astro";
 
 const setupUrl = "https://github.com/arrokh/paper-t-rail";
@@ -146,6 +147,7 @@ const questions = [
     <nav class="site-nav" aria-label="Main navigation">
       <a href="#about">About</a>
       <a href="#architecture">Architecture</a>
+      <a href="#interactive-demo">Try the demo</a>
       <a href="#how-it-works">How it works</a>
       <a href="#faq">FAQ</a>
     </nav>
@@ -313,6 +315,8 @@ const questions = [
       </div>
     </div>
   </section>
+
+  <InteractiveDemo />
 
   <section id="how-it-works" class="landing-section how-it-works-section" aria-labelledby="how-it-works-heading">
     <div class="landing-container">

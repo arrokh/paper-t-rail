@@ -1,0 +1,761 @@
+<section id="interactive-demo" class="landing-section interactive-demo-section" aria-labelledby="interactive-demo-heading">
+  <div class="landing-container interactive-demo">
+    <header class="section-heading section-heading--split">
+      <div>
+        <h2 id="interactive-demo-heading">Follow a claim to the source worth checking.</h2>
+      </div>
+      <p>
+        Trace one example from a research claim through its citation to a candidate passage, then
+        see how the same trail appears in Paper Review.
+      </p>
+    </header>
+
+    <aside class="demo-data-note" aria-label="Synthetic demo data notice">
+      <strong>Synthetic example</strong>
+      <p>All names, claims, and papers below are fictional. This static demo does not upload a document or contact a provider.</p>
+    </aside>
+
+    <div class="demo-story" data-demo-story>
+      <ol class="demo-story__steps" aria-label="Claim-to-evidence walkthrough" hidden>
+        <li><button type="button" data-demo-step="0" aria-pressed="true">Claim</button></li>
+        <li><button type="button" data-demo-step="1" aria-pressed="false">Citation</button></li>
+        <li><button type="button" data-demo-step="2" aria-pressed="false">Cited paper</button></li>
+        <li><button type="button" data-demo-step="3" aria-pressed="false">Candidate passage</button></li>
+      </ol>
+      <output class="demo-story__status" data-demo-step-status role="status" aria-live="polite" aria-atomic="true" hidden>Step 1 of 4 · Claim</output>
+
+      <div class="demo-story__details">
+        <article class="demo-story__panel" data-demo-story-panel="0">
+          <p class="demo-story__kind">Atomic Claim · synthetic source document</p>
+          <h3>A weekly planning routine helped first-year students complete more reading assignments.</h3>
+          <p>This is the proposition Paper T-Rail traces back through the source document’s citation.</p>
+        </article>
+        <article class="demo-story__panel" data-demo-story-panel="1">
+          <p class="demo-story__kind">Citation Context · synthetic source document</p>
+          <h3>A weekly planning routine helped first-year students complete more reading assignments <mark>(Rivera &amp; Holm, 2024)</mark>.</h3>
+          <p>The Citation Marker points to a bibliography entry in the same context.</p>
+        </article>
+        <article class="demo-story__panel" data-demo-story-panel="2">
+          <p class="demo-story__kind">Cited Paper · synthetic bibliography entry</p>
+          <h3>Planning routines and undergraduate reading completion</h3>
+          <p>A. Rivera and M. Holm · 2024 · fictional study</p>
+          <p>The reference is the source Paper T-Rail searches for candidate evidence.</p>
+        </article>
+        <article class="demo-story__panel" data-demo-story-panel="3">
+          <p class="demo-story__kind">Candidate Evidence Passage · synthetic cited paper</p>
+          <blockquote>“Participants assigned to weekly planning completed a higher share of reading assignments than those who received the usual course guidance.”</blockquote>
+          <p>Results · page 6. A candidate passage is for researcher inspection; retrieval does not decide what it supports.</p>
+        </article>
+      </div>
+    </div>
+
+    <div class="demo-review-intro">
+      <h3>Now inspect the trail in Paper Review.</h3>
+      <p>Choose a detail view, then highlight its claim or citation in the sample source document.</p>
+    </div>
+
+    <div class="demo-review-shell" data-demo-review>
+      <header class="demo-review-shell__header">
+        <div>
+          <p class="demo-review-shell__eyebrow">Paper Review · sample Analysis Run</p>
+          <h3>weekly-planning-study.pdf</h3>
+        </div>
+        <span class="demo-review-shell__badge">Synthetic data</span>
+      </header>
+
+      <div class="demo-review-layout">
+        <section class="demo-pdf" aria-labelledby="demo-pdf-heading">
+          <header class="demo-pdf__toolbar">
+            <h4 id="demo-pdf-heading">Original source document</h4>
+            <span>Page 3 of 8</span>
+          </header>
+          <article class="demo-pdf__page" aria-label="Fictional source document page 3">
+            <p class="demo-pdf__notice">Synthetic source document</p>
+            <h5>Digital reading and weekly planning</h5>
+            <p class="demo-pdf__byline">A fictional research draft · Introduction</p>
+            <p>Reading routines can help students plan their study time. Researchers have explored how small changes to weekly schedules affect course participation and assignment completion.</p>
+            <p><span data-demo-pdf-text="claim">A weekly planning routine helped first-year students complete more reading assignments</span> <span data-demo-pdf-text="citation">(Rivera &amp; Holm, 2024)</span>. These findings suggest that regular planning may support students as they organize course work.</p>
+            <p>Further research could examine how these routines work across different courses and student groups.</p>
+          </article>
+        </section>
+
+        <aside class="demo-review-details" aria-label="Paper Review details">
+          <div class="demo-review-details__switcher" role="group" aria-label="Review detail type" data-demo-review-controls hidden>
+            <button type="button" data-demo-review-view="results" aria-pressed="true">AI results</button>
+            <button type="button" data-demo-review-view="citations" aria-pressed="false">Citations &amp; bibliography</button>
+          </div>
+
+          <section class="demo-review-details__panel" data-demo-review-panel="results" aria-labelledby="demo-results-heading">
+            <div class="demo-review-details__title-row">
+              <h4 id="demo-results-heading">Claim results</h4>
+              <span>1 pair</span>
+            </div>
+            <p class="demo-review-details__label">Atomic Claim</p>
+            <p class="demo-review-details__claim">A weekly planning routine helped first-year students complete more reading assignments.</p>
+            <div class="demo-review-details__outcome">
+              <span>Illustrative AI result</span>
+              <strong>Partially supported</strong>
+            </div>
+            <p class="demo-review-details__caveat">Example status only. Candidate passages are for inspection; the report is a human triage aid, not a truth certification.</p>
+            <h5>Candidate passage</h5>
+            <blockquote>“Participants assigned to weekly planning completed a higher share of reading assignments than those who received the usual course guidance.”</blockquote>
+            <p class="demo-review-details__provenance">Fictional cited paper · Results, page 6</p>
+            <div class="demo-review-details__actions" data-demo-pdf-controls hidden>
+              <button type="button" data-demo-pdf-highlight="claim" aria-pressed="false">Show claim in PDF</button>
+            </div>
+          </section>
+
+          <section class="demo-review-details__panel" data-demo-review-panel="citations" aria-labelledby="demo-citations-heading">
+            <h4 id="demo-citations-heading">Citation context</h4>
+            <blockquote>A weekly planning routine helped first-year students complete more reading assignments <span>(Rivera &amp; Holm, 2024)</span>.</blockquote>
+            <h5>Bibliography entry</h5>
+            <p>Rivera, A., &amp; Holm, M. (2024). <em>Planning routines and undergraduate reading completion</em>. Fictional study.</p>
+            <p class="demo-review-details__caveat">This citation and bibliography entry are invented for the demo.</p>
+            <div class="demo-review-details__actions" data-demo-pdf-controls hidden>
+              <button type="button" data-demo-pdf-highlight="citation" aria-pressed="false">Show citation in PDF</button>
+            </div>
+          </section>
+          <output class="demo-review-details__status" data-demo-pdf-status role="status" aria-live="polite" aria-atomic="true"></output>
+        </aside>
+      </div>
+    </div>
+
+    <p class="demo-mobile-note">The full Paper Review view is designed for larger screens in the workspace, so this preview is hidden here. The walkthrough above remains available.</p>
+  </div>
+</section>
+
+<script>
+  const demo = document.querySelector<HTMLElement>("[data-demo-story]");
+
+  if (demo) {
+    const stepButtons = Array.from(demo.querySelectorAll<HTMLButtonElement>("[data-demo-step]"));
+    const storyPanels = Array.from(demo.querySelectorAll<HTMLElement>("[data-demo-story-panel]"));
+    const stepStatus = demo.querySelector<HTMLOutputElement>("[data-demo-step-status]");
+
+    if (stepButtons.length === storyPanels.length && stepStatus) {
+      stepButtons.forEach((button, index) => {
+        button.addEventListener("click", () => {
+          stepButtons.forEach((stepButton, stepIndex) => {
+            stepButton.setAttribute("aria-pressed", String(stepIndex === index));
+          });
+          storyPanels.forEach((panel, panelIndex) => {
+            panel.hidden = panelIndex !== index;
+          });
+          stepStatus.textContent = `Step ${index + 1} of ${stepButtons.length} · ${stepButtons[index]?.textContent?.trim() ?? ""}`;
+        });
+      });
+
+      storyPanels.forEach((panel, index) => {
+        panel.hidden = index !== 0;
+      });
+      demo.querySelector<HTMLElement>(".demo-story__steps")?.removeAttribute("hidden");
+      stepStatus.removeAttribute("hidden");
+    }
+  }
+
+  const review = document.querySelector<HTMLElement>("[data-demo-review]");
+
+  if (review) {
+    const reviewButtons = Array.from(review.querySelectorAll<HTMLButtonElement>("[data-demo-review-view]"));
+    const reviewPanels = Array.from(review.querySelectorAll<HTMLElement>("[data-demo-review-panel]"));
+    const pdfButtons = Array.from(review.querySelectorAll<HTMLButtonElement>("[data-demo-pdf-highlight]"));
+    const pdfText = Array.from(review.querySelectorAll<HTMLElement>("[data-demo-pdf-text]"));
+    const pdfStatus = review.querySelector<HTMLOutputElement>("[data-demo-pdf-status]");
+
+    if (reviewButtons.length === reviewPanels.length) {
+      reviewButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const selectedView = button.dataset.demoReviewView;
+          reviewButtons.forEach((viewButton) => {
+            viewButton.setAttribute("aria-pressed", String(viewButton === button));
+          });
+          reviewPanels.forEach((panel) => {
+            panel.hidden = panel.dataset.demoReviewPanel !== selectedView;
+          });
+        });
+      });
+      reviewPanels.forEach((panel) => {
+        panel.hidden = panel.dataset.demoReviewPanel !== "results";
+      });
+      review.querySelector<HTMLElement>("[data-demo-review-controls]")?.removeAttribute("hidden");
+    }
+
+    if (pdfButtons.length > 0 && pdfText.length > 0 && pdfStatus) {
+      pdfButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          const selectedText = button.dataset.demoPdfHighlight;
+          if (!selectedText) return;
+
+          pdfButtons.forEach((pdfButton) => {
+            pdfButton.setAttribute("aria-pressed", String(pdfButton === button));
+          });
+          pdfText.forEach((text) => {
+            text.classList.toggle("is-highlighted", text.dataset.demoPdfText === selectedText);
+          });
+          pdfStatus.textContent = selectedText === "claim"
+            ? "Claim highlighted in the synthetic source PDF, page 3."
+            : "Citation highlighted in the synthetic source PDF, page 3.";
+        });
+      });
+      review.querySelectorAll<HTMLElement>("[data-demo-pdf-controls]").forEach((controls) => {
+        controls.removeAttribute("hidden");
+      });
+    }
+  }
+</script>
+
+<style>
+  .landing-section.interactive-demo-section {
+    min-height: 0;
+    background: var(--ptr-paper-bright);
+  }
+
+  .landing-section.interactive-demo-section > .landing-container.interactive-demo {
+    justify-content: flex-start;
+    gap: clamp(28px, 5svh, 52px);
+  }
+
+  .demo-data-note {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: baseline;
+    gap: 12px 20px;
+    padding-block: 14px;
+    border-block: 1px solid var(--ptr-border);
+  }
+
+  .demo-data-note strong,
+  .demo-review-shell__badge {
+    color: var(--ptr-teal-deep);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .demo-data-note p,
+  .demo-review-intro p {
+    margin: 0;
+    color: var(--ptr-muted);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .demo-story {
+    width: min(100%, 960px);
+    align-self: center;
+  }
+
+  .demo-story__steps {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .demo-story__steps[hidden],
+  .demo-story__status[hidden],
+  .demo-review-details__switcher[hidden],
+  .demo-review-details__actions[hidden] {
+    display: none;
+  }
+
+  .demo-story__steps li {
+    position: relative;
+    min-width: 0;
+  }
+
+  .demo-story__steps li:not(:last-child)::after {
+    position: absolute;
+    z-index: 0;
+    top: 50%;
+    right: 0;
+    left: 0;
+    border-top: 1px dashed var(--ptr-border);
+    content: "";
+    transform: translateY(-50%);
+  }
+
+  .demo-story__steps button {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    width: 100%;
+    min-height: 48px;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    border: 1px solid transparent;
+    background: var(--ptr-paper-bright);
+    color: var(--ptr-muted);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .demo-story__steps button[aria-pressed="true"] {
+    border-color: var(--ptr-ink);
+    background: var(--ptr-ink);
+    color: var(--ptr-paper-bright);
+  }
+
+  .demo-story__steps button:focus-visible,
+  .demo-review-details__switcher button:focus-visible,
+  .demo-review-details__actions button:focus-visible {
+    outline: 3px solid var(--ptr-focus);
+    outline-offset: 3px;
+  }
+
+  .demo-story__status {
+    display: block;
+    margin-top: 18px;
+    color: var(--ptr-muted);
+    font-family: var(--ptr-font-mono);
+    font-size: 11px;
+  }
+
+  .demo-story__details {
+    min-height: 208px;
+    margin-top: 12px;
+    padding: clamp(20px, 4vw, 36px);
+    border: 1px solid var(--ptr-border);
+    background: var(--ptr-paper);
+  }
+
+  .demo-story__panel[hidden],
+  .demo-review-details__panel[hidden] {
+    display: none;
+  }
+
+  .demo-story__kind,
+  .demo-review-shell__eyebrow,
+  .demo-review-details__label {
+    margin: 0 0 10px;
+    color: var(--ptr-teal-deep);
+    font-family: var(--ptr-font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .demo-story__panel h3 {
+    max-width: 34ch;
+    margin: 0;
+    color: var(--ptr-ink);
+    font-family: var(--ptr-font-display);
+    font-size: clamp(23px, 3.2vw, 34px);
+    line-height: 1.14;
+    text-wrap: pretty;
+  }
+
+  .demo-story__panel > p:last-child {
+    max-width: 65ch;
+    margin: 12px 0 0;
+    color: var(--ptr-muted);
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .demo-story__panel blockquote,
+  .demo-review-details__panel blockquote {
+    margin: 0;
+    color: var(--ptr-ink);
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  .demo-story__panel mark {
+    background: var(--ptr-paper-gold);
+    color: var(--ptr-ink);
+  }
+
+  .demo-review-intro {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 34rem);
+    align-items: end;
+    gap: 16px 32px;
+    padding-top: 10px;
+  }
+
+  .demo-review-intro h3 {
+    margin: 0;
+    color: var(--ptr-ink);
+    font-family: var(--ptr-font-display);
+    font-size: clamp(26px, 3.4vw, 40px);
+    line-height: 1.08;
+  }
+
+  .demo-review-shell {
+    overflow: hidden;
+    border: 1px solid var(--ptr-border);
+    background: var(--ptr-paper);
+  }
+
+  .demo-review-shell__header {
+    display: flex;
+    min-height: 76px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--ptr-border);
+    background: var(--ptr-paper-soft);
+  }
+
+  .demo-review-shell__eyebrow {
+    margin-bottom: 5px;
+  }
+
+  .demo-review-shell__header h3 {
+    margin: 0;
+    color: var(--ptr-ink);
+    font-size: 18px;
+    font-weight: 650;
+    overflow-wrap: anywhere;
+  }
+
+  .demo-review-shell__badge {
+    flex: none;
+    padding: 5px 8px;
+    border: 1px solid var(--ptr-teal);
+    background: var(--ptr-paper-teal);
+    font-size: 10px;
+  }
+
+  .demo-review-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(19rem, 0.9fr);
+    gap: 20px;
+    min-height: 560px;
+    padding: 20px;
+  }
+
+  .demo-pdf {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    border: 1px solid var(--ptr-border);
+    background: var(--ptr-paper-soft);
+  }
+
+  .demo-pdf__toolbar {
+    display: flex;
+    min-height: 42px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background: var(--ptr-ink);
+    color: var(--ptr-paper-bright);
+    font-size: 12px;
+  }
+
+  .demo-pdf__toolbar h4 {
+    margin: 0;
+    font-size: inherit;
+    font-weight: 600;
+  }
+
+  .demo-pdf__toolbar span {
+    flex: none;
+    font-family: var(--ptr-font-mono);
+    font-size: 10px;
+  }
+
+  .demo-pdf__page {
+    width: min(100% - 32px, 36rem);
+    min-height: 480px;
+    align-self: center;
+    margin: 16px auto;
+    padding: clamp(22px, 4vw, 48px);
+    background: var(--ptr-paper-bright);
+    color: var(--ptr-ink);
+    font-family: var(--ptr-font-display);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--ptr-ink) 10%, transparent);
+  }
+
+  .demo-pdf__notice {
+    margin: 0 0 25px;
+    color: var(--ptr-teal-deep);
+    font-family: var(--ptr-font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .demo-pdf__page h5 {
+    margin: 0;
+    font-family: var(--ptr-font-display);
+    font-size: clamp(20px, 2.3vw, 27px);
+    line-height: 1.2;
+  }
+
+  .demo-pdf__byline {
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--ptr-border);
+    color: var(--ptr-muted);
+    font-family: var(--ptr-font-body);
+    font-size: 11px;
+  }
+
+  .demo-pdf__page > p:not(.demo-pdf__notice, .demo-pdf__byline) {
+    margin: 18px 0 0;
+    color: var(--ptr-ink);
+    font-family: var(--ptr-font-body);
+    font-size: 13px;
+    line-height: 1.75;
+  }
+
+  .demo-pdf__page [data-demo-pdf-text] {
+    background: transparent;
+    transition: background-color 160ms ease;
+  }
+
+  .demo-pdf__page [data-demo-pdf-text].is-highlighted {
+    background: var(--ptr-paper-gold);
+    outline: 2px solid var(--ptr-gold-ink);
+    outline-offset: 2px;
+  }
+
+  .demo-review-details {
+    min-width: 0;
+    padding: 4px 0;
+  }
+
+  .demo-review-details__switcher {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    margin-bottom: 16px;
+    padding: 4px;
+    border: 1px solid var(--ptr-border);
+    background: var(--ptr-paper-muted);
+  }
+
+  .demo-review-details__switcher button {
+    min-height: 40px;
+    padding: 7px 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--ptr-ink);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .demo-review-details__switcher button[aria-pressed="true"] {
+    border-color: var(--ptr-border);
+    background: var(--ptr-paper-bright);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--ptr-ink) 10%, transparent);
+  }
+
+  .demo-review-details__title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--ptr-border);
+  }
+
+  .demo-review-details__title-row h4,
+  .demo-review-details__panel > h4 {
+    margin: 0;
+    color: var(--ptr-ink);
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .demo-review-details__title-row > span {
+    color: var(--ptr-muted);
+    font-family: var(--ptr-font-mono);
+    font-size: 10px;
+  }
+
+  .demo-review-details__label {
+    margin-top: 16px;
+    margin-bottom: 6px;
+    font-size: 10px;
+  }
+
+  .demo-review-details__claim,
+  .demo-review-details__panel > p,
+  .demo-review-details__caveat {
+    margin: 0;
+    color: var(--ptr-ink);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .demo-review-details__outcome {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 14px;
+    padding-block: 10px;
+    border-block: 1px solid var(--ptr-border);
+    font-size: 12px;
+  }
+
+  .demo-review-details__outcome span {
+    color: var(--ptr-muted);
+  }
+
+  .demo-review-details__outcome strong {
+    color: var(--ptr-teal-deep);
+  }
+
+  .demo-review-details__caveat {
+    margin-top: 10px !important;
+    color: var(--ptr-muted) !important;
+    font-size: 12px !important;
+  }
+
+  .demo-review-details__panel > h5 {
+    margin: 18px 0 8px;
+    color: var(--ptr-ink);
+    font-size: 13px;
+  }
+
+  .demo-review-details__panel blockquote {
+    padding: 12px;
+    border: 1px solid var(--ptr-border);
+    background: var(--ptr-paper-bright);
+    font-size: 13px;
+  }
+
+  .demo-review-details__provenance {
+    margin-top: 8px !important;
+    color: var(--ptr-muted) !important;
+    font-size: 11px !important;
+  }
+
+  .demo-review-details__actions {
+    margin-top: 12px;
+  }
+
+  .demo-review-details__actions button {
+    min-height: 40px;
+    padding: 8px 12px;
+    border: 1px solid var(--ptr-border);
+    border-radius: var(--ptr-radius-control);
+    background: var(--ptr-paper-bright);
+    color: var(--ptr-ink);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .demo-review-details__actions button:hover {
+    background: var(--ptr-paper-gold);
+  }
+
+  .demo-review-details__actions button[aria-pressed="true"] {
+    border-color: var(--ptr-gold-ink);
+    background: var(--ptr-paper-gold);
+  }
+
+  .demo-review-details__panel > h4 + blockquote {
+    margin-top: 12px;
+  }
+
+  .demo-review-details__panel > h4:not(:first-child) {
+    margin-top: 20px;
+  }
+
+  .demo-review-details__panel > h4 + p {
+    margin-top: 8px;
+  }
+
+  .demo-review-details__status {
+    display: block;
+    min-height: 1.5em;
+    margin-top: 12px;
+    color: var(--ptr-teal-deep);
+    font-size: 12px;
+  }
+
+  .demo-mobile-note {
+    display: none;
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--ptr-border);
+    color: var(--ptr-muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  @media (max-width: 860px) and (min-width: 48rem) {
+    .demo-review-layout {
+      grid-template-columns: minmax(0, 1.1fr) minmax(19rem, 1fr);
+      gap: 12px;
+      padding: 12px;
+    }
+
+    .demo-pdf__page {
+      width: calc(100% - 20px);
+      padding: 22px;
+    }
+
+    .demo-review-details__switcher button {
+      font-size: 11px;
+    }
+  }
+
+  @media (max-width: 47.99rem) {
+    .demo-review-intro {
+      display: none;
+    }
+
+    .demo-data-note {
+      grid-template-columns: 1fr;
+      gap: 6px;
+    }
+
+    .demo-story__steps button {
+      min-height: 56px;
+      padding: 6px 3px;
+      font-size: 10px;
+      line-height: 1.3;
+    }
+
+    .demo-story__details {
+      min-height: 230px;
+      padding: 20px;
+    }
+
+    .demo-story__panel h3 {
+      font-size: clamp(22px, 7vw, 30px);
+    }
+
+    .demo-story__panel > p:last-child {
+      font-size: 14px;
+    }
+
+    .demo-review-intro {
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .demo-review-shell {
+      display: none;
+    }
+
+    .demo-mobile-note {
+      display: block;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .demo-pdf__page [data-demo-pdf-text] {
+      transition: none;
+    }
+  }
+</style>
