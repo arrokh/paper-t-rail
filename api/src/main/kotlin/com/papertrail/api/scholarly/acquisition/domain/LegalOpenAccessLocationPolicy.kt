@@ -4,14 +4,29 @@ import java.net.InetAddress
 import java.net.URI
 
 class LegalOpenAccessLocationPolicy {
-    fun isUsable(location: OpenAccessLocation): Boolean {
-        if (normalizeLicense(location.license) !in PROCESSING_LICENSES) return false
-        if (location.providerId == RECORDED_FIXTURES_PROVIDER) return location.url.startsWith("fixture://")
+    fun isUsable(location: OpenAccessLocation): Boolean = rejectionReasons(location).isEmpty()
 
-        val uri = runCatching { URI(location.url) }.getOrNull() ?: return false
-        if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null || uri.fragment != null ||
-            uri.rawQuery != null || location.url.length > MAX_URL_LENGTH
-        ) return false
+    fun rejectionReasons(location: OpenAccessLocation): Set<CitedPaperAccessCause> {
+        val reasons = linkedSetOf<CitedPaperAccessCause>()
+        val normalizedLicense = normalizeLicense(location.license)
+        when {
+            normalizedLicense.isEmpty() -> reasons += CitedPaperAccessCause.FULL_TEXT_LOCATION_LICENSE_MISSING
+            normalizedLicense !in PROCESSING_LICENSES -> reasons += CitedPaperAccessCause.FULL_TEXT_LOCATION_LICENSE_REJECTED
+        }
+        if (location.providerId == RECORDED_FIXTURES_PROVIDER) {
+            if (!location.url.startsWith("fixture://")) reasons += CitedPaperAccessCause.FULL_TEXT_LOCATION_URL_REJECTED
+            return reasons
+        }
+        if (!isSafePublicHttpsUrl(location.url)) reasons += CitedPaperAccessCause.FULL_TEXT_LOCATION_URL_REJECTED
+        return reasons
+    }
+
+    private fun isSafePublicHttpsUrl(value: String): Boolean {
+        if (value.length > MAX_URL_LENGTH) return false
+        val uri = runCatching { URI(value) }.getOrNull() ?: return false
+        if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null || uri.fragment != null || uri.rawQuery != null) {
+            return false
+        }
         val host = uri.host.removeSurrounding("[", "]")
         if (host.equals("localhost", ignoreCase = true) || host.endsWith(".localhost", ignoreCase = true) ||
             host.endsWith(".local", ignoreCase = true) || host.endsWith(".internal", ignoreCase = true)

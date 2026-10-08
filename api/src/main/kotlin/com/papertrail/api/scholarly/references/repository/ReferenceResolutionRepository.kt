@@ -62,6 +62,13 @@ class ReferenceResolutionRepository(
         bibliographyEntryId,
     ) == true
 
+    fun resolutionStatus(analysisRunId: UUID, bibliographyEntryId: UUID): String? = jdbc.query(
+        "SELECT status FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+        { rs, _ -> rs.getString("status") },
+        analysisRunId,
+        bibliographyEntryId,
+    ).firstOrNull()
+
     fun hasOutboxRequest(analysisRunId: UUID, eventType: String, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? AND payload -> 'payload' ->> 'bibliographyEntryId' = ?)",
         Boolean::class.java,
@@ -132,7 +139,8 @@ class ReferenceResolutionRepository(
                END AS reason_code,
                r.canonical_paper_id, r.matched_doi, r.matched_title,
                r.matched_authors::text AS matched_authors, r.matched_year, r.confidence_score,
-               r.match_method
+               r.match_method, access_progress.status AS access_progress_status,
+               access_progress.reason_code AS access_progress_reason
           FROM bibliography_entries b
           LEFT JOIN bibliography_entry_resolutions r
             ON r.analysis_run_id = b.analysis_run_id AND r.bibliography_entry_id = b.id
@@ -147,6 +155,11 @@ class ReferenceResolutionRepository(
                LIMIT 1
           ) task ON true
           LEFT JOIN inbox_events task_inbox ON task_inbox.event_id = task.event_id
+          LEFT JOIN analysis_run_pipeline_items access_progress
+            ON access_progress.analysis_run_id = b.analysis_run_id
+           AND access_progress.stage_id = 'access'
+           AND access_progress.step_id = 'acquire-source'
+           AND access_progress.item_id = b.id::text
          WHERE b.analysis_run_id = ?
          ORDER BY b.entry_order
         """.trimIndent(),
@@ -232,6 +245,8 @@ class ReferenceResolutionRepository(
             canonicalPaper = candidate,
             confidenceScore = getObject("confidence_score", Double::class.javaObjectType)?.toDouble(),
             matchMethod = getString("match_method"),
+            accessProgressStatus = getString("access_progress_status"),
+            accessProgressReason = getString("access_progress_reason"),
         )
     }
 }

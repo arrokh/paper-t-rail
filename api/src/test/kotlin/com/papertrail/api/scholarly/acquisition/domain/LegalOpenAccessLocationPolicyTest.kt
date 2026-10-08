@@ -1,5 +1,6 @@
 package com.papertrail.api.scholarly.acquisition.domain
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -30,6 +31,22 @@ class LegalOpenAccessLocationPolicyTest {
         assertFalse(policy.isUsable(location("https://[2001:db8::1]/article.pdf", "CC-BY")))
         assertTrue(policy.isUsable(location("https://[2001:4860:4860::8888]/article.pdf", "CC-BY")))
         assertFalse(policy.isUsable(location("https://localhost/article.pdf", "CC-BY")))
+    }
+
+    @Test
+    fun `reports missing and rejected licenses separately from unsafe URLs`() {
+        assertEquals(
+            setOf(CitedPaperAccessCause.FULL_TEXT_LOCATION_LICENSE_MISSING),
+            policy.rejectionReasons(location("https://8.8.8.8/article.pdf", null)),
+        )
+        assertEquals(
+            setOf(CitedPaperAccessCause.FULL_TEXT_LOCATION_LICENSE_REJECTED),
+            policy.rejectionReasons(location("https://8.8.8.8/article.pdf", "CC-BY-NC")),
+        )
+        assertEquals(
+            setOf(CitedPaperAccessCause.FULL_TEXT_LOCATION_URL_REJECTED),
+            policy.rejectionReasons(location("http://8.8.8.8/article.pdf", "CC-BY")),
+        )
     }
 
     @Test

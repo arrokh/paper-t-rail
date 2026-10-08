@@ -163,6 +163,8 @@ const report: ReferenceResolutionReportResponse = {
       canonicalPaper: { id: "paper-1", doi: "10.1234/example", title: "A study of outcomes", authors: ["A. Author"], year: 2024 },
       confidenceScore: 0.99,
       matchMethod: "DOI",
+      accessProgressStatus: null,
+      accessProgressReason: null,
       citedPaperAccess: null,
       verificationOutcomes: [outcome],
     }],

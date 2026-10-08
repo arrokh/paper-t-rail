@@ -124,7 +124,7 @@ class ReferenceResolutionRequestedHandler(
                 skipDownstream(event, REFERENCE_RESOLUTION_RETRIES_EXHAUSTED)
             } else {
                 pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "references", "resolve-entry", event.payload.bibliographyEntryId, "COMPLETED")
-                if (!enqueueAcquisitionIfResolved(event)) skipDownstream(event, "REFERENCE_NOT_ELIGIBLE_FOR_ACCESS")
+                if (!enqueueAcquisitionIfResolved(event)) skipDownstream(event, accessSkipReason(event))
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
@@ -163,8 +163,39 @@ class ReferenceResolutionRequestedHandler(
         return true
     }
 
+    private fun accessSkipReason(event: PipelineEvent<ReferenceResolutionRequestedPayload>): String {
+        if (!processingRepository.accessConfigured(event.analysisRunId)) return "ACCESS_PATH_NOT_CONFIGURED"
+        return when (referenceResolutionRepository.resolutionStatus(event.analysisRunId, event.payload.bibliographyEntryId)) {
+            "UNRESOLVED" -> "ACCESS_SKIPPED_IDENTITY_UNRESOLVED"
+            "UNSUPPORTED_REFERENCE_TYPE" -> "ACCESS_SKIPPED_UNSUPPORTED_REFERENCE_TYPE"
+            else -> "REFERENCE_NOT_ELIGIBLE_FOR_ACCESS"
+        }
+    }
+
     private fun skipDownstream(event: PipelineEvent<ReferenceResolutionRequestedPayload>, reason: String) {
-        pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId, "SKIPPED", reason)
+        val markAccessSkipped = {
+            pipelineProgressRepository.markBibliographyItem(
+                event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId, "SKIPPED", reason,
+            )
+        }
+        if (executionService == null) {
+            markAccessSkipped()
+        } else {
+            executionService.recordWithStatus(
+                analysisRunId = event.analysisRunId,
+                spec = ExecutionSpanSpec(
+                    stageId = "access",
+                    kind = "INTERNAL",
+                    name = "Skip Cited Paper access",
+                    attempt = event.attempt + 1,
+                    eventId = event.eventId,
+                    attributes = mapOf("reasonCode" to reason),
+                    operationId = ExecutionOperationId.forEvent(event.eventId, "access-skip"),
+                ),
+                operation = markAccessSkipped,
+                successStatus = { "SKIPPED" },
+            )
+        }
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "evidence", "prepare-evidence", event.payload.bibliographyEntryId, "SKIPPED", reason)
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "verification", "assess-and-aggregate", event.payload.bibliographyEntryId, "SKIPPED", reason)
     }

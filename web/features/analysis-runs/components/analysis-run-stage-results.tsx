@@ -218,7 +218,7 @@ function PipelineConfiguration({
   return (
     <section ref={stickyBoundaryRef} className="space-y-3 rounded-lg border border-border bg-muted/20 p-4" aria-label={`${pipelineStage(stageId).label} configuration and persisted progress`}>
       <div>
-        <h4 className="font-medium">Run-pinned configuration</h4>
+        <h3 className="font-medium">Run-pinned configuration</h3>
         <p className="mt-1 text-xs text-muted-foreground">Provider and policy selections are pinned to this immutable Analysis Run. Execution statuses come from persisted results.</p>
       </div>
       <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
@@ -431,13 +431,13 @@ function ReferenceMatchCard({ entry, references, view }: { entry: ReportEntry; r
 function AccessResults({ report, view }: { report: ReferenceResolutionReportResponse; view: string }) {
   const entries = report.referenceResolution.entries;
   const { selectedValues, toggleValue, reset } = usePipelineResultFilter("access", ACCESS_STATUS_FILTERS);
-  const accessStates = ["FULL_TEXT_AVAILABLE", "ABSTRACT_ONLY", "METADATA_ONLY", "UNAVAILABLE"] as const;
+  const accessStates = ["FULL_TEXT_AVAILABLE", "ABSTRACT_ONLY", "METADATA_ONLY", "UNAVAILABLE", "NO_ACCESS_RESULT"] as const;
   if (view === "acquire") {
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {accessStates.map((state) => (
-            <ResultMetric key={state} label={state.replaceAll("_", " ").toLowerCase()} value={entries.filter((entry) => entry.citedPaperAccess?.accessStatus === state).length} />
+            <ResultMetric key={state} label={state.replaceAll("_", " ").toLowerCase()} value={entries.filter((entry) => (entry.citedPaperAccess?.accessStatus ?? "NO_ACCESS_RESULT") === state).length} />
           ))}
         </div>
         <ol className="space-y-3">
@@ -445,8 +445,11 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
             <li key={entry.localReferenceKey} className="rounded-lg border border-border bg-card p-4">
               <h4 className="break-words font-medium">{entry.title || displayReferenceKey(entry, entries)}</h4>
               <p className="mt-1 text-xs text-muted-foreground">{displayReferenceKey(entry, entries)} · {entry.status.replaceAll("_", " ").toLowerCase()}</p>
-              <CitedPaperAccessSummary access={entry.citedPaperAccess} />
-              {!entry.citedPaperAccess && <p className="mt-3 text-sm text-muted-foreground">No access result was persisted; unresolved and unsupported references do not enter the access lookup.</p>}
+              <CitedPaperAccessSummary
+                access={entry.citedPaperAccess}
+                progressStatus={entry.accessProgressStatus}
+                progressReason={entry.accessProgressReason}
+              />
             </li>
           ))}
         </ol>
@@ -456,14 +459,16 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
 
   if (view === "discover") {
     const discovered = entries.filter((entry) => entry.citedPaperAccess);
+    const withoutOutcome = entries.filter((entry) => !entry.citedPaperAccess);
     return (
       <div className="space-y-4">
         <p className="text-sm leading-relaxed text-muted-foreground">These are the persisted legal access discovery outcomes. Entries without a resolved Canonical Paper can skip this worker operation.</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <ResultMetric label="Access outcomes" value={discovered.length} />
-          <ResultMetric label="Full text located" value={discovered.filter((entry) => entry.citedPaperAccess?.accessStatus === "FULL_TEXT_AVAILABLE").length} />
+          <ResultMetric label="Full text acquired" value={discovered.filter((entry) => entry.citedPaperAccess?.accessStatus === "FULL_TEXT_AVAILABLE").length} />
           <ResultMetric label="Abstract only" value={discovered.filter((entry) => entry.citedPaperAccess?.accessStatus === "ABSTRACT_ONLY").length} />
           <ResultMetric label="No full text" value={discovered.filter((entry) => entry.citedPaperAccess?.accessStatus === "METADATA_ONLY" || entry.citedPaperAccess?.accessStatus === "UNAVAILABLE").length} />
+          <ResultMetric label="No access outcome" value={withoutOutcome.length} />
         </div>
         {discovered.length === 0 ? <p className="text-sm text-muted-foreground">No access discovery result was persisted.</p> : (
           <ol className="space-y-2">
@@ -473,21 +478,38 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
                   <div className="min-w-0"><p className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, entries)} · {entry.citedPaperAccess?.providerId}</p><h4 className="break-words font-medium">{entry.title || displayReferenceKey(entry, entries)}</h4></div>
                   <Badge variant="outline">{entry.citedPaperAccess?.accessStatus.replaceAll("_", " ").toLowerCase()}</Badge>
                 </div>
-                <dl className="mt-3 grid gap-2 border-t border-border pt-3 text-xs sm:grid-cols-2">
-                  <div><dt className="font-mono uppercase text-muted-foreground">Access reason</dt><dd className="mt-1 break-words">{entry.citedPaperAccess?.accessReason?.replaceAll("_", " ").toLowerCase() ?? "Full-text location found"}</dd></div>
-                  <div><dt className="font-mono uppercase text-muted-foreground">License</dt><dd className="mt-1 break-words">{entry.citedPaperAccess?.license ?? "Not recorded"}</dd></div>
-                  {entry.citedPaperAccess?.sourceUrl && <div className="min-w-0 sm:col-span-2"><dt className="font-mono uppercase text-muted-foreground">Discovered legal location</dt><dd className="mt-1 break-all">{entry.citedPaperAccess.sourceUrl}</dd></div>}
-                </dl>
+                <CitedPaperAccessSummary
+                  access={entry.citedPaperAccess}
+                  progressStatus={entry.accessProgressStatus}
+                  progressReason={entry.accessProgressReason}
+                />
               </li>
             ))}
           </ol>
+        )}
+        {withoutOutcome.length > 0 && (
+          <section className="space-y-2 border-t border-border pt-4" aria-label="References without an access outcome">
+            <h4 className="font-heading font-semibold">No access outcome</h4>
+            <ol className="space-y-2">
+              {withoutOutcome.map((entry) => (
+                <li key={entry.localReferenceKey} className="rounded-lg border border-border bg-card p-3">
+                  <p className="mb-2 break-words text-sm font-medium">{entry.title || displayReferenceKey(entry, entries)}</p>
+                  <CitedPaperAccessSummary
+                    access={null}
+                    progressStatus={entry.accessProgressStatus}
+                    progressReason={entry.accessProgressReason}
+                  />
+                </li>
+              ))}
+            </ol>
+          </section>
         )}
       </div>
     );
   }
 
   const accessFilterOptions: PipelineResultFilterOption[] = [
-    { id: "FULL_TEXT_AVAILABLE", label: "Full text available", description: "A legal full-text source was located and recorded for this Cited Paper.", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "FULL_TEXT_AVAILABLE").length },
+    { id: "FULL_TEXT_AVAILABLE", label: "Full text available", description: "A permitted full-text source was acquired and parsed; language eligibility is separate.", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "FULL_TEXT_AVAILABLE").length },
     { id: "ABSTRACT_ONLY", label: "Abstract only", description: "An abstract is available, but no usable full-text source was recorded.", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "ABSTRACT_ONLY").length },
     { id: "METADATA_ONLY", label: "Metadata only", description: "Bibliographic metadata is available, but no abstract or full-text source was found.", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "METADATA_ONLY").length },
     { id: "UNAVAILABLE", label: "Unavailable", description: "Access lookup ran but found no usable full text or abstract.", value: entries.filter((entry) => entry.citedPaperAccess?.accessStatus === "UNAVAILABLE").length },
@@ -512,9 +534,11 @@ function AccessResults({ report, view }: { report: ReferenceResolutionReportResp
                 <div><p className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, entries)}</p><h4 className="break-words font-medium">{entry.title || displayReferenceKey(entry, entries)}</h4></div>
                 {entry.citedPaperAccess && <Badge variant="outline">{entry.citedPaperAccess.language?.toLowerCase() ?? "language not recorded"}</Badge>}
               </div>
-              {entry.citedPaperAccess
-                ? <CitedPaperAccessSummary access={entry.citedPaperAccess} />
-                : <p className="text-sm text-muted-foreground">No access result was persisted for this reference.</p>}
+              <CitedPaperAccessSummary
+                access={entry.citedPaperAccess}
+                progressStatus={entry.accessProgressStatus}
+                progressReason={entry.accessProgressReason}
+              />
             </li>
           ))}
         </ol>
@@ -539,7 +563,12 @@ function IndexingResults({ run, report, view }: { run: AnalysisRun; report: Refe
                 <li key={entry.localReferenceKey} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card p-4">
                   <div className="min-w-0"><p className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, entries)}</p><p className="break-words text-sm font-medium">{entry.title || displayReferenceKey(entry, entries)}</p></div>
                   <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{access.accessStatus.replaceAll("_", " ").toLowerCase()}</Badge><Badge variant="secondary">{access.language?.toLowerCase() ?? "language not recorded"}</Badge></div>
-                  <p className="w-full text-xs text-muted-foreground">Detector {access.languageDetectorVersion ?? "not recorded"}{access.accessReason ? ` · ${access.accessReason.replaceAll("_", " ").toLowerCase()}` : ""}</p>
+                  <p className="w-full text-xs text-muted-foreground">
+                    Detector {access.languageDetectorVersion ?? "not recorded"}
+                    {access.accessReasons.includes("LANGUAGE_UNSUPPORTED")
+                      ? " · full text is available, but language eligibility prevents semantic assessment"
+                      : " · full-text language eligibility was satisfied"}
+                  </p>
                 </li>
               );
             })}

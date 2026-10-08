@@ -20,6 +20,27 @@ const ACCESS_REASON_LABELS: Record<NonNullable<CitedPaperAccess["accessReason"]>
   FULL_TEXT_ACQUISITION_FAILED: "Legal full-text locations were found, but none could be acquired as bounded PDF or plain text.",
 };
 
+const ACCESS_CAUSE_LABELS: Record<CitedPaperAccess["accessReasons"][number], string> = {
+  NO_ACCESSIBLE_METADATA: "The provider returned no usable metadata.",
+  NO_FULL_TEXT_LOCATION_RETURNED: "The provider returned no full-text location.",
+  FULL_TEXT_LOCATION_LICENSE_MISSING: "A full-text location did not include a license that permits processing.",
+  FULL_TEXT_LOCATION_LICENSE_REJECTED: "A full-text location's license does not permit processing.",
+  FULL_TEXT_LOCATION_URL_REJECTED: "A full-text location URL did not pass the safe-location policy.",
+  FULL_TEXT_DOWNLOAD_FAILED: "A permitted full-text download failed.",
+  FULL_TEXT_FORMAT_UNSUPPORTED: "The returned file format is not supported for text extraction.",
+  FULL_TEXT_PARSE_FAILED: "The returned PDF or text file could not be parsed into usable text.",
+  LANGUAGE_UNSUPPORTED: "Full text was acquired, but its language was not confirmed as supported English; semantic assessment was not run."
+};
+
+const ACCESS_PROGRESS_REASON_LABELS: Record<string, string> = {
+  ACCESS_SKIPPED_IDENTITY_UNRESOLVED: "Access was skipped because the Bibliography Entry has no resolved identity.",
+  ACCESS_SKIPPED_UNSUPPORTED_REFERENCE_TYPE: "Access was skipped because this reference type is unsupported.",
+  ACCESS_PATH_NOT_CONFIGURED: "Access lookup was not configured for this Analysis Run.",
+  REFERENCE_NOT_ELIGIBLE_FOR_ACCESS: "Access lookup was skipped because the reference was not eligible.",
+  REFERENCE_RESOLUTION_RETRIES_EXHAUSTED: "Reference resolution failed after its allowed retries; access was not attempted.",
+  CITED_PAPER_ACCESS_RETRIES_EXHAUSTED: "Access processing failed after its allowed retries.",
+};
+
 const ACCESS_STYLES: Record<CitedPaperAccess["accessStatus"], string> = {
   FULL_TEXT_AVAILABLE: "border-success-foreground/20 bg-success text-success-foreground",
   ABSTRACT_ONLY: "border-warning-foreground/20 bg-warning text-warning-foreground",
@@ -27,8 +48,44 @@ const ACCESS_STYLES: Record<CitedPaperAccess["accessStatus"], string> = {
   UNAVAILABLE: "border-destructive/25 bg-destructive/10 text-destructive",
 };
 
-export function CitedPaperAccessSummary({ access }: { access: CitedPaperAccess | null }) {
-  if (!access) return null;
+export function CitedPaperAccessSummary({
+  access,
+  progressStatus,
+  progressReason,
+}: {
+  access: CitedPaperAccess | null;
+  progressStatus: string | null;
+  progressReason: string | null;
+}) {
+  if (!access) {
+    const status = progressStatus?.toUpperCase();
+    const statusLabel = status === "SKIPPED" ? "Access skipped" : status === "FAILED" ? "Access failed" : status === "WAITING" ? "Access pending" : status === "IN_PROGRESS" ? "Access in progress" : "No access result";
+    const reason = progressReason ? ACCESS_PROGRESS_REASON_LABELS[progressReason] ?? progressReason.replaceAll("_", " ").toLowerCase() : null;
+    const detail = status === "SKIPPED"
+      ? reason ?? "Access was skipped; no more specific cause was recorded."
+      : status === "FAILED"
+        ? reason ?? "Access processing failed; no more specific cause was recorded."
+        : status === "WAITING"
+          ? "The access lookup has not started."
+          : status === "IN_PROGRESS"
+            ? "The access lookup is in progress."
+            : reason ?? "No access outcome was recorded; no specific cause is available.";
+
+    return (
+      <section className="space-y-2 border-t border-border bg-muted/10 p-4" aria-label="Cited Paper access status">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h5 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Cited Paper access</h5>
+          <Badge variant="outline">{statusLabel}</Badge>
+        </div>
+        <p className="m-0 text-sm text-muted-foreground">{detail}</p>
+      </section>
+    );
+  }
+
+  const accessReasons = [...new Set([
+    ...(access.accessReason === "ABSTRACT_ONLY" ? [access.accessReason] : []),
+    ...(access.accessReasons.length > 0 ? access.accessReasons : access.accessReason ? [access.accessReason] : []),
+  ])];
 
   return (
     <section className="space-y-3 border-t border-border bg-muted/10 p-4" aria-label="Cited Paper access and verification status">
@@ -60,10 +117,16 @@ export function CitedPaperAccessSummary({ access }: { access: CitedPaperAccess |
             </dd>
           </div>
         )}
-        {access.accessReason && (
+        {accessReasons.length > 0 && (
           <div className="space-y-1">
-            <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Access note</dt>
-            <dd className="m-0 break-words">{ACCESS_REASON_LABELS[access.accessReason]}</dd>
+            <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Access explanation</dt>
+            <dd className="m-0">
+              <ul className="m-0 list-disc space-y-1 pl-5">
+                {accessReasons.map((reason) => (
+                  <li key={reason} className="break-words">{ACCESS_CAUSE_LABELS[reason as CitedPaperAccess["accessReasons"][number]] ?? ACCESS_REASON_LABELS[reason as NonNullable<CitedPaperAccess["accessReason"]>] ?? reason.replaceAll("_", " ").toLowerCase()}</li>
+                ))}
+              </ul>
+            </dd>
           </div>
         )}
         {access.license && (
@@ -97,6 +160,14 @@ export function CitedPaperAccessSummary({ access }: { access: CitedPaperAccess |
           </div>
         )}
       </dl>
+
+      {access.accessStatus === "FULL_TEXT_AVAILABLE" && (
+        <p className="m-0 text-sm text-muted-foreground">
+          {access.accessReasons.includes("LANGUAGE_UNSUPPORTED")
+            ? "Full text was acquired and parsed, but its language was not confirmed as supported English; semantic assessment was not run. Availability is not evidence of support."
+            : "Full-text availability alone does not show whether semantic assessment ran. Availability is not evidence of support."}
+        </p>
+      )}
 
       {access.evidenceIndexing && (
         <div className="space-y-2 border-t border-border/70 pt-3">

@@ -121,6 +121,8 @@ const referenceReport = {
       canonicalPaper: null,
       confidenceScore: null,
       matchMethod: null,
+      accessProgressStatus: null,
+      accessProgressReason: null,
       citedPaperAccess: null,
       verificationOutcomes: [],
     }],

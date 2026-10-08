@@ -26,6 +26,7 @@ import {
 } from "@/features/analysis-runs/queries/analysis-run-queries";
 import {
   executionGapReasonDescription,
+  executionSpanReasonCode,
   executionStatusLabel,
   filterExecutionSpans,
   getExecutionAncestorContext,
@@ -544,7 +545,7 @@ function SpanInspector({ analysisRunId, spanId }: { analysisRunId: string; spanI
     );
   }
   if (detailQuery.isPending) {
-    return <aside className={cn(INSPECTOR_ASIDE_CLASS_NAME, "space-y-3 p-5")} aria-label="Selected operation details"><Skeleton className="h-6 w-2/3" /><Skeleton className="h-20 w-full" /><Skeleton className="h-32 w-full" /></aside>;
+    return <aside className={cn(INSPECTOR_ASIDE_CLASS_NAME, "space-y-3 p-5")} aria-label="Selected operation details" tabIndex={0}><Skeleton className="h-6 w-2/3" /><Skeleton className="h-20 w-full" /><Skeleton className="h-32 w-full" /></aside>;
   }
   if (detailQuery.isError || !detailQuery.data) {
     return (
@@ -557,6 +558,7 @@ function SpanInspector({ analysisRunId, spanId }: { analysisRunId: string; spanI
   const safeRoute = safeHttpRoute(detail);
   const trustBoundary = spanTrustBoundary(detail);
   const stage = detail.stageId ? stageLabel(detail.stageId) : null;
+  const reasonCode = executionSpanReasonCode(detail);
   const safeAttributes = [
     ["Queue wait", detail.attributes.queueWaitMillis],
     ["Retry backoff", detail.attributes.retryBackoffMillis],
@@ -565,7 +567,7 @@ function SpanInspector({ analysisRunId, spanId }: { analysisRunId: string; spanI
   ].filter(([, value]) => typeof value === "number") as Array<[string, number]>;
 
   return (
-    <aside className={INSPECTOR_ASIDE_CLASS_NAME} aria-label="Selected operation details">
+    <aside className={INSPECTOR_ASIDE_CLASS_NAME} aria-label="Selected operation details" tabIndex={0}>
       <div className="space-y-1 px-4 py-4 sm:px-5">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="m-0 min-w-0 break-words font-serif text-xl font-semibold tracking-tight">{detail.name}</h3>
@@ -592,6 +594,7 @@ function SpanInspector({ analysisRunId, spanId }: { analysisRunId: string; spanI
           {safeRoute && <><dt className="text-muted-foreground">HTTP route</dt><dd className="m-0 break-all font-mono text-xs">{safeRoute}</dd></>}
           {detail.httpStatus !== null && <><dt className="text-muted-foreground">HTTP status</dt><dd className="m-0">{detail.httpStatus}</dd></>}
           {detail.safeErrorCode && <><dt className="text-muted-foreground">Safe error code</dt><dd className="m-0 break-words font-mono text-xs">{detail.safeErrorCode}</dd></>}
+          {reasonCode && <><dt className="text-muted-foreground">Persisted reason</dt><dd className="m-0 break-words font-mono text-xs">{reasonCode}</dd></>}
           <dt className="text-muted-foreground">Started</dt><dd className="m-0 break-words text-sm tabular-nums"><LocalDateTime value={detail.startedAt} /></dd>
           {detail.endedAt && <><dt className="text-muted-foreground">Finished</dt><dd className="m-0 break-words text-sm tabular-nums"><LocalDateTime value={detail.endedAt} /></dd></>}
           <dt className="text-muted-foreground">Duration</dt><dd className="m-0">{formatExecutionDuration(detail.durationMillis)} <span className="text-xs text-muted-foreground">(includes capture overhead)</span></dd>

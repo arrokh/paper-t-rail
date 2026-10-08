@@ -27,6 +27,10 @@ export function isActiveExecutionSpan(span: ExecutionSpan): boolean {
   return span.endedAt === null && ["RUNNING", "IN_PROGRESS"].includes(span.status.toUpperCase());
 }
 
+export function executionSpanReasonCode(span: ExecutionSpan): string | null {
+  return typeof span.attributes.reasonCode === "string" ? span.attributes.reasonCode : null;
+}
+
 function spanDuration(span: ExecutionSpan, now: number): number | null {
   if (!isActiveExecutionSpan(span) && span.durationMillis !== null && Number.isFinite(span.durationMillis)) {
     return Math.max(0, span.durationMillis);
