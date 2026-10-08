@@ -48,6 +48,7 @@ data class ProviderRegistration(
     val targetSelectionPolicyVersion: String? = null,
     val promptVersion: String? = null,
     val outputMappingVersion: String? = null,
+    val selectableForNewRuns: Boolean = true,
 ) {
     fun consentDisclosure(): String? = if (trustBoundary == ProviderTrustBoundary.EXTERNAL) {
         retentionDisclosure?.takeIf(String::isNotBlank) ?: UNKNOWN_RETENTION_DISCLOSURE
@@ -84,7 +85,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
 
     fun directory(): ProviderDirectoryResponse = ProviderDirectoryResponse(
         providers = registrationsByRoleAndId.values
-            .filter(ProviderRegistration::enabled)
+            .filter { it.enabled && it.selectableForNewRuns }
             .groupBy(ProviderRegistration::role)
             .toSortedMap()
             .mapValues { (_, registrations) ->
@@ -106,6 +107,14 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
     )
 
     fun requireSelectable(role: String, providerId: String): ProviderRegistration {
+        val registration = requireAvailableForPinnedRun(role, providerId)
+        if (!registration.selectableForNewRuns) {
+            throw ProviderNotSelectableException("Provider '$providerId' is retained for existing Analysis Runs and cannot be selected for a new run.")
+        }
+        return registration
+    }
+
+    fun requireAvailableForPinnedRun(role: String, providerId: String): ProviderRegistration {
         val registration = registrationsByRoleAndId[role to providerId]
             ?: throw ProviderNotSelectableException("Provider '$providerId' is unknown or unclassified for role '$role'.")
         if (registration.trustBoundary == ProviderTrustBoundary.UNREVIEWED) {
@@ -133,6 +142,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
             require(!unpaywallEnabled || !unpaywallContactEmail.isNullOrBlank()) {
                 "Unpaywall requires a configured provider contact email before it can be enabled."
             }
+            val legacyNomicEmbeddingSettings = ollamaEmbeddingSettings.forLegacyNomicCompatibility()
             return ProviderCatalog(
                 listOf(
                 ProviderRegistration(
@@ -250,19 +260,38 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                 ),
                 ProviderRegistration(
                     role = EMBEDDING_ROLE,
-                    providerId = OllamaEmbeddingSettings.PROVIDER_ID,
-                    displayName = ollamaEmbeddingSettings.modelId.takeIf(String::isNotBlank)
-                        ?.let { "Ollama embeddings ($it)" } ?: "Ollama embeddings",
+                    providerId = ollamaEmbeddingSettings.providerId,
+                    displayName = when (ollamaEmbeddingSettings.modelId) {
+                        OllamaEmbeddingSettings.EMBEDDINGGEMMA_MODEL_ID -> "Ollama · EmbeddingGemma 2 (270m)"
+                        else -> ollamaEmbeddingSettings.modelId.takeIf(String::isNotBlank)
+                            ?.let { "Ollama embeddings ($it)" } ?: "Ollama embeddings"
+                    },
                     version = OllamaEmbeddingSettings.VERSION,
                     model = ollamaEmbeddingSettings.modelId.takeIf(String::isNotBlank),
                     trustBoundary = ollamaEmbeddingSettings.trustBoundary,
-                    enabled = ollamaEmbeddingSettings.isSelectable,
+                    enabled = ollamaEmbeddingSettings.isSelectableForNewRuns,
                     dataCategories = EMBEDDING_DATA_CATEGORIES,
                     retentionDisclosure = ollamaEmbeddingSettings.retentionDisclosure,
                     configurationFingerprint = ollamaEmbeddingSettings.configurationFingerprint
                         .takeIf { ollamaEmbeddingSettings.isConfigurationValid },
                     embeddingDimension = ollamaEmbeddingSettings.dimension
                         .takeIf { ollamaEmbeddingSettings.isConfigurationValid },
+                ),
+                ProviderRegistration(
+                    role = EMBEDDING_ROLE,
+                    providerId = OllamaEmbeddingSettings.LEGACY_NOMIC_PROVIDER_ID,
+                    displayName = "Ollama embeddings (${OllamaEmbeddingSettings.LEGACY_NOMIC_MODEL_ID}; existing runs only)",
+                    version = OllamaEmbeddingSettings.VERSION,
+                    model = legacyNomicEmbeddingSettings.modelId,
+                    trustBoundary = legacyNomicEmbeddingSettings.trustBoundary,
+                    enabled = legacyNomicEmbeddingSettings.isSelectable,
+                    dataCategories = EMBEDDING_DATA_CATEGORIES,
+                    retentionDisclosure = legacyNomicEmbeddingSettings.retentionDisclosure,
+                    configurationFingerprint = legacyNomicEmbeddingSettings.configurationFingerprint
+                        .takeIf { legacyNomicEmbeddingSettings.isConfigurationValid },
+                    embeddingDimension = legacyNomicEmbeddingSettings.dimension
+                        .takeIf { legacyNomicEmbeddingSettings.isConfigurationValid },
+                    selectableForNewRuns = false,
                 ),
                 ProviderRegistration(
                     role = SYSTEM_ONE_ROLE,

@@ -119,12 +119,12 @@ class RunConfigurationFactory(
         )
     }
 
-    /** Prefer local Ollama when available, but keep the safe feature-hash fallback for other deployments. */
+    /** Prefer local EmbeddingGemma 2 when available, but keep the safe feature-hash fallback. */
     private fun defaultEmbeddingRegistration(requestedProvider: String?): ProviderRegistration {
         if (requestedProvider != null) return providerCatalog.requireSelectable(EMBEDDING_ROLE, requestedProvider)
 
         val ollama = try {
-            providerCatalog.requireSelectable(EMBEDDING_ROLE, OllamaEmbeddingSettings.PROVIDER_ID)
+            providerCatalog.requireSelectable(EMBEDDING_ROLE, OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID)
         } catch (_: ProviderNotSelectableException) {
             null
         }

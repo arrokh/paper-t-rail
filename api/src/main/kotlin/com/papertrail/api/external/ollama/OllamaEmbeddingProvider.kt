@@ -22,7 +22,7 @@ class OllamaEmbeddingProvider(
     private val settings: OllamaEmbeddingSettings,
     private val providerCallGate: ProviderCallGate,
 ) : EmbeddingProvider {
-    override val providerId = OllamaEmbeddingSettings.PROVIDER_ID
+    override val providerId = settings.providerId
     override val modelId: String = settings.modelId
     override val version = OllamaEmbeddingSettings.VERSION
     override val dimension: Int = settings.dimension

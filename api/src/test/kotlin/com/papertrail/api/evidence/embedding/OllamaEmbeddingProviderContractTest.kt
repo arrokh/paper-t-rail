@@ -2,6 +2,7 @@ package com.papertrail.api.evidence.embedding
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.papertrail.api.analysis.configuration.ProviderSelection
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
@@ -11,6 +12,7 @@ import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.infrastructure.providers.externalProviderConsent
+import com.papertrail.api.evidence.domain.EmbeddingProfile
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -27,10 +29,12 @@ import com.papertrail.api.external.ollama.OllamaEmbeddingSettings
 class OllamaEmbeddingProviderContractTest {
     @Test
     fun `sends the configured model and only authorized input to the Ollama embed endpoint`() {
-        OllamaTestServer(responseFor("nomic-embed-text", listOf(0.25, -0.5, 0.75))).use { server ->
+        OllamaTestServer(responseFor("embeddinggemma-2:270m", listOf(0.25, -0.5, 0.75))).use { server ->
             val settings = settings(server.baseUrl, apiKey = "server-only-secret")
             val factory = configurationFactory(settings)
-            val configuration = factory.from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.PROVIDER_ID))
+            val configuration = factory.from(
+                RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID),
+            )
             val provider = OllamaEmbeddingProvider(settings, ProviderCallGate(factoryCatalog(settings)))
 
             val chunkVector = provider.embed(
@@ -50,7 +54,7 @@ class OllamaEmbeddingProviderContractTest {
             assertEquals("Bearer server-only-secret", server.authorization)
             assertEquals(listOf("a private cited-paper chunk", "a private claim query"), server.requestBodies.map { body ->
                 val request = mapper.readTree(body)
-                assertEquals("nomic-embed-text", request.path("model").asText())
+                assertEquals("embeddinggemma-2:270m", request.path("model").asText())
                 assertTrue(request.path("truncate").isBoolean)
                 assertFalse(request.path("truncate").asBoolean())
                 request.path("input").single().asText()
@@ -80,16 +84,60 @@ class OllamaEmbeddingProviderContractTest {
         )
         val valid = settings("http://127.0.0.1:11434")
 
-        assertFalse(factoryCatalog(invalidModel).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
-        assertFalse(factoryCatalog(missingEndpoint).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
-        assertFalse(factoryCatalog(endpointCredentials).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
-        assertTrue(factoryCatalog(externalEndpoint).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
-        assertTrue(factoryCatalog(valid).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == "ollama" })
+        assertFalse(factoryCatalog(invalidModel).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID })
+        assertFalse(factoryCatalog(missingEndpoint).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID })
+        assertFalse(factoryCatalog(endpointCredentials).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID })
+        assertTrue(factoryCatalog(externalEndpoint).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID })
+        assertTrue(factoryCatalog(valid).directory().providers.getValue(EMBEDDING_ROLE).any { it.providerId == OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID })
+    }
+
+    @Test
+    fun `processes a previously pinned Nomic run without offering Nomic for new runs`() {
+        val embedding = List(768) { 0.25 }
+        OllamaTestServer(responseFor(OllamaEmbeddingSettings.LEGACY_NOMIC_MODEL_ID, embedding)).use { server ->
+            val settings = settings(server.baseUrl).copy(dimension = 768)
+            val catalog = factoryCatalog(settings)
+            val newRunConfiguration = configurationFactory(settings).from(
+                RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID),
+            )
+            val legacyRegistration = catalog.requireAvailableForPinnedRun(EMBEDDING_ROLE, OllamaEmbeddingSettings.LEGACY_NOMIC_PROVIDER_ID)
+            val legacySelection = ProviderSelection(
+                provider = legacyRegistration.providerId,
+                version = legacyRegistration.version,
+                model = legacyRegistration.model,
+                trustBoundary = legacyRegistration.trustBoundary.id,
+                dataCategories = legacyRegistration.dataCategories.map(DataCategory::id).sorted(),
+                configurationFingerprint = legacyRegistration.configurationFingerprint,
+                embeddingDimension = legacyRegistration.embeddingDimension,
+            )
+            val legacyProfile = EmbeddingProfile.from(legacySelection)
+            assertEquals("ollama", legacySelection.provider)
+            assertEquals(OllamaEmbeddingSettings.LEGACY_NOMIC_MODEL_ID, legacySelection.model)
+            assertTrue(legacyProfile.profileHash != newRunConfiguration.retrieval.embeddingProfileHash)
+            val legacyConfiguration = newRunConfiguration.copy(
+                embedding = legacySelection,
+                retrieval = newRunConfiguration.retrieval.copy(embeddingProfileHash = legacyProfile.profileHash),
+            )
+            val provider = OllamaEmbeddingProvider(
+                settings.forLegacyNomicCompatibility(),
+                ProviderCallGate(catalog),
+            )
+
+            val vector = provider.embed(
+                "historical cited-paper chunk",
+                EmbeddingRequestContext(legacyConfiguration, DataCategory.CITED_PAPER_CHUNKS),
+            )
+
+            assertEquals(768, vector.size)
+            assertEquals(setOf("local", OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID),
+                catalog.directory().providers.getValue(EMBEDDING_ROLE).map { it.providerId }.toSet())
+            assertEquals(OllamaEmbeddingSettings.LEGACY_NOMIC_MODEL_ID, mapper.readTree(server.requestBodies.single()).path("model").asText())
+        }
     }
 
     @Test
     fun `classifies endpoints outside the trusted host list as external without a terms-review gate and requires fresh consent`() {
-        OllamaTestServer(responseFor("nomic-embed-text", listOf(0.25, -0.5, 0.75))).use { server ->
+        OllamaTestServer(responseFor("embeddinggemma-2:270m", listOf(0.25, -0.5, 0.75))).use { server ->
             val settings = settings(
                 baseUrl = server.baseUrl,
                 trustedHosts = setOf("ollama.internal"),
@@ -103,17 +151,17 @@ class OllamaEmbeddingProviderContractTest {
             val requiredCategories = listOf("atomic_claims", "cited_paper_chunks", "embedding_input")
 
             val externalOption = catalog.directory().providers.getValue(EMBEDDING_ROLE)
-                .single { it.providerId == "ollama" }
+                .single { it.providerId == OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID }
             assertEquals("EXTERNAL", externalOption.trustBoundary)
             assertTrue(externalOption.retentionDisclosure!!.contains("Retention and deletion details are unknown"))
             assertThrows<IllegalArgumentException> {
-                factory.from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.PROVIDER_ID))
+                factory.from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID))
             }
             val consented = factory.from(
                 RunConfigurationRequest(
-                    embeddingProvider = OllamaEmbeddingSettings.PROVIDER_ID,
+                    embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID,
                     externalProviderConsents = listOf(
-                        externalProviderConsent(catalog, OllamaEmbeddingSettings.PROVIDER_ID, requiredCategories),
+                        externalProviderConsent(catalog, OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID, requiredCategories),
                     ),
                 ),
             )
@@ -145,7 +193,9 @@ class OllamaEmbeddingProviderContractTest {
         val port = ServerSocket(0).use { it.localPort }
         val settings = settings("http://127.0.0.1:$port", requestTimeoutMillis = 1_000)
         val provider = provider(settings)
-        val configuration = configurationFactory(settings).from(RunConfigurationRequest(embeddingProvider = "ollama"))
+        val configuration = configurationFactory(settings).from(
+            RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID),
+        )
 
         val failure = assertThrows<OllamaEmbeddingException> {
             provider.embed("claim", EmbeddingRequestContext(configuration, DataCategory.ATOMIC_CLAIMS))
@@ -157,11 +207,13 @@ class OllamaEmbeddingProviderContractTest {
     @Test
     fun `applies the configured timeout while reading an Ollama response body`() {
         OllamaTestServer(
-            responseFor("nomic-embed-text", listOf(0.25, -0.5, 0.75)),
+            responseFor("embeddinggemma-2:270m", listOf(0.25, -0.5, 0.75)),
             bodyDelayMillis = 600,
         ).use { server ->
             val settings = settings(server.baseUrl, requestTimeoutMillis = 150)
-            val configuration = configurationFactory(settings).from(RunConfigurationRequest(embeddingProvider = "ollama"))
+            val configuration = configurationFactory(settings).from(
+                RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID),
+            )
 
             val failure = assertThrows<OllamaEmbeddingException> {
                 provider(settings).embed("claim", EmbeddingRequestContext(configuration, DataCategory.ATOMIC_CLAIMS))
@@ -175,7 +227,9 @@ class OllamaEmbeddingProviderContractTest {
     fun `rejects malformed Ollama response bodies`() {
         OllamaTestServer("not-json").use { server ->
             val settings = settings(server.baseUrl)
-            val configuration = configurationFactory(settings).from(RunConfigurationRequest(embeddingProvider = "ollama"))
+            val configuration = configurationFactory(settings).from(
+                RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID),
+            )
 
             val failure = assertThrows<OllamaEmbeddingException> {
                 provider(settings).embed("claim", EmbeddingRequestContext(configuration, DataCategory.ATOMIC_CLAIMS))
@@ -189,7 +243,9 @@ class OllamaEmbeddingProviderContractTest {
     fun `rejects an oversized Ollama response body`() {
         OllamaTestServer("x".repeat(OllamaEmbeddingSettings.MAX_RESPONSE_BYTES + 1)).use { server ->
             val settings = settings(server.baseUrl)
-            val configuration = configurationFactory(settings).from(RunConfigurationRequest(embeddingProvider = "ollama"))
+            val configuration = configurationFactory(settings).from(
+                RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID),
+            )
 
             val failure = assertThrows<OllamaEmbeddingException> {
                 provider(settings).embed("claim", EmbeddingRequestContext(configuration, DataCategory.ATOMIC_CLAIMS))
@@ -201,9 +257,11 @@ class OllamaEmbeddingProviderContractTest {
 
     @Test
     fun `rejects vectors whose dimensions differ from the configured pgvector profile`() {
-        OllamaTestServer(responseFor("nomic-embed-text", listOf(0.25, -0.5))).use { server ->
+        OllamaTestServer(responseFor("embeddinggemma-2:270m", listOf(0.25, -0.5))).use { server ->
             val settings = settings(server.baseUrl)
-            val configuration = configurationFactory(settings).from(RunConfigurationRequest(embeddingProvider = "ollama"))
+            val configuration = configurationFactory(settings).from(
+                RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID),
+            )
 
             val failure = assertThrows<OllamaEmbeddingException> {
                 provider(settings).embed("claim", EmbeddingRequestContext(configuration, DataCategory.ATOMIC_CLAIMS))
@@ -216,19 +274,18 @@ class OllamaEmbeddingProviderContractTest {
     @Test
     fun `pins model endpoint fingerprint and vector dimension in the Analysis Run embedding profile`() {
         val settings = settings("http://127.0.0.1:11434")
-        val configuration = configurationFactory(settings).from(RunConfigurationRequest(embeddingProvider = "ollama"))
+        val configuration = configurationFactory(settings).from(
+            RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID),
+        )
         val differentEndpointConfiguration = configurationFactory(settings.copy(baseUrl = "http://127.0.0.1:11435"))
-            .from(RunConfigurationRequest(embeddingProvider = "ollama"))
-        val differentModelConfiguration = configurationFactory(settings.copy(modelId = "another-embedding-model"))
-            .from(RunConfigurationRequest(embeddingProvider = "ollama"))
+            .from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID))
         val differentDimensionConfiguration = configurationFactory(settings.copy(dimension = 4))
-            .from(RunConfigurationRequest(embeddingProvider = "ollama"))
+            .from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID))
 
-        assertEquals("nomic-embed-text", configuration.embedding.model)
+        assertEquals("embeddinggemma-2:270m", configuration.embedding.model)
         assertEquals(3, configuration.embedding.embeddingDimension)
         assertTrue(configuration.retrieval.embeddingProfileHash.matches(Regex("[0-9a-f]{64}")))
         assertTrue(configuration.retrieval.embeddingProfileHash != differentEndpointConfiguration.retrieval.embeddingProfileHash)
-        assertTrue(configuration.retrieval.embeddingProfileHash != differentModelConfiguration.retrieval.embeddingProfileHash)
         assertTrue(configuration.retrieval.embeddingProfileHash != differentDimensionConfiguration.retrieval.embeddingProfileHash)
     }
 
@@ -258,9 +315,10 @@ class OllamaEmbeddingProviderContractTest {
     ): OllamaEmbeddingSettings = OllamaEmbeddingSettings(
         enabled = true,
         baseUrl = baseUrl,
-        modelId = "nomic-embed-text",
+        modelId = OllamaEmbeddingSettings.EMBEDDINGGEMMA_MODEL_ID,
         dimension = 3,
         apiKey = apiKey,
+        providerId = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID,
         trustedHosts = trustedHosts,
         requestTimeoutMillis = requestTimeoutMillis,
         retentionDisclosure = retentionDisclosure,

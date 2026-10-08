@@ -122,7 +122,7 @@ paper-trail:
     ollama:
       enabled: ${OLLAMA_ENABLED:false}
       base-url: ${OLLAMA_BASE_URL:}
-      model: ${OLLAMA_MODEL:}
+      model: ${OLLAMA_MODEL:embeddinggemma-2:270m}
       dimension: ${OLLAMA_DIMENSION:768}
       api-key: ${OLLAMA_API_KEY:}
       trusted-hosts: ${OLLAMA_TRUSTED_HOSTS:localhost,127.0.0.1}

@@ -195,10 +195,10 @@ test("new-run preferences use Jev when configured and trusted Ollama/Crossref/Un
         ...directory.providers.embedding,
         {
           role: "embedding",
-          providerId: "ollama",
-          displayName: "Ollama embeddings (nomic-embed-text:v1.5)",
+          providerId: "ollama-embeddinggemma-2",
+          displayName: "Ollama · EmbeddingGemma 2 (270m)",
           version: "v1",
-          model: "nomic-embed-text:v1.5",
+          model: "embeddinggemma-2:270m",
           trustBoundary: "LOCAL",
           dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"],
           retentionDisclosure: null,
@@ -230,15 +230,15 @@ test("new-run preferences use Jev when configured and trusted Ollama/Crossref/Un
 
   assert.deepEqual(availableProviderSelections(directoryWithLaya, DEFAULT_PROVIDER_SELECTIONS), {
     ...preferredSelections,
-    embeddingProvider: "ollama",
+    embeddingProvider: "ollama-embeddinggemma-2",
     systemOneProvider: "jev",
     scholarlyMetadataProvider: "crossref",
     openAccessProvider: "unpaywall",
   });
   assert.equal(availableProviderSelections(directoryWithLaya, {
     ...DEFAULT_PROVIDER_SELECTIONS,
-    embeddingProvider: "ollama",
-  }).embeddingProvider, "ollama");
+    embeddingProvider: "ollama-embeddinggemma-2",
+  }).embeddingProvider, "ollama-embeddinggemma-2");
   assert.deepEqual(availableProviderSelections(directory, DEFAULT_PROVIDER_SELECTIONS), {
     ...preferredSelections,
     systemOneProvider: "jev",
@@ -256,10 +256,10 @@ test("external Ollama is not implicit but remains available after explicit selec
         ...directory.providers.embedding,
         {
           role: "embedding",
-          providerId: "ollama",
-          displayName: "External Ollama embeddings",
+          providerId: "ollama-embeddinggemma-2",
+          displayName: "External Ollama EmbeddingGemma 2 (270m)",
           version: "v1",
-          model: "nomic-embed-text:v1.5",
+          model: "embeddinggemma-2:270m",
           trustBoundary: "EXTERNAL",
           dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"],
           retentionDisclosure: "Ollama endpoint retention is unknown.",
@@ -271,8 +271,8 @@ test("external Ollama is not implicit but remains available after explicit selec
 
   assert.equal(availableProviderSelections(externalOllamaDirectory, DEFAULT_PROVIDER_SELECTIONS).embeddingProvider, "local");
   assert.equal(
-    availableProviderSelections(externalOllamaDirectory, DEFAULT_PROVIDER_SELECTIONS, { embedding: "ollama" }).embeddingProvider,
-    "ollama",
+    availableProviderSelections(externalOllamaDirectory, DEFAULT_PROVIDER_SELECTIONS, { embedding: "ollama-embeddinggemma-2" }).embeddingProvider,
+    "ollama-embeddinggemma-2",
   );
 });
 

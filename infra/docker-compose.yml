@@ -109,7 +109,7 @@ services:
     environment:
       OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-nomic-embed-text:v1.5}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-embeddinggemma-2:270m}
     depends_on:
       ollama: { condition: service_healthy }
     networks: [paper-trail]
@@ -260,7 +260,7 @@ services:
       CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_COMPLETION_TOKENS: ${CLAIM_ANALYSIS_OPENAI_COMPATIBLE_MAX_COMPLETION_TOKENS:-2048}
       OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-nomic-embed-text:v1.5}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-embeddinggemma-2:270m}
       OLLAMA_DIMENSION: ${OLLAMA_DIMENSION:-768}
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       OLLAMA_TRUSTED_HOSTS: ${OLLAMA_TRUSTED_HOSTS:-ollama,localhost,127.0.0.1}
