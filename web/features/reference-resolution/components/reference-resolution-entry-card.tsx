@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { ArrowRight, ChevronDown } from "lucide-react";
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
 import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
@@ -63,7 +64,17 @@ export function ReferenceResolutionEntryCard({
           <ReferenceResolutionBadge status={entry.status} />
         </header>
 
-        <div className="grid gap-4 border-t border-border p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+        {(entry.provisionalArtifactSignals?.length ?? 0) > 0 && (
+        <Alert className="rounded-none border-x-0 border-t-0">
+          <AlertTitle>Provisional extraction signal</AlertTitle>
+          <AlertDescription>
+            <p>This screening signal is not human adjudication. The Bibliography Entry and its Citation Target associations are retained.</p>
+            <ul className="mt-2 list-disc pl-5">{entry.provisionalArtifactSignals?.map((signal) => <li key={signal}>{signal.replaceAll("_", " ").toLowerCase()}</li>)}</ul>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid gap-4 border-t border-border p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <dl className="grid gap-3 sm:grid-cols-2">
             {entry.reasonCode && (
               <div className="min-w-0 space-y-1">
@@ -120,6 +131,26 @@ export function ReferenceResolutionEntryCard({
             <p ref={sourcePreviewRef} className="line-clamp-3 break-words text-sm leading-relaxed">{entry.rawText}</p>
           )}
         </section>
+
+        <details className="border-t border-border px-4 py-3">
+          <summary className="cursor-pointer text-xs font-medium text-muted-foreground">Preserved source identifiers and extraction provenance</summary>
+          <div className="mt-2 space-y-3 text-sm">
+            <dl className="grid gap-2 sm:grid-cols-2">
+              <div><dt className="text-xs text-muted-foreground">GROBID source element</dt><dd>{entry.sourceElement ?? "Not recorded"}</dd></div>
+              <div><dt className="text-xs text-muted-foreground">Local key origin</dt><dd>{entry.localReferenceKeyOrigin ?? "UNKNOWN"}</dd></div>
+              <div><dt className="text-xs text-muted-foreground">Original TEI key</dt><dd className="break-all font-mono">{entry.sourceLocalReferenceKey ?? "Not supplied or unavailable"}</dd></div>
+              <div><dt className="text-xs text-muted-foreground">Provenance capture</dt><dd>{entry.provenanceCaptureStatus ?? "UNAVAILABLE"}</dd></div>
+            </dl>
+            {entry.sourceTextContent !== null && entry.sourceTextContent !== undefined && (
+              <p className="whitespace-pre-wrap break-words text-muted-foreground">Unnormalized GROBID text content: {entry.sourceTextContent || "(empty)"}</p>
+            )}
+            {(entry.identifiers?.length ?? 0) > 0 && (
+              <ul className="space-y-1">{entry.identifiers?.map((identifier, index) => <li key={`${identifier.sourceElement}-${identifier.type}-${index}`} className="break-all"><span className="text-muted-foreground">{identifier.type ?? identifier.sourceElement}: </span>{identifier.rawValue}{identifier.normalizedValue && identifier.normalizedValue !== identifier.rawValue ? <span className="text-muted-foreground"> · normalized {identifier.normalizedValue}</span> : null}</li>)}</ul>
+            )}
+            {(entry.sourceLocations?.length ?? 0) > 0 && <p className="text-muted-foreground">Source coordinates: {entry.sourceLocations?.map((location) => location.coordinates).join("; ")}</p>}
+            {(entry.extractionLimitations?.length ?? 0) > 0 && <p className="text-muted-foreground">Limits: {entry.extractionLimitations?.map((limitation) => limitation.replaceAll("_", " ").toLowerCase()).join("; ")}</p>}
+          </div>
+        </details>
 
         {entry.canonicalPaper && (
           <section className="space-y-2 border-t border-border bg-success p-4" aria-label={`Matched Canonical Paper for ${displayKey}`}>

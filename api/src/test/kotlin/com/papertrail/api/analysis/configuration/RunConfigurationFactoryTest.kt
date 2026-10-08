@@ -3,6 +3,7 @@ package com.papertrail.api.analysis.configuration
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.papertrail.api.analysis.http.RunConfigurationRequest
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
 import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationThresholds
 import com.papertrail.api.external.jev.JevSystemOneSettings
@@ -76,6 +77,7 @@ class RunConfigurationFactoryTest {
         assertEquals("0.9.1-crf", snapshot.sourceParser.version)
         assertEquals("docling", snapshot.citedPaperParser?.provider)
         assertEquals("1.30.0", snapshot.citedPaperParser?.version)
+        assertEquals(BibliographyNormalizationPolicySelection.CURRENT, snapshot.bibliographyNormalizationPolicy)
         assertEquals(52_428_800, snapshot.validationLimits.maxUploadBytes)
         assertEquals(100_000, snapshot.validationLimits.maxExtractedCharactersPerPage)
         assertEquals(5_000, snapshot.validationLimits.maxClaimCitationPairs)
@@ -161,11 +163,13 @@ class RunConfigurationFactoryTest {
         val legacyJson = objectMapper.readTree(factory.toJson(factory.from(factory.parseRequest(null))))
             .deepCopy<ObjectNode>()
         legacyJson.remove("citedPaperParser")
+        legacyJson.remove("bibliographyNormalizationPolicy")
         val legacySnapshot = objectMapper.readValue(legacyJson.toString(), AnalysisConfigurationSnapshot::class.java)
 
         assertEquals(null, legacySnapshot.citedPaperParser)
         assertEquals("grobid", legacySnapshot.citedPaperParserSelection().provider)
         assertEquals("0.9.1-crf", legacySnapshot.citedPaperParserSelection().version)
+        assertEquals(null, legacySnapshot.bibliographyNormalizationPolicy)
     }
 
     @Test

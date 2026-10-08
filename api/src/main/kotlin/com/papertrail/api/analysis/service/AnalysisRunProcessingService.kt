@@ -3,6 +3,7 @@ package com.papertrail.api.analysis.service
 import com.papertrail.api.citation.claims.service.ClaimAnalysisService
 import com.papertrail.api.citation.claims.service.ClaimCitationPairCounter
 import com.papertrail.api.citation.repository.ParsedDocumentRepository
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
 import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
 import com.papertrail.api.document.repository.SourceDocumentRepository
@@ -108,8 +109,10 @@ class AnalysisRunProcessingService(
         sourceDocumentRepository.requireActiveSourceDocument(event.payload.documentId)
         if (existingParsed == null) {
             sourceDocumentRepository.requireActiveSourceDocument(event.payload.documentId)
+            val bibliographyNormalizationPolicy = run.configuration.bibliographyNormalizationPolicy
+                ?: BibliographyNormalizationPolicySelection.LEGACY
             val parsed = if (executionService == null) {
-                scientificDocumentParser.parse(content)
+                scientificDocumentParser.parse(content, bibliographyNormalizationPolicy)
             } else {
                 val parserSpan = executionService.startSpan(
                     event.analysisRunId,
@@ -146,7 +149,7 @@ class AnalysisRunProcessingService(
                     )
                 }
                 try {
-                    scientificDocumentParser.parse(content).also { output ->
+                    scientificDocumentParser.parse(content, bibliographyNormalizationPolicy).also { output ->
                         if (parserSpan != null) {
                             executionService.capture(
                                 event.analysisRunId,
@@ -184,6 +187,9 @@ class AnalysisRunProcessingService(
             }
             if (parsed.parserId != run.parserId || parsed.parserVersion != run.parserVersion) {
                 throw IllegalStateException("The scientific parser identity does not match the Analysis Run provenance.")
+            }
+            if (parsed.bibliographyNormalizationPolicy != bibliographyNormalizationPolicy) {
+                throw IllegalStateException("The bibliography normalization policy does not match the Analysis Run configuration.")
             }
             require(parsed.rawParserOutput.isNotEmpty()) { "The scientific parser returned no raw parser output." }
             sourceDocumentRepository.requireActiveSourceDocument(event.payload.documentId)

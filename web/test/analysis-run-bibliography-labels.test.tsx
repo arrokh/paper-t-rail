@@ -57,7 +57,7 @@ const parsedDocument: ParsedDocument = {
     text: "A claim is discussed (Author, 2024).",
     startOffset: 0,
     endOffset: 38,
-    occurrences: [{ id: "occurrence-1", markerText: "(Author, 2024)", startOffset: 25, endOffset: 37, bibliographyReferenceKeys: ["b0"] }],
+    occurrences: [{ id: "occurrence-1", markerText: "(Author, 2024)", startOffset: 25, endOffset: 37, bibliographyReferenceKeys: ["b0"], unmatchedBibliographyReferenceKeys: null }],
     atomicClaims: [{
       id: "claim-1",
       text: "A claim is discussed.",
@@ -76,7 +76,17 @@ const parsedDocument: ParsedDocument = {
     doi: null,
     referenceType: "JOURNAL_ARTICLE",
     resolutionStatus: "RESOLVED",
+    sourceTextContent: null,
+    sourceElement: null,
+    sourceLocalReferenceKey: null,
+    localReferenceKeyOrigin: "UNKNOWN",
+    identifiers: [],
+    sourceLocations: [],
+    provisionalArtifactSignals: [],
+    extractionLimitations: ["BIBLIOGRAPHY_PROVENANCE_UNAVAILABLE"],
+    provenanceCaptureStatus: "UNAVAILABLE",
   }],
+  bibliographyNormalizationPolicy: null,
 };
 
 const referenceReport = {
@@ -305,6 +315,39 @@ describe("Analysis Run bibliography display keys", () => {
       expect(citationLink?.textContent).toContain(labels[index]);
       expect(document.getElementById(`bibliography-${localReferenceKey}`)).toBeTruthy();
     });
+  });
+
+  it("shows provisional extraction signals and unmatched TEI targets without dropping local Citation Targets", () => {
+    const suspiciousDocument: ParsedDocument = {
+      ...parsedDocument,
+      bibliographyNormalizationPolicy: { policyId: "grobid-bibliography-normalization", version: "2" },
+      citationContexts: [{
+        ...parsedDocument.citationContexts[0],
+        occurrences: [{
+          ...parsedDocument.citationContexts[0].occurrences[0],
+          unmatchedBibliographyReferenceKeys: ["missing-source-key"],
+        }],
+      }],
+      bibliographyEntries: [{
+        ...parsedDocument.bibliographyEntries[0],
+        rawText: "",
+        sourceTextContent: "Raw TEI content",
+        sourceElement: "bibl",
+        sourceLocalReferenceKey: "b0",
+        localReferenceKeyOrigin: "GROBID_XML_ID",
+        provisionalArtifactSignals: ["EMPTY_GROBID_BIBLIOGRAPHY_TEXT"],
+        extractionLimitations: ["SOURCE_TEXT_SPAN_UNAVAILABLE"],
+        provenanceCaptureStatus: "CAPTURED",
+      }],
+    };
+
+    renderStage("source", suspiciousDocument);
+
+    expect(screen.getByText("Unmatched GROBID targets: missing-source-key")).toBeTruthy();
+    expect(screen.getByText("Provisional extraction signal")).toBeTruthy();
+    expect(screen.getByText(/This screening signal is not human adjudication/)).toBeTruthy();
+    expect(screen.getByText("No bibliography text was extracted.")).toBeTruthy();
+    expect(screen.getByText("b1 · journal article")).toBeTruthy();
   });
 
   it("preserves generated keys when the complete order collection is not reliable", () => {

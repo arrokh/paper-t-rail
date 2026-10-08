@@ -1,5 +1,7 @@
 package com.papertrail.api.scholarly.references.report
 
+import com.papertrail.api.citation.parsing.ParsedBibliographyIdentifier
+import com.papertrail.api.citation.parsing.ParsedBibliographySourceLocation
 import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
 import io.swagger.v3.oas.annotations.media.Schema
@@ -33,4 +35,22 @@ data class BibliographyResolutionReportEntry(
     val accessProgressReason: String? = null,
     val citedPaperAccess: CitedPaperAccessReport? = null,
     val verificationOutcomes: List<CitedReferenceVerificationOutcome> = emptyList(),
+    @field:Schema(description = "Unnormalized element text content extracted from GROBID TEI; raw TEI bytes are stored separately.")
+    val sourceTextContent: String? = null,
+    @field:Schema(description = "GROBID bibliography element, or null when source provenance was not captured.")
+    val sourceElement: String? = null,
+    @field:Schema(description = "Original TEI xml:id; null means no source ID was captured or the entry used a generated internal key.")
+    val sourceLocalReferenceKey: String? = null,
+    @field:Schema(description = "Origin of localReferenceKey. UNKNOWN is used when legacy provenance is unavailable.", allowableValues = ["GROBID_XML_ID", "GENERATED_FALLBACK", "UNKNOWN"])
+    val localReferenceKeyOrigin: String = "UNKNOWN",
+    @field:Schema(description = "Raw TEI identifiers and URL targets plus local normalization; retaining these values does not trigger provider requests.")
+    val identifiers: List<ParsedBibliographyIdentifier> = emptyList(),
+    @field:Schema(description = "GROBID page/coordinate metadata. Coordinates are not normalized source-text spans.")
+    val sourceLocations: List<ParsedBibliographySourceLocation> = emptyList(),
+    @field:Schema(description = "Provisional extraction-artifact signals only; these are not adjudicated truth or a reason to drop this Bibliography Entry.")
+    val provisionalArtifactSignals: List<String> = emptyList(),
+    @field:Schema(description = "Known extraction limitations or unavailable historical provenance.")
+    val extractionLimitations: List<String> = emptyList(),
+    @field:Schema(description = "Whether extraction provenance was captured; old rows report UNAVAILABLE rather than inferred cause.", allowableValues = ["CAPTURED", "UNAVAILABLE"])
+    val provenanceCaptureStatus: String = "UNAVAILABLE",
 )

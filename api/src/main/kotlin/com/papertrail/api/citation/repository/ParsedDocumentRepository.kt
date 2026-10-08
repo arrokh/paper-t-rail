@@ -11,6 +11,9 @@ import com.papertrail.api.analysis.http.ParsedParserProvenance
 import com.papertrail.api.analysis.http.ParsedSectionView
 import com.papertrail.api.citation.claims.domain.CitationContextClaims
 import com.papertrail.api.citation.claims.domain.CitationTargetKey
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
+import com.papertrail.api.citation.parsing.ParsedBibliographyIdentifier
+import com.papertrail.api.citation.parsing.ParsedBibliographySourceLocation
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -28,6 +31,9 @@ class ParsedDocumentRepository(
         rawTeiObjectKey: String,
         extractedClaims: List<CitationContextClaims>,
     ) {
+        val bibliographyNormalizationPolicy = requireNotNull(parsed.bibliographyNormalizationPolicy) {
+            "The source parser did not report the pinned bibliography normalization policy."
+        }
         val claimsByContextSpan = extractedClaims.associateBy { it.contextStartOffset to it.contextEndOffset }
         require(claimsByContextSpan.size == extractedClaims.size &&
             claimsByContextSpan.keys == parsed.citationContexts.map { it.startOffset to it.endOffset }.toSet()
@@ -35,8 +41,9 @@ class ParsedDocumentRepository(
         jdbc.update(
             """
             INSERT INTO parsed_document_parses (
-                analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text, raw_tei_object_key
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text, raw_tei_object_key,
+                bibliography_normalization_policy_id, bibliography_normalization_policy_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
             analysisRunId,
             sourceContentSha256,
@@ -44,6 +51,8 @@ class ParsedDocumentRepository(
             parsed.parserVersion,
             parsed.normalizedSourceText,
             rawTeiObjectKey,
+            bibliographyNormalizationPolicy.policyId,
+            bibliographyNormalizationPolicy.version,
         )
 
         val sectionIds = parsed.sections.associate { it.sectionOrder to UUID.randomUUID() }
@@ -70,8 +79,10 @@ class ParsedDocumentRepository(
                 """
                 INSERT INTO bibliography_entries (
                     id, analysis_run_id, entry_order, local_reference_key, raw_text, parsed_title,
-                    parsed_authors, parsed_year, parsed_doi, reference_type, resolution_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, 'NOT_ATTEMPTED')
+                    parsed_authors, parsed_year, parsed_doi, reference_type, resolution_status,
+                    source_element, source_text_content, source_local_reference_key, local_reference_key_origin, identifiers,
+                    source_locations, provisional_artifact_signals, extraction_limitations, provenance_capture_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, 'NOT_ATTEMPTED', ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?)
                 """.trimIndent(),
                 referenceIds.getValue(entry.localReferenceKey),
                 analysisRunId,
@@ -83,6 +94,15 @@ class ParsedDocumentRepository(
                 entry.year,
                 entry.doi,
                 entry.referenceType,
+                entry.sourceElement.takeIf { entry.provenanceCaptured },
+                entry.sourceTextContent.takeIf { entry.provenanceCaptured },
+                entry.sourceLocalReferenceKey.takeIf { entry.provenanceCaptured },
+                entry.localReferenceKeyOrigin.takeIf { entry.provenanceCaptured },
+                entry.identifiers.takeIf { entry.provenanceCaptured }?.let(JsonUtil::toJson),
+                entry.sourceLocations.takeIf { entry.provenanceCaptured }?.let(JsonUtil::toJson),
+                entry.provisionalArtifactSignals.takeIf { entry.provenanceCaptured }?.let(JsonUtil::toJson),
+                entry.extractionLimitations.takeIf { entry.provenanceCaptured }?.let(JsonUtil::toJson),
+                "CAPTURED".takeIf { entry.provenanceCaptured },
             )
         }
 
@@ -110,8 +130,8 @@ class ParsedDocumentRepository(
                     """
                     INSERT INTO citation_occurrences (
                         id, analysis_run_id, citation_context_id, section_id,
-                        marker_text, start_offset, end_offset
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        marker_text, start_offset, end_offset, unmatched_bibliography_reference_keys
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)
                     """.trimIndent(),
                     occurrenceId,
                     analysisRunId,
@@ -120,6 +140,7 @@ class ParsedDocumentRepository(
                     occurrence.markerText,
                     occurrence.startOffset,
                     occurrence.endOffset,
+                    occurrence.unmatchedBibliographyReferenceKeys?.let(JsonUtil::toJson),
                 )
                 occurrence.bibliographyReferenceKeys.distinct()
                     .forEachIndexed { targetOrder, referenceKey ->
@@ -188,10 +209,21 @@ class ParsedDocumentRepository(
     fun find(analysisRunId: UUID): ParsedDocumentView? {
         val parse = jdbc.query(
             """
-            SELECT parser_id, parser_version, source_content_sha256, normalized_source_text
+            SELECT parser_id, parser_version, source_content_sha256, normalized_source_text,
+                   bibliography_normalization_policy_id, bibliography_normalization_policy_version
               FROM parsed_document_parses WHERE analysis_run_id = ?
             """.trimIndent(),
-            { rs, _ -> ParseRow(rs.getString("parser_id"), rs.getString("parser_version"), rs.getString("source_content_sha256"), rs.getString("normalized_source_text")) },
+            { rs, _ -> ParseRow(
+                parserId = rs.getString("parser_id"),
+                parserVersion = rs.getString("parser_version"),
+                sourceContentSha256 = rs.getString("source_content_sha256"),
+                normalizedSourceText = rs.getString("normalized_source_text"),
+                bibliographyNormalizationPolicy = rs.getString("bibliography_normalization_policy_id")?.let { policyId ->
+                    rs.getString("bibliography_normalization_policy_version")?.let { version ->
+                        BibliographyNormalizationPolicySelection(policyId, version)
+                    }
+                },
+            ) },
             analysisRunId,
         ).firstOrNull() ?: return null
         val sections = jdbc.query(
@@ -206,7 +238,12 @@ class ParsedDocumentRepository(
             """
             SELECT entry.entry_order, entry.local_reference_key, entry.raw_text, entry.parsed_title,
                    entry.parsed_authors::text AS parsed_authors, entry.parsed_year, entry.parsed_doi,
-                   entry.reference_type, COALESCE(resolution.status, entry.resolution_status) AS resolution_status
+                   entry.reference_type, COALESCE(resolution.status, entry.resolution_status) AS resolution_status,
+                   entry.source_element, entry.source_text_content, entry.source_local_reference_key, entry.local_reference_key_origin,
+                   entry.identifiers::text AS identifiers, entry.source_locations::text AS source_locations,
+                   entry.provisional_artifact_signals::text AS provisional_artifact_signals,
+                   entry.extraction_limitations::text AS extraction_limitations,
+                   entry.provenance_capture_status
               FROM bibliography_entries entry
               LEFT JOIN bibliography_entry_resolutions resolution
                 ON resolution.analysis_run_id = entry.analysis_run_id
@@ -220,6 +257,7 @@ class ParsedDocumentRepository(
         val occurrenceRows = jdbc.query(
             """
             SELECT o.id, o.citation_context_id, o.marker_text, o.start_offset, o.end_offset,
+                   o.unmatched_bibliography_reference_keys::text AS unmatched_reference_keys,
                    b.local_reference_key
               FROM citation_occurrences o
               LEFT JOIN citation_targets t
@@ -241,6 +279,7 @@ class ParsedDocumentRepository(
                     startOffset = first.startOffset,
                     endOffset = first.endOffset,
                     bibliographyReferenceKeys = duplicateRows.mapNotNull { it.referenceKey }.distinct(),
+                    unmatchedBibliographyReferenceKeys = first.unmatchedReferenceKeys,
                 )
             }.toMutableList()
         }
@@ -317,8 +356,12 @@ class ParsedDocumentRepository(
             sections = sections,
             citationContexts = contexts,
             bibliographyEntries = bibliographyEntries,
+            bibliographyNormalizationPolicy = parse.bibliographyNormalizationPolicy,
         )
     }
+
+    private fun listOfNotCapturedLimitation(provenanceCaptureStatus: String?): List<String> =
+        if (provenanceCaptureStatus == "CAPTURED") emptyList() else listOf("BIBLIOGRAPHY_PROVENANCE_UNAVAILABLE")
 
     private fun ResultSet.toClaimTargetRow() = ClaimTargetRow(
         claimId = getObject("id", UUID::class.java),
@@ -340,6 +383,9 @@ class ParsedDocumentRepository(
         startOffset = getInt("start_offset"),
         endOffset = getInt("end_offset"),
         referenceKey = getString("local_reference_key"),
+        unmatchedReferenceKeys = getString("unmatched_reference_keys")?.let {
+            JsonUtil.fromJson(it, JsonUtil.collectionType(List::class.java, String::class.java))
+        },
     )
 
     private fun ResultSet.toBibliographyEntryView() = ParsedBibliographyEntryView(
@@ -352,6 +398,23 @@ class ParsedDocumentRepository(
         doi = getString("parsed_doi"),
         referenceType = getString("reference_type"),
         resolutionStatus = getString("resolution_status"),
+        sourceTextContent = getString("source_text_content"),
+        sourceElement = getString("source_element"),
+        sourceLocalReferenceKey = getString("source_local_reference_key"),
+        localReferenceKeyOrigin = getString("local_reference_key_origin") ?: "UNKNOWN",
+        identifiers = getString("identifiers")?.let {
+            JsonUtil.fromJson<List<ParsedBibliographyIdentifier>>(it, JsonUtil.collectionType(List::class.java, ParsedBibliographyIdentifier::class.java))
+        }.orEmpty(),
+        sourceLocations = getString("source_locations")?.let {
+            JsonUtil.fromJson<List<ParsedBibliographySourceLocation>>(it, JsonUtil.collectionType(List::class.java, ParsedBibliographySourceLocation::class.java))
+        }.orEmpty(),
+        provisionalArtifactSignals = getString("provisional_artifact_signals")?.let {
+            JsonUtil.fromJson<List<String>>(it, JsonUtil.collectionType(List::class.java, String::class.java))
+        }.orEmpty(),
+        extractionLimitations = getString("extraction_limitations")?.let {
+            JsonUtil.fromJson<List<String>>(it, JsonUtil.collectionType(List::class.java, String::class.java))
+        } ?: listOfNotCapturedLimitation(getString("provenance_capture_status")),
+        provenanceCaptureStatus = getString("provenance_capture_status") ?: "UNAVAILABLE",
     )
 
     private data class ClaimTargetRow(
@@ -366,6 +429,20 @@ class ParsedDocumentRepository(
         val referenceKey: String?,
         val referenceTitle: String?,
     )
-    private data class ParseRow(val parserId: String, val parserVersion: String, val sourceContentSha256: String, val normalizedSourceText: String)
-    private data class OccurrenceRow(val id: UUID, val contextId: UUID, val markerText: String, val startOffset: Int, val endOffset: Int, val referenceKey: String?)
+    private data class ParseRow(
+        val parserId: String,
+        val parserVersion: String,
+        val sourceContentSha256: String,
+        val normalizedSourceText: String,
+        val bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection?,
+    )
+    private data class OccurrenceRow(
+        val id: UUID,
+        val contextId: UUID,
+        val markerText: String,
+        val startOffset: Int,
+        val endOffset: Int,
+        val referenceKey: String?,
+        val unmatchedReferenceKeys: List<String>?,
+    )
 }

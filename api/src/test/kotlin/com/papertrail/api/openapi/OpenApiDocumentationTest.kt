@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.papertrail.api.infrastructure.cache.OperatorCredentialVerifier
 import com.papertrail.api.infrastructure.logging.RequestCorrelationFilter
 import com.papertrail.api.analysis.http.ParsedDocumentView
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
+import com.papertrail.api.citation.parsing.ParsedBibliographyIdentifier
+import com.papertrail.api.citation.parsing.ParsedBibliographySourceLocation
 import com.papertrail.api.analysis.http.ParsedAtomicClaimView
 import com.papertrail.api.analysis.http.ParsedClaimCitationTargetView
 import com.papertrail.api.analysis.http.ParsedCitationContextView
@@ -396,6 +399,17 @@ class OpenApiDocumentationTest {
         assertFalse(parsedDocument.path("description").asText().contains("completed Analysis Run"))
         assertTrue(parsedDocument.path("responses").has("404"))
         assertTrue(parsedDocument.path("responses").has("409"))
+        val parsedDocumentSchemaName = parsedDocument.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val parsedDocumentProperties = document.path("components").path("schemas").path(parsedDocumentSchemaName).path("properties")
+        assertTrue(parsedDocumentProperties.has("bibliographyNormalizationPolicy"))
+        val parsedBibliographySchemaName = parsedDocumentProperties.path("bibliographyEntries").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val parsedBibliographyProperties = document.path("components").path("schemas").path(parsedBibliographySchemaName).path("properties")
+        assertTrue(parsedBibliographyProperties.path("sourceTextContent").path("description").asText().contains("Unnormalized"))
+        assertTrue(parsedBibliographyProperties.path("provisionalArtifactSignals").path("description").asText().contains("not human adjudication"))
+        assertTrue(parsedBibliographyProperties.has("identifiers"))
+        assertTrue(parsedBibliographyProperties.has("extractionLimitations"))
+        val occurrenceProperties = document.path("components").path("schemas").path("ParsedCitationOccurrenceView").path("properties")
+        assertTrue(occurrenceProperties.has("unmatchedBibliographyReferenceKeys"))
         val sourceDocument = paths.path("/api/v1/analysis-runs/{runId}/source-document").path("get")
         assertTrue(sourceDocument.path("parameters").any { it.path("name").asText() == "runId" && it.path("description").asText().contains("Analysis Run") })
         val sourcePdfResponse = sourceDocument.path("responses").path("200")
@@ -432,6 +446,17 @@ class OpenApiDocumentationTest {
         val report = paths.path("/api/v1/analysis-runs/{runId}/report").path("get")
         assertTrue(report.path("responses").path("200").path("content").has("application/json"))
         assertTrue(report.path("responses").has("404"))
+        val reportSchemaName = report.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val reportProperties = document.path("components").path("schemas").path(reportSchemaName).path("properties")
+        val resolutionSchemaName = reportProperties.path("referenceResolution").path("${'$'}ref").asText().substringAfterLast('/')
+        val resolutionProperties = document.path("components").path("schemas").path(resolutionSchemaName).path("properties")
+        assertTrue(resolutionProperties.has("bibliographyNormalizationPolicy"))
+        assertTrue(resolutionProperties.path("summary").path("${'$'}ref").asText().isNotBlank())
+        val reportEntrySchemaName = resolutionProperties.path("entries").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val reportEntryProperties = document.path("components").path("schemas").path(reportEntrySchemaName).path("properties")
+        assertTrue(reportEntryProperties.path("provisionalArtifactSignals").path("description").asText().contains("not adjudicated"))
+        assertTrue(reportEntryProperties.has("sourceLocalReferenceKey"))
+        assertTrue(reportEntryProperties.has("identifiers"))
         assertTrue(report.path("description").asText().contains("never rolled up"))
         assertTrue(report.path("description").asText().contains("access-stage skip reasons"))
         val accessProgressStatusSchema = document.findValue("accessProgressStatus")
@@ -905,7 +930,7 @@ class OpenApiDocumentationTest {
                     endOffset = 10,
                     occurrences = listOf(
                         ParsedCitationOccurrenceView(
-                            UUID.randomUUID(), "[1]", 6, 9, listOf("ref1"),
+                            UUID.randomUUID(), "[1]", 6, 9, listOf("ref1"), listOf("missing-tei-key"),
                         ),
                     ),
                     atomicClaims = listOf(
@@ -928,6 +953,7 @@ class OpenApiDocumentationTest {
                 ),
             ),
             bibliographyEntries = emptyList(),
+            bibliographyNormalizationPolicy = BibliographyNormalizationPolicySelection.CURRENT,
         )
         Mockito.`when`(analysisRunService.getParsedDocument(runId)).thenReturn(parsed)
 
@@ -936,6 +962,8 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.parser.provider").value("grobid"))
             .andExpect(jsonPath("$.normalizedSourceText").value("Claim [1]."))
             .andExpect(jsonPath("$.citationContexts[0].occurrences[0].bibliographyReferenceKeys[0]").value("ref1"))
+            .andExpect(jsonPath("$.citationContexts[0].occurrences[0].unmatchedBibliographyReferenceKeys[0]").value("missing-tei-key"))
+            .andExpect(jsonPath("$.bibliographyNormalizationPolicy.version").value("2"))
             .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].text").value("Claim"))
             .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].sourceStartOffset").value(0))
             .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].citationTargets[0].associationKind").value("INFERRED_PROVISIONAL"))
@@ -990,7 +1018,7 @@ class OpenApiDocumentationTest {
                     executionStatus = "COMPLETED",
                     scorePolicyVersion = "title-author-year-weighted-edit-similarity-v1",
                     confidenceThreshold = 0.9,
-                    summary = ReferenceResolutionSummary(2, 1, 0, 1, 0, 0),
+                    summary = ReferenceResolutionSummary(2, 1, 0, 1, 0, 0, provisionalArtifactSignalEntries = 1),
                     entries = listOf(
                         BibliographyResolutionReportEntry(
                             entryOrder = 1,
@@ -1012,6 +1040,15 @@ class OpenApiDocumentationTest {
                             ),
                             confidenceScore = 1.0,
                             matchMethod = "DOI",
+                            sourceTextContent = "Original GROBID source text",
+                            sourceElement = "biblStruct",
+                            sourceLocalReferenceKey = "ref1",
+                            localReferenceKeyOrigin = "GROBID_XML_ID",
+                            identifiers = listOf(ParsedBibliographyIdentifier("idno", "DOI", "https://doi.org/10.1234/example", "10.1234/example")),
+                            sourceLocations = listOf(ParsedBibliographySourceLocation(2, "2,10,20,30,40")),
+                            provisionalArtifactSignals = listOf("UNCITED_SECTION_HEADING_PATTERN"),
+                            extractionLimitations = listOf("SOURCE_TEXT_SPAN_UNAVAILABLE"),
+                            provenanceCaptureStatus = "CAPTURED",
                             accessProgressStatus = "COMPLETED",
                             accessProgressReason = null,
                             citedPaperAccess = CitedPaperAccessReport(
@@ -1032,6 +1069,7 @@ class OpenApiDocumentationTest {
                             verificationOutcomes = listOf(outcome),
                         ),
                     ),
+                    bibliographyNormalizationPolicy = BibliographyNormalizationPolicySelection.CURRENT,
                 ),
             ),
         )
@@ -1047,6 +1085,12 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.confidenceThreshold").value(0.9))
             .andExpect(jsonPath("$.referenceResolution.summary.unsupportedReferenceType").value(1))
             .andExpect(jsonPath("$.referenceResolution.summary.failed").value(0))
+            .andExpect(jsonPath("$.referenceResolution.summary.provisionalArtifactSignalEntries").value(1))
+            .andExpect(jsonPath("$.referenceResolution.bibliographyNormalizationPolicy.version").value("2"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].sourceTextContent").value("Original GROBID source text"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].sourceLocalReferenceKey").value("ref1"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].identifiers[0].rawValue").value("https://doi.org/10.1234/example"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].provisionalArtifactSignals[0]").value("UNCITED_SECTION_HEADING_PATTERN"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessStatus").value("ABSTRACT_ONLY"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessReason").value("ABSTRACT_ONLY"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessReasons[0]").value("NO_FULL_TEXT_LOCATION_RETURNED"))

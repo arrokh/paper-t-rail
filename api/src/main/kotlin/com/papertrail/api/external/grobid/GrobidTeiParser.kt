@@ -8,9 +8,12 @@ import java.util.Locale
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import com.papertrail.api.citation.parsing.CitationContextSegmenter
 import com.papertrail.api.citation.parsing.CitationMarker
 import com.papertrail.api.citation.parsing.ParsedBibliographyEntry
+import com.papertrail.api.citation.parsing.ParsedBibliographyIdentifier
+import com.papertrail.api.citation.parsing.ParsedBibliographySourceLocation
 import com.papertrail.api.citation.parsing.ParsedCitationContext
 import com.papertrail.api.citation.parsing.ParsedCitationOccurrence
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
@@ -25,7 +28,13 @@ class GrobidTeiParser(
     init {
         require(maximumCharacters > 0) { "The parsed-text limit must be positive." }
     }
-    fun parse(tei: String): ParsedScientificDocument {
+    fun parse(
+        tei: String,
+        normalizationPolicy: BibliographyNormalizationPolicySelection = BibliographyNormalizationPolicySelection.CURRENT,
+    ): ParsedScientificDocument {
+        require(normalizationPolicy in SUPPORTED_BIBLIOGRAPHY_POLICIES) {
+            "The bibliography normalization policy is not supported."
+        }
         val root = try {
             val factory = DocumentBuilderFactory.newInstance().apply {
                 isNamespaceAware = true
@@ -43,7 +52,7 @@ class GrobidTeiParser(
         val body = descendants(root).firstOrNull { it.localName == "body" }
             ?: throw IllegalArgumentException("The scientific parser response has no TEI body.")
         val referencedBibliographyKeys = readReferencedBibliographyKeys(body)
-        val bibliographyEntries = readBibliography(root, referencedBibliographyKeys)
+        val bibliographyEntries = readBibliography(root, referencedBibliographyKeys, normalizationPolicy)
         val bibliographyKeys = bibliographyEntries.mapTo(mutableSetOf()) { it.localReferenceKey }
         val sourceSections = readSections(body)
         val sections = mutableListOf<ParsedSection>()
@@ -70,6 +79,7 @@ class GrobidTeiParser(
                             startOffset = paragraphStart + marker.startOffset,
                             endOffset = paragraphStart + marker.endOffset,
                             bibliographyReferenceKeys = marker.referenceKeys.filter { it in bibliographyKeys },
+                            unmatchedBibliographyReferenceKeys = marker.referenceKeys.filterNot { it in bibliographyKeys },
                         )
                     }
                     contexts += ParsedCitationContext(
@@ -94,6 +104,7 @@ class GrobidTeiParser(
             sections = sections,
             citationContexts = contexts,
             bibliographyEntries = bibliographyEntries,
+            bibliographyNormalizationPolicy = normalizationPolicy,
         )
     }
 
@@ -199,17 +210,27 @@ class GrobidTeiParser(
         }
         .toSet()
 
-    private fun readBibliography(root: Element, referencedKeys: Set<String>): List<ParsedBibliographyEntry> {
+    private fun readBibliography(
+        root: Element,
+        referencedKeys: Set<String>,
+        normalizationPolicy: BibliographyNormalizationPolicySelection,
+    ): List<ParsedBibliographyEntry> {
         val list = descendants(root).firstOrNull { it.localName == "listBibl" } ?: return emptyList()
         val candidates = descendants(list).filter { it.localName == "biblStruct" || it.localName == "bibl" }
+        val reservedKeys = candidates.mapNotNull(::sourceLocalReferenceKey).toSet() + referencedKeys
         val seenKeys = mutableSetOf<String>()
         val entries = candidates.mapIndexedNotNull { index, element ->
-            val id = element.getAttributeNS(XMLConstants.XML_NS_URI, "id")
-                .ifBlank { element.getAttribute("xml:id") }
-                .ifBlank { "ref${index + 1}" }
-            require(seenKeys.add(id)) { "The scientific parser returned duplicate bibliography identifiers." }
+            val sourceKey = sourceLocalReferenceKey(element)
+            val localKey = sourceKey ?: if (normalizationPolicy == BibliographyNormalizationPolicySelection.LEGACY) {
+                "ref${index + 1}"
+            } else {
+                generatedLocalReferenceKey(index + 1, reservedKeys + seenKeys)
+            }
+            require(seenKeys.add(localKey)) { "The scientific parser returned duplicate bibliography identifiers." }
             val rawText = readableBibliographyText(element)
-            if (rawText.isEmpty()) return@mapIndexedNotNull null
+            if (rawText.isEmpty() && normalizationPolicy == BibliographyNormalizationPolicySelection.LEGACY) {
+                return@mapIndexedNotNull null
+            }
             val title = descendants(element).firstOrNull { candidate ->
                 candidate.localName == "title" && candidate.parentNode is Element &&
                     (candidate.parentNode as Element).localName in setOf("analytic", "monogr")
@@ -230,18 +251,94 @@ class GrobidTeiParser(
             val year = descendants(element).firstOrNull { it.localName == "date" }
                 ?.let { it.getAttribute("when").ifBlank { it.textContent } }
                 ?.let(YEAR_PATTERN::find)?.value?.toIntOrNull()
-            val doi = descendants(element).firstOrNull {
-                it.localName == "idno" && it.getAttribute("type").equals("doi", ignoreCase = true)
-            }?.let { normalizeDoi(it.textContent) }
+            val identifiers = readBibliographyIdentifiers(element)
+            val doi = identifiers.firstOrNull { it.type.equals("doi", ignoreCase = true) }?.normalizedValue
             val type = referenceType(element)
-            val entry = ParsedBibliographyEntry(index, id, rawText, title, authors, year, doi, type)
-            if (isUncitedSectionHeading(entry, referencedKeys)) return@mapIndexedNotNull null
-            entry
+            val sourceLocations = readSourceLocations(element)
+            val entry = ParsedBibliographyEntry(
+                entryOrder = index,
+                localReferenceKey = localKey,
+                rawText = rawText,
+                title = title,
+                authors = authors,
+                year = year,
+                doi = doi,
+                referenceType = type,
+                sourceElement = element.localName,
+                sourceLocalReferenceKey = sourceKey,
+                localReferenceKeyOrigin = if (sourceKey == null) "GENERATED_FALLBACK" else "GROBID_XML_ID",
+                identifiers = identifiers,
+                sourceLocations = sourceLocations,
+                extractionLimitations = buildList {
+                    if (sourceLocations.none { it.page != null }) add(SOURCE_PAGE_UNAVAILABLE)
+                    add(SOURCE_TEXT_SPAN_UNAVAILABLE)
+                },
+                provenanceCaptured = true,
+                sourceTextContent = element.textContent.orEmpty(),
+            )
+            val potentialArtifact = isPotentialSectionHeadingArtifact(entry, referencedKeys)
+            if (normalizationPolicy == BibliographyNormalizationPolicySelection.LEGACY && potentialArtifact) {
+                return@mapIndexedNotNull null
+            }
+            val provisionalSignals = buildList {
+                if (potentialArtifact) add(POTENTIAL_SECTION_HEADING_SIGNAL)
+                if (rawText.isEmpty()) add(EMPTY_BIBLIOGRAPHY_TEXT_SIGNAL)
+            }
+            entry.copy(provisionalArtifactSignals = provisionalSignals)
         }
         return entries.mapIndexed { entryOrder, entry -> entry.copy(entryOrder = entryOrder) }
     }
 
-    private fun isUncitedSectionHeading(entry: ParsedBibliographyEntry, referencedKeys: Set<String>): Boolean {
+    private fun sourceLocalReferenceKey(element: Element): String? = element
+        .getAttributeNS(XMLConstants.XML_NS_URI, "id")
+        .ifBlank { element.getAttribute("xml:id") }
+        .takeIf(String::isNotBlank)
+
+    private fun generatedLocalReferenceKey(index: Int, reservedKeys: Set<String>): String {
+        val base = "generated-bibl-$index"
+        var candidate = base
+        var suffix = 1
+        while (candidate in reservedKeys) {
+            candidate = "$base-$suffix"
+            suffix++
+        }
+        return candidate
+    }
+
+    private fun readBibliographyIdentifiers(element: Element): List<ParsedBibliographyIdentifier> = descendants(element)
+        .filter { it.localName == "idno" || it.localName == "ptr" || it.localName == "ref" }
+        .mapNotNull { identifierElement ->
+            val rawValue = if (identifierElement.localName == "idno") {
+                identifierElement.textContent.orEmpty()
+            } else {
+                identifierElement.getAttribute("target")
+            }
+            if (rawValue.isBlank()) return@mapNotNull null
+            val type = identifierElement.getAttribute("type").takeIf(String::isNotBlank)
+            val normalizedValue = if (type.equals("doi", ignoreCase = true)) {
+                normalizeDoi(rawValue).takeIf(String::isNotBlank)
+            } else {
+                normalizeWhitespace(rawValue).takeIf(String::isNotBlank)
+            }
+            ParsedBibliographyIdentifier(identifierElement.localName, type, rawValue, normalizedValue)
+        }
+
+    private fun readSourceLocations(element: Element): List<ParsedBibliographySourceLocation> =
+        (listOf(element) + descendants(element))
+            .flatMap { candidate -> candidate.getAttribute("coords").takeIf(String::isNotBlank)?.split(';').orEmpty() }
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .map { coordinates ->
+                ParsedBibliographySourceLocation(
+                    page = coordinates.substringBefore(',').trim().toIntOrNull(),
+                    coordinates = coordinates,
+                )
+            }
+
+    private fun isPotentialSectionHeadingArtifact(
+        entry: ParsedBibliographyEntry,
+        referencedKeys: Set<String>,
+    ): Boolean {
         if (entry.localReferenceKey in referencedKeys) return false
         if (entry.referenceType != "OTHER" || entry.year != null || entry.doi != null) return false
 
@@ -330,7 +427,15 @@ class GrobidTeiParser(
     private data class NormalizedParagraph(val text: String, val markers: List<CitationMarker>)
 
     companion object {
+        private val SUPPORTED_BIBLIOGRAPHY_POLICIES = setOf(
+            BibliographyNormalizationPolicySelection.LEGACY,
+            BibliographyNormalizationPolicySelection.CURRENT,
+        )
         private val BIBLIOGRAPHY_SECTION_HEADINGS = setOf("references", "bibliography", "works cited", "literature cited")
+        private const val POTENTIAL_SECTION_HEADING_SIGNAL = "UNCITED_SECTION_HEADING_PATTERN"
+        private const val EMPTY_BIBLIOGRAPHY_TEXT_SIGNAL = "EMPTY_GROBID_BIBLIOGRAPHY_TEXT"
+        private const val SOURCE_PAGE_UNAVAILABLE = "SOURCE_PAGE_UNAVAILABLE"
+        private const val SOURCE_TEXT_SPAN_UNAVAILABLE = "SOURCE_TEXT_SPAN_UNAVAILABLE"
         private val WHITESPACE = Regex("[\\s\\p{Z}]+")
         private val YEAR_PATTERN = Regex("(?:18|19|20)\\d{2}")
         private val THESIS_PATTERN = Regex("\\b(?:thesis|dissertation)\\b", RegexOption.IGNORE_CASE)

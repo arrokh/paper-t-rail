@@ -2,6 +2,7 @@ package com.papertrail.api.analysis.configuration
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.utils.JsonUtil
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
@@ -42,6 +43,7 @@ class RunConfigurationFactory(
     private val defaultClaimExtractorProvider: String = "heuristic",
     private val citedPaperParserId: String = "docling",
     private val citedPaperParserVersion: String = "1.30.0",
+    private val bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection = BibliographyNormalizationPolicySelection.CURRENT,
 ) {
     init {
         require(referenceResolutionPolicyVersion.isNotBlank()) { "Reference resolution policy version must be configured." }
@@ -231,6 +233,7 @@ class RunConfigurationFactory(
             ),
             externalProviderConsents = consentSnapshots,
             citedPaperParser = ProviderSelection(citedPaperParserId, citedPaperParserVersion),
+            bibliographyNormalizationPolicy = bibliographyNormalizationPolicy,
         )
     }
 

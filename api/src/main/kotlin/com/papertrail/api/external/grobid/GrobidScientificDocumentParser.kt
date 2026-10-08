@@ -6,6 +6,7 @@ import org.springframework.util.LinkedMultiValueMap
 import org.springframework.web.client.RestClient
 import java.nio.charset.StandardCharsets
 
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
 
@@ -20,7 +21,15 @@ class GrobidScientificDocumentParser(
         }
     }
 
-    override fun parse(pdf: ByteArray): ParsedScientificDocument {
+    override fun parse(pdf: ByteArray): ParsedScientificDocument = parse(
+        pdf,
+        BibliographyNormalizationPolicySelection.CURRENT,
+    )
+
+    override fun parse(
+        pdf: ByteArray,
+        bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection,
+    ): ParsedScientificDocument {
         require(pdf.isNotEmpty()) { "A non-empty PDF is required for scientific parsing." }
         val request = LinkedMultiValueMap<String, Any>().apply {
             add("input", object : ByteArrayResource(pdf) {
@@ -47,7 +56,7 @@ class GrobidScientificDocumentParser(
             } ?: throw IllegalStateException("The scientific parser returned no response.")
         val (responseBytes, responseCharset) = response
         require(responseBytes.isNotEmpty()) { "The scientific parser returned an empty response." }
-        return teiParser.parse(String(responseBytes, responseCharset))
+        return teiParser.parse(String(responseBytes, responseCharset), bibliographyNormalizationPolicy)
             .copy(rawParserOutput = responseBytes)
     }
 

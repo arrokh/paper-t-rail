@@ -75,6 +75,15 @@ function sourceReferences(parsedDocument: ParsedDocument | null, report: Referen
         doi: entry.doi,
         referenceType: entry.referenceType,
         resolutionStatus: entry.status,
+        sourceTextContent: entry.sourceTextContent,
+        sourceElement: entry.sourceElement,
+        sourceLocalReferenceKey: entry.sourceLocalReferenceKey,
+        localReferenceKeyOrigin: entry.localReferenceKeyOrigin,
+        identifiers: entry.identifiers,
+        sourceLocations: entry.sourceLocations,
+        provisionalArtifactSignals: entry.provisionalArtifactSignals,
+        extractionLimitations: entry.extractionLimitations,
+        provenanceCaptureStatus: entry.provenanceCaptureStatus,
       });
     }
   }

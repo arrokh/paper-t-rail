@@ -319,6 +319,9 @@ function AnnotationResults({ parsedDocument, view }: { parsedDocument: ParsedDoc
                 {context.occurrences.map((occurrence) => (
                   <li key={occurrence.id} className="min-w-0 max-w-full">
                     <Badge variant="outline" className="h-auto max-w-full justify-start whitespace-normal break-words py-1 text-left font-mono text-xs">{occurrence.markerText} · {occurrence.startOffset}–{occurrence.endOffset}</Badge>
+                    {occurrence.unmatchedBibliographyReferenceKeys && occurrence.unmatchedBibliographyReferenceKeys.length > 0 && (
+                      <p className="mt-1 break-words text-xs text-muted-foreground">Unmatched GROBID targets: {occurrence.unmatchedBibliographyReferenceKeys.join(", ")}</p>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -338,6 +341,11 @@ function ParsedBibliographyResults({ parsedDocument }: { parsedDocument: ParsedD
         <h4 id="parsed-bibliography-heading" className="font-heading font-semibold">Parsed bibliography entries</h4>
         <Badge variant="outline">{parsedDocument.bibliographyEntries.length}</Badge>
       </div>
+      <p className="text-xs text-muted-foreground">
+        {parsedDocument.bibliographyNormalizationPolicy
+          ? `Normalization policy ${parsedDocument.bibliographyNormalizationPolicy.policyId} v${parsedDocument.bibliographyNormalizationPolicy.version}.`
+          : "Normalization policy was not recorded for this historical run."}
+      </p>
       {parsedDocument.bibliographyEntries.length === 0 ? <p className="text-sm text-muted-foreground">No Bibliography Entries were parsed.</p> : (
         <ol className="space-y-2">
           {parsedDocument.bibliographyEntries.map((entry) => (
@@ -346,14 +354,33 @@ function ParsedBibliographyResults({ parsedDocument }: { parsedDocument: ParsedD
                 <p className="font-mono text-xs text-muted-foreground">{displayReferenceKey(entry, parsedDocument.bibliographyEntries)} · {entry.referenceType.replaceAll("_", " ").toLowerCase()}</p>
                 {entry.year && <span className="font-mono text-xs text-muted-foreground">{entry.year}</span>}
               </div>
-              <h5 className="mt-1 break-words font-medium">{entry.title || entry.rawText}</h5>
-              {entry.authors.length > 0 && <p className="mt-1 break-words text-sm text-muted-foreground">{entry.authors.join(", ")}</p>}
-              {entry.title && (
-                <details className="mt-3 border-t border-border pt-3">
-                  <summary className="cursor-pointer text-xs font-medium text-muted-foreground">Original bibliography text</summary>
-                  <p className="mt-2 break-words text-sm leading-relaxed text-muted-foreground">{entry.rawText}</p>
-                </details>
+              <h5 className="mt-1 break-words font-medium">{entry.title || entry.rawText || "No bibliography text was extracted."}</h5>
+              {entry.provisionalArtifactSignals.length > 0 && (
+                <Alert className="mt-3">
+                  <AlertTitle>Provisional extraction signal</AlertTitle>
+                  <AlertDescription>
+                    <p>This screening signal is not human adjudication. The entry and any Citation Target association are retained.</p>
+                    <ul className="mt-2 list-disc pl-5">{entry.provisionalArtifactSignals.map((signal) => <li key={signal}>{signal.replaceAll("_", " ").toLowerCase()}</li>)}</ul>
+                  </AlertDescription>
+                </Alert>
               )}
+              {entry.authors.length > 0 && <p className="mt-1 break-words text-sm text-muted-foreground">{entry.authors.join(", ")}</p>}
+              <details className="mt-3 border-t border-border pt-3">
+                <summary className="cursor-pointer text-xs font-medium text-muted-foreground">Source text, identifiers, and extraction provenance</summary>
+                <div className="mt-2 space-y-3 text-sm">
+                  <p className="break-words leading-relaxed text-muted-foreground">Normalized display text: {entry.rawText || "No text extracted."}</p>
+                  {entry.sourceTextContent !== null && <p className="whitespace-pre-wrap break-words text-muted-foreground">Unnormalized GROBID text content: {entry.sourceTextContent || "(empty)"}</p>}
+                  <dl className="grid gap-2 sm:grid-cols-2">
+                    <div><dt className="text-xs text-muted-foreground">Source element</dt><dd>{entry.sourceElement ?? "Not recorded"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Local key origin</dt><dd>{entry.localReferenceKeyOrigin}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Original TEI key</dt><dd className="break-all font-mono">{entry.sourceLocalReferenceKey ?? "Not supplied or unavailable"}</dd></div>
+                    <div><dt className="text-xs text-muted-foreground">Provenance capture</dt><dd>{entry.provenanceCaptureStatus}</dd></div>
+                  </dl>
+                  {entry.identifiers.length > 0 && <ul className="space-y-1">{entry.identifiers.map((identifier, index) => <li key={`${identifier.sourceElement}-${identifier.type}-${index}`} className="break-all"><span className="text-muted-foreground">{identifier.type ?? identifier.sourceElement}: </span>{identifier.rawValue}{identifier.normalizedValue && identifier.normalizedValue !== identifier.rawValue ? <span className="text-muted-foreground"> · normalized {identifier.normalizedValue}</span> : null}</li>)}</ul>}
+                  {entry.sourceLocations.length > 0 && <p className="text-muted-foreground">Source coordinates: {entry.sourceLocations.map((location) => location.coordinates).join("; ")}</p>}
+                  {entry.extractionLimitations.length > 0 && <p className="text-muted-foreground">Limits: {entry.extractionLimitations.map((limitation) => limitation.replaceAll("_", " ").toLowerCase()).join("; ")}</p>}
+                </div>
+              </details>
             </li>
           ))}
         </ol>
@@ -376,6 +403,14 @@ function ReferenceMatchResults({ report, view }: { report: ReferenceResolutionRe
 
   return (
     <div className="space-y-5">
+      {resolution.summary.provisionalArtifactSignalEntries > 0 && (
+        <Alert>
+          <AlertTitle>Provisional extraction screening</AlertTitle>
+          <AlertDescription>
+            {resolution.summary.provisionalArtifactSignalEntries} Bibliography Entries have rule-based extraction signals. These are not adjudicated labels; no entry or Citation Target association was removed.
+          </AlertDescription>
+        </Alert>
+      )}
       <PipelineResultMetricFilters
         label="Filter bibliography entries by resolution status"
         options={filterOptions}
@@ -401,7 +436,7 @@ function ReferenceMatchCard({ entry, references, view }: { entry: ReportEntry; r
         <ReferenceResolutionBadge status={entry.status} />
       </div>
       <div className="mt-1 min-w-0 space-y-1">
-        <h4 className="break-words font-medium">{entry.title || displayReferenceKey(entry, references)}</h4>
+        <h4 className="break-words font-medium">{entry.title || entry.rawText || "No bibliography text was extracted."}</h4>
         {entry.authors.length > 0 && <p className="break-words text-sm text-muted-foreground">{entry.authors.join(", ")}</p>}
       </div>
       {view === "normalize" ? (

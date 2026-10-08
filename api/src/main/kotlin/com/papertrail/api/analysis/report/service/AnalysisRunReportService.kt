@@ -64,6 +64,7 @@ class AnalysisRunReportService(
                 confidenceThreshold = configuration.confidenceThreshold,
                 summary = summary,
                 entries = reportEntries,
+                bibliographyNormalizationPolicy = context.bibliographyNormalizationPolicy,
             ),
         )
     }

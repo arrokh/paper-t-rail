@@ -5,4 +5,5 @@ data class ParsedCitationOccurrence(
     val startOffset: Int,
     val endOffset: Int,
     val bibliographyReferenceKeys: List<String>,
+    val unmatchedBibliographyReferenceKeys: List<String>? = null,
 )

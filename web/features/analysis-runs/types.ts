@@ -232,6 +232,7 @@ export type ParsedDocument = {
       startOffset: number;
       endOffset: number;
       bibliographyReferenceKeys: string[];
+      unmatchedBibliographyReferenceKeys: string[] | null;
     }>;
     atomicClaims: Array<{
       id: string;
@@ -257,7 +258,22 @@ export type ParsedDocument = {
     doi: string | null;
     referenceType: string;
     resolutionStatus: string;
+    sourceTextContent: string | null;
+    sourceElement: string | null;
+    sourceLocalReferenceKey: string | null;
+    localReferenceKeyOrigin: "GROBID_XML_ID" | "GENERATED_FALLBACK" | "UNKNOWN";
+    identifiers: Array<{
+      sourceElement: string;
+      type: string | null;
+      rawValue: string;
+      normalizedValue: string | null;
+    }>;
+    sourceLocations: Array<{ page: number | null; coordinates: string }>;
+    provisionalArtifactSignals: string[];
+    extractionLimitations: string[];
+    provenanceCaptureStatus: "CAPTURED" | "UNAVAILABLE";
   }>;
+  bibliographyNormalizationPolicy: { policyId: string; version: string } | null;
 };
 
 export type EvidenceCoverageSummary = {
@@ -296,7 +312,9 @@ export type ReferenceResolutionReportResponse = {
       unsupportedReferenceType: number;
       notAttempted: number;
       failed: number;
+      provisionalArtifactSignalEntries: number;
     };
+    bibliographyNormalizationPolicy: { policyId: string; version: string } | null;
     entries: Array<{
       entryOrder: number;
       localReferenceKey: string;
@@ -313,6 +331,20 @@ export type ReferenceResolutionReportResponse = {
       matchMethod: string | null;
       accessProgressStatus: string | null;
       accessProgressReason: string | null;
+      sourceTextContent: string | null;
+      sourceElement: string | null;
+      sourceLocalReferenceKey: string | null;
+      localReferenceKeyOrigin: "GROBID_XML_ID" | "GENERATED_FALLBACK" | "UNKNOWN";
+      identifiers: Array<{
+        sourceElement: string;
+        type: string | null;
+        rawValue: string;
+        normalizedValue: string | null;
+      }>;
+      sourceLocations: Array<{ page: number | null; coordinates: string }>;
+      provisionalArtifactSignals: string[];
+      extractionLimitations: string[];
+      provenanceCaptureStatus: "CAPTURED" | "UNAVAILABLE";
       citedPaperAccess: {
         accessStatus: "FULL_TEXT_AVAILABLE" | "ABSTRACT_ONLY" | "METADATA_ONLY" | "UNAVAILABLE";
         accessReason: "ABSTRACT_ONLY" | "NO_LEGAL_FULL_TEXT_LOCATION" | "NO_ACCESSIBLE_METADATA" | "FULL_TEXT_ACQUISITION_FAILED" | null;

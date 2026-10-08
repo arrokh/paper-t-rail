@@ -27,6 +27,15 @@ const entry: Entry = {
   matchMethod: "DOI",
   accessProgressStatus: null,
   accessProgressReason: null,
+  sourceTextContent: null,
+  sourceElement: "biblStruct",
+  sourceLocalReferenceKey: "ref1",
+  localReferenceKeyOrigin: "GROBID_XML_ID",
+  identifiers: [{ sourceElement: "idno", type: "DOI", rawValue: "10.1234/example", normalizedValue: "10.1234/example" }],
+  sourceLocations: [{ page: 2, coordinates: "2,10,20,30,40" }],
+  provisionalArtifactSignals: [],
+  extractionLimitations: [],
+  provenanceCaptureStatus: "CAPTURED",
   citedPaperAccess: null,
   verificationOutcomes: [],
 };
@@ -89,6 +98,36 @@ describe("Reference Resolution Entry Card", () => {
     expect(parsedEntryLink.getAttribute("href")).toBe("#bibliography-b0");
     fireEvent.click(parsedEntryLink);
     expect(onViewParsedEntry).toHaveBeenCalledWith(expect.anything(), "b0");
+  });
+
+  it("shows extraction signals as provisional and exposes retained source identifiers", () => {
+    const suspiciousEntry = {
+      ...entry,
+      rawText: "",
+      sourceTextContent: "Raw TEI text",
+      provisionalArtifactSignals: ["EMPTY_GROBID_BIBLIOGRAPHY_TEXT"],
+    };
+    render(
+      <ol>
+        <ReferenceResolutionEntryCard
+          analysisRunId="run-123"
+          entry={suspiciousEntry}
+          references={[suspiciousEntry]}
+          anchorId="resolution-ref1"
+          parsedEntryHref="#bibliography-ref1"
+          parsedEntryAvailable={false}
+          onViewParsedEntry={vi.fn()}
+        />
+      </ol>,
+    );
+
+    expect(screen.getByText("Provisional extraction signal")).toBeTruthy();
+    expect(screen.getByText(/This screening signal is not human adjudication/)).toBeTruthy();
+    fireEvent.click(screen.getByText("Preserved source identifiers and extraction provenance"));
+    expect(screen.getByText(/Unnormalized GROBID text content: Raw TEI text/)).toBeTruthy();
+    const provenanceDetails = screen.getByText("Preserved source identifiers and extraction provenance").closest("details");
+    expect(provenanceDetails?.textContent).toContain("10.1234/example");
+    expect(provenanceDetails?.textContent).toContain("Source coordinates: 2,10,20,30,40");
   });
 
   it("keeps one-based labels and internal navigation identifiers for legacy ordered keys", () => {

@@ -1,0 +1,3 @@
+# Version Bibliography Normalization and Preserve Extraction Provenance
+
+New Analysis Runs pin a bibliography normalization policy (`grobid-bibliography-normalization` v2); snapshots without a policy retain the legacy v1 behavior. Persist the original GROBID text projection, identifiers, source keys, available coordinates, extraction limits, and unmatched TEI target keys with each run so later policy changes cannot rewrite history. Rule-based contamination signals remain provisional screening aids: retain suspicious entries and their Citation Target associations, and do not fabricate page/span data or treat the signals as human adjudication.

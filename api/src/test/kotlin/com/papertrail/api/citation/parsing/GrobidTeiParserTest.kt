@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import com.papertrail.api.external.grobid.GrobidTeiParser
 
@@ -53,31 +54,96 @@ class GrobidTeiParserTest {
     }
 
     @Test
-    fun `ignores uncited heading-only bibliography artifacts without hiding real references`() {
+    fun `preserves heading candidates identifiers coordinates and unmatched TEI targets`() {
         val tei = """
             <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
               <text>
-                <body><div><p>Prior work <ref type="bibr" target="#book">[1]</ref> informed this study.</p></div></body>
+                <body><div><p>Prior work <ref type="bibr" target="#paper">[1]</ref> and <ref type="bibr" target="#missing">[2]</ref> inform this study.</p></div></body>
                 <back><listBibl>
                   <bibl xml:id="heading"><author><persName><surname>References</surname></persName></author></bibl>
-                  <biblStruct xml:id="book">
-                    <monogr><title level="m">Instrumen perangkat pembelajaran</title><imprint><date when="2013"/></imprint></monogr>
+                  <biblStruct xml:id="paper" coords="2,10,20,30,40">
+                    <analytic><title level="a">A precise study</title><author><persName><forename>Ada</forename><surname>Author</surname></persName></author></analytic>
+                    <monogr><title level="j">Example Journal</title><imprint><date when="2024"/></imprint><idno type="DOI">https://doi.org/10.1234/example</idno><idno type="arXiv">arXiv:2401.01234v2</idno><ptr type="web" target="https://example.org/record"/></monogr>
                   </biblStruct>
-                  <biblStruct xml:id="named-work">
-                    <analytic><title level="a">References</title><author><persName><forename>Ada</forename><surname>Author</surname></persName></author></analytic>
-                    <monogr><title level="j">Example Journal</title><imprint><date when="2024"/></imprint></monogr>
-                  </biblStruct>
+                  <biblStruct><monogr><title level="m">A work without a source id</title></monogr></biblStruct>
                 </listBibl></back>
               </text>
             </TEI>
         """.trimIndent()
 
         val parsed = GrobidTeiParser("grobid", "0.9.1-crf").parse(tei)
+        val heading = parsed.bibliographyEntries.first()
+        val paper = parsed.bibliographyEntries[1]
+        val generated = parsed.bibliographyEntries[2]
+        val occurrences = parsed.citationContexts.single().occurrences
 
-        assertEquals(listOf("book", "named-work"), parsed.bibliographyEntries.map { it.localReferenceKey })
-        assertEquals(listOf(0, 1), parsed.bibliographyEntries.map { it.entryOrder })
-        assertEquals(listOf("BOOK", "JOURNAL_ARTICLE"), parsed.bibliographyEntries.map { it.referenceType })
-        assertEquals("book", parsed.citationContexts.single().occurrences.single().bibliographyReferenceKeys.single())
+        assertEquals(listOf("heading", "paper"), parsed.bibliographyEntries.take(2).map { it.localReferenceKey })
+        assertEquals("paper", occurrences[0].bibliographyReferenceKeys.single())
+        assertEquals(listOf("missing"), occurrences[1].unmatchedBibliographyReferenceKeys)
+        assertEquals(listOf("UNCITED_SECTION_HEADING_PATTERN"), heading.provisionalArtifactSignals)
+        assertEquals("paper", paper.sourceLocalReferenceKey)
+        assertEquals("GROBID_XML_ID", paper.localReferenceKeyOrigin)
+        assertEquals(listOf(2), paper.sourceLocations.map { it.page })
+        assertTrue(paper.extractionLimitations.contains("SOURCE_TEXT_SPAN_UNAVAILABLE"))
+        assertEquals(
+            listOf("DOI", "arXiv", "web"),
+            paper.identifiers.map { it.type },
+        )
+        assertEquals(
+            "\n        A precise studyAdaAuthor\n        Example Journalhttps://doi.org/10.1234/examplearXiv:2401.01234v2\n      ",
+            paper.sourceTextContent,
+        )
+        assertEquals("https://doi.org/10.1234/example", paper.identifiers.first().rawValue)
+        assertEquals("10.1234/example", paper.identifiers.first().normalizedValue)
+        assertEquals("arXiv:2401.01234v2", paper.identifiers[1].rawValue)
+        assertEquals("https://example.org/record", paper.identifiers[2].rawValue)
+        assertTrue(generated.localReferenceKey.startsWith("generated-bibl-"))
+        assertEquals(null, generated.sourceLocalReferenceKey)
+        assertEquals("GENERATED_FALLBACK", generated.localReferenceKeyOrigin)
+        assertEquals(BibliographyNormalizationPolicySelection.CURRENT, parsed.bibliographyNormalizationPolicy)
+    }
+
+    @Test
+    fun `preserves empty extraction candidates and their Citation Target associations`() {
+        val tei = """
+            <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+              <text>
+                <body><div><p>Prior work <ref type="bibr" target="#empty">[1]</ref> informed this study.</p></div></body>
+                <back><listBibl><bibl xml:id="empty"></bibl></listBibl></back>
+              </text>
+            </TEI>
+        """.trimIndent()
+
+        val parsed = GrobidTeiParser("grobid", "0.9.1-crf").parse(tei)
+
+        assertEquals("empty", parsed.bibliographyEntries.single().localReferenceKey)
+        assertEquals("", parsed.bibliographyEntries.single().rawText)
+        assertEquals(listOf("EMPTY_GROBID_BIBLIOGRAPHY_TEXT"), parsed.bibliographyEntries.single().provisionalArtifactSignals)
+        assertEquals(listOf("empty"), parsed.citationContexts.single().occurrences.single().bibliographyReferenceKeys)
+        assertEquals(emptyList<String>(), parsed.citationContexts.single().occurrences.single().unmatchedBibliographyReferenceKeys)
+    }
+
+    @Test
+    fun `legacy normalization keeps its historical heading filter`() {
+        val tei = """
+            <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+              <text>
+                <body><div><p>Prior work <ref type="bibr" target="#book">[1]</ref> informed this study.</p></div></body>
+                <back><listBibl>
+                  <bibl xml:id="heading"><author><persName><surname>References</surname></persName></author></bibl>
+                  <biblStruct xml:id="book"><monogr><title level="m">A real book</title></monogr></biblStruct>
+                </listBibl></back>
+              </text>
+            </TEI>
+        """.trimIndent()
+
+        val parsed = GrobidTeiParser("grobid", "0.9.1-crf").parse(
+            tei,
+            BibliographyNormalizationPolicySelection.LEGACY,
+        )
+
+        assertEquals(listOf("book"), parsed.bibliographyEntries.map { it.localReferenceKey })
+        assertEquals(BibliographyNormalizationPolicySelection.LEGACY, parsed.bibliographyNormalizationPolicy)
     }
 
     @Test
