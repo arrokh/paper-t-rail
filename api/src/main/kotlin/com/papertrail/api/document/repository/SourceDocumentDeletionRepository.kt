@@ -63,8 +63,20 @@ class SourceDocumentDeletionRepository(
                   AND shared_run.document_id <> ?
                   AND tombstone.document_id IS NULL
            )
+        UNION
+        SELECT upload.staging_object_key
+          FROM recovery_batch_uploads upload
+          JOIN analysis_runs run ON run.id = upload.analysis_run_id
+         WHERE run.document_id = ?
+        UNION
+        SELECT upload.finalized_object_key
+          FROM recovery_batch_uploads upload
+          JOIN analysis_runs run ON run.id = upload.analysis_run_id
+         WHERE run.document_id = ?
         """.trimIndent(),
         { rs, _ -> rs.getString("object_key") },
+        documentId,
+        documentId,
         documentId,
         documentId,
         documentId,

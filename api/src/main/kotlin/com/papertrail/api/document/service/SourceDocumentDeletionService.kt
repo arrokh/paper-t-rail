@@ -1,5 +1,6 @@
 package com.papertrail.api.document.service
 
+import com.papertrail.api.analysis.recovery.repository.RecoveryUploadCleanupRepository
 import com.papertrail.api.document.repository.SourceDocumentDeletionRepository
 import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
 import org.slf4j.LoggerFactory
@@ -7,11 +8,13 @@ import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.web.server.ResponseStatusException
+import java.time.Instant
 import java.util.UUID
 
 @Service
 class SourceDocumentDeletionService(
     private val repository: SourceDocumentDeletionRepository,
+    private val recoveryUploadCleanupRepository: RecoveryUploadCleanupRepository,
     private val transactionTemplate: TransactionTemplate,
     private val objectStore: SourceDocumentObjectStore,
 ) {
@@ -41,6 +44,7 @@ class SourceDocumentDeletionService(
     private fun purge(documentId: UUID) {
         if (!repository.lockDocumentForPurge(documentId)) return
 
+        recoveryUploadCleanupRepository.scheduleSourceDocumentUploads(documentId, Instant.now())
         val objectKeys = repository.objectKeysToDelete(documentId)
         val canonicalPaperIds = repository.canonicalPaperIds(documentId)
         objectKeys.forEach(objectStore::delete)

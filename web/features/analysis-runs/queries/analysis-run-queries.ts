@@ -27,6 +27,7 @@ import type {
   ExecutionSpanPage,
   ExecutionSummary,
 } from "../execution/execution-types.ts";
+import { recoveryBatchQueryKey } from "../../recovery-uploads/queries/recovery-upload-queries.ts";
 
 const RUN_PAGE_SIZE = 20;
 const RUN_POLL_INTERVAL_MS = 2500;
@@ -188,6 +189,7 @@ export function deleteSourceDocumentMutationOptions(queryClient: QueryClient) {
         queryClient.removeQueries({ queryKey: ["analysis-runs", "parsed-document", runId], exact: true });
         queryClient.removeQueries({ queryKey: referenceResolutionReportQueryKey(runId), exact: true });
         queryClient.removeQueries({ queryKey: sourceDocumentPdfAccessQueryKey(runId), exact: true });
+        queryClient.removeQueries({ queryKey: recoveryBatchQueryKey(runId), exact: true });
         queryClient.removeQueries({ queryKey: [...EXECUTION_QUERY_KEY, runId] });
       });
       await refreshRecentAnalysisRuns(queryClient);

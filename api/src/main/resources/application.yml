@@ -43,6 +43,18 @@ paper-trail:
     access-key: ${S3_ACCESS_KEY:local-s3-access}
     secret-key: ${S3_SECRET_KEY:local-s3-secret}
     bucket: ${S3_BUCKET:source-documents}
+    browser-upload-origins: "${S3_BROWSER_UPLOAD_ALLOWED_ORIGINS:http://127.0.0.1:3000,http://localhost:3000}"
+  recovery:
+    staging:
+      max-file-bytes: ${paper-trail.upload.max-bytes}
+      max-files-per-batch: ${PAPER_RECOVERY_MAX_FILES_PER_BATCH:10}
+      max-batch-bytes: ${PAPER_RECOVERY_MAX_BATCH_BYTES:262144000}
+      upload-url-ttl-seconds: ${PAPER_RECOVERY_UPLOAD_URL_TTL_SECONDS:300}
+      inactivity-ttl-seconds: ${PAPER_RECOVERY_INACTIVITY_TTL_SECONDS:604800}
+      in-flight-grace-seconds: ${PAPER_RECOVERY_IN_FLIGHT_GRACE_SECONDS:3600}
+      cleanup-retry-window-seconds: ${PAPER_RECOVERY_CLEANUP_RETRY_WINDOW_SECONDS:604800}
+      cleanup-interval-ms: ${PAPER_RECOVERY_CLEANUP_INTERVAL_MS:3600000}
+      cleanup-batch-size: ${PAPER_RECOVERY_CLEANUP_BATCH_SIZE:50}
   queue:
     stream: ${REDIS_STREAM:ae:pipeline}
     group: ${REDIS_CONSUMER_GROUP:ae-workers}

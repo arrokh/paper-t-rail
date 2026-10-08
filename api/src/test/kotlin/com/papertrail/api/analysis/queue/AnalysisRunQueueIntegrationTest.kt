@@ -104,6 +104,15 @@ import com.papertrail.api.infrastructure.messaging.repository.InboxRepository
 import com.papertrail.api.infrastructure.messaging.repository.OutboxRepository
 import com.papertrail.api.infrastructure.messaging.redis.RedisStreamWorker
 import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedHandler
+import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadStatus
+import com.papertrail.api.analysis.recovery.repository.RecoveryBatchRepository
+import com.papertrail.api.analysis.recovery.repository.RecoveryUploadCleanupRepository
+import com.papertrail.api.analysis.recovery.service.RecoveryPdfValidator
+import com.papertrail.api.analysis.recovery.service.RecoveryStagingService
+import com.papertrail.api.analysis.recovery.service.RecoveryStagingSettings
+import com.papertrail.api.analysis.recovery.service.RecoveryUploadCleanupService
+import com.papertrail.api.analysis.recovery.service.RecoveryUploadCorsPolicy
 import com.papertrail.api.document.repository.SourceDocumentDeletionRepository
 import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.document.validation.DocumentLanguageDetector
@@ -143,6 +152,7 @@ import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRep
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
+import com.papertrail.api.infrastructure.storage.PresignedObjectUpload
 import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
 import com.papertrail.api.infrastructure.storage.SourceObjectMetadata
 import com.papertrail.api.document.service.SourceDocumentDeletionService
@@ -213,9 +223,339 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 @Testcontainers
 class AnalysisRunQueueIntegrationTest {
+    @Test
+    fun `recovery PDFs require rights acceptance verify actual bytes and remove staged snapshots`() {
+        val run = createQueuedRun()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'Parsed source fixture')",
+            run.analysisRunId,
+            run.hash,
+        )
+        jdbc.update(
+            "UPDATE analysis_runs SET status = 'PROCESSING', progress = '{\"stage\":\"PROCESSING\"}'::jsonb WHERE id = ?",
+            run.analysisRunId,
+        )
+        jdbc.update(
+            "UPDATE analysis_runs SET status = 'PARSED', progress = '{\"stage\":\"PARSED\"}'::jsonb WHERE id = ?",
+            run.analysisRunId,
+        )
+        listOf("b0", "b1").forEachIndexed { index, localKey ->
+            jdbc.update(
+                "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, reference_type) VALUES (?, ?, ?, ?, ?, 'JOURNAL_ARTICLE')",
+                UUID.randomUUID(),
+                run.analysisRunId,
+                index,
+                localKey,
+                "Recovery bibliography entry $localKey",
+            )
+        }
+        val settings = recoveryStagingSettings()
+        val service = RecoveryStagingService(
+            repository = RecoveryBatchRepository(jdbc, settings),
+            objectStore = objectStore,
+            settings = settings,
+            corsPolicy = RecoveryUploadCorsPolicy(objectStore, settings),
+            pdfValidator = RecoveryPdfValidator(500),
+        )
+
+        val unaccepted = assertThrows(RecoveryStagingException::class.java) {
+            service.createBatch(run.analysisRunId, UUID.randomUUID(), "recovery-rights-v1", false)
+        }
+        assertEquals(400, unaccepted.statusCode)
+
+        val batchKey = UUID.randomUUID()
+        val batch = service.createBatch(run.analysisRunId, batchKey, "recovery-rights-v1", true)
+        assertEquals(batch.id, service.createBatch(run.analysisRunId, batchKey, "recovery-rights-v1", true).id)
+        val pdf = englishPdf()
+        val pdfSha256 = expectedSha256(pdf)
+        val oversized = assertThrows(RecoveryStagingException::class.java) {
+            service.createUploadIntent(batch.id, "b0", UUID.randomUUID(), "oversized.pdf", settings.maxFileBytes + 1, "a".repeat(64))
+        }
+        assertEquals(413, oversized.statusCode)
+        val firstIntent = service.createUploadIntent(batch.id, "b0", UUID.randomUUID(), "candidate.pdf", pdf.size.toLong(), pdfSha256)
+        val repeatedIntent = service.createUploadIntent(batch.id, "b0", firstIntent.upload.idempotencyKey, "candidate.pdf", pdf.size.toLong(), pdfSha256)
+        assertEquals(firstIntent.upload.id, repeatedIntent.upload.id)
+        val duplicateEntry = assertThrows(RecoveryStagingException::class.java) {
+            service.createUploadIntent(batch.id, "b0", UUID.randomUUID(), "other.pdf", pdf.size.toLong(), pdfSha256)
+        }
+        assertEquals(409, duplicateEntry.statusCode)
+
+        objectStore.put(firstIntent.upload.stagingObjectKey, pdf, "application/pdf")
+        val staged = service.finalizeUpload(batch.id, firstIntent.upload.id)
+        assertEquals(RecoveryUploadStatus.STAGED, staged.status)
+        assertEquals(pdf.size.toLong(), staged.actualSize)
+        assertEquals(pdfSha256, staged.actualSha256)
+        assertTrue(objectStore.contains(staged.finalizedObjectKey))
+        assertFalse(objectStore.contains(staged.stagingObjectKey))
+        objectStore.put(staged.stagingObjectKey, "late replay content".toByteArray(), "application/pdf")
+        assertTrue(objectStore.get(staged.finalizedObjectKey).contentEquals(pdf))
+
+        val badIntent = service.createUploadIntent(batch.id, "b1", UUID.randomUUID(), "wrong-checksum.pdf", pdf.size.toLong(), "0".repeat(64))
+        objectStore.put(badIntent.upload.stagingObjectKey, pdf, "application/pdf")
+        val mismatch = assertThrows(RecoveryStagingException::class.java) {
+            service.finalizeUpload(batch.id, badIntent.upload.id)
+        }
+        assertEquals(422, mismatch.statusCode)
+        assertFalse(objectStore.contains(badIntent.upload.stagingObjectKey))
+        assertEquals(RecoveryUploadStatus.REJECTED, service.activeBatch(run.analysisRunId)!!.uploads.first { it.id == badIntent.upload.id }.status)
+
+        val removed = service.removeUpload(batch.id, staged.id)
+        assertEquals(RecoveryUploadStatus.REMOVED, removed.status)
+        assertFalse(objectStore.contains(staged.finalizedObjectKey))
+        assertEquals(RecoveryUploadStatus.REMOVED, service.removeUpload(batch.id, staged.id).status)
+        assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_cleanup_tombstones", Int::class.java))
+    }
+
+    @Test
+    fun `late checksum rejection cannot delete an already finalized snapshot`() {
+        val run = createQueuedRun()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'Parsed source fixture')",
+            run.analysisRunId,
+            run.hash,
+        )
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, reference_type) VALUES (?, ?, 0, 'b0', 'Recovery bibliography entry', 'JOURNAL_ARTICLE')",
+            UUID.randomUUID(),
+            run.analysisRunId,
+        )
+        val settings = recoveryStagingSettings()
+        val firstReadStarted = CountDownLatch(1)
+        val releaseFirstRead = CountDownLatch(1)
+        val secondReadStarted = CountDownLatch(1)
+        val releaseSecondRead = CountDownLatch(1)
+        val readCount = AtomicInteger()
+        val pdf = englishPdf()
+        val corruptedPdf = pdf.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }
+        val racingObjectStore = object : SourceDocumentObjectStore {
+            override fun put(objectKey: String, content: ByteArray, contentType: String) = objectStore.put(objectKey, content, contentType)
+            override fun get(objectKey: String): ByteArray = when (readCount.incrementAndGet()) {
+                1 -> {
+                    firstReadStarted.countDown()
+                    check(releaseFirstRead.await(5, TimeUnit.SECONDS)) { "Timed out waiting to release the valid finalizer." }
+                    pdf.copyOf()
+                }
+                2 -> {
+                    secondReadStarted.countDown()
+                    check(releaseSecondRead.await(5, TimeUnit.SECONDS)) { "Timed out waiting to release the stale finalizer." }
+                    corruptedPdf.copyOf()
+                }
+                else -> objectStore.get(objectKey)
+            }
+            override fun stat(objectKey: String): SourceObjectMetadata = objectStore.stat(objectKey)
+            override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int): String =
+                objectStore.presignGet(objectKey, responseContentDisposition, expirySeconds)
+            override fun presignPutPdf(objectKey: String, expectedSize: Long, expectedSha256: String, expirySeconds: Int): PresignedObjectUpload =
+                objectStore.presignPutPdf(objectKey, expectedSize, expectedSha256, expirySeconds)
+            override fun configureBrowserUploadCors(allowedOrigins: Collection<String>) = Unit
+            override fun delete(objectKey: String) = objectStore.delete(objectKey)
+        }
+        val service = RecoveryStagingService(
+            RecoveryBatchRepository(jdbc, settings),
+            racingObjectStore,
+            settings,
+            RecoveryUploadCorsPolicy(racingObjectStore, settings),
+            RecoveryPdfValidator(500),
+        )
+        val batch = service.createBatch(run.analysisRunId, UUID.randomUUID(), "recovery-rights-v1", true)
+        val intent = service.createUploadIntent(batch.id, "b0", UUID.randomUUID(), "candidate.pdf", pdf.size.toLong(), expectedSha256(pdf))
+        objectStore.put(intent.upload.stagingObjectKey, pdf, "application/pdf")
+        val firstFailure = AtomicReference<Throwable?>()
+        val secondFailure = AtomicReference<Throwable?>()
+        val firstFinished = CountDownLatch(1)
+        val secondFinished = CountDownLatch(1)
+        val firstFinalizer = Thread {
+            try {
+                service.finalizeUpload(batch.id, intent.upload.id)
+            } catch (exception: Throwable) {
+                firstFailure.set(exception)
+            } finally {
+                firstFinished.countDown()
+            }
+        }
+        val secondFinalizer = Thread {
+            try {
+                service.finalizeUpload(batch.id, intent.upload.id)
+            } catch (exception: Throwable) {
+                secondFailure.set(exception)
+            } finally {
+                secondFinished.countDown()
+            }
+        }
+
+        try {
+            firstFinalizer.start()
+            assertTrue(firstReadStarted.await(5, TimeUnit.SECONDS), "The valid finalizer did not read staging bytes.")
+            secondFinalizer.start()
+            assertTrue(secondReadStarted.await(5, TimeUnit.SECONDS), "The stale finalizer did not read staging bytes.")
+            releaseFirstRead.countDown()
+            assertTrue(firstFinished.await(5, TimeUnit.SECONDS), "The valid finalizer did not finish.")
+            assertNull(firstFailure.get())
+            releaseSecondRead.countDown()
+            assertTrue(secondFinished.await(5, TimeUnit.SECONDS), "The stale finalizer did not finish.")
+        } finally {
+            releaseFirstRead.countDown()
+            releaseSecondRead.countDown()
+            firstFinalizer.join(10_000)
+            secondFinalizer.join(10_000)
+        }
+
+        val lateRejection = secondFailure.get() as? RecoveryStagingException
+        assertEquals(409, lateRejection?.statusCode)
+        assertEquals("STAGED", jdbc.queryForObject("SELECT status FROM recovery_batch_uploads WHERE id = ?", String::class.java, intent.upload.id))
+        assertTrue(objectStore.contains(intent.upload.finalizedObjectKey))
+        assertArrayEquals(pdf, objectStore.get(intent.upload.finalizedObjectKey))
+        assertEquals(
+            0,
+            jdbc.queryForObject("SELECT count(*) FROM recovery_upload_cleanup_tombstones WHERE object_key = ?", Int::class.java, intent.upload.finalizedObjectKey),
+        )
+    }
+
+    @Test
+    fun `cleanup retries stop at the bounded retry horizon`() {
+        val now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+        val retryUntil = now.plusSeconds(15)
+        val tombstoneId = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO recovery_upload_cleanup_tombstones (id, object_key, not_before, retry_until, next_attempt_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            tombstoneId,
+            "recovery/staging/retry-window-${UUID.randomUUID()}.pdf",
+            Timestamp.from(now.minusSeconds(1)),
+            Timestamp.from(retryUntil),
+            Timestamp.from(now.minusSeconds(1)),
+            Timestamp.from(now.minusSeconds(1)),
+        )
+        val cleanupRepository = RecoveryUploadCleanupRepository(jdbc, recoveryStagingSettings())
+
+        val firstAttempt = cleanupRepository.claimDue(now, retryIntervalSeconds = 3_600, limit = 1).single()
+        val scheduledAttempt = jdbc.queryForObject(
+            "SELECT next_attempt_at FROM recovery_upload_cleanup_tombstones WHERE id = ?",
+            Timestamp::class.java,
+            tombstoneId,
+        )!!.toInstant()
+        assertEquals(retryUntil, scheduledAttempt)
+        assertEquals(retryUntil, firstAttempt.retryUntil)
+
+        val finalAttempt = cleanupRepository.claimDue(retryUntil, retryIntervalSeconds = 3_600, limit = 1).single()
+        cleanupRepository.markFailure(finalAttempt.id, retryUntil, retryIntervalSeconds = 3_600, errorType = "S3Exception", retryUntil = finalAttempt.retryUntil)
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_cleanup_tombstones WHERE id = ?", Int::class.java, tombstoneId))
+    }
+
+    @Test
+    fun `recovery cleanup resumes from durable tombstones and removes a late staging write`() {
+        val run = createQueuedRun()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'Parsed source fixture')",
+            run.analysisRunId,
+            run.hash,
+        )
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, reference_type) VALUES (?, ?, 0, 'b0', 'Recovery bibliography entry', 'JOURNAL_ARTICLE')",
+            UUID.randomUUID(),
+            run.analysisRunId,
+        )
+        val settings = recoveryStagingSettings()
+        val stagingService = RecoveryStagingService(
+            repository = RecoveryBatchRepository(jdbc, settings),
+            objectStore = objectStore,
+            settings = settings,
+            corsPolicy = RecoveryUploadCorsPolicy(objectStore, settings),
+            pdfValidator = RecoveryPdfValidator(500),
+        )
+        val batch = stagingService.createBatch(run.analysisRunId, UUID.randomUUID(), "recovery-rights-v1", true)
+        val pdf = englishPdf()
+        val intent = stagingService.createUploadIntent(batch.id, "b0", UUID.randomUUID(), "candidate.pdf", pdf.size.toLong(), expectedSha256(pdf))
+        objectStore.put(intent.upload.stagingObjectKey, pdf, "application/pdf")
+        stagingService.removeUpload(batch.id, intent.upload.id)
+        assertFalse(objectStore.contains(intent.upload.stagingObjectKey))
+
+        // Model a still-valid or in-flight signed PUT that completed after immediate removal.
+        objectStore.put(intent.upload.stagingObjectKey, pdf, "application/pdf")
+        jdbc.update(
+            "UPDATE recovery_upload_cleanup_tombstones SET not_before = ?, next_attempt_at = ? WHERE object_key = ?",
+            Timestamp.from(Instant.now().minusSeconds(1)),
+            Timestamp.from(Instant.now().minusSeconds(1)),
+            intent.upload.stagingObjectKey,
+        )
+        val cleanupService = RecoveryUploadCleanupService(
+            RecoveryBatchRepository(jdbc, settings),
+            RecoveryUploadCleanupRepository(jdbc, settings),
+            objectStore,
+            settings,
+        )
+
+        cleanupService.cleanExpiredRecoveryUploads()
+
+        assertFalse(objectStore.contains(intent.upload.stagingObjectKey))
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM recovery_upload_cleanup_tombstones WHERE object_key = ? AND last_success_at IS NOT NULL",
+            Int::class.java,
+            intent.upload.stagingObjectKey,
+        ))
+    }
+
+    @Test
+    fun `source deletion removes recovery snapshots and retains late-write cleanup tombstones`() {
+        val run = createQueuedRun()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'Parsed source fixture')",
+            run.analysisRunId,
+            run.hash,
+        )
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, reference_type) VALUES (?, ?, 0, 'b0', 'Recovery bibliography entry', 'JOURNAL_ARTICLE')",
+            UUID.randomUUID(),
+            run.analysisRunId,
+        )
+        val settings = recoveryStagingSettings()
+        val recoveryService = RecoveryStagingService(
+            repository = RecoveryBatchRepository(jdbc, settings),
+            objectStore = objectStore,
+            settings = settings,
+            corsPolicy = RecoveryUploadCorsPolicy(objectStore, settings),
+            pdfValidator = RecoveryPdfValidator(500),
+        )
+        val batch = recoveryService.createBatch(run.analysisRunId, UUID.randomUUID(), "recovery-rights-v1", true)
+        val pdf = englishPdf()
+        val intent = recoveryService.createUploadIntent(batch.id, "b0", UUID.randomUUID(), "candidate.pdf", pdf.size.toLong(), expectedSha256(pdf))
+        objectStore.put(intent.upload.stagingObjectKey, pdf, "application/pdf")
+        val staged = recoveryService.finalizeUpload(batch.id, intent.upload.id)
+        assertTrue(objectStore.contains(staged.finalizedObjectKey))
+
+        sourceDocumentDeletionService().delete(run.documentId)
+
+        assertFalse(objectStore.contains(staged.finalizedObjectKey))
+        assertFalse(objectStore.contains(staged.stagingObjectKey))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_batches WHERE analysis_run_id = ?", Int::class.java, run.analysisRunId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_cleanup_tombstones WHERE object_key = ?", Int::class.java, staged.stagingObjectKey))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_cleanup_tombstones WHERE object_key = ?", Int::class.java, staged.finalizedObjectKey))
+
+        objectStore.put(staged.finalizedObjectKey, pdf, "application/pdf")
+        val cleanupDueAt = Instant.now().minusSeconds(1)
+        jdbc.update(
+            "UPDATE recovery_upload_cleanup_tombstones SET not_before = ?, next_attempt_at = ? WHERE object_key = ?",
+            Timestamp.from(cleanupDueAt),
+            Timestamp.from(cleanupDueAt),
+            staged.finalizedObjectKey,
+        )
+        RecoveryUploadCleanupService(
+            RecoveryBatchRepository(jdbc, settings),
+            RecoveryUploadCleanupRepository(jdbc, settings),
+            objectStore,
+            settings,
+        ).cleanExpiredRecoveryUploads()
+        assertFalse(objectStore.contains(staged.finalizedObjectKey))
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM recovery_upload_cleanup_tombstones WHERE object_key = ? AND last_success_at IS NOT NULL",
+            Int::class.java,
+            staged.finalizedObjectKey,
+        ))
+    }
+
     @Test
     fun `execution artifacts are sanitized run-local deduplicated removable and deleted with their document`() {
         val firstRun = createQueuedRun()
@@ -841,6 +1181,9 @@ class AnalysisRunQueueIntegrationTest {
             override fun stat(objectKey: String): SourceObjectMetadata = objectStore.stat(objectKey)
             override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int): String =
                 objectStore.presignGet(objectKey, responseContentDisposition, expirySeconds)
+            override fun presignPutPdf(objectKey: String, expectedSize: Long, expectedSha256: String, expirySeconds: Int) =
+                objectStore.presignPutPdf(objectKey, expectedSize, expectedSha256, expirySeconds)
+            override fun configureBrowserUploadCors(allowedOrigins: Collection<String>) = objectStore.configureBrowserUploadCors(allowedOrigins)
             override fun delete(objectKey: String) {
                 if (deleteAttempts.getAndIncrement() == 0) error("simulated object-store failure")
                 objectStore.delete(objectKey)
@@ -848,6 +1191,7 @@ class AnalysisRunQueueIntegrationTest {
         }
         val deletionService = SourceDocumentDeletionService(
             SourceDocumentDeletionRepository(jdbc),
+            RecoveryUploadCleanupRepository(jdbc, recoveryStagingSettings()),
             TransactionTemplate(DataSourceTransactionManager(dataSource)),
             flakyObjectStore,
         )
@@ -4006,6 +4350,7 @@ class AnalysisRunQueueIntegrationTest {
 
     private fun sourceDocumentDeletionService() = SourceDocumentDeletionService(
         repository = SourceDocumentDeletionRepository(jdbc),
+        recoveryUploadCleanupRepository = RecoveryUploadCleanupRepository(jdbc, recoveryStagingSettings()),
         transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
         objectStore = objectStore,
     )
@@ -4450,6 +4795,19 @@ class AnalysisRunQueueIntegrationTest {
         }
     }
 
+    private fun recoveryStagingSettings() = RecoveryStagingSettings(
+        maxFileBytes = 52_428_800,
+        maxFilesPerBatch = 10,
+        maxBatchBytes = 262_144_000,
+        uploadUrlTtlSeconds = 300,
+        inactivityTtlSeconds = 604_800,
+        inFlightGraceSeconds = 3_600,
+        cleanupRetryWindowSeconds = 604_800,
+        cleanupIntervalMs = 3_600_000,
+        cleanupBatchSize = 50,
+        browserUploadOrigins = "http://127.0.0.1:3000",
+    )
+
     private fun expectedSha256(content: ByteArray): String = MessageDigest.getInstance("SHA-256")
         .digest(content)
         .joinToString("") { "%02x".format(it.toInt() and 0xff) }
@@ -4481,6 +4839,9 @@ class AnalysisRunQueueIntegrationTest {
         }
         override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int): String =
             "http://s3.test/source-documents/$objectKey?disposition=$responseContentDisposition&expires=$expirySeconds"
+        override fun presignPutPdf(objectKey: String, expectedSize: Long, expectedSha256: String, expirySeconds: Int) =
+            PresignedObjectUpload("http://s3.test/source-documents/$objectKey", "application/pdf", expectedSha256)
+        override fun configureBrowserUploadCors(allowedOrigins: Collection<String>) = Unit
         override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey); checksums.remove(objectKey) }
         fun contentType(objectKey: String): String? = contentTypes[objectKey]
         fun contains(objectKey: String): Boolean = objectKey in content
@@ -4489,7 +4850,7 @@ class AnalysisRunQueueIntegrationTest {
 
     @BeforeEach
     fun resetDatabases() {
-        jdbc.update("TRUNCATE inbox_events, outbox_events, analysis_runs, source_documents CASCADE")
+        jdbc.update("TRUNCATE recovery_upload_cleanup_tombstones, inbox_events, outbox_events, analysis_runs, source_documents CASCADE")
         redisTemplate.connectionFactory!!.connection.serverCommands().flushDb()
         objectStore.clear()
     }
@@ -4600,6 +4961,14 @@ class AnalysisRunQueueIntegrationTest {
             val detailedAccessCausesMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("detailed_cited_paper_access_causes.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(detailedAccessCausesMigrationVerification)) }
+            }
+            val recoveryPdfStagingMigration = migrationDirectory.resolve("recovery_pdf_staging.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryPdfStagingMigration)) }
+            }
+            val recoveryPdfStagingMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("recovery_pdf_staging.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryPdfStagingMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

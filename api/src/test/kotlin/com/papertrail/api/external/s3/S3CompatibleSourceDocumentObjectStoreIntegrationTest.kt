@@ -4,13 +4,22 @@ import com.papertrail.api.infrastructure.storage.SourceObjectMetadata
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.containers.wait.strategy.Wait
 import org.testcontainers.utility.DockerImageName
 import org.yaml.snakeyaml.Yaml
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.S3Configuration
+import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest
 import software.amazon.awssdk.services.s3.model.S3Exception
 import java.net.URI
 import java.net.URLDecoder
@@ -23,6 +32,90 @@ import java.time.Duration
 
 /** Set PAPER_TRAIL_STORAGE_TEST_ENDPOINT to run against an already-started isolated service. */
 class S3CompatibleSourceDocumentObjectStoreIntegrationTest {
+    @Test
+    fun `presigned PDF upload binds the exact byte count and SHA-256 on configured storage`() {
+        val endpoint = System.getenv(STORAGE_TEST_ENDPOINT_ENV)
+            ?: objectStorage?.let { "http://${it.host}:${it.getMappedPort(S3_PORT)}" }
+            ?: error("The external object-storage test endpoint is missing.")
+        val publicEndpoint = System.getenv(STORAGE_TEST_PUBLIC_ENDPOINT_ENV) ?: endpoint
+        val objectKey = "recovery/staging/upload-${System.nanoTime()}.pdf"
+        val content = FIXTURE_CONTENT.toByteArray(Charsets.UTF_8)
+        S3CompatibleSourceDocumentObjectStore(
+            endpoint = endpoint,
+            region = REGION,
+            accessKey = TEST_ACCESS_KEY,
+            secretKey = TEST_SECRET_KEY,
+            publicEndpoint = publicEndpoint,
+            pathStyleAccess = true,
+            bucket = BUCKET,
+        ).use { store ->
+            store.configureBrowserUploadCors(listOf("http://web.test"))
+            val upload = store.presignPutPdf(
+                objectKey = objectKey,
+                expectedSize = content.size.toLong(),
+                expectedSha256 = FIXTURE_SHA256,
+                expirySeconds = EXPIRY_SECONDS,
+            )
+            val preflight = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create(upload.url))
+                    .header("Origin", "http://web.test")
+                    .header("Access-Control-Request-Method", "PUT")
+                    .header("Access-Control-Request-Headers", "content-type,x-amz-checksum-sha256")
+                    .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                    .build(),
+                HttpResponse.BodyHandlers.ofByteArray(),
+            )
+            assertEquals(200, preflight.statusCode())
+            assertEquals("http://web.test", preflight.headers().firstValue("Access-Control-Allow-Origin").orElse(null))
+            assertTrue(preflight.headers().firstValue("Access-Control-Allow-Methods").orElse("").contains("PUT"))
+            val allowedHeaders = preflight.headers().firstValue("Access-Control-Allow-Headers").orElse("").lowercase()
+            assertTrue("content-type" in allowedHeaders)
+            assertTrue("x-amz-checksum-sha256" in allowedHeaders)
+            val untrustedPreflight = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create(upload.url))
+                    .header("Origin", "http://untrusted.test")
+                    .header("Access-Control-Request-Method", "PUT")
+                    .header("Access-Control-Request-Headers", "content-type,x-amz-checksum-sha256")
+                    .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                    .build(),
+                HttpResponse.BodyHandlers.ofByteArray(),
+            )
+            assertFalse(untrustedPreflight.headers().firstValue("Access-Control-Allow-Origin").orElse(null) == "http://untrusted.test")
+
+            val response = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create(upload.url))
+                    .header("Content-Type", "application/pdf")
+                    .header("x-amz-checksum-sha256", upload.checksumSha256)
+                    .PUT(HttpRequest.BodyPublishers.ofByteArray(content))
+                    .build(),
+                HttpResponse.BodyHandlers.ofByteArray(),
+            )
+
+            assertEquals(200, response.statusCode())
+            assertArrayEquals(content, store.get(objectKey))
+            val wrongSize = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create(upload.url))
+                    .header("Content-Type", "application/pdf")
+                    .header("x-amz-checksum-sha256", upload.checksumSha256)
+                    .PUT(HttpRequest.BodyPublishers.ofByteArray(content + byteArrayOf(0)))
+                    .build(),
+                HttpResponse.BodyHandlers.ofByteArray(),
+            )
+            assertTrue(wrongSize.statusCode() in setOf(400, 403, 411))
+
+            val wrongChecksum = HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create(upload.url))
+                    .header("Content-Type", "application/pdf")
+                    .header("x-amz-checksum-sha256", upload.checksumSha256)
+                    .PUT(HttpRequest.BodyPublishers.ofByteArray(ByteArray(content.size) { 0x61 }))
+                    .build(),
+                HttpResponse.BodyHandlers.ofByteArray(),
+            )
+            assertTrue(wrongChecksum.statusCode() >= 400)
+            store.delete(objectKey)
+        }
+    }
+
     @Test
     fun `configured object storage supports source document upload download metadata deletion and presigned response overrides`() {
         val endpoint = System.getenv(STORAGE_TEST_ENDPOINT_ENV)
@@ -109,7 +202,21 @@ class S3CompatibleSourceDocumentObjectStoreIntegrationTest {
         @BeforeAll
         @JvmStatic
         fun startObjectStorageWhenNeeded() {
-            objectStorage?.start()
+            val container = objectStorage ?: return
+            container.start()
+            S3Client.builder()
+                .endpointOverride(URI.create("http://${container.host}:${container.getMappedPort(S3_PORT)}"))
+                .region(Region.of(REGION))
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(TEST_ACCESS_KEY, TEST_SECRET_KEY)))
+                .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(true).build())
+                .build()
+                .use { client ->
+                    try {
+                        client.createBucket(CreateBucketRequest.builder().bucket(BUCKET).build())
+                    } catch (_: BucketAlreadyOwnedByYouException) {
+                        // SeaweedFS may provision S3_BUCKET just after its status endpoint becomes ready.
+                    }
+                }
         }
 
         @AfterAll
