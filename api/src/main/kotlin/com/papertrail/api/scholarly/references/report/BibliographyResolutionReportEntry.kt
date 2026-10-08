@@ -17,8 +17,10 @@ data class BibliographyResolutionReportEntry(
     val doi: String?,
     val referenceType: String,
     val status: String,
+    @field:Schema(description = "Content-free explanation code; CONFLICTING_DOI_IDENTIFIERS means distinct DOI values were supplied and identity was not confirmed.")
     val reasonCode: String?,
     val canonicalPaper: ReportCanonicalPaper?,
+    @field:Schema(description = "Uncalibrated ranking score for metadata matching, not a probability. DOI-confirmed matches use 1.0 as an identity-confirmation marker, not as a similarity score.")
     val confidenceScore: Double?,
     val matchMethod: String?,
     @field:Schema(description = "Up to three provider-candidate comparisons with component reasons; consult status and matchMethod for the identity decision. Scores are rankings, not probabilities.")

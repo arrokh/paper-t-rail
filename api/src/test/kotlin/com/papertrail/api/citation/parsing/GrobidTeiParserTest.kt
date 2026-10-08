@@ -3,6 +3,7 @@ package com.papertrail.api.citation.parsing
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -101,6 +102,69 @@ class GrobidTeiParserTest {
         assertEquals(null, generated.sourceLocalReferenceKey)
         assertEquals("GENERATED_FALLBACK", generated.localReferenceKeyOrigin)
         assertEquals(BibliographyNormalizationPolicySelection.CURRENT, parsed.bibliographyNormalizationPolicy)
+    }
+
+    @Test
+    fun `normalizes DOI prefixes case-insensitively and preserves the source identifier`() {
+        val tei = """
+            <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+              <text>
+                <body><div><p>A source paragraph.</p></div></body>
+                <back><listBibl>
+                  <biblStruct xml:id="paper">
+                    <analytic><title level="a">Example title</title></analytic>
+                    <monogr><idno type="DOI">DOI: 10.1234/Example</idno></monogr>
+                  </biblStruct>
+                </listBibl></back>
+              </text>
+            </TEI>
+        """.trimIndent()
+
+        val entry = GrobidTeiParser("grobid", "0.9.1-crf").parse(tei).bibliographyEntries.single()
+        val identifier = entry.identifiers.single()
+
+        assertEquals("DOI: 10.1234/Example", identifier.rawValue)
+        assertEquals("10.1234/example", identifier.normalizedValue)
+        assertEquals("10.1234/example", entry.doi)
+
+        val legacyEntry = GrobidTeiParser("grobid", "0.9.1-crf").parse(
+            tei,
+            BibliographyNormalizationPolicySelection.LEGACY,
+        ).bibliographyEntries.single()
+        assertEquals("DOI: 10.1234/Example", legacyEntry.identifiers.single().normalizedValue)
+        assertEquals("DOI: 10.1234/Example", legacyEntry.doi)
+    }
+
+    @Test
+    fun `does not use journal or series titles as work titles when the analytic title is missing`() {
+        val tei = """
+            <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+              <text>
+                <body><div><p>Prior work informed this study.</p></div></body>
+                <back><listBibl>
+                  <biblStruct xml:id="article">
+                    <analytic><author><persName><forename>Ada</forename><surname>Researcher</surname></persName></author></analytic>
+                    <monogr><title level="j">Journal of Evidence</title><imprint><date when="2024"/></imprint></monogr>
+                  </biblStruct>
+                  <biblStruct xml:id="book">
+                    <monogr><title level="m">A Monograph Title</title></monogr>
+                  </biblStruct>
+                  <biblStruct xml:id="series">
+                    <monogr><title level="s">Research Series</title></monogr>
+                  </biblStruct>
+                </listBibl></back>
+              </text>
+            </TEI>
+        """.trimIndent()
+
+        val parsed = GrobidTeiParser("grobid", "0.9.1-crf").parse(tei)
+
+        assertNull(parsed.bibliographyEntries[0].title)
+        assertEquals("JOURNAL_ARTICLE", parsed.bibliographyEntries[0].referenceType)
+        assertEquals("A Monograph Title", parsed.bibliographyEntries[1].title)
+        assertEquals("BOOK", parsed.bibliographyEntries[1].referenceType)
+        assertNull(parsed.bibliographyEntries[2].title)
+        assertEquals("Research Series", parsed.bibliographyEntries[2].rawText)
     }
 
     @Test

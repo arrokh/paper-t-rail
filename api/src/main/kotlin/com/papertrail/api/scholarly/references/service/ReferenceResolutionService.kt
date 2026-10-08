@@ -51,7 +51,14 @@ class ReferenceResolutionService(
         )
         sourceDocumentRepository.requireActiveAnalysisRun(analysisRunId)
         val decision = resolver.resolve(
-            BibliographyReference(stored.title, stored.authors, stored.year, stored.doi, stored.referenceType),
+            BibliographyReference(
+                title = stored.title,
+                authors = stored.authors,
+                year = stored.year,
+                doi = stored.doi,
+                referenceType = stored.referenceType,
+                doiIdentifiers = stored.doiIdentifiers,
+            ),
         )
         transactionTemplate.executeWithoutResult {
             sourceDocumentRepository.lockActiveAnalysisRun(analysisRunId)
