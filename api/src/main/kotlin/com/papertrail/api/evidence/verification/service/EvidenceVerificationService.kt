@@ -26,6 +26,7 @@ import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
 import com.papertrail.api.infrastructure.providers.SYSTEM_ONE_ROLE
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.stereotype.Service
 import java.util.UUID
 
@@ -187,13 +188,15 @@ class EvidenceVerificationService(
         evidencePassageIds: Set<UUID>,
     ) {
         val log = logger.atInfo()
-            .addKeyValue("analysisRunId", analysisRunId)
             .addKeyValue("bibliographyEntryId", bibliographyEntryId)
             .addKeyValue("verificationId", verificationId)
             .addKeyValue("providerId", provider.providerId)
             .addKeyValue("atomicClaimId", atomicClaimId)
             .addKeyValue("evidencePassageCount", evidencePassageIds.size)
             .addKeyValue("evidencePassageIds", evidencePassageIds.sortedBy(UUID::toString))
+        if (MDC.get("analysisRunId") == null) {
+            log.addKeyValue("analysisRunId", analysisRunId.toString())
+        }
         provider.modelId?.let { log.addKeyValue("modelId", it) }
         log.log("System One verification started")
     }
@@ -209,7 +212,6 @@ class EvidenceVerificationService(
         evaluationMode: String,
     ) {
         val log = logger.atInfo()
-            .addKeyValue("analysisRunId", analysisRunId)
             .addKeyValue("bibliographyEntryId", bibliographyEntryId)
             .addKeyValue("verificationId", verificationId)
             .addKeyValue("providerId", provider.providerId)
@@ -218,6 +220,9 @@ class EvidenceVerificationService(
             .addKeyValue("evidencePassageIds", evidencePassageIds.sortedBy(UUID::toString))
             .addKeyValue("judgementCount", judgementCount)
             .addKeyValue("evaluationMode", evaluationMode)
+        if (MDC.get("analysisRunId") == null) {
+            log.addKeyValue("analysisRunId", analysisRunId.toString())
+        }
         provider.modelId?.let { log.addKeyValue("modelId", it) }
         log.log("System One judgements persisted")
     }
@@ -234,11 +239,13 @@ class EvidenceVerificationService(
         evidencePassageSpanId: UUID? = null,
     ) {
         val log = logger.atWarn()
-            .addKeyValue("analysisRunId", analysisRunId)
             .addKeyValue("verificationId", verificationId)
             .addKeyValue("providerId", providerId)
             .addKeyValue("failureReasonCode", failureReasonCode)
             .addKeyValue("exceptionType", exception.javaClass.simpleName)
+        if (MDC.get("analysisRunId") == null) {
+            log.addKeyValue("analysisRunId", analysisRunId.toString())
+        }
         bibliographyEntryId?.let { log.addKeyValue("bibliographyEntryId", it) }
         atomicClaimId?.let { log.addKeyValue("atomicClaimId", it) }
         evidencePassageIds?.let {

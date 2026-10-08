@@ -219,6 +219,29 @@ afterEach(() => {
   window.history.replaceState(null, "", "/");
 });
 
+describe("Analysis Run stage results loading", () => {
+  it("shows accessible skeleton placeholders while persisted results are loading", () => {
+    render(
+      <AnalysisRunStageResults
+        run={run}
+        selectedStage="source"
+        backHref="/analysis-runs"
+        parsedDocument={null}
+        report={null}
+        parsedLoading={true}
+        reportLoading={false}
+        parsedError={null}
+        reportError={null}
+        onSelectStage={vi.fn()}
+      />,
+    );
+
+    const status = screen.getByRole("status", { name: "Loading Read the PDF results" });
+    expect(status.textContent).toContain("Loading Read the PDF results…");
+    expect(status.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+  });
+});
+
 describe("Analysis Run bibliography display keys", () => {
   it("shows persisted stage outcomes instead of startup PENDING values from the run snapshot", () => {
     const references = renderStage("references");
