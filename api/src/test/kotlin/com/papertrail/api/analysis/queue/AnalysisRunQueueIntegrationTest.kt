@@ -1690,6 +1690,126 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `unresolved and unsupported references report why access was skipped`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+
+        processReferenceResolutionEvents(created.analysisRunId)
+
+        val reference = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref4" }
+        assertEquals("UNRESOLVED", reference.status)
+        assertNull(reference.citedPaperAccess)
+        assertEquals("SKIPPED", reference.accessProgressStatus)
+        assertEquals("ACCESS_SKIPPED_IDENTITY_UNRESOLVED", reference.accessProgressReason)
+
+        val unsupported = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref2" }
+        assertEquals("UNSUPPORTED_REFERENCE_TYPE", unsupported.status)
+        assertEquals("SKIPPED", unsupported.accessProgressStatus)
+        assertEquals("ACCESS_SKIPPED_UNSUPPORTED_REFERENCE_TYPE", unsupported.accessProgressReason)
+
+        val skipSpans = executionService().spans(created.analysisRunId, 100, null).items
+            .filter { it.name == "Skip Cited Paper access" }
+        assertEquals(setOf("SKIPPED"), skipSpans.map { it.status }.toSet())
+        assertEquals(
+            setOf("ACCESS_SKIPPED_IDENTITY_UNRESOLVED", "ACCESS_SKIPPED_UNSUPPORTED_REFERENCE_TYPE"),
+            skipSpans.map { it.attributes.path("reasonCode").asText() }.toSet(),
+        )
+    }
+
+    @Test
+    fun `persists distinct causes for missing and rejected full-text licenses`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val locations = listOf(
+            OpenAccessLocation("fixture://recorded/missing-license", null, "publishedVersion", "repository", "recorded-fixtures"),
+            OpenAccessLocation("fixture://recorded/rejected-license", "CC-BY-NC", "publishedVersion", "repository", "recorded-fixtures"),
+            OpenAccessLocation("http://8.8.8.8/unsafe", "CC-BY", "publishedVersion", "repository", "unpaywall"),
+        )
+        val factory = controlledOpenAccessFactory(
+            OpenAccessDiscovery(true, false, locations, "recorded-fixtures", Instant.now()),
+            fullText = null,
+            fetchCalls = AtomicInteger(),
+        )
+
+        processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
+
+        val access = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
+        assertEquals("METADATA_ONLY", access.accessStatus)
+        assertEquals(
+            listOf("FULL_TEXT_LOCATION_LICENSE_MISSING", "FULL_TEXT_LOCATION_LICENSE_REJECTED", "FULL_TEXT_LOCATION_URL_REJECTED"),
+            access.accessReasons,
+        )
+        assertEquals(
+            access.accessReasons.toSet(),
+            executionService().spans(created.analysisRunId, 100, null).items
+                .filter { it.name == "Classify Cited Paper access cause" }
+                .map { it.attributes.path("reasonCode").asText() }
+                .toSet(),
+        )
+    }
+
+    @Test
+    fun `persists download format and parse failures as separate access causes`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val locations = listOf("download", "format", "parse").map { suffix ->
+            OpenAccessLocation("fixture://recorded/$suffix", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures")
+        } + OpenAccessLocation("http://8.8.8.8/unsafe", "CC-BY", "publishedVersion", "repository", "unpaywall")
+        val factory = object : OpenAccessProviderFactory {
+            override val providerId = "recorded-fixtures"
+
+            override fun forRun(configuration: AnalysisConfigurationSnapshot): OpenAccessProvider = object : OpenAccessProvider {
+                override fun discover(reference: BibliographyReference) =
+                    OpenAccessDiscovery(true, false, locations, providerId, Instant.now())
+
+                override fun fetch(location: OpenAccessLocation): AcquiredFullText = when (location.url.substringAfterLast('/')) {
+                    "download" -> throw IllegalStateException("Temporary download failure with private URL text.")
+                    "format" -> AcquiredFullText(byteArrayOf(1, 2, 3), "application/zip", location)
+                    else -> AcquiredFullText("not a PDF".toByteArray(), "application/pdf", location)
+                }
+            }
+        }
+
+        processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
+
+        val access = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
+        assertEquals("METADATA_ONLY", access.accessStatus)
+        assertEquals(
+            listOf("FULL_TEXT_LOCATION_URL_REJECTED", "FULL_TEXT_DOWNLOAD_FAILED", "FULL_TEXT_FORMAT_UNSUPPORTED", "FULL_TEXT_PARSE_FAILED"),
+            access.accessReasons,
+        )
+        assertEquals(
+            access.accessReasons.toSet(),
+            executionService().spans(created.analysisRunId, 100, null).items
+                .filter { it.name == "Classify Cited Paper access cause" }
+                .map { it.attributes.path("reasonCode").asText() }
+                .toSet(),
+        )
+    }
+
+    @Test
     fun `abstract-only cited access is terminal insufficient evidence and never fetches full text`() {
         val created = createQueuedRun()
         val documentEvent = jdbc.queryForObject(
@@ -1742,6 +1862,7 @@ class AnalysisRunQueueIntegrationTest {
             .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
         assertEquals("METADATA_ONLY", access.accessStatus)
         assertEquals("NO_LEGAL_FULL_TEXT_LOCATION", access.accessReason)
+        assertEquals(listOf("NO_FULL_TEXT_LOCATION_RETURNED"), access.accessReasons)
         val outcomes = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertTrue(outcomes.isNotEmpty())
@@ -1759,7 +1880,11 @@ class AnalysisRunQueueIntegrationTest {
             DOCUMENT_ANALYSIS_REQUESTED,
         )!!
         eventHandler().handle(documentEvent)
-        val factory = controlledOpenAccessFactory(null, null, AtomicInteger())
+        val factory = controlledOpenAccessFactory(
+            OpenAccessDiscovery(false, false, emptyList(), "recorded-fixtures", Instant.now()),
+            fullText = null,
+            fetchCalls = AtomicInteger(),
+        )
 
         processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
 
@@ -1768,6 +1893,7 @@ class AnalysisRunQueueIntegrationTest {
         val access = reference.citedPaperAccess!!
         assertEquals("UNAVAILABLE", access.accessStatus)
         assertEquals("NO_ACCESSIBLE_METADATA", access.accessReason)
+        assertEquals(listOf("NO_ACCESSIBLE_METADATA"), access.accessReasons)
         val outcomes = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertTrue(outcomes.isNotEmpty())
@@ -1802,6 +1928,7 @@ class AnalysisRunQueueIntegrationTest {
             .single { it.localReferenceKey == "ref1" }
         val access = reference.citedPaperAccess!!
         assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
+        assertEquals(listOf("LANGUAGE_UNSUPPORTED"), access.accessReasons)
         assertEquals("fr", access.language)
         assertEquals(1, fetched.get())
         assertNull(access.evidenceIndexing)
@@ -4465,6 +4592,14 @@ class AnalysisRunQueueIntegrationTest {
             val executionMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("analysis_run_execution.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(executionMigrationVerification)) }
+            }
+            val detailedAccessCausesMigration = migrationDirectory.resolve("detailed_cited_paper_access_causes.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(detailedAccessCausesMigration)) }
+            }
+            val detailedAccessCausesMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("detailed_cited_paper_access_causes.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(detailedAccessCausesMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

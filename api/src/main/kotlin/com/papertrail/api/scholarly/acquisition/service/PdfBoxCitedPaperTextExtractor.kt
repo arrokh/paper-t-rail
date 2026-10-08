@@ -1,6 +1,7 @@
 package com.papertrail.api.scholarly.acquisition.service
 
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
+import com.papertrail.api.scholarly.acquisition.domain.UnsupportedCitedPaperFormatException
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.text.PDFTextStripper
 import org.springframework.beans.factory.annotation.Value
@@ -31,7 +32,7 @@ class PdfBoxCitedPaperTextExtractor(
                 PDFTextStripper().writeText(document, boundedWriter)
                 text.toString()
             }
-            else -> throw IllegalArgumentException("Cited full text must be a PDF or plain text file.")
+            else -> throw UnsupportedCitedPaperFormatException()
         }
         require(text.isNotBlank()) { "Cited full text contains no extractable text." }
         require(text.length <= maximumCharacters) { "Cited full text exceeds the configured extracted-text limit." }

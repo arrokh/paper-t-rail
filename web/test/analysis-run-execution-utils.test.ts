@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   executionGapReasonDescription,
+  executionSpanReasonCode,
   filterExecutionSpans,
   formatExecutionDuration,
   getExecutionAncestorContext,
@@ -42,6 +43,14 @@ describe("execution trace timeline and filtering", () => {
     expect(timeline.rows[2].leftPercent).toBeCloseTo(16.67, 1);
     expect(timeline.rows[2].widthPercent).toBeCloseTo(83.33, 1);
     expect(formatExecutionDuration(12_000)).toBe("12 sec");
+  });
+
+  it("exposes only persisted reason codes from safe execution span attributes", () => {
+    const accessSpan = { ...spans[1], attributes: { reasonCode: "FULL_TEXT_PARSE_FAILED" } };
+
+    expect(executionSpanReasonCode(accessSpan)).toBe("FULL_TEXT_PARSE_FAILED");
+    expect(executionSpanReasonCode(spans[1])).toBeNull();
+    expect(executionSpanReasonCode({ ...spans[1], attributes: { reasonCode: 42 } })).toBeNull();
   });
 
   it("explains a persisted trace-gap reason without conflating it with run status", () => {

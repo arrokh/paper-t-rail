@@ -17,3 +17,4 @@ source_document_deletion [human_reviews] 2026-09-27T00:00:00Z Paper T-Rail Maint
 laya_evidence_passage_spans [source_document_deletion] 2026-09-27T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist tokenizer-budgeted Laya span diagnostics independently of parent judgements
 persisted_analysis_run_pipeline [laya_evidence_passage_spans] 2026-09-30T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist worker stage and per-reference progress independently of domain outcomes
 analysis_run_execution [persisted_analysis_run_pipeline] 2026-09-30T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist run-linked execution spans and sanitized inspectable artifacts
+detailed_cited_paper_access_causes [analysis_run_execution] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist detailed cited-paper access causes

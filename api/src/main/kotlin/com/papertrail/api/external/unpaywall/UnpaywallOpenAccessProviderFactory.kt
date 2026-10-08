@@ -10,6 +10,7 @@ import com.papertrail.api.infrastructure.providers.OPEN_ACCESS_ROLE
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
 import com.papertrail.api.infrastructure.providers.ProviderCallPayload
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
+import com.papertrail.api.scholarly.acquisition.domain.UnsupportedCitedPaperFormatException
 import com.papertrail.api.scholarly.acquisition.domain.LegalOpenAccessLocationPolicy
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
@@ -166,7 +167,7 @@ class UnpaywallOpenAccessProviderFactory(
                                 executionService?.captureCurrent(
                                     ExecutionSpanArtifactSpec("RESULT", responseSchema, mapOf("httpStatus" to httpStatus)),
                                 )
-                                throw IllegalStateException("Open-access content response must be a PDF or plain text file.")
+                                throw UnsupportedCitedPaperFormatException()
                             }
                             val bytes = response.body.readNBytes(maximumBytes + 1)
                             if (bytes.isEmpty() || bytes.size > maximumBytes) {

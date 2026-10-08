@@ -311,9 +311,12 @@ export type ReferenceResolutionReportResponse = {
       canonicalPaper: { id: string; doi: string | null; title: string; authors: string[]; year: number | null } | null;
       confidenceScore: number | null;
       matchMethod: string | null;
+      accessProgressStatus: string | null;
+      accessProgressReason: string | null;
       citedPaperAccess: {
         accessStatus: "FULL_TEXT_AVAILABLE" | "ABSTRACT_ONLY" | "METADATA_ONLY" | "UNAVAILABLE";
         accessReason: "ABSTRACT_ONLY" | "NO_LEGAL_FULL_TEXT_LOCATION" | "NO_ACCESSIBLE_METADATA" | "FULL_TEXT_ACQUISITION_FAILED" | null;
+        accessReasons: Array<"NO_ACCESSIBLE_METADATA" | "NO_FULL_TEXT_LOCATION_RETURNED" | "FULL_TEXT_LOCATION_LICENSE_MISSING" | "FULL_TEXT_LOCATION_LICENSE_REJECTED" | "FULL_TEXT_LOCATION_URL_REJECTED" | "FULL_TEXT_DOWNLOAD_FAILED" | "FULL_TEXT_FORMAT_UNSUPPORTED" | "FULL_TEXT_PARSE_FAILED" | "LANGUAGE_UNSUPPORTED">;
         providerId: string;
         sourceUrl: string | null;
         license: string | null;

@@ -4,6 +4,7 @@ import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
+import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessCause
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessDecision
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessReason
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
@@ -72,6 +73,7 @@ class CitedPaperAccessRepository(
         discovery: OpenAccessDiscovery?,
         decision: CitedPaperAccessDecision,
         accessReason: CitedPaperAccessReason?,
+        accessReasons: List<CitedPaperAccessCause>,
         locationUrl: String?,
         license: String?,
         version: String?,
@@ -88,10 +90,10 @@ class CitedPaperAccessRepository(
             """
             INSERT INTO cited_paper_access (
                 analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status,
-                provider_id, access_reason, metadata_available, abstract_available, source_url, license_identifier,
+                provider_id, access_reason, access_reasons, metadata_available, abstract_available, source_url, license_identifier,
                 location_version, location_host_type, discovered_at, object_key, content_sha256,
                 content_media_type, language, language_detector_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
             """.trimIndent(),
             analysisRunId,
@@ -100,6 +102,7 @@ class CitedPaperAccessRepository(
             decision.accessStatus.name,
             providerId,
             accessReason?.name,
+            JsonUtil.toJson(accessReasons.map { it.name }),
             discovery?.metadataAvailable == true || discovery?.abstractAvailable == true || discovery?.locations?.isNotEmpty() == true || fullText != null,
             discovery?.abstractAvailable == true,
             locationUrl,
@@ -125,7 +128,7 @@ class CitedPaperAccessRepository(
     fun reportEntries(analysisRunId: UUID): List<CitedPaperAccessReportEntry> = jdbc.query(
         """
         SELECT b.id AS bibliography_entry_id, b.local_reference_key, a.access_status, a.access_reason,
-               a.provider_id, a.source_url, a.license_identifier, a.location_version, a.location_host_type,
+               a.access_reasons::text AS access_reasons, a.provider_id, a.source_url, a.license_identifier, a.location_version, a.location_host_type,
                a.discovered_at, a.content_sha256, a.language, a.language_detector_version
           FROM cited_paper_access a
           JOIN bibliography_entries b
@@ -149,6 +152,10 @@ class CitedPaperAccessRepository(
         report = CitedPaperAccessReport(
             accessStatus = getString("access_status"),
             accessReason = getString("access_reason"),
+            accessReasons = JsonUtil.fromJson(
+                getString("access_reasons"),
+                JsonUtil.collectionType(List::class.java, String::class.java),
+            ),
             providerId = getString("provider_id"),
             sourceUrl = getString("source_url"),
             license = getString("license_identifier"),

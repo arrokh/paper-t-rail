@@ -350,6 +350,17 @@ class OpenApiDocumentationTest {
         assertTrue(report.path("responses").path("200").path("content").has("application/json"))
         assertTrue(report.path("responses").has("404"))
         assertTrue(report.path("description").asText().contains("never rolled up"))
+        assertTrue(report.path("description").asText().contains("access-stage skip reasons"))
+        val accessProgressStatusSchema = document.findValue("accessProgressStatus")
+        val accessProgressReasonSchema = document.findValue("accessProgressReason")
+        val accessReasonsSchema = document.findValue("accessReasons")
+        assertTrue(accessProgressStatusSchema.path("description").asText().contains("legacy history"))
+        assertTrue(accessProgressStatusSchema.path("enum").any { it.asText() == "SKIPPED" })
+        assertTrue(accessProgressReasonSchema.path("description").asText().contains("historical cause"))
+        assertTrue(accessProgressReasonSchema.path("enum").any { it.asText() == "ACCESS_SKIPPED_IDENTITY_UNRESOLVED" })
+        assertTrue(accessReasonsSchema.path("description").asText().contains("detailed attribution"))
+        assertTrue(accessReasonsSchema.path("items").path("enum").any { it.asText() == "FULL_TEXT_PARSE_FAILED" })
+        assertTrue(accessReasonsSchema.path("items").path("enum").any { it.asText() == "LANGUAGE_UNSUPPORTED" })
         val review = paths.path("/api/v1/verifications/{verificationId}/reviews").path("post")
         assertEquals("Record a Human Review", review.path("summary").asText())
         assertTrue(review.path("requestBody").path("content").has("application/json"))
@@ -918,9 +929,12 @@ class OpenApiDocumentationTest {
                             ),
                             confidenceScore = 1.0,
                             matchMethod = "DOI",
+                            accessProgressStatus = "COMPLETED",
+                            accessProgressReason = null,
                             citedPaperAccess = CitedPaperAccessReport(
                                 accessStatus = "ABSTRACT_ONLY",
                                 accessReason = "ABSTRACT_ONLY",
+                                accessReasons = listOf("NO_FULL_TEXT_LOCATION_RETURNED"),
                                 providerId = "recorded-fixtures",
                                 sourceUrl = null,
                                 license = null,
@@ -952,6 +966,8 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.summary.failed").value(0))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessStatus").value("ABSTRACT_ONLY"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessReason").value("ABSTRACT_ONLY"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessReasons[0]").value("NO_FULL_TEXT_LOCATION_RETURNED"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].accessProgressStatus").value("COMPLETED"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.verificationOutcomes[0].claimText").value("The study reports an outcome."))
             .andExpect(jsonPath("$.referenceResolution.entries[0].canonicalPaper.title").value("Canonical Example Paper"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].verificationOutcomes[0].claimText").value("The study reports an outcome."))

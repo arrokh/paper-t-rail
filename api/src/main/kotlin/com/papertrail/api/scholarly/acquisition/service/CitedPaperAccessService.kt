@@ -9,11 +9,13 @@ import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProvider
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProviderFactory
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
+import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessCause
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessPolicy
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessReason
 import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessStatus
 import com.papertrail.api.scholarly.acquisition.domain.LegalOpenAccessLocationPolicy
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
+import com.papertrail.api.scholarly.acquisition.domain.UnsupportedCitedPaperFormatException
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepository
 import com.papertrail.api.scholarly.acquisition.repository.ResolvedCitedReference
@@ -76,10 +78,13 @@ class CitedPaperAccessService(
                 operation = discover,
             )
         }
-        val permittedLocations = discovery?.locations.orEmpty().filter(locationPolicy::isUsable)
-        val acquiredText = acquireExtractableFullText(analysisRunId, context.documentId, providerSelection.provider, provider, permittedLocations)
-        val acquired = acquiredText?.first
-        val extractedText = acquiredText?.second
+        val locations = discovery?.locations.orEmpty()
+        val checkedLocations = locations.map { location -> location to locationPolicy.rejectionReasons(location) }
+        val permittedLocations = checkedLocations.filter { (_, reasons) -> reasons.isEmpty() }.map { it.first }
+        val rejectedLocationCauses = checkedLocations.flatMap { it.second }.distinct()
+        val acquisition = acquireExtractableFullText(analysisRunId, context.documentId, providerSelection.provider, provider, permittedLocations)
+        val acquired = acquisition.fullText
+        val extractedText = acquisition.extractedText
         val languageDetection = extractedText?.let { text ->
             val detect = { languageDetector.detect(text) }
             executionService?.record(
@@ -106,6 +111,14 @@ class CitedPaperAccessService(
             decision.accessStatus == CitedPaperAccessStatus.UNAVAILABLE -> CitedPaperAccessReason.NO_ACCESSIBLE_METADATA
             else -> null
         }
+        val accessCauses = when {
+            acquired != null && supportedLanguage != "en" -> listOf(CitedPaperAccessCause.LANGUAGE_UNSUPPORTED)
+            acquired != null -> emptyList()
+            discovery == null || !metadataAvailable -> listOf(CitedPaperAccessCause.NO_ACCESSIBLE_METADATA)
+            locations.isEmpty() -> listOf(CitedPaperAccessCause.NO_FULL_TEXT_LOCATION_RETURNED)
+            permittedLocations.isEmpty() -> rejectedLocationCauses
+            else -> (rejectedLocationCauses + acquisition.failureCauses).distinct()
+        }
         val provenanceLocation = acquired?.location ?: permittedLocations.firstOrNull()
         val contentHash = acquired?.bytes?.let(::sha256Hex)
         val objectKey = if (acquired != null && contentHash != null) {
@@ -124,6 +137,7 @@ class CitedPaperAccessService(
                     discovery = discovery,
                     decision = decision,
                     accessReason = accessReason,
+                    accessReasons = accessCauses,
                     locationUrl = provenanceLocation?.url,
                     license = provenanceLocation?.license,
                     version = provenanceLocation?.version,
@@ -148,6 +162,7 @@ class CitedPaperAccessService(
             if (!inserted && objectKey != null && !repository.isObjectKeyReferenced(objectKey)) {
                 objectStore.delete(objectKey)
             }
+            if (inserted) recordAccessCauses(analysisRunId, accessCauses)
         } catch (exception: Exception) {
             cleanupObjectIfUnreferenced(analysisRunId, objectKey)
             throw exception
@@ -160,12 +175,13 @@ class CitedPaperAccessService(
         providerId: String,
         provider: OpenAccessProvider,
         locations: List<OpenAccessLocation>,
-    ): Pair<AcquiredFullText, String>? {
+    ): FullTextAcquisitionResult {
+        val failureCauses = linkedSetOf<CitedPaperAccessCause>()
         for ((index, location) in locations.take(MAX_LOCATIONS_TO_TRY).withIndex()) {
-            try {
-                sourceDocumentRepository.requireActiveSourceDocument(documentId)
-                val fetch = { provider.fetch(location) }
-                val acquired = executionService?.recordCurrentProviderCall(
+            sourceDocumentRepository.requireActiveSourceDocument(documentId)
+            val fetch = { provider.fetch(location) }
+            val acquired = try {
+                executionService?.recordCurrentProviderCall(
                     operationKey = "open-access-fulltext-fetch-$index",
                     name = "Fetch cited-paper full text",
                     providerId = providerId,
@@ -174,20 +190,46 @@ class CitedPaperAccessService(
                     stageId = "access",
                     operation = fetch,
                 ) ?: fetch()
+            } catch (exception: ProviderCallRejectedException) {
+                throw exception
+            } catch (_: UnsupportedCitedPaperFormatException) {
+                failureCauses += CitedPaperAccessCause.FULL_TEXT_FORMAT_UNSUPPORTED
+                continue
+            } catch (_: Exception) {
+                failureCauses += CitedPaperAccessCause.FULL_TEXT_DOWNLOAD_FAILED
+                continue
+            }
+            val text = try {
                 val extract = { textExtractor.extract(acquired) }
-                val text = executionService?.record(
+                executionService?.record(
                     analysisRunId,
                     ExecutionSpanSpec("access", "TRANSFORMATION", "Extract cited-paper text"),
                     extract,
                 ) ?: extract()
-                return acquired to text
-            } catch (exception: ProviderCallRejectedException) {
-                throw exception
+            } catch (_: UnsupportedCitedPaperFormatException) {
+                failureCauses += CitedPaperAccessCause.FULL_TEXT_FORMAT_UNSUPPORTED
+                continue
             } catch (_: Exception) {
-                // Try the next location from the same legal discovery result.
+                failureCauses += CitedPaperAccessCause.FULL_TEXT_PARSE_FAILED
+                continue
             }
+            return FullTextAcquisitionResult(acquired, text, emptyList())
         }
-        return null
+        return FullTextAcquisitionResult(null, null, failureCauses.toList())
+    }
+
+    private fun recordAccessCauses(analysisRunId: UUID, causes: List<CitedPaperAccessCause>) {
+        causes.forEach { cause ->
+            executionService?.record(
+                analysisRunId,
+                ExecutionSpanSpec(
+                    stageId = "access",
+                    kind = "TRANSFORMATION",
+                    name = "Classify Cited Paper access cause",
+                    attributes = mapOf("reasonCode" to cause.name),
+                ),
+            ) { Unit }
+        }
     }
 
     private fun loadRun(analysisRunId: UUID): CitedPaperAccessRepository.AccessRunContext? = repository.loadRun(analysisRunId)
@@ -210,6 +252,12 @@ class CitedPaperAccessService(
                     .log("Failed to clean up an unreferenced cited full-text object")
             }
     }
+
+    private data class FullTextAcquisitionResult(
+        val fullText: AcquiredFullText?,
+        val extractedText: String?,
+        val failureCauses: List<CitedPaperAccessCause>,
+    )
 
     companion object {
         private const val MAX_LOCATIONS_TO_TRY = 5

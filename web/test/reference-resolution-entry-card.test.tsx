@@ -25,6 +25,8 @@ const entry: Entry = {
   },
   confidenceScore: 1,
   matchMethod: "DOI",
+  accessProgressStatus: null,
+  accessProgressReason: null,
   citedPaperAccess: null,
   verificationOutcomes: [],
 };

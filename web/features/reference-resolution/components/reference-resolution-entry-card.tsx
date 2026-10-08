@@ -145,7 +145,11 @@ export function ReferenceResolutionEntryCard({
           </section>
         )}
 
-        <CitedPaperAccessSummary access={entry.citedPaperAccess} />
+        <CitedPaperAccessSummary
+          access={entry.citedPaperAccess}
+          progressStatus={entry.accessProgressStatus}
+          progressReason={entry.accessProgressReason}
+        />
 
         <section className="space-y-3 border-t border-border p-4" aria-label={`Claim–Reference Verifications for ${displayKey}`}>
           <div className="flex flex-wrap items-center justify-between gap-2">
