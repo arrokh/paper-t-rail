@@ -63,4 +63,4 @@ For a user-adjudicated set, agree on the population/sampling frame and per-paper
 
 ## Validation note
 
-Primary source pages/papers were fetched and inspected directly. Automated `source_check` returned “unclear” for the main claims (no semantic assessment was available); conclusions above are based on manual inspection of the cited primary sources. No user documents, credentials, paid services, or external data transfers were used.
+Primary source pages/papers were fetched and manually inspected during the research pass. Automated `source_check` returned “unclear” for the main claims (no semantic assessment was available). A follow-up evidence audit found no other material corrections, but could not extract page content from the RenoBench Hugging Face card; its detailed claims were not independently reconfirmed in that audit and remain based on the original manual inspection. No user documents, credentials, paid services, or external data transfers were used.
