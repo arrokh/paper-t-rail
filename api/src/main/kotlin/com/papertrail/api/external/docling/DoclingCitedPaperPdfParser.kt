@@ -1,18 +1,20 @@
 package com.papertrail.api.external.docling
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.papertrail.api.utils.JsonUtil
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataCandidate
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataExtractionMethod
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataField
 import com.papertrail.api.citation.parsing.ParsedBibliographyEntry
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
+import com.papertrail.api.evidence.parsing.CitedPaperPdfParser
+import com.papertrail.api.utils.JsonUtil
 import org.springframework.core.io.ByteArrayResource
 import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.util.LinkedMultiValueMap
 import org.springframework.web.client.RestClient
-
-import com.papertrail.api.evidence.parsing.CitedPaperPdfParser
 
 class DoclingCitedPaperPdfParser(
     private val client: RestClient,
@@ -42,6 +44,7 @@ class DoclingCitedPaperPdfParser(
             )
             add("from_formats", "pdf")
             add("to_formats", "md")
+            add("to_formats", "json")
         }
         val responseBytes = client.post()
             .uri("/v1/convert/file")
@@ -65,7 +68,88 @@ class DoclingCitedPaperPdfParser(
         if (!markdown.isTextual || markdown.asText().isBlank()) {
             throw IllegalStateException("Docling returned no Markdown content for the Cited Paper PDF.")
         }
-        return parseMarkdown(markdown.asText())
+        return parseMarkdown(markdown.asText()).copy(
+            bibliographicMetadataCandidates = parseBibliographicMetadataCandidates(
+                response.path("document").path("json_content"),
+            ),
+        )
+    }
+
+    private fun parseBibliographicMetadataCandidates(jsonContent: JsonNode): List<ParsedBibliographicMetadataCandidate> {
+        val textItems = jsonContent.path("texts")
+        if (!textItems.isArray) return emptyList()
+
+        val firstPageItems = textItems.filter { item ->
+            item.path("prov").any { provenance -> provenance.path("page_no").asInt(-1) == FIRST_PAGE }
+        }
+        val candidates = mutableListOf<ParsedBibliographicMetadataCandidate>()
+        val title = firstPageItems.firstOrNull { item ->
+            val text = item.path("text")
+            item.path("label").asText() in TITLE_LABELS && text.isTextual && text.asText().isNotBlank()
+        }
+        if (title != null) {
+            candidates += metadataCandidate(
+                field = ParsedBibliographicMetadataField.TITLE,
+                item = title,
+                value = title.path("text").asText().trim(),
+                extractionMethod = if (title.path("label").asText() == "title") {
+                    ParsedBibliographicMetadataExtractionMethod.DOCLING_LABEL
+                } else {
+                    ParsedBibliographicMetadataExtractionMethod.FIRST_PAGE_SECTION_HEADER
+                },
+            )
+            firstPageItems.drop(firstPageItems.indexOf(title) + 1)
+                .firstOrNull { item ->
+                    val text = item.path("text").takeIf { it.isTextual }?.asText()?.trim().orEmpty()
+                    item.path("label").asText() == "text" && text.isNotEmpty() && !DOI_PATTERN.containsMatchIn(text)
+                }
+                ?.let { authors ->
+                    candidates += metadataCandidate(
+                        field = ParsedBibliographicMetadataField.AUTHORS,
+                        item = authors,
+                        value = authors.path("text").asText().trim(),
+                        extractionMethod = ParsedBibliographicMetadataExtractionMethod.FIRST_TEXT_AFTER_TITLE_HEADING,
+                    )
+                }
+        }
+
+        firstPageItems.forEach { item ->
+            val label = item.path("label").asText()
+            val textNode = item.path("text")
+            val text = textNode.takeIf { it.isTextual }?.asText()?.trim().orEmpty()
+            DOI_PATTERN.findAll(text).forEach { match ->
+                val doi = match.groupValues[1].trimEnd('.', ',', ';')
+                if (doi.isNotEmpty()) {
+                    candidates += metadataCandidate(
+                        field = ParsedBibliographicMetadataField.DOI,
+                        item = item,
+                        value = doi,
+                        extractionMethod = ParsedBibliographicMetadataExtractionMethod.EXPLICIT_DOI_PREFIX,
+                    )
+                }
+            }
+        }
+        return candidates.distinct()
+    }
+
+    private fun metadataCandidate(
+        field: ParsedBibliographicMetadataField,
+        item: JsonNode,
+        value: String,
+        extractionMethod: ParsedBibliographicMetadataExtractionMethod,
+    ): ParsedBibliographicMetadataCandidate {
+        val provenance = item.path("prov").firstOrNull { it.path("page_no").asInt(-1) == FIRST_PAGE }
+        val charSpan = provenance?.path("charspan")?.takeIf { it.isArray && it.size() >= 2 }
+        return ParsedBibliographicMetadataCandidate(
+            field = field,
+            value = value,
+            pageNumber = FIRST_PAGE,
+            sourceLabel = item.path("label").asText(),
+            extractionMethod = extractionMethod,
+            sourceElementId = item.path("self_ref").asText().takeIf { it.isNotBlank() },
+            sourceCharSpanStart = charSpan?.get(0)?.takeIf { it.canConvertToInt() }?.asInt(),
+            sourceCharSpanEnd = charSpan?.get(1)?.takeIf { it.canConvertToInt() }?.asInt(),
+        )
     }
 
     private fun parseResponse(responseBytes: ByteArray): JsonNode = runCatching {
@@ -145,6 +229,9 @@ class DoclingCitedPaperPdfParser(
     companion object {
         const val PARSER_ID = "docling"
         private const val SUCCESS_STATUS = "success"
+        private const val FIRST_PAGE = 1
+        private val TITLE_LABELS = setOf("title", "section_header")
+        private val DOI_PATTERN = Regex("(?:\\bdoi\\s*:\\s*|\\bhttps?://(?:dx\\.)?doi\\.org/)(10\\.[0-9]{4,9}/[^\\s<>\"{}|\\\\^`\\[\\]]+)", RegexOption.IGNORE_CASE)
         private val MARKDOWN_HEADING = Regex("^#{1,6}\\s+(.+?)\\s*#*\\s*$")
         private val MARKDOWN_LIST_LINE = Regex("^(?:[-*+]\\s+|\\d+[.)]\\s+).+")
         private val WHITESPACE = Regex("[\\s\\p{Z}]+")
