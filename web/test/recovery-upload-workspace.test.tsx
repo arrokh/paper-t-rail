@@ -59,14 +59,17 @@ function stagedUpload(): RecoveryBatch["uploads"][number] {
   };
 }
 
-function renderWorkspace() {
+function renderWorkspace(
+  entries: ParsedDocument["bibliographyEntries"] | null = bibliographyEntries,
+  entriesError: string | null = null,
+) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <RecoveryUploadWorkspace
         analysisRunId="run-1"
-        entries={bibliographyEntries}
+        entries={entries}
         entriesLoading={false}
-        entriesError={null}
+        entriesError={entriesError}
         enabled
       />
     </QueryClientProvider>,
@@ -112,6 +115,35 @@ describe("Recovery Upload workspace", () => {
     });
     expect(screen.getByText(/does not confirm the paper identity/)).toBeTruthy();
     expect(screen.getByText(/Uploading never starts provider assessment/)).toBeTruthy();
+  });
+
+  it("keeps existing uploads inspectable and removable when policy and bibliography reads fail", async () => {
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    let activeBatch = makeBatch([stagedUpload()]);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json({ code: "UNAVAILABLE", message: "Policy unavailable." }, { status: 503 });
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([activeBatch]);
+      if (url === "/api/v1/recovery-batches/batch-1/uploads/upload-1" && options?.method === "DELETE") {
+        activeBatch = makeBatch([{ ...stagedUpload(), status: "REMOVED" }]);
+        return Response.json(activeBatch.uploads[0]);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace(null, "Could not load Bibliography Entries.");
+    await screen.findByText("Server-verified snapshot");
+    expect(screen.getAllByText("Bibliography Entry · b0").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Remove upload" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Choose PDF" })).toBeNull();
+    expect(screen.getByText(/New browser uploads are disabled/)).toBeTruthy();
+    fireEvent.click(screen.getByText("View recorded rights declaration"));
+    expect(screen.getByText(rights.text)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove upload" }));
+    await waitFor(() => expect(requests.some(({ options }) => options?.method === "DELETE")).toBe(true));
+    expect(await screen.findByText(/This upload is removed\./)).toBeTruthy();
   });
 
   it("shows a staged PDF as a verified candidate, preserves the declaration, and offers removal", async () => {

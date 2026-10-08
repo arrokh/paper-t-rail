@@ -43,6 +43,29 @@ class RecoveryUploadCleanupRepository(
             java.sql.Timestamp.from(now),
             documentId,
         )
+        jdbc.update(
+            """
+            INSERT INTO recovery_upload_cleanup_tombstones (
+                id, object_key, not_before, retry_until, next_attempt_at, created_at
+            )
+            SELECT gen_random_uuid(), upload.finalized_object_key, CAST(? AS TIMESTAMPTZ),
+                   CAST(? AS TIMESTAMPTZ) + (CAST(? AS DOUBLE PRECISION) * INTERVAL '1 second'),
+                   CAST(? AS TIMESTAMPTZ), CAST(? AS TIMESTAMPTZ)
+              FROM recovery_batch_uploads upload
+              JOIN analysis_runs run ON run.id = upload.analysis_run_id
+             WHERE run.document_id = ?
+            ON CONFLICT (object_key) DO UPDATE
+                SET not_before = GREATEST(recovery_upload_cleanup_tombstones.not_before, EXCLUDED.not_before),
+                    retry_until = GREATEST(recovery_upload_cleanup_tombstones.retry_until, EXCLUDED.retry_until),
+                    next_attempt_at = GREATEST(recovery_upload_cleanup_tombstones.next_attempt_at, EXCLUDED.next_attempt_at)
+            """.trimIndent(),
+            java.sql.Timestamp.from(now),
+            java.sql.Timestamp.from(now),
+            settings.cleanupRetryWindowSeconds,
+            java.sql.Timestamp.from(now),
+            java.sql.Timestamp.from(now),
+            documentId,
+        )
     }
 
     @Transactional

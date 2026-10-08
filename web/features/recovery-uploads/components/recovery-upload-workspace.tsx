@@ -194,7 +194,7 @@ export function RecoveryUploadWorkspace({
         </Card>
       )}
 
-      {enabled && batch && rights && entries && (
+      {enabled && batch && (
         <>
           <Card className="shadow-sm">
             <CardHeader>
@@ -220,14 +220,34 @@ export function RecoveryUploadWorkspace({
                   <AlertDescription>{activeError.message}</AlertDescription>
                 </Alert>
               )}
+              {!entries && batch.uploads.length === 0 && (
+                <p className="m-0 text-sm text-muted-foreground">Bibliography Entries are unavailable, and this batch has no uploads to display yet.</p>
+              )}
               <ul className="m-0 grid list-none gap-3 p-0">
-                {entries.map((entry) => (
+                {entries?.map((entry) => (
                   <RecoveryUploadReferenceCard
                     key={entry.localReferenceKey}
                     batchId={batch.id}
-                    entry={entry}
+                    localReferenceKey={entry.localReferenceKey}
+                    label={entry.title || entry.rawText || `Bibliography Entry ${entry.entryOrder + 1}`}
                     upload={uploadedByReferenceKey.get(entry.localReferenceKey)}
-                    maxFileBytes={rights.maxFileBytes}
+                    maxFileBytes={rights?.maxFileBytes ?? null}
+                    canUpload={rights !== undefined}
+                    disabled={isBusy}
+                    onUpload={startUpload}
+                    onFinalize={finalize}
+                    onRemove={remove}
+                  />
+                ))}
+                {!entries && batch.uploads.map((upload) => (
+                  <RecoveryUploadReferenceCard
+                    key={upload.id}
+                    batchId={batch.id}
+                    localReferenceKey={upload.localReferenceKey}
+                    label={`Bibliography Entry · ${upload.localReferenceKey}`}
+                    upload={upload}
+                    maxFileBytes={rights?.maxFileBytes ?? null}
+                    canUpload={rights !== undefined}
                     disabled={isBusy}
                     onUpload={startUpload}
                     onFinalize={finalize}
@@ -252,18 +272,22 @@ export function RecoveryUploadWorkspace({
 
 function RecoveryUploadReferenceCard({
   batchId,
-  entry,
+  localReferenceKey,
+  label,
   upload,
   maxFileBytes,
+  canUpload,
   disabled,
   onUpload,
   onFinalize,
   onRemove,
 }: {
   batchId: string;
-  entry: BibliographyEntry;
+  localReferenceKey: string;
+  label: string;
   upload: RecoveryUpload | undefined;
-  maxFileBytes: number;
+  maxFileBytes: number | null;
+  canUpload: boolean;
   disabled: boolean;
   onUpload: (localReferenceKey: string, file: File, idempotencyKey: string) => void;
   onFinalize: (batchId: string, uploadId: string) => void;
@@ -273,8 +297,7 @@ function RecoveryUploadReferenceCard({
   const [localError, setLocalError] = useState<string | null>(null);
   const isResumable = upload?.status === "PENDING_UPLOAD" || upload?.status === "FINALIZING";
   const canStartNew = !upload || upload.status === "REMOVED" || upload.status === "EXPIRED";
-  const label = entry.title || entry.rawText || `Bibliography Entry ${entry.entryOrder + 1}`;
-  const fileInputId = `recovery-file-${batchId}-${encodeURIComponent(entry.localReferenceKey)}`;
+  const fileInputId = `recovery-file-${batchId}-${encodeURIComponent(localReferenceKey)}`;
   const descriptionId = `${fileInputId}-description`;
 
   function onFileSelected(file: File | undefined) {
@@ -288,19 +311,19 @@ function RecoveryUploadReferenceCard({
       setLocalError("Choose a non-empty PDF file.");
       return;
     }
-    if (file.size > maxFileBytes) {
+    if (maxFileBytes !== null && file.size > maxFileBytes) {
       setLocalError(`This file exceeds the configured ${formatBytes(maxFileBytes)} per-file limit.`);
       return;
     }
     const idempotencyKey = isResumable && upload ? upload.idempotencyKey : globalThis.crypto.randomUUID();
-    onUpload(entry.localReferenceKey, file, idempotencyKey);
+    onUpload(localReferenceKey, file, idempotencyKey);
   }
 
   return (
     <li className="min-w-0 rounded-lg border border-border bg-background p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="m-0 font-mono text-xs text-muted-foreground">Bibliography Entry · {entry.localReferenceKey}</p>
+          <p className="m-0 font-mono text-xs text-muted-foreground">Bibliography Entry · {localReferenceKey}</p>
           <p className="m-0 line-clamp-4 break-words text-sm leading-relaxed">{label}</p>
         </div>
         {upload && <Badge variant="outline" className="shrink-0">{statusLabel(upload.status)}</Badge>}
@@ -327,10 +350,12 @@ function RecoveryUploadReferenceCard({
       )}
 
       <p id={descriptionId} className="mt-3 mb-0 text-xs leading-relaxed text-muted-foreground">
-        PDFs only · up to {formatBytes(maxFileBytes)} · direct private-storage PUT · server checks actual size, SHA-256, and PDF structure.
+        {maxFileBytes === null
+          ? "Upload limits are unavailable. New browser uploads are disabled until the current policy loads."
+          : `PDFs only · up to ${formatBytes(maxFileBytes)} · direct private-storage PUT · server checks actual size, SHA-256, and PDF structure.`}
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        {canStartNew && (
+        {canStartNew && canUpload && (
           <>
             <Button type="button" variant="outline" size="sm" disabled={disabled} aria-describedby={descriptionId} onClick={() => fileInput.current?.click()}>
               Choose PDF
@@ -355,22 +380,26 @@ function RecoveryUploadReferenceCard({
             <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onFinalize(batchId, upload.id)}>
               {upload.status === "FINALIZING" ? "Retry verification" : "Verify uploaded PDF"}
             </Button>
-            <Button type="button" variant="secondary" size="sm" disabled={disabled} aria-describedby={descriptionId} onClick={() => fileInput.current?.click()}>
-              Resume with same PDF
-            </Button>
-            <input
-              ref={fileInput}
-              id={fileInputId}
-              type="file"
-              accept="application/pdf,.pdf"
-              disabled={disabled}
-              className="sr-only"
-              aria-label={`Resume PDF for ${label}`}
-              onChange={(event) => {
-                onFileSelected(event.currentTarget.files?.[0]);
-                event.currentTarget.value = "";
-              }}
-            />
+            {canUpload && (
+              <>
+                <Button type="button" variant="secondary" size="sm" disabled={disabled} aria-describedby={descriptionId} onClick={() => fileInput.current?.click()}>
+                  Resume with same PDF
+                </Button>
+                <input
+                  ref={fileInput}
+                  id={fileInputId}
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  disabled={disabled}
+                  className="sr-only"
+                  aria-label={`Resume PDF for ${label}`}
+                  onChange={(event) => {
+                    onFileSelected(event.currentTarget.files?.[0]);
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </>
+            )}
           </>
         )}
         {upload && upload.status !== "REMOVED" && upload.status !== "EXPIRED" && (

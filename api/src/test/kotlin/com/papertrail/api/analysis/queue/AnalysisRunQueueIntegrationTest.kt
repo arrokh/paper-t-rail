@@ -531,7 +531,29 @@ class AnalysisRunQueueIntegrationTest {
         assertFalse(objectStore.contains(staged.finalizedObjectKey))
         assertFalse(objectStore.contains(staged.stagingObjectKey))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_batches WHERE analysis_run_id = ?", Int::class.java, run.analysisRunId))
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_cleanup_tombstones", Int::class.java))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_cleanup_tombstones WHERE object_key = ?", Int::class.java, staged.stagingObjectKey))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_cleanup_tombstones WHERE object_key = ?", Int::class.java, staged.finalizedObjectKey))
+
+        objectStore.put(staged.finalizedObjectKey, pdf, "application/pdf")
+        val cleanupDueAt = Instant.now().minusSeconds(1)
+        jdbc.update(
+            "UPDATE recovery_upload_cleanup_tombstones SET not_before = ?, next_attempt_at = ? WHERE object_key = ?",
+            Timestamp.from(cleanupDueAt),
+            Timestamp.from(cleanupDueAt),
+            staged.finalizedObjectKey,
+        )
+        RecoveryUploadCleanupService(
+            RecoveryBatchRepository(jdbc, settings),
+            RecoveryUploadCleanupRepository(jdbc, settings),
+            objectStore,
+            settings,
+        ).cleanExpiredRecoveryUploads()
+        assertFalse(objectStore.contains(staged.finalizedObjectKey))
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM recovery_upload_cleanup_tombstones WHERE object_key = ? AND last_success_at IS NOT NULL",
+            Int::class.java,
+            staged.finalizedObjectKey,
+        ))
     }
 
     @Test
