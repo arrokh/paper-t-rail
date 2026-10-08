@@ -15,7 +15,6 @@ data class OllamaEmbeddingSettings(
     val trustedHosts: Set<String> = emptySet(),
     val requestTimeoutMillis: Long = DEFAULT_REQUEST_TIMEOUT_MILLIS,
     val retentionDisclosure: String? = null,
-    val providerId: String = EMBEDDINGGEMMA_PROVIDER_ID,
 ) {
     val baseUri: URI? = parseBaseUri(baseUrl)
     val endpointUri: URI? = baseUri?.let { URI("${it.toASCIIString().trimEnd('/')}/api/embed") }
@@ -37,8 +36,6 @@ data class OllamaEmbeddingSettings(
         ?.let { sha256Hex("paper-trail-ollama-endpoint-v1\n$it".toByteArray(Charsets.UTF_8)) }
     val isSelectable: Boolean = enabled && isConfigurationValid &&
         trustBoundary in setOf(ProviderTrustBoundary.LOCAL, ProviderTrustBoundary.EXTERNAL)
-    val isSelectableForNewRuns: Boolean = isSelectable &&
-        providerId == EMBEDDINGGEMMA_PROVIDER_ID && modelId == EMBEDDINGGEMMA_MODEL_ID
 
     init {
         require(trustedHosts.none(String::isBlank)) { "Ollama trusted hosts must not contain blank entries." }
@@ -54,18 +51,8 @@ data class OllamaEmbeddingSettings(
         .trimEnd('.')
         .lowercase()
 
-    fun forLegacyNomicCompatibility(): OllamaEmbeddingSettings = copy(
-        providerId = LEGACY_NOMIC_PROVIDER_ID,
-        modelId = LEGACY_NOMIC_MODEL_ID,
-        dimension = LEGACY_NOMIC_DIMENSION,
-    )
-
     companion object {
-        const val LEGACY_NOMIC_PROVIDER_ID = "ollama"
-        const val EMBEDDINGGEMMA_PROVIDER_ID = "ollama-embeddinggemma-2"
-        const val EMBEDDINGGEMMA_MODEL_ID = "embeddinggemma-2:270m"
-        const val LEGACY_NOMIC_MODEL_ID = "nomic-embed-text:v1.5"
-        const val LEGACY_NOMIC_DIMENSION = 768
+        const val PROVIDER_ID = "ollama"
         const val VERSION = "v1"
         const val DEFAULT_DIMENSION = 768
         const val DEFAULT_REQUEST_TIMEOUT_MILLIS = 60_000L
@@ -80,7 +67,6 @@ data class OllamaEmbeddingSettings(
             baseUrl = "",
             modelId = "",
             dimension = DEFAULT_DIMENSION,
-            providerId = EMBEDDINGGEMMA_PROVIDER_ID,
         )
 
         private fun parseBaseUri(value: String): URI? = runCatching {

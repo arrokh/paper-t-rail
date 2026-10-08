@@ -32,7 +32,7 @@ const architecture = [
     name: "Prepare evidence",
     system: "Docling · embedding model · hybrid retrieval",
     detail: "Prepare eligible cited full text and retrieve candidate Evidence Passages.",
-    technologies: "Docling 1.30.0 · Ollama EmbeddingGemma 2 for new runs; Nomic reserved for historical runs · local feature-hash-384-v1 fallback · PostgreSQL full-text search + pgvector.",
+    technologies: "Docling 1.30.0 · Ollama nomic-embed-text:v1.5 embedding model or local feature-hash-384-v1 lexical fallback · PostgreSQL full-text search + pgvector.",
     asset: "/images/architecture/stage-evidence.svg",
   },
   {

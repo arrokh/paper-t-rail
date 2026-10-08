@@ -73,15 +73,7 @@ import org.mockito.Mockito
 import java.time.Instant
 import java.util.UUID
 
-@SpringBootTest(properties = [
-    "paper-trail.role=api",
-    "paper-trail.operator.credential=operator-test-credential",
-    "paper-trail.providers.ollama.enabled=true",
-    "paper-trail.providers.ollama.base-url=http://ollama:11434",
-    "paper-trail.providers.ollama.model=embeddinggemma-2:270m",
-    "paper-trail.providers.ollama.dimension=768",
-    "paper-trail.providers.ollama.trusted-hosts=ollama",
-])
+@SpringBootTest(properties = ["paper-trail.role=api", "paper-trail.operator.credential=operator-test-credential"])
 @AutoConfigureMockMvc
 @ExtendWith(OutputCaptureExtension::class)
 class OpenApiDocumentationTest {
@@ -249,7 +241,6 @@ class OpenApiDocumentationTest {
         val providerListing = paths.path("/api/v1/providers").path("get")
         assertTrue(providerListing.path("responses").path("200").path("content").has("application/json"))
         assertTrue(providerListing.path("description").asText().contains("opaque fingerprint"))
-        assertTrue(providerListing.path("description").asText().contains("Historical-only registrations"))
         val providerDirectorySchema = providerListing.path("responses").path("200").path("content")
             .path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val directoryProperties = document.path("components").path("schemas").path(providerDirectorySchema).path("properties")
@@ -405,8 +396,8 @@ class OpenApiDocumentationTest {
         assertEquals("openai-compatible-chat", configProperties.path("claimExtractorProvider").path("default").asText())
         assertTrue(configProperties.path("claimExtractorProvider").path("description").asText().contains("deployment-configured default"))
         assertTrue(configProperties.has("embeddingProvider"))
-        assertEquals("ollama-embeddinggemma-2", configProperties.path("embeddingProvider").path("default").asText())
-        assertTrue(configProperties.path("embeddingProvider").path("description").asText().contains("Ollama EmbeddingGemma 2"))
+        assertEquals("ollama", configProperties.path("embeddingProvider").path("default").asText())
+        assertTrue(configProperties.path("embeddingProvider").path("description").asText().contains("local Ollama"))
         assertTrue(configProperties.has("systemOneProvider"))
         val systemOneDescription = configProperties.path("systemOneProvider").path("description").asText()
         assertTrue(systemOneDescription.contains("Jev by default"))
@@ -654,19 +645,12 @@ class OpenApiDocumentationTest {
         val localClaimAnalyzer = claimExtractorOptions.first { it.path("providerId").asText() == "openai-compatible-chat" }
         assertEquals("google/gemma-4-e2b", localClaimAnalyzer.path("model").asText())
         assertEquals("LOCAL", localClaimAnalyzer.path("trustBoundary").asText())
-        assertEquals(2, embeddingOptions.size())
-        assertEquals(
-            setOf("local", "ollama-embeddinggemma-2"),
-            embeddingOptions.map { it.path("providerId").asText() }.toSet(),
-        )
-        val embeddingGemma = embeddingOptions.first { it.path("providerId").asText() == "ollama-embeddinggemma-2" }
-        assertEquals("embeddinggemma-2:270m", embeddingGemma.path("model").asText())
-        assertFalse(embeddingOptions.any { it.path("model").asText().contains("nomic-embed-text") })
+        assertEquals(1, embeddingOptions.size())
         assertEquals(1, systemOneOptions.size())
         assertEquals(2, scholarlyMetadataOptions.size())
         assertEquals(2, openAccessOptions.size())
         val providerOptions = listOf(claimExtractorOptions, embeddingOptions, systemOneOptions, scholarlyMetadataOptions, openAccessOptions).flatMap { it.toList() }
-        assertEquals(9, providerOptions.size)
+        assertEquals(8, providerOptions.size)
         assertEquals(setOf("recorded-fixtures", "crossref"), scholarlyMetadataOptions.map { it.path("providerId").asText() }.toSet())
         assertEquals(setOf("recorded-fixtures", "unpaywall"), openAccessOptions.map { it.path("providerId").asText() }.toSet())
         val crossref = scholarlyMetadataOptions.first { it.path("providerId").asText() == "crossref" }

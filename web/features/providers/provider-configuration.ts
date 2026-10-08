@@ -13,7 +13,7 @@ export type ProviderSelections = {
 
 export const DEFAULT_PROVIDER_SELECTIONS: ProviderSelections = {
   claimExtractorProvider: "openai-compatible-chat",
-  embeddingProvider: "ollama-embeddinggemma-2",
+  embeddingProvider: "ollama",
   systemOneProvider: "jev",
   scholarlyMetadataProvider: "crossref",
   openAccessProvider: "unpaywall",
@@ -118,7 +118,7 @@ export function availableProviderSelections(
       if (role === "systemOne" && provider.providerId === "laya" && provider.trustBoundary !== "LOCAL") return false;
       const implicitOllamaPreference = role === "embedding"
         && explicitSelections.embedding === undefined
-        && provider.providerId === "ollama-embeddinggemma-2";
+        && provider.providerId === "ollama";
       return !implicitOllamaPreference || provider.trustBoundary === "LOCAL";
     });
     if (role === "claimExtractor") {

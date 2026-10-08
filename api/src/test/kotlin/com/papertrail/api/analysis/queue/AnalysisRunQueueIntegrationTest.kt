@@ -2540,20 +2540,19 @@ class AnalysisRunQueueIntegrationTest {
         val ollamaSettings = OllamaEmbeddingSettings(
             enabled = true,
             baseUrl = "http://ollama:11434",
-            modelId = OllamaEmbeddingSettings.EMBEDDINGGEMMA_MODEL_ID,
+            modelId = "nomic-embed-text",
             dimension = 768,
             trustedHosts = setOf("ollama"),
-            providerId = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID,
         )
         val providerCatalog = ProviderCatalog.safeDefaults(ollamaEmbeddingSettings = ollamaSettings)
         val configuration = configurationFactory(providerCatalog)
-            .from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID))
+            .from(RunConfigurationRequest(embeddingProvider = OllamaEmbeddingSettings.PROVIDER_ID))
             .copy(aggregation = AggregationPolicySnapshot("NOT_RUN", null, null, null))
         val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
         val embeddingCategories = mutableListOf<DataCategory>()
         val ollamaProvider = object : EmbeddingProvider {
-            override val providerId = OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID
-            override val modelId = OllamaEmbeddingSettings.EMBEDDINGGEMMA_MODEL_ID
+            override val providerId = OllamaEmbeddingSettings.PROVIDER_ID
+            override val modelId = "nomic-embed-text"
             override val version = OllamaEmbeddingSettings.VERSION
             override val dimension = 768
 
@@ -2603,8 +2602,8 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("PARSED", report.runStatus)
         assertEquals("NOT_RUN", report.evidenceCoverage.executionStatus)
         assertEquals("COMPLETED", reference.citedPaperAccess?.evidenceIndexing?.status)
-        assertEquals(OllamaEmbeddingSettings.EMBEDDINGGEMMA_PROVIDER_ID, retrievalProfile.embeddingProvider)
-        assertEquals(OllamaEmbeddingSettings.EMBEDDINGGEMMA_MODEL_ID, retrievalProfile.embeddingModel)
+        assertEquals("ollama", retrievalProfile.embeddingProvider)
+        assertEquals("nomic-embed-text", retrievalProfile.embeddingModel)
         assertEquals(768, retrievalProfile.embeddingDimension)
         assertTrue(embeddingCategories.contains(DataCategory.CITED_PAPER_CHUNKS))
         assertTrue(embeddingCategories.contains(DataCategory.ATOMIC_CLAIMS))
@@ -2620,7 +2619,7 @@ class AnalysisRunQueueIntegrationTest {
         )
         assertTrue(
             jdbc.queryForObject(
-                "SELECT count(*) FROM paper_chunk_embeddings WHERE analysis_run_id = ? AND provider_id = 'ollama-embeddinggemma-2' AND model_id = 'embeddinggemma-2:270m' AND dimension = 768",
+                "SELECT count(*) FROM paper_chunk_embeddings WHERE analysis_run_id = ? AND provider_id = 'ollama' AND model_id = 'nomic-embed-text' AND dimension = 768",
                 Long::class.java,
                 created.analysisRunId,
             )!! > 0,

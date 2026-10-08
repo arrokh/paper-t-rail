@@ -44,7 +44,7 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
         configuration: AnalysisConfigurationSnapshot,
     ): ProviderRegistration {
         val registration = try {
-            catalog.requireAvailableForPinnedRun(role, providerId)
+            catalog.requireSelectable(role, providerId)
         } catch (exception: ProviderNotSelectableException) {
             throw ProviderCallRejectedException(exception.message ?: "Provider is not selectable.")
         }

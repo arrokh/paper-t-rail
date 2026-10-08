@@ -24,7 +24,7 @@ const providerDirectory = {
     ],
     embedding: [
       { role: "embedding", providerId: "local", displayName: "Local", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
-      { role: "embedding", providerId: "ollama-embeddinggemma-2", displayName: "Ollama · EmbeddingGemma 2 (270m)", version: "v1", model: "embeddinggemma-2:270m", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
+      { role: "embedding", providerId: "ollama", displayName: "Ollama embeddings (nomic-embed-text:v1.5)", version: "v1", model: "nomic-embed-text:v1.5", trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: null, retentionDisclosureFingerprint: null },
       { role: "embedding", providerId: "hosted-ai", displayName: "Hosted AI", version: "v2", model: "embed-2", trustBoundary: "EXTERNAL", dataCategories: ["atomic_claims", "cited_paper_chunks", "embedding_input"], retentionDisclosure: "Retention and deletion details are unknown; consult the provider's terms.", retentionDisclosureFingerprint: "a".repeat(64) },
     ],
     systemOne: [{ role: "systemOne", providerId: "mock", displayName: "Mock", version: "v1", model: null, trustBoundary: "LOCAL", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosure: null, retentionDisclosureFingerprint: null }],
@@ -342,10 +342,7 @@ describe("interactive workspace remote state", () => {
     renderWorkspace();
     await screen.findByRole("heading", { name: "Choose your services" });
     await waitForProviderDirectory();
-    const embeddingOptions = screen.getByLabelText("Embeddings").querySelectorAll("option");
-    expect([...embeddingOptions].some((option) => option.textContent?.includes("EmbeddingGemma 2"))).toBe(true);
-    expect([...embeddingOptions].some((option) => option.textContent?.includes("nomic-embed-text"))).toBe(false);
-    fireEvent.change(screen.getByLabelText("Embeddings"), { target: { value: "ollama-embeddinggemma-2" } });
+    fireEvent.change(screen.getByLabelText("Embeddings"), { target: { value: "ollama" } });
     await continueToConsentStep();
     expect(screen.getByText("No external providers selected")).toBeTruthy();
     await clickContinue();
@@ -360,7 +357,7 @@ describe("interactive workspace remote state", () => {
     fireEvent.click(screen.getByRole("button", { name: "Upload & start Analysis Run" }));
 
     await waitFor(() => expect(submittedConfiguration).toMatchObject({
-      embeddingProvider: "ollama-embeddinggemma-2",
+      embeddingProvider: "ollama",
       externalProviderConsents: [],
       captureExecution: false,
     }));

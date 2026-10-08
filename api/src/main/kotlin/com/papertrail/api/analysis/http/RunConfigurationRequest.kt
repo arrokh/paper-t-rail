@@ -17,8 +17,8 @@ data class RunConfigurationRequest(
     )
     val claimExtractorProvider: String? = null,
     @field:Schema(
-        description = "Embedding provider. If omitted, select local Ollama EmbeddingGemma 2 when available; otherwise use local feature-hash embeddings. Nomic is retained only for existing Analysis Runs.",
-        defaultValue = "ollama-embeddinggemma-2",
+        description = "Embedding provider. If omitted, select local Ollama when available; otherwise use local feature-hash embeddings.",
+        defaultValue = "ollama",
         requiredMode = Schema.RequiredMode.NOT_REQUIRED,
     )
     val embeddingProvider: String? = null,

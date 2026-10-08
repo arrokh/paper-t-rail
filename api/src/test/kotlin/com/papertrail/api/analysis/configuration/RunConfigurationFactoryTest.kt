@@ -169,42 +169,23 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
-    fun `prefers local EmbeddingGemma 2 for new runs and keeps Nomic only for pinned historical runs`() {
+    fun `prefers local Ollama for an omitted embedding selection and keeps feature-hash fallback`() {
         val localOllama = OllamaEmbeddingSettings(
             enabled = true,
             baseUrl = "http://127.0.0.1:11434",
-            modelId = "embeddinggemma-2:270m",
+            modelId = "nomic-embed-text:v1.5",
             dimension = 768,
             trustedHosts = setOf("127.0.0.1"),
-            providerId = "ollama-embeddinggemma-2",
         )
-        val catalog = ProviderCatalog.safeDefaults(ollamaEmbeddingSettings = localOllama)
-        val localOllamaFactory = factoryFor(providerCatalog = catalog)
+        val localOllamaFactory = factoryFor(
+            providerCatalog = ProviderCatalog.safeDefaults(ollamaEmbeddingSettings = localOllama),
+        )
 
-        val embedding = localOllamaFactory.from(localOllamaFactory.parseRequest(jacksonObjectMapper().readTree("{}"))).embedding
+        val ollama = localOllamaFactory.from(localOllamaFactory.parseRequest(jacksonObjectMapper().readTree("{}"))).embedding
 
-        assertEquals("ollama-embeddinggemma-2", embedding.provider)
-        assertEquals("embeddinggemma-2:270m", embedding.model)
-        assertEquals(768, embedding.embeddingDimension)
-        assertEquals(
-            setOf("local", "ollama-embeddinggemma-2"),
-            catalog.directory().providers.getValue("embedding").map { it.providerId }.toSet(),
-        )
-        assertThrows(ProviderNotSelectableException::class.java) {
-            localOllamaFactory.from(RunConfigurationRequest(embeddingProvider = "ollama"))
-        }
-
-        val oldDefaultConfiguration = ProviderCatalog.safeDefaults(
-            ollamaEmbeddingSettings = localOllama.copy(modelId = OllamaEmbeddingSettings.LEGACY_NOMIC_MODEL_ID),
-        )
-        assertEquals(
-            setOf("local"),
-            oldDefaultConfiguration.directory().providers.getValue("embedding").map { it.providerId }.toSet(),
-        )
-        assertEquals(
-            "local",
-            factoryFor(providerCatalog = oldDefaultConfiguration).from(RunConfigurationRequest()).embedding.provider,
-        )
+        assertEquals("ollama", ollama.provider)
+        assertEquals("nomic-embed-text:v1.5", ollama.model)
+        assertEquals(768, ollama.embeddingDimension)
 
         val externalOllamaFactory = factoryFor(
             providerCatalog = ProviderCatalog.safeDefaults(
