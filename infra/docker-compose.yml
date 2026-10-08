@@ -83,7 +83,7 @@ services:
     networks: [paper-trail]
 
   ollama:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.34.4}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.40.1}
     restart: unless-stopped
     expose:
       - "11434"
@@ -98,7 +98,7 @@ services:
     networks: [paper-trail]
 
   ollama-model-init:
-    image: ${OLLAMA_IMAGE:-ollama/ollama:0.34.4}
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.40.1}
     entrypoint: ["/bin/sh", "-ec"]
     command:
       - |
