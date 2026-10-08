@@ -82,9 +82,9 @@ export function ReferenceResolutionEntryCard({
                 <dd className="m-0 break-words text-sm text-foreground">{entry.reasonCode.replaceAll("_", " ").toLowerCase()}</dd>
               </div>
             )}
-            {entry.confidenceScore !== null && (
+            {entry.confidenceScore !== null && entry.matchMethod !== "CONFIRMED_DOI" && (
               <div className="space-y-1">
-                <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Match confidence</dt>
+                <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Similarity score (uncalibrated)</dt>
                 <dd className="m-0 font-mono text-sm text-foreground">{entry.confidenceScore.toFixed(3)}</dd>
               </div>
             )}
@@ -112,6 +112,44 @@ export function ReferenceResolutionEntryCard({
             </a>
           )}
         </div>
+
+        {(entry.candidateEvidence?.length ?? 0) > 0 && (
+          <section
+            className="space-y-3 border-t border-border p-4"
+            aria-label={`${entry.status === "RESOLVED" ? "Candidate comparison evidence" : "Unconfirmed candidate evidence"} for ${displayKey}`}
+          >
+            <div>
+              <h5 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Candidate evidence</h5>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {entry.status === "RESOLVED"
+                  ? "The run-pinned matching policy selected the shown identity from provider metadata. Scores are rankings, not probabilities."
+                  : "Provider results are candidates, not confirmed identities. Scores are rankings, not probabilities."}
+              </p>
+            </div>
+            <ol className="space-y-2">
+              {entry.candidateEvidence?.map((candidate, index) => (
+                <li key={candidate.doi ?? `${candidate.title}-${index}`} className="space-y-2 rounded-lg border border-border bg-muted/10 p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <h6 className="break-words font-medium text-foreground">{candidate.title}</h6>
+                    {candidate.rankingScore !== null && candidate.rankingScore !== undefined && (
+                      <span className="font-mono text-xs text-muted-foreground">Ranking score {candidate.rankingScore.toFixed(3)}</span>
+                    )}
+                  </div>
+                  <p className="break-words text-sm text-muted-foreground">
+                    {[candidate.authors.join(", "), candidate.year?.toString(), candidate.doi ? `DOI ${candidate.doi}` : null].filter(Boolean).join(" · ") || "Metadata not recorded"}
+                  </p>
+                  <ul className="flex flex-wrap gap-2" aria-label="Candidate comparison reasons">
+                    {candidate.reasonCodes.map((reason) => (
+                      <li key={reason} className="rounded border border-border px-2 py-1 font-mono text-[0.65rem] text-muted-foreground">
+                        {reason.replaceAll("_", " ").toLowerCase()}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
 
         <section className="space-y-2 border-t border-border p-4" aria-label={`Original bibliography entry ${displayKey}`}>
           <h5 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Original bibliography entry</h5>
@@ -163,7 +201,7 @@ export function ReferenceResolutionEntryCard({
               {entry.canonicalPaper.year && <span>{entry.canonicalPaper.year}</span>}
               {entry.canonicalPaper.doi && (
                 <a
-                  className="break-all text-primary underline underline-offset-4 hover:text-primary/80"
+                  className="break-all text-success-foreground underline underline-offset-4 hover:text-success-foreground/80"
                   href={`https://doi.org/${entry.canonicalPaper.doi.split("/").map(encodeURIComponent).join("/")}`}
                   target="_blank"
                   rel="noreferrer"

@@ -46,6 +46,7 @@ class ReferenceResolutionService(
             matcher = ScholarlyMetadataMatcher(
                 threshold = threshold,
                 ambiguityMargin = ScholarlyMetadataMatcher.AMBIGUITY_MARGIN,
+                policyVersion = configuration.scorePolicyVersion ?: ScholarlyMetadataMatcher.LEGACY_POLICY_VERSION,
             ),
         )
         sourceDocumentRepository.requireActiveAnalysisRun(analysisRunId)

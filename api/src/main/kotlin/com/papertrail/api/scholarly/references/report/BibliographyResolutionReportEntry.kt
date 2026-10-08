@@ -4,6 +4,7 @@ import com.papertrail.api.citation.parsing.ParsedBibliographyIdentifier
 import com.papertrail.api.citation.parsing.ParsedBibliographySourceLocation
 import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
+import com.papertrail.api.scholarly.references.resolver.ScholarlyCandidateEvidence
 import io.swagger.v3.oas.annotations.media.Schema
 
 data class BibliographyResolutionReportEntry(
@@ -20,6 +21,8 @@ data class BibliographyResolutionReportEntry(
     val canonicalPaper: ReportCanonicalPaper?,
     val confidenceScore: Double?,
     val matchMethod: String?,
+    @field:Schema(description = "Up to three provider-candidate comparisons with component reasons; consult status and matchMethod for the identity decision. Scores are rankings, not probabilities.")
+    val candidateEvidence: List<ScholarlyCandidateEvidence> = emptyList(),
     @field:Schema(
         description = "Persisted access-stage state for this Bibliography Entry; null when legacy history has no saved stage item.",
         allowableValues = ["WAITING", "IN_PROGRESS", "COMPLETED", "SKIPPED", "FAILED"],

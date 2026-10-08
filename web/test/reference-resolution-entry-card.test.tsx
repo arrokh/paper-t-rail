@@ -24,7 +24,7 @@ const entry: Entry = {
     year: 2024,
   },
   confidenceScore: 1,
-  matchMethod: "DOI",
+  matchMethod: "CONFIRMED_DOI",
   accessProgressStatus: null,
   accessProgressReason: null,
   sourceTextContent: null,
@@ -65,11 +65,81 @@ describe("Reference Resolution Entry Card", () => {
     expect(screen.getByText(entry.rawText)).toBeTruthy();
     expect(screen.getByText("Canonical Example Study")).toBeTruthy();
     expect(screen.getByText("Canonical ID canonical-paper-1234")).toBeTruthy();
+    expect(screen.queryByText("1.000")).toBeNull();
     const parsedEntryLink = screen.getByRole("link", { name: "View parsed entry" });
     expect(parsedEntryLink.getAttribute("href")).toEqual("#bibliography-ref1");
 
     fireEvent.click(parsedEntryLink);
     expect(onViewParsedEntry).toHaveBeenCalledWith(expect.anything(), "ref1");
+  });
+
+  it("shows bounded candidates as unconfirmed evidence with uncalibrated ranking scores", () => {
+    const candidateEntry = {
+      ...entry,
+      status: "UNRESOLVED",
+      reasonCode: "TITLE_CONFLICT",
+      canonicalPaper: null,
+      candidateEvidence: [{
+        doi: "10.1234/unrelated",
+        title: "A different study",
+        authors: ["Riley Example"],
+        year: 2024,
+        rankingScore: 0.812,
+        reasonCodes: ["TITLE_CONFLICT", "AUTHOR_SET_MATCH", "YEAR_MATCH"],
+      }],
+    } satisfies Entry;
+
+    render(
+      <ol>
+        <ReferenceResolutionEntryCard
+          analysisRunId="run-123"
+          entry={candidateEntry}
+          references={[candidateEntry]}
+          anchorId="resolution-ref1"
+          parsedEntryHref="#bibliography-ref1"
+          parsedEntryAvailable={false}
+          onViewParsedEntry={vi.fn()}
+        />
+      </ol>,
+    );
+
+    const evidenceRegion = screen.getByRole("region", { name: "Unconfirmed candidate evidence for ref1" });
+    expect(evidenceRegion.textContent).toContain("A different study");
+    expect(evidenceRegion.textContent).toContain("Ranking score 0.812");
+    expect(evidenceRegion.textContent).toContain("Provider results are candidates, not confirmed identities");
+    expect(evidenceRegion.textContent).toContain("title conflict");
+  });
+
+  it("labels candidate comparisons as part of a resolved identity decision", () => {
+    const resolvedEntry = {
+      ...entry,
+      candidateEvidence: [{
+        doi: "10.1234/example",
+        title: "Example study",
+        authors: ["Riley Example"],
+        year: 2024,
+        rankingScore: null,
+        reasonCodes: ["TITLE_EXACT", "AUTHOR_SET_MATCH", "YEAR_MATCH", "DOI_CONFIRMED"],
+      }],
+    } satisfies Entry;
+
+    render(
+      <ol>
+        <ReferenceResolutionEntryCard
+          analysisRunId="run-123"
+          entry={resolvedEntry}
+          references={[resolvedEntry]}
+          anchorId="resolution-ref1"
+          parsedEntryHref="#bibliography-ref1"
+          parsedEntryAvailable={false}
+          onViewParsedEntry={vi.fn()}
+        />
+      </ol>,
+    );
+
+    const evidenceRegion = screen.getByRole("region", { name: "Candidate comparison evidence for ref1" });
+    expect(evidenceRegion.textContent).toContain("matching policy selected the shown identity");
+    expect(evidenceRegion.textContent).not.toContain("candidates, not confirmed identities");
   });
 
   it("displays generated bibliography keys one-based without changing parsed-entry callbacks", () => {

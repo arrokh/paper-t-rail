@@ -41,6 +41,7 @@ import com.papertrail.api.infrastructure.cache.RedisProviderCacheStore
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_REQUESTED
+import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
 import com.papertrail.api.scholarly.acquisition.events.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
 import com.papertrail.api.scholarly.acquisition.events.CitedPaperAcquisitionRequestedPayload
@@ -1364,7 +1365,7 @@ class AnalysisRunQueueIntegrationTest {
             ),
         )
         assertEquals(
-            "title-author-year-weighted-edit-similarity-v1",
+            ScholarlyMetadataMatcher.POLICY_VERSION,
             jdbc.queryForObject(
                 "SELECT configuration_snapshot #>> '{referenceResolution,scorePolicyVersion}' FROM analysis_runs WHERE id = ?",
                 String::class.java,
@@ -3667,7 +3668,7 @@ class AnalysisRunQueueIntegrationTest {
         }
         val report = analysisRunReportService().report(created.analysisRunId)!!
         assertEquals("COMPLETED", report.referenceResolution.executionStatus)
-        assertEquals("title-author-year-weighted-edit-similarity-v1", report.referenceResolution.scorePolicyVersion)
+        assertEquals(ScholarlyMetadataMatcher.POLICY_VERSION, report.referenceResolution.scorePolicyVersion)
         assertEquals(0.25, report.referenceResolution.confidenceThreshold)
         assertEquals(4, report.referenceResolution.summary.total)
         assertEquals(1, report.referenceResolution.summary.resolved)
@@ -3677,7 +3678,11 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("CONFIRMED_DOI", report.referenceResolution.entries[0].matchMethod)
         assertEquals("UNSUPPORTED_REFERENCE_TYPE", report.referenceResolution.entries[1].reasonCode)
         assertEquals("UNRESOLVED", report.referenceResolution.entries[3].status)
-        assertEquals("BELOW_CONFIDENCE_THRESHOLD", report.referenceResolution.entries[3].reasonCode)
+        assertEquals("TITLE_CONFLICT", report.referenceResolution.entries[3].reasonCode)
+        assertEquals(
+            listOf("TITLE_CONFLICT", "AUTHOR_CONFLICT", "YEAR_CONFLICT"),
+            report.referenceResolution.entries[3].candidateEvidence.single().reasonCodes,
+        )
         assertNull(report.referenceResolution.entries[3].canonicalPaper)
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND canonical_paper_id IS NOT NULL", Int::class.java, created.analysisRunId))
         assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ?", Int::class.java, created.analysisRunId))
@@ -5059,6 +5064,14 @@ class AnalysisRunQueueIntegrationTest {
             val bibliographyProvenanceMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("bibliography_entry_provenance.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(bibliographyProvenanceMigrationVerification)) }
+            }
+            val candidateEvidenceMigration = migrationDirectory.resolve("reference_resolution_candidate_evidence.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(candidateEvidenceMigration)) }
+            }
+            val candidateEvidenceMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("reference_resolution_candidate_evidence.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(candidateEvidenceMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

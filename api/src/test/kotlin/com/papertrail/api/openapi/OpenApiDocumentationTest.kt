@@ -18,6 +18,7 @@ import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
+import com.papertrail.api.scholarly.references.resolver.ScholarlyCandidateEvidence
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
 import com.papertrail.api.external.unpaywall.UnpaywallDiscoveryCache
 import com.papertrail.api.external.unpaywall.http.UnpaywallCacheInvalidationRequest
@@ -457,6 +458,12 @@ class OpenApiDocumentationTest {
         assertTrue(reportEntryProperties.path("provisionalArtifactSignals").path("description").asText().contains("not adjudicated"))
         assertTrue(reportEntryProperties.has("sourceLocalReferenceKey"))
         assertTrue(reportEntryProperties.has("identifiers"))
+        val candidateEvidence = reportEntryProperties.path("candidateEvidence")
+        assertTrue(candidateEvidence.path("description").asText().contains("Up to three"))
+        val candidateSchemaName = candidateEvidence.path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val candidateProperties = document.path("components").path("schemas").path(candidateSchemaName).path("properties")
+        assertTrue(candidateProperties.path("rankingScore").path("description").asText().contains("not a probability"))
+        assertTrue(candidateProperties.has("reasonCodes"))
         assertTrue(report.path("description").asText().contains("never rolled up"))
         assertTrue(report.path("description").asText().contains("access-stage skip reasons"))
         val accessProgressStatusSchema = document.findValue("accessProgressStatus")
@@ -1040,6 +1047,16 @@ class OpenApiDocumentationTest {
                             ),
                             confidenceScore = 1.0,
                             matchMethod = "DOI",
+                            candidateEvidence = listOf(
+                                ScholarlyCandidateEvidence(
+                                    doi = "10.1234/example",
+                                    title = "Example paper",
+                                    authors = listOf("Riley Example"),
+                                    year = 2024,
+                                    rankingScore = 1.0,
+                                    reasonCodes = listOf("TITLE_EXACT", "AUTHOR_SET_MATCH", "YEAR_MATCH", "DOI_CONFIRMED"),
+                                ),
+                            ),
                             sourceTextContent = "Original GROBID source text",
                             sourceElement = "biblStruct",
                             sourceLocalReferenceKey = "ref1",
@@ -1087,6 +1104,9 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.summary.failed").value(0))
             .andExpect(jsonPath("$.referenceResolution.summary.provisionalArtifactSignalEntries").value(1))
             .andExpect(jsonPath("$.referenceResolution.bibliographyNormalizationPolicy.version").value("2"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].title").value("Example paper"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].rankingScore").value(1.0))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].reasonCodes[0]").value("TITLE_EXACT"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].sourceTextContent").value("Original GROBID source text"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].sourceLocalReferenceKey").value("ref1"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].identifiers[0].rawValue").value("https://doi.org/10.1234/example"))

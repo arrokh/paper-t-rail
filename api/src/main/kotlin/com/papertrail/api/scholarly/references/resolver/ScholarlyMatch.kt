@@ -6,4 +6,5 @@ data class ScholarlyMatch(
     val candidate: ScholarlyWork?,
     val score: Double?,
     val reasonCode: String,
+    val candidateEvidence: List<ScholarlyCandidateEvidence> = emptyList(),
 )
