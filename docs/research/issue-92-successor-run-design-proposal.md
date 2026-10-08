@@ -1,10 +1,10 @@
 # Issue #92: Successor Analysis Run design proposal
 
-**Status: proposal for human review — not approved, and not an implementation authorization.**
+**Status: The materialized-run-local architecture was approved by the maintainer in the #92 comment accompanying PR #108. This approves the design choices below, not implementation readiness. Native dependencies #89/#91 remain open, and the policy for reusing historical provider outputs when successor consent differs is unresolved.**
 
-## Decision requested
+## Approved design decision
 
-For the first supplied-PDF reassessment increment, approve or reject this recommended shape:
+For the first supplied-PDF reassessment increment, the maintainer approved this shape:
 
 1. Materialize compatible results into fresh rows owned by the successor Analysis Run. Keep all result-graph foreign keys within that run.
 2. Reuse immutable object bytes by their exact hash and existing object key where policy permits; do not copy the PDF merely to make a new run. Keep the object until no run references it.
@@ -114,9 +114,9 @@ The current access table cannot yet represent a supplied PDF without fake automa
 - expected-pair accounting, partial success, terminal retry as a new successor, aggregate recomputation, and Human Reviews remaining on the predecessor;
 - report/API navigation that distinguishes recomputed, reused, and incomplete results without exposing sensitive content in logs.
 
-## Human decision needed before implementation
+## Remaining policy decision and implementation gates
 
-Please approve or change the recommended materialized-run-local model, including these linked choices:
+The maintainer approved the following materialized-run-local choices in the #92 issue comment:
 
 1. Fresh successor-owned rows for all reused outputs; no direct cross-run result pointers.
 2. Immutable object bytes may be shared by exact hash/key when rights and reference-aware deletion allow; relational rows and embeddings are copied.
@@ -124,4 +124,4 @@ Please approve or change the recommended materialized-run-local model, including
 4. Stage-specific compatibility fingerprints govern reuse; global config changes invalidate dependent outputs and are disclosed before submission.
 5. Human Reviews never transfer to successor assessments.
 
-Provider selection, numerical budgets, and #86 evaluation targets are not decided here. This proposal does not bypass those separate gates or authorize implementation before the #89/#91 dependencies and required evidence/design approvals are met.
+Whether prior provider outputs may be reused when successor consent differs remains an explicit, unresolved policy decision; do not implement that reuse path until it is settled. Provider selection, numerical budgets, and #86 evaluation targets are separate decisions. S7 implementation remains gated by open native dependencies #89/#91 and the required evidence and policy decisions.
