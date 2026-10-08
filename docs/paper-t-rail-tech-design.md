@@ -2827,6 +2827,19 @@ Returns JSON with short-lived, read-only S3-compatible presigned URLs for viewin
 
 Configure `S3_PUBLIC_ENDPOINT` to an address the user's browser can reach for signed PDF URLs. The API and worker continue to use the private `S3_ENDPOINT` for storage operations; in the local Compose setup, the public endpoint follows `S3_ENDPOINT` when overridden or `S3_HOST_PORT` otherwise (9000 by default). Configure `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, and `S3_PATH_STYLE_ACCESS` for the chosen service. Compose provisions the local bucket at startup; an external bucket must exist before the app starts, so API credentials do not need bucket-list or bucket-create permission. The API currently uses static access/secret credentials; other provider-specific identity modes are outside this adapter's configuration. The provider must support SigV4 presigned GETs, user metadata, stat/head, deletion, and signed response-header overrides. Compose selects the local server image behind its generic `object-storage` service. Any pre-migration object-storage volume is left untouched and is neither declared nor mounted by the new Compose service because its on-disk format is incompatible; existing objects require an explicit S3-level migration and are not copied automatically.
 
+### Recovery PDF staging
+
+```http
+GET    /api/v1/recovery-rights-declaration
+GET    /api/v1/analysis-runs/{id}/recovery-batches
+POST   /api/v1/analysis-runs/{id}/recovery-batches
+POST   /api/v1/recovery-batches/{batchId}/entries/{localReferenceKey}/uploads
+POST   /api/v1/recovery-batches/{batchId}/uploads/{uploadId}/finalize
+DELETE /api/v1/recovery-batches/{batchId}/uploads/{uploadId}
+```
+
+Recovery uploads are temporary user-supplied candidates attached to Bibliography Entries of a non-deleted predecessor Analysis Run. The first response supplies the exact versioned rights text, a per-file cap inherited from `paper-trail.upload.max-bytes`, and configured batch caps. Batch creation records an explicit user acceptance; it is not a license grant or consent for external processing. Intent creation signs a short-lived direct browser `PUT` for the exact content length, `application/pdf`, and declared SHA-256. Configure `S3_PUBLIC_ENDPOINT` for browser reachability and `S3_BROWSER_UPLOAD_ALLOWED_ORIGINS` as comma-separated exact HTTP(S) origins. The app owns and replaces the bucket CORS rules with a narrow PUT-only policy for those origins and the content-type/checksum headers, so runtime credentials require bucket-CORS write permission. Finalization reads and verifies actual bytes and PDF structure locally, then writes a stable server-owned snapshot; it never trusts ETag or starts provider assessment. Intents and finalization are idempotent; the returned idempotency key lets the UI resume after refresh without persisting a bearer URL. Batch expiry is seven days after the last successful user mutation; reads and polling do not extend it. Cleanup runs hourly after signed-URL expiry plus a one-hour transfer grace, with durable hourly retry tombstones for seven days. Because a signed URL cannot revoke a PUT already in flight, cleanup is bounded rather than an unbounded guarantee. These rules are detailed in [ADR 0017](./adr/0017-bounded-user-supplied-recovery-pdfs.md).
+
 ### Parsed document structure
 
 ```http

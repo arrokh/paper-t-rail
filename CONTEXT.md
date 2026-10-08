@@ -79,6 +79,14 @@ _Avoid_: claim verification when the specific cited work is material.
 One analysis of a Source Document under a defined analysis configuration. Results are immutable during normal use; explicit user deletion is the privacy exception. Re-analysis creates a new run rather than replacing prior results.
 _Avoid_: analysis when referring to a specific execution.
 
+**Recovery Batch**:
+A temporary, rights-declared collection of user-supplied PDF uploads attached to one non-deleted predecessor Analysis Run. It does not change that run or establish reference identity, language eligibility, legal permission, or evidence support; abandoned staging expires under [ADR 0017](docs/adr/0017-bounded-user-supplied-recovery-pdfs.md).
+_Avoid_: Analysis Run when referring to the temporary recovery workflow.
+
+**Recovery Upload**:
+One upload intent in a Recovery Batch, linked to a Bibliography Entry. Its finalized snapshot is a user-supplied candidate for later review, not a Cited Paper Asset until separately accepted; upload completion alone is not evidence assessment.
+_Avoid_: Cited Paper Asset when referring to an unaccepted recovery upload.
+
 **Execution Span**:
 One timed operation or attempt within an Analysis Run, showing what processing occurred and its execution status. It is distinct from an Evidence Passage Span and does not establish whether evidence supports a claim.
 

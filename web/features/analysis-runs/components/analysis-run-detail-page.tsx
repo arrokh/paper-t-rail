@@ -13,6 +13,7 @@ import { AnalysisRunPaperReview } from "@/features/analysis-runs/components/anal
 import { AnalysisRunDetailLoadingState } from "@/features/analysis-runs/components/analysis-run-loading";
 import { AnalysisRunStageResults } from "@/features/analysis-runs/components/analysis-run-stage-results";
 import { AnalysisRunExecution } from "@/features/analysis-runs/components/analysis-run-execution";
+import { RecoveryUploadWorkspace } from "@/features/recovery-uploads/components/recovery-upload-workspace";
 import { BackToTopFab } from "@/features/workspace/components/back-to-top-fab";
 import { WorkspaceBreadcrumb } from "@/features/workspace/components/workspace-breadcrumb";
 import { useWorkspaceShellState } from "@/features/workspace/components/workspace-shell-state";
@@ -134,7 +135,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const stageParam = searchParams.get("step");
   const selectedStage = normalizePipelineStageId(stageParam);
   const routeViewParam = searchParams.get("view");
-  const routeSelectedView = routeViewParam === "review" ? "review" : routeViewParam === "execution" ? "execution" : "pipeline";
+  const routeSelectedView = routeViewParam === "review" ? "review" : routeViewParam === "execution" ? "execution" : routeViewParam === "recovery" ? "recovery" : "pipeline";
   const [selectedView, setSelectedView] = useState(routeSelectedView);
   const urlSelectedSpanId = searchParams.get("span");
   const [selectedExecutionSpanId, setSelectedExecutionSpanId] = useState(urlSelectedSpanId);
@@ -231,11 +232,15 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
     if (previousSelectedView.current === selectedView) return;
     previousSelectedView.current = selectedView;
 
-    const cardId = selectedView === "review" ? "paper-review-card" : selectedView === "execution" ? "execution-trace" : "analysis-pipeline-card";
+    const cardId = selectedView === "review" ? "paper-review-card" : selectedView === "execution" ? "execution-trace" : selectedView === "recovery" ? "recovery-staging" : "analysis-pipeline-card";
     const panel = document.getElementById(cardId)?.closest<HTMLElement>(".analysis-run-view-panel");
     const scrollToSelectedView = () => {
       if (selectedView === "review") scrollToPaperReviewCard();
       else if (selectedView === "execution") document.getElementById("execution-trace")?.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
+      else if (selectedView === "recovery") document.getElementById("recovery-staging")?.scrollIntoView({
         block: "start",
         behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
       });
@@ -371,7 +376,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
         value={selectedView}
         onValueChange={(value) => {
           if (typeof value !== "string") return;
-          const nextView = value === "review" ? "review" : value === "execution" ? "execution" : "pipeline";
+          const nextView = value === "review" ? "review" : value === "execution" ? "execution" : value === "recovery" ? "recovery" : "pipeline";
           if (value === "review") setHasOpenedPaperReview(true);
           setSelectedView(nextView);
           updateQueryParameters({ view: nextView === "pipeline" ? null : nextView });
@@ -392,6 +397,9 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}
           >
             Paper Review
+          </TabsTrigger>
+          <TabsTrigger value="recovery" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
+            Recovery PDFs
           </TabsTrigger>
           <TabsTrigger value="execution" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
             Execution Trace
@@ -431,6 +439,15 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
               </Card>
             </section>
           )}
+        </TabsContent>
+        <TabsContent value="recovery" className="analysis-run-view-panel">
+          <RecoveryUploadWorkspace
+            analysisRunId={analysisRunId}
+            entries={parsedDocument?.bibliographyEntries ?? null}
+            entriesLoading={parsedReady && parsedQuery.isPending}
+            entriesError={parsedError}
+            enabled={parsedReady}
+          />
         </TabsContent>
         <TabsContent value="execution" className="analysis-run-view-panel">
           <div id="execution-trace">

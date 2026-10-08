@@ -36,6 +36,36 @@ test("DELETE is proxied only for a Source Document UUID, not other API operation
   assert.equal(new URL(upstreamRequest.url).pathname, `/api/v1/documents/${documentId}`);
 });
 
+test("recovery upload DELETE is proxied only for a batch-scoped UUID path", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const upstreamRequests = [];
+  globalThis.fetch = async (url, options) => {
+    upstreamRequests.push({ url, options });
+    return new Response("{}", { status: 200 });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; });
+
+  const batchId = "e25a0c19-f13b-4d81-9d55-9755b770ca6e";
+  const uploadId = "91a9870f-14fb-4717-a967-ef8e10e925e5";
+  const validPath = ["recovery-batches", batchId, "uploads", uploadId];
+  const invalidPath = ["recovery-batches", "not-a-uuid", "uploads", uploadId];
+  const request = (path) => ({
+    method: "DELETE",
+    headers: new Headers(),
+    nextUrl: new URL(`http://localhost/api/v1/${path.join("/")}`),
+    arrayBuffer: async () => new ArrayBuffer(0),
+  });
+
+  const invalidResponse = await DELETE(request(invalidPath), { params: Promise.resolve({ path: invalidPath }) });
+  assert.equal(invalidResponse.status, 404);
+  assert.equal(upstreamRequests.length, 0);
+
+  const response = await DELETE(request(validPath), { params: Promise.resolve({ path: validPath }) });
+  assert.equal(response.status, 200);
+  assert.equal(new URL(upstreamRequests[0].url).pathname, `/api/v1/${validPath.join("/")}`);
+  assert.equal(upstreamRequests[0].options.method, "DELETE");
+});
+
 test("execution artifact DELETE and capture-stop PATCH are proxied only for valid Analysis Run paths", async (context) => {
   const originalFetch = globalThis.fetch;
   const originalInfo = console.info;

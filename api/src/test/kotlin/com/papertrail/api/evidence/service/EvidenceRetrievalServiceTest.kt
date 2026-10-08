@@ -7,6 +7,7 @@ import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
+import com.papertrail.api.infrastructure.storage.PresignedObjectUpload
 import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
 import com.papertrail.api.infrastructure.storage.SourceObjectMetadata
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
@@ -76,6 +77,9 @@ class EvidenceRetrievalServiceTest {
             override fun get(objectKey: String): ByteArray = bytes
             override fun stat(objectKey: String) = SourceObjectMetadata(bytes.size.toLong(), null)
             override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int) = "http://s3.test/$objectKey"
+            override fun presignPutPdf(objectKey: String, expectedSize: Long, expectedSha256: String, expirySeconds: Int) =
+                PresignedObjectUpload("http://s3.test/$objectKey", "application/pdf", expectedSha256)
+            override fun configureBrowserUploadCors(allowedOrigins: Collection<String>) = Unit
             override fun delete(objectKey: String) = Unit
         }
         var observedParserSelection: ProviderSelection? = null

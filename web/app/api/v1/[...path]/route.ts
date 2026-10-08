@@ -81,7 +81,12 @@ export async function DELETE(request: NextRequest, context: RouteContext): Promi
     && path[2] === "execution"
     && path[3] === "artifacts"
     && uuidPattern.test(path[4]);
-  if (!isDocumentDeletion && !isExecutionArtifactRemoval) return new Response(null, { status: 404 });
+  const isRecoveryUploadRemoval = path.length === 4
+    && path[0] === "recovery-batches"
+    && uuidPattern.test(path[1])
+    && path[2] === "uploads"
+    && uuidPattern.test(path[3]);
+  if (!isDocumentDeletion && !isExecutionArtifactRemoval && !isRecoveryUploadRemoval) return new Response(null, { status: 404 });
   return proxy(request, context);
 }
 

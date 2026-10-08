@@ -18,6 +18,7 @@ import {
   PROVIDER_DIRECTORY_QUERY_KEY,
   providerDirectoryQueryOptions,
 } from "../features/providers/provider-directory-query.ts";
+import { recoveryBatchQueryKey } from "../features/recovery-uploads/queries/recovery-upload-queries.ts";
 
 function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -155,11 +156,13 @@ test("document deletion clears cached execution artifacts for its runs", async (
   const originalFetch = globalThis.fetch;
   const runPageKey = [...RECENT_ANALYSIS_RUNS_QUERY_KEY, null, "", ""];
   const artifactKey = executionArtifactQueryKey("deleted-run", "artifact-1", "span-1", "RESPONSE");
+  const recoveryBatchKey = recoveryBatchQueryKey("deleted-run");
   client.setQueryData(runPageKey, {
     items: [{ id: "deleted-run", documentId: "deleted-document" }],
     nextCursor: null,
   });
   client.setQueryData(artifactKey, { content: "sanitized artifact body" });
+  client.setQueryData(recoveryBatchKey, { id: "recovery-batch" });
   globalThis.fetch = async (url, options = {}) => {
     assert.equal(url, "/api/v1/documents/deleted-document");
     assert.equal(options.method, "DELETE");
@@ -174,6 +177,7 @@ test("document deletion clears cached execution artifacts for its runs", async (
   await mutation.execute("deleted-document");
 
   assert.equal(client.getQueryData(artifactKey), undefined);
+  assert.equal(client.getQueryData(recoveryBatchKey), undefined);
   assert.deepEqual(client.getQueryData(runPageKey).items, []);
 });
 

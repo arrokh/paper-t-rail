@@ -41,6 +41,10 @@ import com.papertrail.api.analysis.execution.http.ExecutionArtifactResponse
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
 import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.document.service.SourceDocumentDeletionService
+import com.papertrail.api.analysis.recovery.domain.RecoveryRightsDeclaration
+import com.papertrail.api.analysis.recovery.service.RecoveryStagingService
+import com.papertrail.api.analysis.recovery.service.RecoveryStagingSettings
+import com.papertrail.api.analysis.recovery.service.RecoveryUploadLimits
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -80,8 +84,14 @@ class OpenApiDocumentationTest {
     @Value("\${paper-trail.analysis.system-one-aggregation.enabled}")
     private var systemOneAggregationEnabled: Boolean = false
 
+    @Value("\${paper-trail.upload.max-bytes}")
+    private var analysisRunMaxUploadBytes: Long = 0
+
     @Autowired
     private lateinit var mockMvc: MockMvc
+
+    @Autowired
+    private lateinit var recoveryStagingSettings: RecoveryStagingSettings
 
     @Autowired
     private lateinit var objectMapper: ObjectMapper
@@ -97,6 +107,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var sourceDocumentDeletionService: SourceDocumentDeletionService
+
+    @MockitoBean
+    private lateinit var recoveryStagingService: RecoveryStagingService
 
     @MockitoBean
     private lateinit var configurationFactory: RunConfigurationFactory
@@ -226,6 +239,33 @@ class OpenApiDocumentationTest {
     }
 
     @Test
+    fun `recovery per-file limit inherits the Analysis Run PDF upload limit`() {
+        assertEquals(analysisRunMaxUploadBytes, recoveryStagingSettings.maxFileBytes)
+        assertEquals(10, recoveryStagingSettings.maxFilesPerBatch)
+        assertEquals(262_144_000, recoveryStagingSettings.maxBatchBytes)
+        assertEquals(300, recoveryStagingSettings.uploadUrlTtlSeconds)
+    }
+
+    @Test
+    fun `rights declaration endpoint returns exact text and configured upload limits without caching`() {
+        Mockito.`when`(recoveryStagingService.currentRightsDeclaration()).thenReturn(RecoveryRightsDeclaration.CURRENT)
+        Mockito.`when`(recoveryStagingService.currentLimits()).thenReturn(
+            RecoveryUploadLimits(50_000_000, 10, 250_000_000, 300, 604_800),
+        )
+
+        mockMvc.perform(get("/api/v1/recovery-rights-declaration"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.version").value("recovery-rights-v1"))
+            .andExpect(jsonPath("$.text").value(RecoveryRightsDeclaration.CURRENT.text))
+            .andExpect(jsonPath("$.maxFileBytes").value(50_000_000))
+            .andExpect(jsonPath("$.maxFilesPerBatch").value(10))
+            .andExpect(jsonPath("$.maxBatchBytes").value(250_000_000))
+            .andExpect(jsonPath("$.uploadUrlTtlSeconds").value(300))
+            .andExpect(jsonPath("$.inactivityTtlSeconds").value(604_800))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+    }
+
+    @Test
     fun `OpenAPI contract describes the existing analysis run endpoints and PDF upload`() {
         val response = mockMvc.perform(get("/v3/api-docs"))
             .andExpect(status().isOk)
@@ -277,6 +317,46 @@ class OpenApiDocumentationTest {
         assertTrue(uploadProperties.path("configuration").path("description").asText().contains("trusted local workspace"))
         assertEquals("string", uploadProperties.path("file").path("type").asText())
         assertEquals("binary", uploadProperties.path("file").path("format").asText())
+
+        val rightsDeclaration = paths.path("/api/v1/recovery-rights-declaration").path("get")
+        assertTrue(rightsDeclaration.path("responses").has("200"))
+        val rightsSchemaName = rightsDeclaration.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val rightsProperties = document.path("components").path("schemas").path(rightsSchemaName).path("properties")
+        listOf("version", "text", "maxFileBytes", "maxFilesPerBatch", "maxBatchBytes", "uploadUrlTtlSeconds", "inactivityTtlSeconds").forEach { assertTrue(rightsProperties.has(it)) }
+
+        val recoveryBatchesPath = "/api/v1/analysis-runs/{analysisRunId}/recovery-batches"
+        val listRecoveryBatches = paths.path(recoveryBatchesPath).path("get")
+        assertTrue(listRecoveryBatches.path("responses").has("200"))
+        assertTrue(listRecoveryBatches.path("responses").has("404"))
+        assertTrue(listRecoveryBatches.path("responses").path("200").path("content").path("application/json").path("schema").path("items").has("${'$'}ref"))
+        val createRecoveryBatch = paths.path(recoveryBatchesPath).path("post")
+        assertEquals("Create or retrieve a Recovery Batch", createRecoveryBatch.path("summary").asText())
+        assertTrue(createRecoveryBatch.path("requestBody").path("required").asBoolean())
+        assertTrue(createRecoveryBatch.path("responses").has("400"))
+        assertTrue(createRecoveryBatch.path("responses").has("410"))
+        val createBatchSchemaName = createRecoveryBatch.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val createBatchProperties = document.path("components").path("schemas").path(createBatchSchemaName).path("properties")
+        assertTrue(createBatchProperties.has("idempotencyKey"))
+        assertTrue(createBatchProperties.has("rightsDeclarationAccepted"))
+        assertTrue(createBatchProperties.has("rightsDeclarationVersion"))
+        val createUpload = paths.path("/api/v1/recovery-batches/{batchId}/entries/{localReferenceKey}/uploads").path("post")
+        assertTrue(createUpload.path("responses").has("409"))
+        assertTrue(createUpload.path("responses").has("413"))
+        assertTrue(createUpload.path("responses").has("503"))
+        val uploadIntentSchemaName = createUpload.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val uploadIntentProperties = document.path("components").path("schemas").path(uploadIntentSchemaName).path("properties")
+        assertTrue(uploadIntentProperties.has("uploadUrl"))
+        assertTrue(uploadIntentProperties.has("requiredHeaders"))
+        val recoveryUploadSchemaName = uploadIntentProperties.path("upload").path("${'$'}ref").asText().substringAfterLast('/')
+        val recoveryUploadProperties = document.path("components").path("schemas").path(recoveryUploadSchemaName).path("properties")
+        assertTrue(recoveryUploadProperties.has("idempotencyKey"))
+        assertTrue(uploadIntentProperties.path("uploadUrl").path("description").asText().contains("bearer"))
+        val finalizeUpload = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/finalize").path("post")
+        assertTrue(finalizeUpload.path("responses").has("409"))
+        assertTrue(finalizeUpload.path("responses").has("422"))
+        val removeUpload = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}").path("delete")
+        assertTrue(removeUpload.path("responses").has("200"))
+        assertTrue(removeUpload.path("responses").has("404"))
 
         val getRun = paths.path("/api/v1/analysis-runs/{runId}").path("get")
         assertTrue(getRun.path("responses").path("200").path("content").has("application/json"))
