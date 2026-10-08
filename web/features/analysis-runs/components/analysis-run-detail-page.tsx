@@ -147,6 +147,17 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const previousRouteView = useRef(routeSelectedView);
   const previousSelectedView = useRef(selectedView);
   const stageSelectionRequestRef = useRef(0);
+  const [navigatingToStage, setNavigatingToStage] = useState<PipelineStageId | null>(null);
+  const [stageSelectionAwaitingRoute, setStageSelectionAwaitingRoute] = useState<{
+    stage: PipelineStageId;
+    requestId: number;
+    recheckNavigationAfterResultsReady: boolean;
+  } | null>(null);
+  const stageNavigationRecheckRef = useRef<{ stage: PipelineStageId; requestId: number } | null>(null);
+  const [navigationResultsHeight, setNavigationResultsHeight] = useState<{ stage: PipelineStageId; height: number } | undefined>();
+  const [stageTransitionKey, setStageTransitionKey] = useState(0);
+  const displayedStage = selectedStage ?? navigatingToStage;
+  const isInitialStageSelectionPending = selectedStage === null && navigatingToStage !== null;
   useEffect(() => () => {
     stageSelectionRequestRef.current += 1;
   }, []);
@@ -167,7 +178,42 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
   const report = reportQuery.data ?? null;
   const parsedError = parsedQuery.error instanceof Error ? parsedQuery.error.message : parsedQuery.isError ? "Could not load the parsed Source Document." : null;
   const reportError = reportQuery.error instanceof Error ? reportQuery.error.message : reportQuery.isError ? "Could not load the Evidence Coverage Report." : null;
+  const stageResultsLoading = displayedStage === "source"
+    ? parsedReady && parsedQuery.isPending
+    : parsedReady && reportQuery.isPending;
+  const stageResultsAwaitingDataAvailability = Boolean(
+    displayedStage && run && !parsedReady && run.status !== "FAILED",
+  );
+  const navigationResultsMinimumHeight = navigationResultsHeight?.stage === displayedStage
+    && (isInitialStageSelectionPending || stageResultsLoading)
+    ? navigationResultsHeight.height
+    : undefined;
   const homeHref = homeHrefFor(searchParams);
+
+  useEffect(() => {
+    const awaitingRoute = stageSelectionAwaitingRoute;
+    if (!awaitingRoute || awaitingRoute.requestId !== stageSelectionRequestRef.current || selectedStage !== awaitingRoute.stage) return;
+
+    setNavigatingToStage(null);
+    setStageSelectionAwaitingRoute(null);
+    if (awaitingRoute.recheckNavigationAfterResultsReady) {
+      stageNavigationRecheckRef.current = { stage: awaitingRoute.stage, requestId: awaitingRoute.requestId };
+    }
+    setStageTransitionKey((current) => current + 1);
+  }, [selectedStage, stageSelectionAwaitingRoute]);
+
+  useEffect(() => {
+    const recheck = stageNavigationRecheckRef.current;
+    if (!recheck || recheck.requestId !== stageSelectionRequestRef.current) return;
+    if (selectedStage !== recheck.stage) {
+      stageNavigationRecheckRef.current = null;
+      return;
+    }
+    if (stageResultsLoading || stageResultsAwaitingDataAvailability) return;
+
+    stageNavigationRecheckRef.current = null;
+    void scrollToPipelineStageNavigation();
+  }, [selectedStage, stageResultsAwaitingDataAvailability, stageResultsLoading]);
 
   useEffect(() => {
     setShellPaperReviewActive(isPaperReviewActive);
@@ -246,8 +292,16 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
 
   async function selectStage(stage: PipelineStageId) {
     const requestId = ++stageSelectionRequestRef.current;
+    const recheckNavigationAfterResultsReady = selectedStage === null;
+    setStageSelectionAwaitingRoute(null);
+    stageNavigationRecheckRef.current = null;
+    const resultsHeight = document.getElementById("pipeline-results")?.getBoundingClientRect().height;
+    setNavigationResultsHeight(resultsHeight === undefined ? undefined : { stage, height: resultsHeight });
+    setNavigatingToStage(stage);
     await scrollToPipelineStageNavigation();
-    if (requestId === stageSelectionRequestRef.current) updateQueryParameters({ step: stage, substep: null });
+    if (requestId !== stageSelectionRequestRef.current) return;
+    updateQueryParameters({ step: stage, substep: null });
+    setStageSelectionAwaitingRoute({ stage, requestId, recheckNavigationAfterResultsReady });
   }
 
   function selectReviewPair(outcomeId: string, localReferenceKey: string) {
@@ -350,10 +404,13 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             onSelectStage={selectStage}
             afterIntro={<AnalysisRunProvenance run={run} />}
           />
-          {selectedStage && (
+          {displayedStage && (
             <AnalysisRunStageResults
               run={run}
-              selectedStage={selectedStage}
+              selectedStage={displayedStage}
+              transitionKey={stageTransitionKey}
+              isInitialSelectionPending={isInitialStageSelectionPending}
+              minimumHeight={navigationResultsMinimumHeight}
               backHref={backHref}
               parsedDocument={parsedDocument}
               report={report}
@@ -364,7 +421,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
               onSelectStage={selectStage}
             />
           )}
-          {!selectedStage && (
+          {!displayedStage && (
             <section id="pipeline-results" aria-labelledby="pipeline-results-heading" className="pipeline-results">
               <Card className="shadow-sm">
                 <CardContent className="flex min-h-40 flex-col items-center justify-center gap-1 py-10 text-center">

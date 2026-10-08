@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Spinner } from "@/components/ui/spinner";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
@@ -771,9 +771,55 @@ function VerificationStageResults({ run, report }: { run: AnalysisRun; report: R
   return <ReportResults report={report} view="summary" />;
 }
 
+function PipelineResultsSkeletonBlock({ className }: { className: string }) {
+  return <Skeleton className={cn(className, "motion-reduce:animate-none")} />;
+}
+
+function PipelineResultsSkeleton({ stageId }: { stageId: PipelineStageId }) {
+  const stageLabel = pipelineStage(stageId).label;
+
+  return (
+    <div role="status" aria-label={`Loading ${stageLabel} results`} className="w-full space-y-5">
+      <span className="sr-only">Loading {stageLabel} results…</span>
+      <div aria-hidden="true" className="space-y-5">
+        <div className="space-y-2">
+          <PipelineResultsSkeletonBlock className="h-5 w-40" />
+          <PipelineResultsSkeletonBlock className="h-3 w-2/3" />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <PipelineResultsSkeletonBlock className="h-8 w-24 rounded-full" />
+          <PipelineResultsSkeletonBlock className="h-8 w-20 rounded-full" />
+          <PipelineResultsSkeletonBlock className="h-8 w-28 rounded-full" />
+          <PipelineResultsSkeletonBlock className="h-8 w-24 rounded-full" />
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {Array.from({ length: 4 }, (_, index) => (
+            <PipelineResultsSkeletonBlock key={index} className="h-16 w-full rounded-lg" />
+          ))}
+        </div>
+        <div className="space-y-3">
+          {Array.from({ length: 3 }, (_, index) => (
+            <div key={index} className="space-y-2 border-b border-border/70 py-3 last:border-b-0">
+              <div className="flex items-center justify-between gap-4">
+                <PipelineResultsSkeletonBlock className={index === 0 ? "h-4 w-2/3" : "h-4 w-2/5"} />
+                <PipelineResultsSkeletonBlock className="h-6 w-20 rounded-full" />
+              </div>
+              <PipelineResultsSkeletonBlock className="h-3 w-1/3" />
+              <PipelineResultsSkeletonBlock className="h-8 w-full" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AnalysisRunStageResults({
   run,
   selectedStage,
+  transitionKey = 0,
+  isInitialSelectionPending = false,
+  minimumHeight,
   backHref,
   parsedDocument,
   report,
@@ -785,6 +831,9 @@ export function AnalysisRunStageResults({
 }: {
   run: AnalysisRun;
   selectedStage: PipelineStageId;
+  transitionKey?: number;
+  isInitialSelectionPending?: boolean;
+  minimumHeight?: number;
   backHref: string;
   parsedDocument: ParsedDocument | null;
   report: ReferenceResolutionReportResponse | null;
@@ -803,8 +852,12 @@ export function AnalysisRunStageResults({
   const sourceResultFilter = usePipelineResultFilter("source", SOURCE_RESULT_FILTER_IDS);
   const needsParsedDocument = stage.id === "source";
   const needsReport = ["references", "access", "evidence", "verification"].includes(stage.id);
-  const loading = needsParsedDocument ? parsedLoading : needsReport && reportLoading;
-  const error = needsParsedDocument ? parsedError : needsReport ? reportError : null;
+  const loading = isInitialSelectionPending || (needsParsedDocument ? parsedLoading : needsReport && reportLoading);
+  const error = isInitialSelectionPending ? null : needsParsedDocument ? parsedError : needsReport ? reportError : null;
+  const resultsState = loading ? "loading" : error ? "error" : "ready";
+  const [animatedTransitionKey, setAnimatedTransitionKey] = useState(0);
+  const lastAnimatedTransitionKeyRef = useRef(0);
+  const shouldAnimateResultsCard = !loading && transitionKey > 0 && animatedTransitionKey === transitionKey;
   const sourceClaimCount = parsedDocument?.citationContexts.reduce((count, context) => count + context.atomicClaims.length, 0) ?? 0;
   const sourceResultFilterOptions: PipelineResultFilterOption[] = [
     { id: "sections", label: "Sections", description: "Document headings and their source-text spans persisted by the PDF parser.", value: parsedDocument?.sections.length ?? 0 },
@@ -812,6 +865,17 @@ export function AnalysisRunStageResults({
     { id: "claims", label: "Atomic Claims", description: "Claims extracted from citation contexts. Links from claims to references are inferred and provisional.", value: sourceClaimCount },
     { id: "bibliography", label: "Bibliography Entries", description: "Reference entries parsed from the document’s bibliography.", value: parsedDocument?.bibliographyEntries.length ?? 0 },
   ];
+
+  useEffect(() => {
+    if (loading || transitionKey === 0 || lastAnimatedTransitionKeyRef.current === transitionKey) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      lastAnimatedTransitionKeyRef.current = transitionKey;
+      setAnimatedTransitionKey(transitionKey);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, transitionKey]);
 
   useEffect(() => {
     let frame = 0;
@@ -857,10 +921,17 @@ export function AnalysisRunStageResults({
       resizeObserver.disconnect();
       if (frame !== 0) window.cancelAnimationFrame(frame);
     };
-  }, [selectedStage, showStickyNavigation]);
+  }, [selectedStage, resultsState, showStickyNavigation]);
 
   return (
-    <section ref={resultsScopeRef} id="pipeline-results" className="pipeline-results space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6" aria-label={`${stage.label} pipeline results`} key={stage.id}>
+    <section
+      ref={resultsScopeRef}
+      id="pipeline-results"
+      className="pipeline-results"
+      style={{ minHeight: minimumHeight }}
+      aria-label={`${stage.label} pipeline results`}
+      aria-busy={loading}
+    >
       <div
         ref={stickyNavigationRef}
         data-sticky-step-navigation
@@ -893,44 +964,53 @@ export function AnalysisRunStageResults({
         </div>
       </div>
 
-      <PipelineConfiguration
-        run={run}
-        stageId={stage.id}
-        report={report}
-        reportLoading={reportLoading}
-        reportError={reportError}
-        stickyBoundaryRef={stickyBoundaryRef}
-      />
+      <div
+        className={cn(
+          "space-y-4 rounded-xl border border-border bg-card p-4 shadow-sm sm:p-6",
+          shouldAnimateResultsCard && "pipeline-results-card-reveal",
+        )}
+      >
+        <PipelineConfiguration
+          run={run}
+          stageId={stage.id}
+          report={report}
+          reportLoading={reportLoading}
+          reportError={reportError}
+          stickyBoundaryRef={stickyBoundaryRef}
+        />
 
-      {loading && <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status"><Spinner aria-hidden="true" /> Loading persisted results…</p>}
-      {error && <Alert variant="destructive"><AlertTitle>Results unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-      {!loading && !error && needsParsedDocument && !parsedDocument && <RunResultsUnavailable stage={stage.id} run={run} />}
-      {!loading && !error && needsReport && !report && <RunResultsUnavailable stage={stage.id} run={run} />}
+        <div>
+          {loading && <PipelineResultsSkeleton stageId={stage.id} />}
+          {error && <Alert variant="destructive"><AlertTitle>Results unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+          {!loading && !error && needsParsedDocument && !parsedDocument && <RunResultsUnavailable stage={stage.id} run={run} />}
+          {!loading && !error && needsReport && !report && <RunResultsUnavailable stage={stage.id} run={run} />}
 
-      {!loading && !error && parsedDocument && stage.id === "source" && (
-        <div className="space-y-5">
-          <PipelineResultMetricFilters
-            label="Filter parsed source data"
-            options={sourceResultFilterOptions}
-            selectedValues={sourceResultFilter.selectedValues}
-            onToggle={sourceResultFilter.toggleValue}
-            onReset={sourceResultFilter.reset}
-          />
-          <div className="space-y-8">
-            {matchesSelectedFilter(sourceResultFilter.selectedValues, "sections") && <AnnotationResults parsedDocument={parsedDocument} view="sections" />}
-            {matchesSelectedFilter(sourceResultFilter.selectedValues, "citations") && <AnnotationResults parsedDocument={parsedDocument} view="annotations" />}
-            {matchesSelectedFilter(sourceResultFilter.selectedValues, "claims") && <AnnotationResults parsedDocument={parsedDocument} view="claims" />}
-            {matchesSelectedFilter(sourceResultFilter.selectedValues, "bibliography") && <ParsedBibliographyResults parsedDocument={parsedDocument} />}
-          </div>
+          {!loading && !error && parsedDocument && stage.id === "source" && (
+            <div className="space-y-5">
+              <PipelineResultMetricFilters
+                label="Filter parsed source data"
+                options={sourceResultFilterOptions}
+                selectedValues={sourceResultFilter.selectedValues}
+                onToggle={sourceResultFilter.toggleValue}
+                onReset={sourceResultFilter.reset}
+              />
+              <div className="space-y-8">
+                {matchesSelectedFilter(sourceResultFilter.selectedValues, "sections") && <AnnotationResults parsedDocument={parsedDocument} view="sections" />}
+                {matchesSelectedFilter(sourceResultFilter.selectedValues, "citations") && <AnnotationResults parsedDocument={parsedDocument} view="annotations" />}
+                {matchesSelectedFilter(sourceResultFilter.selectedValues, "claims") && <AnnotationResults parsedDocument={parsedDocument} view="claims" />}
+                {matchesSelectedFilter(sourceResultFilter.selectedValues, "bibliography") && <ParsedBibliographyResults parsedDocument={parsedDocument} />}
+              </div>
+            </div>
+          )}
+
+          {!loading && !error && report && stage.id === "references" && <ReferenceMatchResults report={report} view="all" />}
+          {!loading && !error && report && stage.id === "access" && <AccessResults report={report} view="all" />}
+          {!loading && !error && report && stage.id === "evidence" && <IndexingResults run={run} report={report} view="all" />}
+          {!loading && !error && report && stage.id === "verification" && (
+            <VerificationStageResults run={run} report={report} />
+          )}
         </div>
-      )}
-
-      {!loading && !error && report && stage.id === "references" && <ReferenceMatchResults report={report} view="all" />}
-      {!loading && !error && report && stage.id === "access" && <AccessResults report={report} view="all" />}
-      {!loading && !error && report && stage.id === "evidence" && <IndexingResults run={run} report={report} view="all" />}
-      {!loading && !error && report && stage.id === "verification" && (
-        <VerificationStageResults run={run} report={report} />
-      )}
+      </div>
     </section>
   );
 }

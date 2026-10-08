@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnalysisRunDetailPage } from "@/features/analysis-runs/components/analysis-run-detail-page";
@@ -12,6 +12,9 @@ const queryHookMocks = vi.hoisted(() => ({
   useParsedDocument: vi.fn(),
   useReferenceResolutionReport: vi.fn(),
 }));
+
+const pipelineNavigationMock = vi.hoisted(() => ({ scrollToPipelineStageNavigation: vi.fn() }));
+const routeQueryMock = vi.hoisted(() => ({ search: null as string | null }));
 
 const pdfJsMocks = vi.hoisted(() => {
   class TextLayer {
@@ -36,8 +39,10 @@ const pdfJsMocks = vi.hoisted(() => {
 
 vi.mock("pdfjs-dist", () => pdfJsMocks);
 
+vi.mock("@/features/analysis-runs/scroll-to-pipeline-stage-navigation", () => pipelineNavigationMock);
+
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(window.location.search),
+  useSearchParams: () => new URLSearchParams(routeQueryMock.search ?? window.location.search),
 }));
 
 vi.mock("@/features/analysis-runs/queries/analysis-run-queries", async (importOriginal) => {
@@ -257,13 +262,15 @@ function renderDetailPage() {
     unobserve() {}
     disconnect() {}
   });
-  return render(
+  const page = () => (
     <QueryClientProvider client={queryClient}>
       <WorkspaceShell>
         <AnalysisRunDetailPage analysisRunId={run.id} />
       </WorkspaceShell>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const rendered = render(page());
+  return { ...rendered, rerenderDetailPage: () => rendered.rerender(page()) };
 }
 
 afterEach(() => {
@@ -272,6 +279,8 @@ afterEach(() => {
   queryHookMocks.useAnalysisRun.mockReset();
   queryHookMocks.useParsedDocument.mockReset();
   queryHookMocks.useReferenceResolutionReport.mockReset();
+  pipelineNavigationMock.scrollToPipelineStageNavigation.mockReset();
+  routeQueryMock.search = null;
   pdfJsMocks.getDocument.mockReset();
   pdfJsMocks.GlobalWorkerOptions.workerSrc = "";
 });
@@ -645,60 +654,302 @@ describe("Analysis Run Paper Review", () => {
     expect(await screen.findByRole("region", { name: quickAccessName })).toBeTruthy();
   });
 
-  it("uses the same scroll-before-select transition for pipeline cards and sticky buttons", async () => {
+  it("keeps the current stage content visible until smooth navigation and route confirmation finish", async () => {
     queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
     queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
     queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    routeQueryMock.search = "?step=references";
+    let finishNavigation: (() => void) | undefined;
+    pipelineNavigationMock.scrollToPipelineStageNavigation.mockImplementation(() => new Promise<void>((resolve) => {
+      finishNavigation = resolve;
+    }));
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=references`);
+
+    const { rerenderDetailPage } = renderDetailPage();
+    const currentResults = await screen.findByRole("region", { name: "Resolve references pipeline results" });
+    const currentCard = currentResults.children[1];
+    const pipelineNavigation = await screen.findByRole("navigation", { name: "Analysis pipeline stages" });
+    fireEvent.click(within(pipelineNavigation).getByRole("button", { name: /01 Read the PDF/ }));
+
+    expect(screen.getByRole("region", { name: "Resolve references pipeline results" })).toBe(currentResults);
+    expect(currentResults.children[1]).toBe(currentCard);
+    expect(currentResults.getAttribute("aria-busy")).toBe("false");
+    expect(screen.queryByRole("region", { name: "Read the PDF pipeline results" })).toBeNull();
+    expect(within(pipelineNavigation).getByRole("button", { name: /02 Resolve references/ }).getAttribute("aria-current")).toBe("step");
+
+    await act(async () => finishNavigation?.());
+    routeQueryMock.search = "?step=source";
+    rerenderDetailPage();
+
+    const selectedResults = await screen.findByRole("region", { name: "Read the PDF pipeline results" });
+    expect(selectedResults.children[1]).toBe(currentCard);
+    expect(within(pipelineNavigation).getByRole("button", { name: /01 Read the PDF.*selected stage/ }).getAttribute("aria-current")).toBe("step");
+    expect(selectedResults.getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("waits for the run to expose parsed results before re-aligning after an initial selection", async () => {
+    const processingRun = { ...run, status: "PROCESSING" as const };
+    const parsedRun = { ...run, status: "PARSED" as const };
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: processingRun, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: null, isPending: true, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: null, isPending: true, isError: false, error: null });
+    routeQueryMock.search = "";
+    pipelineNavigationMock.scrollToPipelineStageNavigation.mockResolvedValue(undefined);
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}`);
+
+    const { rerenderDetailPage } = renderDetailPage();
+    const pipelineNavigation = await screen.findByRole("navigation", { name: "Analysis pipeline stages" });
+    fireEvent.click(within(pipelineNavigation).getByRole("button", { name: /01 Read the PDF/ }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("step")).toBe("source"));
+    routeQueryMock.search = "?step=source";
+    rerenderDetailPage();
+
+    const results = screen.getByRole("region", { name: "Read the PDF pipeline results" });
+    expect(results.getAttribute("aria-busy")).toBe("false");
+    expect(pipelineNavigationMock.scrollToPipelineStageNavigation).toHaveBeenCalledTimes(1);
+
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: parsedRun, isPending: false, error: null });
+    rerenderDetailPage();
+    expect(results.getAttribute("aria-busy")).toBe("true");
+    expect(pipelineNavigationMock.scrollToPipelineStageNavigation).toHaveBeenCalledTimes(1);
+
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    rerenderDetailPage();
+    await waitFor(() => expect(results.getAttribute("aria-busy")).toBe("false"));
+    await waitFor(() => expect(pipelineNavigationMock.scrollToPipelineStageNavigation).toHaveBeenCalledTimes(2));
+  });
+
+  it("cancels initial re-alignment when route selection moves away before results load", async () => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: null, isPending: true, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    routeQueryMock.search = "";
+    pipelineNavigationMock.scrollToPipelineStageNavigation.mockResolvedValue(undefined);
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}`);
+
+    const { rerenderDetailPage } = renderDetailPage();
+    const pipelineNavigation = await screen.findByRole("navigation", { name: "Analysis pipeline stages" });
+    fireEvent.click(within(pipelineNavigation).getByRole("button", { name: /01 Read the PDF/ }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("step")).toBe("source"));
+    routeQueryMock.search = "?step=source";
+    rerenderDetailPage();
+    expect(pipelineNavigationMock.scrollToPipelineStageNavigation).toHaveBeenCalledTimes(1);
+
+    routeQueryMock.search = "";
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}`);
+    rerenderDetailPage();
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    rerenderDetailPage();
+
+    routeQueryMock.search = "?step=source";
     window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=source`);
+    rerenderDetailPage();
+    const restoredResults = await screen.findByRole("region", { name: "Read the PDF pipeline results" });
+    await waitFor(() => expect(restoredResults.getAttribute("aria-busy")).toBe("false"));
+    expect(pipelineNavigationMock.scrollToPipelineStageNavigation).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { stage: "source" as const, buttonLabel: "01 Read the PDF", resultLabel: "Read the PDF" },
+    { stage: "references" as const, buttonLabel: "02 Resolve references", resultLabel: "Resolve references" },
+  ])("re-aligns the pipeline stage navigation after initial $stage results finish loading", async ({ stage, buttonLabel, resultLabel }) => {
+    const parsedLoading = stage === "source";
+    const reportLoading = stage === "references";
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedLoading ? null : parsedDocument, isPending: parsedLoading, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: reportLoading, isError: false, error: null });
+    routeQueryMock.search = "";
+    pipelineNavigationMock.scrollToPipelineStageNavigation.mockResolvedValue(undefined);
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}`);
+
+    const { rerenderDetailPage } = renderDetailPage();
+    const pipelineNavigation = await screen.findByRole("navigation", { name: "Analysis pipeline stages" });
+    fireEvent.click(within(pipelineNavigation).getByRole("button", { name: new RegExp(buttonLabel) }));
+
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("step")).toBe(stage));
+    expect(pipelineNavigationMock.scrollToPipelineStageNavigation).toHaveBeenCalledTimes(1);
+
+    routeQueryMock.search = `?step=${stage}`;
+    rerenderDetailPage();
+    const results = screen.getByRole("region", { name: `${resultLabel} pipeline results` });
+    expect(results.getAttribute("aria-busy")).toBe("true");
+    expect(pipelineNavigationMock.scrollToPipelineStageNavigation).toHaveBeenCalledTimes(1);
+
+    if (parsedLoading) {
+      queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    } else {
+      queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    }
+    rerenderDetailPage();
+    await waitFor(() => expect(results.getAttribute("aria-busy")).toBe("false"));
+    await waitFor(() => expect(pipelineNavigationMock.scrollToPipelineStageNavigation).toHaveBeenCalledTimes(2));
+
+    rerenderDetailPage();
+    expect(pipelineNavigationMock.scrollToPipelineStageNavigation).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])("shows a stage skeleton only for an initial selection (already selected: %s)", async (alreadySelected) => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    let finishNavigation: (() => void) | undefined;
+    pipelineNavigationMock.scrollToPipelineStageNavigation.mockImplementation(() => new Promise<void>((resolve) => {
+      finishNavigation = resolve;
+    }));
+
+    if (alreadySelected) window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=source`);
+    renderDetailPage();
+    const pipelineNavigation = await screen.findByRole("navigation", { name: "Analysis pipeline stages" });
+    fireEvent.click(within(pipelineNavigation).getByRole("button", { name: /01 Read the PDF/ }));
+    expect(new URLSearchParams(window.location.search).get("step")).toBe(alreadySelected ? "source" : null);
+
+    const results = screen.getByRole("region", { name: "Read the PDF pipeline results" });
+    const loadingCard = within(results).getByRole("region", { name: /configuration and persisted progress/ }).parentElement;
+    if (alreadySelected) {
+      expect(results.getAttribute("aria-busy")).toBe("false");
+      expect(within(results).queryByRole("status")).toBeNull();
+      expect(within(results).getByText("Citation Context 1 · sentence fallback")).toBeTruthy();
+    } else {
+      const loadingStatus = within(results).getByRole("status", { name: "Loading Read the PDF results" });
+      expect(loadingStatus.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+    }
+    expect(loadingCard?.classList.contains("pipeline-results-card-reveal")).toBe(false);
+    expect(screen.queryByText(/Opening Read the PDF results/)).toBeNull();
+    expect(screen.getByRole("button", { name: /01 Read the PDF/ }).getAttribute("aria-current")).toBe(alreadySelected ? "step" : null);
+
+    await act(async () => finishNavigation?.());
+
+    const completedResults = screen.getByRole("region", { name: "Read the PDF pipeline results" });
+    const completedCard = within(completedResults).getByRole("region", { name: /configuration and persisted progress/ }).parentElement;
+    expect(completedCard).toBe(loadingCard);
+    await waitFor(() => expect(completedCard?.classList.contains("pipeline-results-card-reveal")).toBe(true));
+    expect(completedCard?.classList.contains("slide-in-from-bottom-1")).toBe(false);
+    expect(screen.getByRole("button", { name: /01 Read the PDF.*selected stage/ }).getAttribute("aria-current")).toBe("step");
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("animates the selected results card after a same-stage click when scrolling resolves immediately", async () => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    pipelineNavigationMock.scrollToPipelineStageNavigation.mockResolvedValue(undefined);
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=source`);
+
+    renderDetailPage();
+    const results = await screen.findByRole("region", { name: "Read the PDF pipeline results" });
+    expect(within(results).getByRole("region", { name: /configuration and persisted progress/ }).parentElement?.classList.contains("pipeline-results-card-reveal")).toBe(false);
+
+    fireEvent.click(within(await screen.findByRole("navigation", { name: "Analysis pipeline stages" })).getByRole("button", { name: /01 Read the PDF/ }));
+
+    await waitFor(() => {
+      const configuration = within(screen.getByRole("region", { name: "Read the PDF pipeline results" }))
+        .getByRole("region", { name: /configuration and persisted progress/ });
+      expect(configuration.parentElement?.classList.contains("pipeline-results-card-reveal")).toBe(true);
+    });
+  });
+
+  it("keeps the selected loading card mounted until the route reflects the selection", async () => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    routeQueryMock.search = "";
+    let finishNavigation: (() => void) | undefined;
+    pipelineNavigationMock.scrollToPipelineStageNavigation.mockImplementation(() => new Promise<void>((resolve) => {
+      finishNavigation = resolve;
+    }));
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}`);
+
+    const { rerenderDetailPage } = renderDetailPage();
+    const pipelineNavigation = await screen.findByRole("navigation", { name: "Analysis pipeline stages" });
+    fireEvent.click(within(pipelineNavigation).getByRole("button", { name: /01 Read the PDF/ }));
+    const results = screen.getByRole("region", { name: "Read the PDF pipeline results" });
+    const loadingCard = results.children[1];
+
+    await act(async () => finishNavigation?.());
+
+    expect(screen.getByRole("region", { name: "Read the PDF pipeline results" })).toBe(results);
+    expect(within(results).getByRole("region", { name: /configuration and persisted progress/ }).parentElement).toBe(loadingCard);
+    expect(screen.queryByText("Please select a pipeline stage above to view its results.")).toBeNull();
+
+    routeQueryMock.search = `?step=source`;
+    rerenderDetailPage();
+    await waitFor(() => expect(results.getAttribute("aria-busy")).toBe("false"));
+    expect(within(results).getByRole("region", { name: /configuration and persisted progress/ }).parentElement).toBe(loadingCard);
+    await waitFor(() => expect(loadingCard?.classList.contains("pipeline-results-card-reveal")).toBe(true));
+  });
+
+  it("fades in the results card after a pending fetch completes without moving it", async () => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: null, isPending: true, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    routeQueryMock.search = "";
+    let finishNavigation: (() => void) | undefined;
+    pipelineNavigationMock.scrollToPipelineStageNavigation.mockImplementation(() => new Promise<void>((resolve) => {
+      finishNavigation = resolve;
+    }));
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}`);
+
+    const { rerenderDetailPage } = renderDetailPage();
+    fireEvent.click(within(await screen.findByRole("navigation", { name: "Analysis pipeline stages" })).getByRole("button", { name: /01 Read the PDF/ }));
+    const results = screen.getByRole("region", { name: "Read the PDF pipeline results" });
+    const resultsCard = results.children[1];
+
+    await act(async () => finishNavigation?.());
+    routeQueryMock.search = "?step=source";
+    rerenderDetailPage();
+    expect(results.getAttribute("aria-busy")).toBe("true");
+    expect(resultsCard.classList.contains("pipeline-results-card-reveal")).toBe(false);
+
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    rerenderDetailPage();
+    await waitFor(() => expect(results.getAttribute("aria-busy")).toBe("false"));
+    await act(async () => {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
+    });
+    expect(results.children[1]).toBe(resultsCard);
+    await waitFor(() => expect(resultsCard.classList.contains("pipeline-results-card-reveal")).toBe(true));
+    expect(resultsCard.classList.contains("slide-in-from-bottom-1")).toBe(false);
+  });
+
+  it("reserves the previous results height only after the selected stage begins loading", async () => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: null, isPending: true, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    let finishNavigation: (() => void) | undefined;
+    pipelineNavigationMock.scrollToPipelineStageNavigation.mockImplementation(() => new Promise<void>((resolve) => {
+      finishNavigation = resolve;
+    }));
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?step=references`);
+
     const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
-    const originalMatchMedia = window.matchMedia;
-    const scrollEvents: string[] = [];
-    const rect = (top: number, bottom: number): DOMRect => ({
-      x: 0, y: top, width: 1_024, height: bottom - top, top, right: 1_024, bottom, left: 0,
-      toJSON: () => ({}),
-    });
     const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      if (this.id === "pipeline-results") return rect(-10, 1_000);
-      if (this.getAttribute("aria-label")?.includes("configuration and persisted progress")) return rect(-100, -1);
-      if (this.hasAttribute("data-sticky-step-navigation")) return rect(0, 50);
+      if (this.id === "pipeline-results") {
+        return { x: 0, y: 0, width: 1_024, height: 1_000, top: 0, right: 1_024, bottom: 1_000, left: 0, toJSON: () => ({}) };
+      }
       return originalGetBoundingClientRect.call(this);
-    });
-    window.matchMedia = () => ({
-      matches: true,
-      media: "(prefers-reduced-motion: reduce)",
-      onchange: null,
-      addListener() {},
-      removeListener() {},
-      addEventListener() {},
-      removeEventListener() {},
-      dispatchEvent: () => false,
-    });
-    const scrollIntoView = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => scrollEvents.push("scroll"));
-    const originalReplaceState = window.history.replaceState.bind(window.history);
-    const replaceState = vi.spyOn(window.history, "replaceState").mockImplementation((data, unused, url) => {
-      scrollEvents.push("url");
-      originalReplaceState(data, unused, url);
     });
 
     try {
-      renderDetailPage();
-      await waitFor(() => expect(document.querySelector("[data-sticky-step-navigation]")?.getAttribute("aria-hidden")).toBe("false"));
-      const [pipelineCardNavigation, stickyNavigation] = await screen.findAllByRole("navigation", { name: "Analysis pipeline stages" });
+      const { rerenderDetailPage } = renderDetailPage();
+      const pipelineNavigation = await screen.findByRole("navigation", { name: "Analysis pipeline stages" });
+      fireEvent.click(within(pipelineNavigation).getByRole("button", { name: /01 Read the PDF/ }));
 
-      fireEvent.click(within(stickyNavigation).getByRole("button", { name: /02 Resolve references/ }));
-      await waitFor(() => expect(new URLSearchParams(window.location.search).get("step")).toBe("references"));
-      expect(scrollEvents).toEqual(["scroll", "url"]);
+      const currentResults = screen.getByRole("region", { name: "Resolve references pipeline results" });
+      expect(currentResults.style.minHeight).toBe("");
+      expect(currentResults.getAttribute("aria-busy")).toBe("false");
 
-      scrollEvents.length = 0;
-      fireEvent.click(within(pipelineCardNavigation).getByRole("button", { name: /03 Acquire cited sources/ }));
-      await waitFor(() => expect(new URLSearchParams(window.location.search).get("step")).toBe("access"));
-      expect(scrollEvents).toEqual(["scroll", "url"]);
-      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+      await act(async () => finishNavigation?.());
+      rerenderDetailPage();
+      const loadingResults = screen.getByRole("region", { name: "Read the PDF pipeline results" });
+      expect(loadingResults.getAttribute("aria-busy")).toBe("true");
+      expect(loadingResults.style.minHeight).toBe("1000px");
+
+      queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+      rerenderDetailPage();
+      await waitFor(() => expect(loadingResults.getAttribute("aria-busy")).toBe("false"));
+      expect(loadingResults.style.minHeight).toBe("");
     } finally {
-      scrollIntoView.mockRestore();
-      replaceState.mockRestore();
       geometry.mockRestore();
-      window.matchMedia = originalMatchMedia;
     }
   });
 

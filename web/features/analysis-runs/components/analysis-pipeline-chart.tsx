@@ -134,7 +134,6 @@ export function AnalysisPipelineChart({
           })}
         </ol>
       </nav>
-
     </section>
   );
 }
