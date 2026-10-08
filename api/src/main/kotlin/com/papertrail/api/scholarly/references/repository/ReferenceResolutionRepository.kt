@@ -56,7 +56,8 @@ class ReferenceResolutionRepository(
     fun pendingEntry(analysisRunId: UUID, bibliographyEntryId: UUID): StoredBibliographyReference? = jdbc.query(
         """
         SELECT b.id, b.entry_order, b.local_reference_key, b.raw_text, b.parsed_title,
-               b.parsed_authors::text AS parsed_authors, b.parsed_year, b.parsed_doi, b.reference_type
+               b.parsed_authors::text AS parsed_authors, b.parsed_year, b.parsed_doi, b.reference_type,
+               b.identifiers::text AS identifiers
           FROM bibliography_entries b
           LEFT JOIN bibliography_entry_resolutions r
             ON r.analysis_run_id = b.analysis_run_id AND r.bibliography_entry_id = b.id
@@ -236,6 +237,14 @@ class ReferenceResolutionRepository(
         year = getObject("parsed_year", Integer::class.java)?.toInt(),
         doi = getString("parsed_doi"),
         referenceType = getString("reference_type"),
+        doiIdentifiers = getString("identifiers")?.let { json ->
+            JsonUtil.fromJson<List<ParsedBibliographyIdentifier>>(
+                json,
+                JsonUtil.collectionType(List::class.java, ParsedBibliographyIdentifier::class.java),
+            )
+        }?.filter { it.type?.equals("doi", ignoreCase = true) == true }
+            ?.map { it.normalizedValue ?: it.rawValue }
+            .orEmpty(),
     )
 
     private fun listOfNotCapturedLimitation(provenanceCaptureStatus: String?): List<String> =

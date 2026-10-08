@@ -166,6 +166,39 @@ class ConservativeReferenceResolverTest {
     }
 
     @Test
+    fun `keeps conflicting DOI identifiers unresolved without provider lookup`() {
+        val provider = RecordingMetadataProvider(
+            doiResult = work("10.1234/first", "A paper", listOf("A Author"), 2020),
+            searchResults = listOf(work("10.1234/first", "A paper", listOf("A Author"), 2020)),
+        )
+        val resolver = ConservativeReferenceResolver(provider, ScholarlyMetadataMatcher(0.9, 0.02))
+
+        val result = resolver.resolve(
+            reference(doi = "10.1234/first").copy(doiIdentifiers = listOf("10.1234/first", "10.1234/second")),
+        )
+
+        assertEquals(ReferenceResolutionStatus.UNRESOLVED, result.status)
+        assertEquals("CONFLICTING_DOI_IDENTIFIERS", result.reasonCode)
+        assertFalse(provider.doiLookupAttempted)
+        assertFalse(provider.searchAttempted)
+    }
+
+    @Test
+    fun `rejects a malformed additional DOI even when another DOI is valid`() {
+        val provider = RecordingMetadataProvider(doiResult = work("10.1234/first", "A paper", listOf("A Author"), 2020))
+        val resolver = ConservativeReferenceResolver(provider, ScholarlyMetadataMatcher(0.9, 0.02))
+
+        val result = resolver.resolve(
+            reference(doi = "10.1234/first").copy(doiIdentifiers = listOf("not-a-doi")),
+        )
+
+        assertEquals(ReferenceResolutionStatus.UNRESOLVED, result.status)
+        assertEquals("INVALID_IDENTIFIER", result.reasonCode)
+        assertFalse(provider.doiLookupAttempted)
+        assertFalse(provider.searchAttempted)
+    }
+
+    @Test
     fun `reports an unconfirmed DOI separately from a conflicting DOI`() {
         val provider = RecordingMetadataProvider()
         val resolver = ConservativeReferenceResolver(provider, ScholarlyMetadataMatcher(0.9, 0.02))
@@ -290,13 +323,35 @@ class ConservativeReferenceResolverTest {
             ScholarlyMetadataMatcher(0.9, 0.02, ScholarlyMetadataMatcher.LEGACY_POLICY_VERSION),
         )
 
-        val result = resolver.resolve(reference(doi = "10.1234/unconfirmed"))
+        val result = resolver.resolve(
+            reference(doi = "10.1234/unconfirmed").copy(doiIdentifiers = listOf("10.1234/additional")),
+        )
 
         assertEquals(ReferenceResolutionStatus.RESOLVED, result.status)
         assertEquals(matchingWork, result.work)
         assertEquals("METADATA_MATCH", result.matchMethod)
         assertTrue(provider.searchAttempted)
+        assertEquals(emptyList<String>(), provider.searchedReference?.doiIdentifiers)
         assertTrue(result.candidateEvidence.isEmpty())
+    }
+
+    @Test
+    fun `keeps the legacy policy behavior for references with additional DOI identifiers`() {
+        val confirmed = work("10.1234/first", "A paper", listOf("A Author"), 2020)
+        val provider = RecordingMetadataProvider(doiResult = confirmed)
+        val resolver = ConservativeReferenceResolver(
+            provider,
+            ScholarlyMetadataMatcher(0.9, 0.02, ScholarlyMetadataMatcher.LEGACY_POLICY_VERSION),
+        )
+
+        val result = resolver.resolve(
+            reference(doi = "10.1234/first").copy(doiIdentifiers = listOf("10.1234/first", "10.1234/second")),
+        )
+
+        assertEquals(ReferenceResolutionStatus.RESOLVED, result.status)
+        assertEquals("DOI_CONFIRMED", result.reasonCode)
+        assertTrue(provider.doiLookupAttempted)
+        assertFalse(provider.searchAttempted)
     }
 
     @Test
@@ -331,6 +386,7 @@ class ConservativeReferenceResolverTest {
     ) : ScholarlyMetadataLookup {
         var doiLookupAttempted = false
         var searchAttempted = false
+        var searchedReference: BibliographyReference? = null
 
         override fun byDoi(doi: String): ScholarlyWork? {
             doiLookupAttempted = true
@@ -339,6 +395,7 @@ class ConservativeReferenceResolverTest {
 
         override fun search(reference: BibliographyReference): List<ScholarlyWork> {
             searchAttempted = true
+            searchedReference = reference
             return searchResults
         }
     }

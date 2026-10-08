@@ -13,4 +13,5 @@ data class StoredBibliographyReference(
     val year: Int?,
     val doi: String?,
     val referenceType: String,
+    val doiIdentifiers: List<String> = emptyList(),
 )

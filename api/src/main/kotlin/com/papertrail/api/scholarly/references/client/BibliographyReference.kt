@@ -6,4 +6,5 @@ data class BibliographyReference(
     val year: Int?,
     val doi: String?,
     val referenceType: String,
+    val doiIdentifiers: List<String> = emptyList(),
 )

@@ -896,6 +896,12 @@ class AnalysisRunQueueIntegrationTest {
                                     rawValue = "https://doi.org/${entry.doi}",
                                     normalizedValue = entry.doi,
                                 ),
+                                ParsedBibliographyIdentifier(
+                                    sourceElement = "idno",
+                                    type = "DOI",
+                                    rawValue = "10.1234/conflicting-reference",
+                                    normalizedValue = "10.1234/conflicting-reference",
+                                ),
                             ) else emptyList(),
                             sourceLocations = listOf(ParsedBibliographySourceLocation(2, "2,10,20,30,40")),
                             provisionalArtifactSignals = if (entry.localReferenceKey == "ref2") {
@@ -921,13 +927,33 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(BibliographyNormalizationPolicySelection.CURRENT, parsed.bibliographyNormalizationPolicy)
         assertEquals("Original GROBID text for ref1", parsed.bibliographyEntries.first().sourceTextContent)
         assertEquals("ref1", parsed.bibliographyEntries.first().sourceLocalReferenceKey)
-        assertEquals("https://doi.org/10.5555/papertrail.fixture.reference-resolution.2024", parsed.bibliographyEntries.first().identifiers.single().rawValue)
+        assertEquals(
+            listOf(
+                "https://doi.org/10.5555/papertrail.fixture.reference-resolution.2024",
+                "10.1234/conflicting-reference",
+            ),
+            parsed.bibliographyEntries.first().identifiers.map { it.rawValue },
+        )
         assertEquals(listOf(2), parsed.bibliographyEntries.first().sourceLocations.map { it.page })
         assertEquals("missing-tei-key", parsed.citationContexts.first().occurrences.first().unmatchedBibliographyReferenceKeys?.single())
 
         val resolutionRepository = ReferenceResolutionRepository(jdbc)
         assertEquals(BibliographyNormalizationPolicySelection.CURRENT, resolutionRepository.loadRun(run.analysisRunId)?.bibliographyNormalizationPolicy)
+        val referenceId = jdbc.queryForObject(
+            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? AND local_reference_key = 'ref1'",
+            UUID::class.java,
+            run.analysisRunId,
+        )!!
+        assertEquals(
+            listOf("10.5555/papertrail.fixture.reference-resolution.2024", "10.1234/conflicting-reference"),
+            resolutionRepository.pendingEntry(run.analysisRunId, referenceId)?.doiIdentifiers,
+        )
+
+        processReferenceResolutionEvents(run.analysisRunId)
+
         val reportEntries = resolutionRepository.reportEntries(run.analysisRunId)
+        assertEquals("UNRESOLVED", reportEntries.first().status)
+        assertEquals("CONFLICTING_DOI_IDENTIFIERS", reportEntries.first().reasonCode)
         assertEquals(listOf("UNCITED_SECTION_HEADING_PATTERN"), reportEntries[1].provisionalArtifactSignals)
         assertEquals("CAPTURED", reportEntries[1].provenanceCaptureStatus)
         assertEquals(1, reportEntries.count { it.provisionalArtifactSignals.isNotEmpty() })

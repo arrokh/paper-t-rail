@@ -253,6 +253,56 @@ describe("Analysis Run stage results loading", () => {
 });
 
 describe("Analysis Run bibliography display keys", () => {
+  it("explains unresolved matches by their recorded cause and labels ranking scores as uncalibrated", () => {
+    const sourceEntry = referenceReport.referenceResolution.entries[0];
+    const unresolvedReport = {
+      ...referenceReport,
+      referenceResolution: {
+        ...referenceReport.referenceResolution,
+        summary: { ...referenceReport.referenceResolution.summary, resolved: 0, unresolved: 1 },
+        entries: [{ ...sourceEntry, status: "UNRESOLVED", reasonCode: "TITLE_CONFLICT", confidenceScore: 0.91 }],
+      },
+    } as unknown as ReferenceResolutionReportResponse;
+
+    renderStage("references", parsedDocument, unresolvedReport);
+
+    fireEvent.click(screen.getByRole("button", { name: "Explain Unresolved" }));
+    expect(screen.getByText("The run did not confirm a Canonical Paper; inspect the decision reason for the specific cause.")).toBeTruthy();
+    expect(screen.getByText("Similarity score (uncalibrated)")).toBeTruthy();
+    expect(screen.getByText("0.910")).toBeTruthy();
+    expect(screen.getByText("title conflict")).toBeTruthy();
+  });
+
+  it("does not display DOI confirmation as a similarity score", () => {
+    const sourceEntry = referenceReport.referenceResolution.entries[0];
+    const confirmedDoiReport = {
+      ...referenceReport,
+      referenceResolution: {
+        ...referenceReport.referenceResolution,
+        entries: [{
+          ...sourceEntry,
+          status: "RESOLVED",
+          reasonCode: "DOI_CONFIRMED",
+          matchMethod: "CONFIRMED_DOI",
+          confidenceScore: 1,
+          canonicalPaper: {
+            id: "paper-id",
+            doi: "10.1234/example",
+            title: "A study",
+            authors: ["Author"],
+            year: 2024,
+          },
+        }],
+      },
+    } as unknown as ReferenceResolutionReportResponse;
+
+    renderStage("references", parsedDocument, confirmedDoiReport);
+
+    expect(screen.queryByText("Similarity score (uncalibrated)")).toBeNull();
+    expect(screen.queryByText("1.000")).toBeNull();
+    expect(screen.getByText("doi confirmed")).toBeTruthy();
+  });
+
   it("shows persisted stage outcomes instead of startup PENDING values from the run snapshot", () => {
     const references = renderStage("references");
     const referenceConfiguration = screen.getByRole("region", { name: /Resolve references configuration and persisted progress/ });

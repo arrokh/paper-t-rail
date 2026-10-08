@@ -394,7 +394,7 @@ function ReferenceMatchResults({ report, view }: { report: ReferenceResolutionRe
   const { selectedValues, toggleValue, reset } = usePipelineResultFilter("references", RESOLUTION_STATUS_FILTERS);
   const filterOptions: PipelineResultFilterOption[] = [
     { id: "RESOLVED", label: "Resolved", description: "Matched to a Canonical Paper under this run’s reference-matching policy.", value: resolution.summary.resolved },
-    { id: "UNRESOLVED", label: "Unresolved", description: "Matching ran, but no candidate met the configured threshold.", value: resolution.summary.unresolved },
+    { id: "UNRESOLVED", label: "Unresolved", description: "The run did not confirm a Canonical Paper; inspect the decision reason for the specific cause.", value: resolution.summary.unresolved },
     { id: "UNSUPPORTED_REFERENCE_TYPE", label: "Unsupported reference type", description: "The Bibliography Entry type is not supported for automatic matching.", value: resolution.summary.unsupportedReferenceType },
     { id: "NOT_ATTEMPTED", label: "Not attempted", description: "Matching was skipped because the entry was outside the configured policy.", value: resolution.summary.notAttempted },
     { id: "RESOLUTION_FAILED", label: "Resolution failed", description: "The matching attempt failed before a result could be stored.", value: resolution.summary.failed },
@@ -448,7 +448,9 @@ function ReferenceMatchCard({ entry, references, view }: { entry: ReportEntry; r
         </dl>
       ) : (
         <dl className="mt-3 grid gap-2 border-t border-border pt-3 text-xs sm:grid-cols-3">
-          <div><dt className="font-mono uppercase text-muted-foreground">Confidence</dt><dd className="mt-1 font-mono">{entry.confidenceScore?.toFixed(3) ?? "Not scored"}</dd></div>
+          {entry.matchMethod !== "CONFIRMED_DOI" && (
+            <div><dt className="font-mono uppercase text-muted-foreground">Similarity score (uncalibrated)</dt><dd className="mt-1 font-mono">{entry.confidenceScore?.toFixed(3) ?? "Not scored"}</dd></div>
+          )}
           <div><dt className="font-mono uppercase text-muted-foreground">Decision reason</dt><dd className="mt-1 break-words">{entry.reasonCode?.replaceAll("_", " ").toLowerCase() ?? "—"}</dd></div>
           <div><dt className="font-mono uppercase text-muted-foreground">Candidate</dt><dd className="mt-1 break-words">{entry.canonicalPaper?.title ?? "No match retained"}</dd></div>
         </dl>

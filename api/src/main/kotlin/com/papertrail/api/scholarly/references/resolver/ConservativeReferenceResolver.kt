@@ -16,11 +16,21 @@ class ConservativeReferenceResolver(
             )
         }
 
-        val suppliedDoi = !reference.doi.isNullOrBlank()
-        val doi = DoiNormalizer.normalize(reference.doi)
-        if (suppliedDoi && doi == null && matcher.policyVersion != ScholarlyMetadataMatcher.LEGACY_POLICY_VERSION) {
+        val isLegacyPolicy = matcher.policyVersion == ScholarlyMetadataMatcher.LEGACY_POLICY_VERSION
+        val suppliedDois = if (isLegacyPolicy) {
+            listOfNotNull(reference.doi?.takeIf(String::isNotBlank))
+        } else {
+            (reference.doiIdentifiers + listOfNotNull(reference.doi)).filter(String::isNotBlank)
+        }
+        val normalizedDois = suppliedDois.map(DoiNormalizer::normalize)
+        if (!isLegacyPolicy && normalizedDois.any { it == null }) {
             return ReferenceResolutionDecision(ReferenceResolutionStatus.UNRESOLVED, "INVALID_IDENTIFIER")
         }
+        val distinctDois = normalizedDois.filterNotNull().toSet()
+        if (!isLegacyPolicy && distinctDois.size > 1) {
+            return ReferenceResolutionDecision(ReferenceResolutionStatus.UNRESOLVED, "CONFLICTING_DOI_IDENTIFIERS")
+        }
+        val doi = if (isLegacyPolicy) DoiNormalizer.normalize(reference.doi) else distinctDois.singleOrNull()
         if (doi != null) {
             val doiWork = scholarlyMetadata.byDoi(doi)
             if (matcher.policyVersion == ScholarlyMetadataMatcher.LEGACY_POLICY_VERSION) {
@@ -75,7 +85,7 @@ class ConservativeReferenceResolver(
             }
         }
 
-        val match = matcher.match(reference, scholarlyMetadata.search(reference))
+        val match = matcher.match(reference, scholarlyMetadata.search(reference.copy(doiIdentifiers = emptyList())))
         return if (match.candidate != null) {
             ReferenceResolutionDecision(
                 ReferenceResolutionStatus.RESOLVED,

@@ -231,10 +231,18 @@ class GrobidTeiParser(
             if (rawText.isEmpty() && normalizationPolicy == BibliographyNormalizationPolicySelection.LEGACY) {
                 return@mapIndexedNotNull null
             }
-            val title = descendants(element).firstOrNull { candidate ->
-                candidate.localName == "title" && candidate.parentNode is Element &&
-                    (candidate.parentNode as Element).localName in setOf("analytic", "monogr")
-            }?.let { normalizeWhitespace(it.textContent) }?.takeIf(String::isNotEmpty)
+            val analytic = descendants(element).firstOrNull { it.localName == "analytic" }
+            val titleElement = analytic?.let { analyticElement ->
+                descendants(analyticElement).firstOrNull { it.localName == "title" }
+            } ?: if (analytic == null) {
+                descendants(element).firstOrNull { candidate ->
+                    candidate.localName == "title" && candidate.parentNode is Element &&
+                        (candidate.parentNode as Element).localName == "monogr" && candidate.getAttribute("level") !in setOf("j", "s")
+                }
+            } else {
+                null
+            }
+            val title = titleElement?.let { normalizeWhitespace(it.textContent) }?.takeIf(String::isNotEmpty)
             val authors = descendants(element).filter { it.localName == "author" }
                 .mapNotNull { author ->
                     val person = descendants(author).firstOrNull { it.localName == "persName" }
@@ -251,7 +259,7 @@ class GrobidTeiParser(
             val year = descendants(element).firstOrNull { it.localName == "date" }
                 ?.let { it.getAttribute("when").ifBlank { it.textContent } }
                 ?.let(YEAR_PATTERN::find)?.value?.toIntOrNull()
-            val identifiers = readBibliographyIdentifiers(element)
+            val identifiers = readBibliographyIdentifiers(element, normalizationPolicy)
             val doi = identifiers.firstOrNull { it.type.equals("doi", ignoreCase = true) }?.normalizedValue
             val type = referenceType(element)
             val sourceLocations = readSourceLocations(element)
@@ -305,7 +313,10 @@ class GrobidTeiParser(
         return candidate
     }
 
-    private fun readBibliographyIdentifiers(element: Element): List<ParsedBibliographyIdentifier> = descendants(element)
+    private fun readBibliographyIdentifiers(
+        element: Element,
+        normalizationPolicy: BibliographyNormalizationPolicySelection,
+    ): List<ParsedBibliographyIdentifier> = descendants(element)
         .filter { it.localName == "idno" || it.localName == "ptr" || it.localName == "ref" }
         .mapNotNull { identifierElement ->
             val rawValue = if (identifierElement.localName == "idno") {
@@ -316,7 +327,7 @@ class GrobidTeiParser(
             if (rawValue.isBlank()) return@mapNotNull null
             val type = identifierElement.getAttribute("type").takeIf(String::isNotBlank)
             val normalizedValue = if (type.equals("doi", ignoreCase = true)) {
-                normalizeDoi(rawValue).takeIf(String::isNotBlank)
+                normalizeDoi(rawValue, normalizationPolicy).takeIf(String::isNotBlank)
             } else {
                 normalizeWhitespace(rawValue).takeIf(String::isNotBlank)
             }
@@ -374,10 +385,17 @@ class GrobidTeiParser(
         .removePrefix("#")
         .takeIf(String::isNotBlank)
 
-    private fun normalizeDoi(value: String): String = normalizeWhitespace(value)
-        .replace(Regex("^https?://(?:dx\\.)?doi\\.org/", RegexOption.IGNORE_CASE), "")
-        .removePrefix("doi:")
-        .trim()
+    private fun normalizeDoi(value: String, normalizationPolicy: BibliographyNormalizationPolicySelection): String {
+        val withoutUrl = normalizeWhitespace(value)
+            .replace(Regex("^https?://(?:dx\\.)?doi\\.org/", RegexOption.IGNORE_CASE), "")
+        if (normalizationPolicy == BibliographyNormalizationPolicySelection.LEGACY) {
+            return withoutUrl.removePrefix("doi:").trim()
+        }
+        return withoutUrl
+            .replace(Regex("^doi:\\s*", RegexOption.IGNORE_CASE), "")
+            .trim()
+            .lowercase(Locale.ROOT)
+    }
 
     private fun readableBibliographyText(element: Element): String {
         val separatedElements = setOf("author", "date", "forename", "genName", "idno", "surname", "title", "addName")
