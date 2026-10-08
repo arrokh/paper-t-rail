@@ -329,6 +329,14 @@ export type ReferenceResolutionReportResponse = {
       canonicalPaper: { id: string; doi: string | null; title: string; authors: string[]; year: number | null } | null;
       confidenceScore: number | null;
       matchMethod: string | null;
+      candidateEvidence?: Array<{
+        doi: string | null;
+        title: string;
+        authors: string[];
+        year: number | null;
+        rankingScore: number | null;
+        reasonCodes: string[];
+      }>;
       accessProgressStatus: string | null;
       accessProgressReason: string | null;
       sourceTextContent: string | null;

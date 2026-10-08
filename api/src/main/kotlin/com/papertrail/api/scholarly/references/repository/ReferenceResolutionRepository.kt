@@ -10,6 +10,7 @@ import com.papertrail.api.scholarly.references.model.StoredBibliographyReference
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
 import com.papertrail.api.scholarly.references.resolver.ReferenceResolutionDecision
+import com.papertrail.api.scholarly.references.resolver.ScholarlyCandidateEvidence
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
@@ -114,8 +115,8 @@ class ReferenceResolutionRepository(
             INSERT INTO bibliography_entry_resolutions (
                 analysis_run_id, bibliography_entry_id, status, reason_code, canonical_paper_id,
                 matched_doi, matched_title, matched_authors, matched_year, confidence_score,
-                match_method, provider_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+                match_method, candidate_evidence, provider_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?::jsonb, ?)
             ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
             """.trimIndent(),
             analysisRunId,
@@ -129,6 +130,7 @@ class ReferenceResolutionRepository(
             decision.work?.year,
             decision.score,
             decision.matchMethod,
+            JsonUtil.toJson(decision.candidateEvidence),
             providerId,
         )
         return canonicalPaperId
@@ -150,7 +152,8 @@ class ReferenceResolutionRepository(
                END AS reason_code,
                r.canonical_paper_id, r.matched_doi, r.matched_title,
                r.matched_authors::text AS matched_authors, r.matched_year, r.confidence_score,
-               r.match_method, access_progress.status AS access_progress_status,
+               r.match_method, r.candidate_evidence::text AS candidate_evidence,
+               access_progress.status AS access_progress_status,
                access_progress.reason_code AS access_progress_reason,
                b.source_element, b.source_text_content, b.source_local_reference_key, b.local_reference_key_origin,
                b.identifiers::text AS identifiers, b.source_locations::text AS source_locations,
@@ -264,6 +267,9 @@ class ReferenceResolutionRepository(
             canonicalPaper = candidate,
             confidenceScore = getObject("confidence_score", Double::class.javaObjectType)?.toDouble(),
             matchMethod = getString("match_method"),
+            candidateEvidence = getString("candidate_evidence")?.let {
+                JsonUtil.fromJson<List<ScholarlyCandidateEvidence>>(it, JsonUtil.collectionType(List::class.java, ScholarlyCandidateEvidence::class.java))
+            }.orEmpty(),
             accessProgressStatus = getString("access_progress_status"),
             accessProgressReason = getString("access_progress_reason"),
             sourceTextContent = getString("source_text_content"),

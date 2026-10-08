@@ -1318,39 +1318,40 @@ OpenAccessProvider
 
 ## 21.2 Resolution Flow
 
+New Analysis Runs pin `title-author-year-strict-consistency-v2`. Historical runs pinned to `title-author-year-weighted-edit-similarity-v1` keep the prior behavior; in particular, v1 can continue to metadata search after an empty or mismatched DOI lookup. Existing persisted decisions are not rewritten.
+
 ```mermaid
 flowchart TD
     BIB["Bibliography Entry"]
-
     DOI{"Valid DOI supplied?"}
     DOI_LOOKUP["Crossref lookup by DOI"]
-    CONFIRMED{"Exact DOI confirmed?"}
-    METADATA["Crossref metadata search"]
-    MATCH{"Confident match?"}
-
+    IDENTIFIER{"Exact DOI and no available-field conflict?"}
+    METADATA["Bounded Crossref candidate search"]
+    MATCH{"Exact title and available author/year agreement?"}
+    UNIQUE{"One distinct best candidate?"}
     CANON["Canonical Paper"]
     S2["Semantic Scholar enrichment"]
     OA["Open Access discovery"]
-
     UNRES["UNRESOLVED"]
 
     BIB --> DOI
-
     DOI -- Yes --> DOI_LOOKUP
-    DOI_LOOKUP --> CONFIRMED
-    CONFIRMED -- Yes --> CANON
-    CONFIRMED -- No --> UNRES
+    DOI_LOOKUP --> IDENTIFIER
+    IDENTIFIER -- Yes --> CANON
+    IDENTIFIER -- No --> UNRES
     DOI -- No --> METADATA
     METADATA --> MATCH
-
-    MATCH -- Yes --> CANON
     MATCH -- No --> UNRES
-
+    MATCH -- Yes --> UNIQUE
+    UNIQUE -- Yes --> CANON
+    UNIQUE -- No --> UNRES
     CANON --> S2
     S2 --> OA
 ```
 
-Crossref is the primary identity-resolution mechanism. A syntactically valid DOI printed in a bibliography entry must be normalized and confirmed against scholarly metadata; only a record carrying that exact normalized DOI can resolve the entry. If the lookup is empty or returns another DOI, mark the entry `UNRESOLVED` and do not fall back to metadata search, preventing a supplied identifier from being silently replaced with a different work. When no valid DOI is supplied, use a deterministic score over title, author, and year, and require a configurable confidence threshold; the default is `0.25` (`PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD`), and each Analysis Run snapshots its configured value. Do not choose a merely top-ranked candidate when it falls below the threshold or remains ambiguous. Mark that reference `UNRESOLVED` instead. Use the conservative, version-pinned matcher; below-threshold and ambiguous entries remain `UNRESOLVED`. Empirical threshold calibration is not a product or release requirement, and matching outcomes must not be described as calibrated. Version the score policy and threshold with each Analysis Run.
+Crossref is the primary identity-resolution mechanism. Under v2, a supplied malformed DOI is unresolved and does not trigger metadata search. A valid DOI resolves only when the provider returns that exact normalized DOI and every corresponding available title, author-set, and year field is consistent; an empty result and a conflicting record remain distinct unresolved outcomes, with no fallback search that could silently replace the supplied identifier. Without a valid DOI, matching requires a title and at least one of authors or year. The normalized title and every supplied author/year field must agree; missing candidate fields and conflicts remain unresolved, and author/year agreement cannot rescue a different title. Candidate deduplication uses the same DOI or identical normalized title/author/year metadata; no topic-similarity or alternate-version equivalence is inferred. Ambiguous candidates remain unresolved.
+
+The configured score policy and threshold remain pinned to each Analysis Run. Candidate scores are deterministic rankings, not probabilities or calibrated confidence. Reports persist up to three candidate metadata summaries and content-free comparison reason codes; resolution status and method, not candidate presence alone, state whether the run resolved the identity. The v2 implementation has deterministic behavioral tests but no human-adjudicated held-out evaluation. Issue #86's evidence and the human policy-approval gate remain open; do not mark issue #89 evaluation-ready or claim measured identity accuracy until they are satisfied. Provider failures remain operational failures, distinct from an empty result or a bibliographic conflict.
 
 Semantic Scholar is enrichment/graph context, not a competing canonical-identity authority in V1.
 
@@ -1683,7 +1684,7 @@ Example shape (symbolic placeholders must be replaced with the actual run values
       "trustBoundary": "EXTERNAL",
       "dataCategories": ["bibliographic_metadata"]
     },
-    "scorePolicyVersion": "title-author-year-weighted-edit-similarity-v1",
+    "scorePolicyVersion": "title-author-year-strict-consistency-v2",
     "confidenceThreshold": "configured-value"
   },
   "aggregationThresholds": {
@@ -3464,7 +3465,7 @@ scholarly metadata:
 API requests that omit a provider use recorded fixtures; the web new-run form initially prefers Crossref when listed, and any external lookup requires matching per-run consent before a request is sent
 
 reference resolution:
-title-author-year-weighted-edit-similarity-v1; conservative configured confidence threshold pinned to each Analysis Run (empirical calibration is not required; results remain uncalibrated)
+new runs pin title-author-year-strict-consistency-v2; old snapshots retain title-author-year-weighted-edit-similarity-v1. The configured threshold is pinned for both; scores are uncalibrated rankings. Issue #89 still needs its human-adjudicated evaluation and policy-approval gate.
 
 graph and OA providers:
 API requests that omit a provider use recorded fixtures; the web new-run form initially prefers Unpaywall when listed, and any external discovery/access request requires matching per-run consent
@@ -3485,7 +3486,7 @@ Focus on:
 
 - claim decomposition helpers, meaning-bearing qualifier preservation, and source-span validation/deduplication,
 - Citation Context clause segmentation and sentence fallback,
-- DOI normalization, conservative thresholds, and ambiguous/below-threshold abstention against deterministic fixtures,
+- DOI normalization, run-pinned legacy/current reference policies, identifier and bibliographic conflicts, missing metadata, candidate ambiguity, and deterministic abstention,
 - reference type classification,
 - unsupported-reference precedence over unresolved identity,
 - non-English cited full-text handling without a verifier call,
@@ -3603,7 +3604,7 @@ A coding agent should consider V1 usable when all of the following work:
 40. Abstract-only papers receive `INSUFFICIENT_EVIDENCE` without semantic-verifier calls; accessible non-English cited full text receives `INSUFFICIENT_EVIDENCE` with `LANGUAGE_UNSUPPORTED`, without embedding or verification-provider calls.
 41. Comparable credible support and contradiction yield `INSUFFICIENT_EVIDENCE`; clearly stronger evidence may determine `SUPPORTED` or `CONTRADICTED`, while partial support without stronger contradiction yields `PARTIALLY_SUPPORTED`.
 42. Use the versioned evidence-strength rubric and aggregation thresholds pinned to each run; keep Laya judgements/statuses labeled uncalibrated. Human calibration is not a product or release requirement.
-43. Pin the conservative reference-resolution score policy and threshold to each run; leave ambiguous or below-threshold matches `UNRESOLVED`. Empirical threshold calibration is not a product or release requirement.
+43. Pin the reference-resolution policy and configured threshold to each run. Legacy v1 outcomes retain their historical policy. New v2 runs reject title/metadata conflicts, expose bounded candidate reasons, and leave ambiguity unresolved. Candidate scores are uncalibrated rankings. The human-adjudicated baseline and policy-approval gate in issues #86/#89 remain required before evaluation readiness; synthetic behavior fixtures do not satisfy that gate.
 44. The configurable byte, page, and claim-citation-pair caps are benchmarked against a representative article and dissertation; current defaults are 50 MiB, 500 pages, and 5,000 pairs, with outcomes in [the V1 runtime matrix](benchmarks/v1-runtime-matrix.md).
 45. The compatibility matrix pins tested service/provider versions; the benchmark uses Redis 7.4.2 (above 6.2) and records the ARM64 runtime pins in [the V1 runtime matrix](benchmarks/v1-runtime-matrix.md).
 

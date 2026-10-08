@@ -9,6 +9,7 @@ import com.papertrail.api.evidence.verification.domain.TestEvidenceAggregationTh
 import com.papertrail.api.external.jev.JevSystemOneSettings
 import com.papertrail.api.external.laya.LayaSystemOneSettings
 import com.papertrail.api.external.ollama.OllamaEmbeddingSettings
+import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
 import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysisSettings
 import com.papertrail.api.infrastructure.providers.CLAIM_EXTRACTOR_ROLE
 import com.papertrail.api.infrastructure.providers.DataCategory
@@ -87,7 +88,7 @@ class RunConfigurationFactoryTest {
         assertEquals("recorded-fixtures", metadataProvider.provider)
         assertEquals("LOCAL", metadataProvider.trustBoundary)
         assertEquals(listOf("bibliographic_metadata"), metadataProvider.dataCategories)
-        assertEquals("title-author-year-weighted-edit-similarity-v1", snapshot.referenceResolution.scorePolicyVersion)
+        assertEquals(ScholarlyMetadataMatcher.POLICY_VERSION, snapshot.referenceResolution.scorePolicyVersion)
         assertEquals(0.25, snapshot.referenceResolution.confidenceThreshold)
         assertEquals("NOT_RUN", snapshot.aggregation.executionStatus)
         assertEquals(null, snapshot.aggregation.verificationPolicyVersion)

@@ -8,4 +8,5 @@ data class ReferenceResolutionDecision(
     val work: ScholarlyWork? = null,
     val score: Double? = null,
     val matchMethod: String? = null,
+    val candidateEvidence: List<ScholarlyCandidateEvidence> = emptyList(),
 )
