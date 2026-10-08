@@ -1,5 +1,7 @@
 package com.papertrail.api.analysis.http
 
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
+
 import java.util.UUID
 
 data class ParsedDocumentView(
@@ -9,4 +11,5 @@ data class ParsedDocumentView(
     val sections: List<ParsedSectionView>,
     val citationContexts: List<ParsedCitationContextView>,
     val bibliographyEntries: List<ParsedBibliographyEntryView>,
+    val bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection? = null,
 )

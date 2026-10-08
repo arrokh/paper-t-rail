@@ -25,6 +25,15 @@ const bibliographyEntries: ParsedDocument["bibliographyEntries"] = [{
   doi: "10.1234/example",
   referenceType: "JOURNAL_ARTICLE",
   resolutionStatus: "UNRESOLVED",
+  sourceTextContent: null,
+  sourceElement: null,
+  sourceLocalReferenceKey: null,
+  localReferenceKeyOrigin: "UNKNOWN",
+  identifiers: [],
+  sourceLocations: [],
+  provisionalArtifactSignals: [],
+  extractionLimitations: ["BIBLIOGRAPHY_PROVENANCE_UNAVAILABLE"],
+  provenanceCaptureStatus: "UNAVAILABLE",
 }];
 
 function makeBatch(uploads: RecoveryBatch["uploads"] = []): RecoveryBatch {

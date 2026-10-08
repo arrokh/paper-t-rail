@@ -129,7 +129,10 @@ import com.papertrail.api.citation.claims.service.HeuristicClaimExtractor
 import com.papertrail.api.citation.claims.service.HeuristicClaimAnalysisProvider
 import com.papertrail.api.document.validation.PdfDocumentValidator
 import com.papertrail.api.analysis.report.service.AnalysisRunReportService
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import com.papertrail.api.citation.parsing.ParsedBibliographyEntry
+import com.papertrail.api.citation.parsing.ParsedBibliographyIdentifier
+import com.papertrail.api.citation.parsing.ParsedBibliographySourceLocation
 import com.papertrail.api.citation.parsing.ParsedCitationContext
 import com.papertrail.api.citation.parsing.ParsedCitationOccurrence
 import com.papertrail.api.citation.repository.ParsedDocumentRepository
@@ -863,6 +866,70 @@ class AnalysisRunQueueIntegrationTest {
         assertTrue(storedArtifacts.none { it.contains("integration pdf bytes") || it.contains("test GROBID output") })
         assertTrue(storedArtifacts.any { it.contains("sourceSha256") })
         assertTrue(storedArtifacts.any { it.contains("candidateCount") })
+    }
+
+    @Test
+    fun `persists normalization policy identifiers provenance and unmatched Citation Targets`() {
+        val sourceParser = object : ScientificDocumentParser {
+            override fun parse(
+                pdf: ByteArray,
+                bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection,
+            ): ParsedScientificDocument {
+                val parsed = TestScientificDocumentParser.parse(pdf, bibliographyNormalizationPolicy)
+                return parsed.copy(
+                    citationContexts = parsed.citationContexts.mapIndexed { index, context ->
+                        if (index != 0) context else context.copy(
+                            occurrences = context.occurrences.map { it.copy(unmatchedBibliographyReferenceKeys = listOf("missing-tei-key")) },
+                        )
+                    },
+                    bibliographyEntries = parsed.bibliographyEntries.map { entry ->
+                        entry.copy(
+                            sourceElement = "biblStruct",
+                            sourceTextContent = "Original GROBID text for ${entry.localReferenceKey}",
+                            sourceLocalReferenceKey = entry.localReferenceKey,
+                            localReferenceKeyOrigin = "GROBID_XML_ID",
+                            identifiers = if (entry.localReferenceKey == "ref1") listOf(
+                                ParsedBibliographyIdentifier(
+                                    sourceElement = "idno",
+                                    type = "DOI",
+                                    rawValue = "https://doi.org/${entry.doi}",
+                                    normalizedValue = entry.doi,
+                                ),
+                            ) else emptyList(),
+                            sourceLocations = listOf(ParsedBibliographySourceLocation(2, "2,10,20,30,40")),
+                            provisionalArtifactSignals = if (entry.localReferenceKey == "ref2") {
+                                listOf("UNCITED_SECTION_HEADING_PATTERN")
+                            } else emptyList(),
+                            extractionLimitations = listOf("SOURCE_TEXT_SPAN_UNAVAILABLE"),
+                            provenanceCaptured = true,
+                        )
+                    },
+                )
+            }
+        }
+        val run = createQueuedRun()
+        val event = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE event_id = ?",
+            String::class.java,
+            run.eventId,
+        )!!
+
+        eventHandler(parser = sourceParser).handle(event)
+
+        val parsed = requireNotNull(ParsedDocumentRepository(jdbc).find(run.analysisRunId))
+        assertEquals(BibliographyNormalizationPolicySelection.CURRENT, parsed.bibliographyNormalizationPolicy)
+        assertEquals("Original GROBID text for ref1", parsed.bibliographyEntries.first().sourceTextContent)
+        assertEquals("ref1", parsed.bibliographyEntries.first().sourceLocalReferenceKey)
+        assertEquals("https://doi.org/10.5555/papertrail.fixture.reference-resolution.2024", parsed.bibliographyEntries.first().identifiers.single().rawValue)
+        assertEquals(listOf(2), parsed.bibliographyEntries.first().sourceLocations.map { it.page })
+        assertEquals("missing-tei-key", parsed.citationContexts.first().occurrences.first().unmatchedBibliographyReferenceKeys?.single())
+
+        val resolutionRepository = ReferenceResolutionRepository(jdbc)
+        assertEquals(BibliographyNormalizationPolicySelection.CURRENT, resolutionRepository.loadRun(run.analysisRunId)?.bibliographyNormalizationPolicy)
+        val reportEntries = resolutionRepository.reportEntries(run.analysisRunId)
+        assertEquals(listOf("UNCITED_SECTION_HEADING_PATTERN"), reportEntries[1].provisionalArtifactSignals)
+        assertEquals("CAPTURED", reportEntries[1].provenanceCaptureStatus)
+        assertEquals(1, reportEntries.count { it.provisionalArtifactSignals.isNotEmpty() })
     }
 
     @Test
@@ -1670,6 +1737,10 @@ class AnalysisRunQueueIntegrationTest {
         val parsed = service.getParsedDocument(created.analysisRunId)
         assertEquals("grobid", parsed.parser.provider)
         assertEquals(created.hash, parsed.sourceContentSha256)
+        assertEquals(BibliographyNormalizationPolicySelection.CURRENT, parsed.bibliographyNormalizationPolicy)
+        val uncapturedProvenance = parsed.bibliographyEntries.single { it.localReferenceKey == "ref2" }
+        assertEquals("UNAVAILABLE", uncapturedProvenance.provenanceCaptureStatus)
+        assertTrue(uncapturedProvenance.extractionLimitations.contains("BIBLIOGRAPHY_PROVENANCE_UNAVAILABLE"))
         val reference = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }
         val access = reference.citedPaperAccess!!
@@ -3124,7 +3195,10 @@ class AnalysisRunQueueIntegrationTest {
         val secondClaimStart = sourceText.indexOf(claimTwo)
         val secondMarker = sourceText.indexOf("[2]")
         val sourceParser = object : ScientificDocumentParser {
-            override fun parse(pdf: ByteArray) = ParsedScientificDocument(
+            override fun parse(
+                pdf: ByteArray,
+                bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection,
+            ) = ParsedScientificDocument(
                 parserId = "grobid",
                 parserVersion = "0.9.1-crf",
                 normalizedSourceText = sourceText,
@@ -3152,6 +3226,7 @@ class AnalysisRunQueueIntegrationTest {
                     ParsedBibliographyEntry(1, "ref-beta", "Beta Study of Yield", "Beta Study of Yield", listOf("Author Beta"), 2021, "10.5555/papertrail.fixture.beta.2021", "JOURNAL_ARTICLE"),
                 ),
                 rawParserOutput = "<TEI>fixture source</TEI>".toByteArray(),
+                bibliographyNormalizationPolicy = bibliographyNormalizationPolicy,
             )
         }
         val scholarlyWorks = listOf(
@@ -4237,17 +4312,23 @@ class AnalysisRunQueueIntegrationTest {
     ) : ScientificDocumentParser {
         val parseCalls = AtomicInteger()
 
-        override fun parse(pdf: ByteArray): ParsedScientificDocument {
+        override fun parse(
+            pdf: ByteArray,
+            bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection,
+        ): ParsedScientificDocument {
             if (parseCalls.incrementAndGet() == 1) {
                 started.countDown()
                 check(proceed.await(10, TimeUnit.SECONDS)) { "Timed out waiting to release the blocking parser." }
             }
-            return TestScientificDocumentParser.parse(pdf)
+            return TestScientificDocumentParser.parse(pdf, bibliographyNormalizationPolicy)
         }
     }
 
     private object TestScientificDocumentParser : ScientificDocumentParser {
-        override fun parse(pdf: ByteArray): ParsedScientificDocument {
+        override fun parse(
+            pdf: ByteArray,
+            bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection,
+        ): ParsedScientificDocument {
             val firstContext = "Prior results support the method and reproduce it [1, 2]"
             val secondContext = "however, later work disputes it [3]."
             val secondContextStart = firstContext.length + 2
@@ -4293,6 +4374,7 @@ class AnalysisRunQueueIntegrationTest {
                     ParsedBibliographyEntry(3, "ref4", "An unrelated ocean chemistry paper", "An unrelated ocean chemistry paper", listOf("Different Author"), 1991, null, "JOURNAL_ARTICLE"),
                 ),
                 rawParserOutput = "<TEI>test GROBID output</TEI>".toByteArray(),
+                bibliographyNormalizationPolicy = bibliographyNormalizationPolicy,
             )
         }
     }
@@ -4969,6 +5051,14 @@ class AnalysisRunQueueIntegrationTest {
             val recoveryPdfStagingMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("recovery_pdf_staging.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryPdfStagingMigrationVerification)) }
+            }
+            val bibliographyProvenanceMigration = migrationDirectory.resolve("bibliography_entry_provenance.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(bibliographyProvenanceMigration)) }
+            }
+            val bibliographyProvenanceMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("bibliography_entry_provenance.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(bibliographyProvenanceMigrationVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

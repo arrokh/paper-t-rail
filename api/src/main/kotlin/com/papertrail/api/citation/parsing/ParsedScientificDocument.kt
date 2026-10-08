@@ -8,4 +8,5 @@ data class ParsedScientificDocument(
     val citationContexts: List<ParsedCitationContext>,
     val bibliographyEntries: List<ParsedBibliographyEntry>,
     val rawParserOutput: ByteArray = ByteArray(0),
+    val bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection? = null,
 )

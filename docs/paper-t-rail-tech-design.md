@@ -220,7 +220,7 @@ The reference entry at the end of the source document:
 [17] Smith, J. et al. (2024). Effects of Generative Feedback...
 ```
 
-This is not yet a guaranteed canonical identity.
+This is not yet a guaranteed canonical identity. Preserve the source-local key, raw GROBID text content, extracted DOI/repository identifiers and URL targets, and provenance separately from normalized fields. A Bibliography Entry is not a Canonical Paper; source identifiers are retained without implying an external lookup or identity match.
 
 ## 4.5 Reference Resolution
 
@@ -2992,6 +2992,10 @@ adapter normalization
   ↓
 domain DTOs/entities
 ```
+
+New Analysis Runs pin the `grobid-bibliography-normalization` policy and version in their immutable configuration. Current runs use v2; older snapshots without a policy use legacy v1 behavior. Persist the unnormalized TEI element text content alongside the normalized display text and parsed fields. Keep original local keys, identifier/URL values, source element, coordinates, provisional artifact signals, and extraction limitations run-scoped. Older rows report provenance as unavailable; do not backfill inferred causes. GROBID page coordinates are not source-text spans, so record unavailable page/span provenance rather than fabricating offsets.
+
+Suspicious extraction patterns are screening signals, not adjudicated labels. The v2 policy retains the Bibliography Entry and any Citation Target association; unmatched TEI target keys are also persisted for inspection. Do not redirect a target to a different entry or claim that the #86 human-adjudicated evidence gate is satisfied by these signals.
 
 ---
 

@@ -1,5 +1,6 @@
 package com.papertrail.api.analysis.configuration
 
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import io.swagger.v3.oas.annotations.media.Schema
 
 data class AnalysisConfigurationSnapshot(
@@ -25,6 +26,8 @@ data class AnalysisConfigurationSnapshot(
     val externalProviderConsents: List<ExternalProviderConsentSnapshot>,
     @field:Schema(description = "Cited Paper PDF parser pinned for Stage 04. Older Analysis Runs without this field use their source parser.")
     val citedPaperParser: ProviderSelection? = null,
+    @field:Schema(description = "Bibliography normalization policy pinned for new Analysis Runs; absent legacy snapshots use the legacy policy.")
+    val bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection? = null,
 ) {
     fun citedPaperParserSelection(): ProviderSelection = citedPaperParser ?: sourceParser
 }

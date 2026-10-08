@@ -2,6 +2,9 @@ package com.papertrail.api.scholarly.references.repository
 
 import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
+import com.papertrail.api.citation.parsing.ParsedBibliographyIdentifier
+import com.papertrail.api.citation.parsing.ParsedBibliographySourceLocation
 import com.papertrail.api.scholarly.references.client.ScholarlyWork
 import com.papertrail.api.scholarly.references.model.StoredBibliographyReference
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
@@ -21,11 +24,14 @@ class ReferenceResolutionRepository(
 ) {
     fun loadRun(analysisRunId: UUID): RunResolutionContext? = jdbc.query(
         """
-        SELECT status,
-               configuration_snapshot::text AS configuration,
-               analysis_run_has_conflict_aware_evidence_coverage(configuration_snapshot) AS semantic_pipeline_configured
+        SELECT run.status,
+               run.configuration_snapshot::text AS configuration,
+               analysis_run_has_conflict_aware_evidence_coverage(run.configuration_snapshot) AS semantic_pipeline_configured,
+               parsed.bibliography_normalization_policy_id,
+               parsed.bibliography_normalization_policy_version
           FROM analysis_runs run
           JOIN source_documents document ON document.id = run.document_id
+          LEFT JOIN parsed_document_parses parsed ON parsed.analysis_run_id = run.id
          WHERE run.id = ?
            AND NOT EXISTS (
                SELECT 1 FROM source_document_tombstones tombstone WHERE tombstone.document_id = document.id
@@ -36,6 +42,11 @@ class ReferenceResolutionRepository(
                 runStatus = rs.getString("status"),
                 configuration = JsonUtil.fromJson(rs.getString("configuration"), AnalysisConfigurationSnapshot::class.java),
                 semanticPipelineConfigured = rs.getBoolean("semantic_pipeline_configured"),
+                bibliographyNormalizationPolicy = rs.getString("bibliography_normalization_policy_id")?.let { policyId ->
+                    rs.getString("bibliography_normalization_policy_version")?.let { version ->
+                        BibliographyNormalizationPolicySelection(policyId, version)
+                    }
+                },
             )
         },
         analysisRunId,
@@ -140,7 +151,11 @@ class ReferenceResolutionRepository(
                r.canonical_paper_id, r.matched_doi, r.matched_title,
                r.matched_authors::text AS matched_authors, r.matched_year, r.confidence_score,
                r.match_method, access_progress.status AS access_progress_status,
-               access_progress.reason_code AS access_progress_reason
+               access_progress.reason_code AS access_progress_reason,
+               b.source_element, b.source_text_content, b.source_local_reference_key, b.local_reference_key_origin,
+               b.identifiers::text AS identifiers, b.source_locations::text AS source_locations,
+               b.provisional_artifact_signals::text AS provisional_artifact_signals,
+               b.extraction_limitations::text AS extraction_limitations, b.provenance_capture_status
           FROM bibliography_entries b
           LEFT JOIN bibliography_entry_resolutions r
             ON r.analysis_run_id = b.analysis_run_id AND r.bibliography_entry_id = b.id
@@ -205,6 +220,7 @@ class ReferenceResolutionRepository(
         val runStatus: String,
         val configuration: AnalysisConfigurationSnapshot,
         val semanticPipelineConfigured: Boolean,
+        val bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection?,
     )
 
     private fun ResultSet.toStoredReference() = StoredBibliographyReference(
@@ -218,6 +234,9 @@ class ReferenceResolutionRepository(
         doi = getString("parsed_doi"),
         referenceType = getString("reference_type"),
     )
+
+    private fun listOfNotCapturedLimitation(provenanceCaptureStatus: String?): List<String> =
+        if (provenanceCaptureStatus == "CAPTURED") emptyList() else listOf("BIBLIOGRAPHY_PROVENANCE_UNAVAILABLE")
 
     private fun ResultSet.toReportEntry(): BibliographyResolutionReportEntry {
         val status = getString("status")
@@ -247,6 +266,23 @@ class ReferenceResolutionRepository(
             matchMethod = getString("match_method"),
             accessProgressStatus = getString("access_progress_status"),
             accessProgressReason = getString("access_progress_reason"),
+            sourceTextContent = getString("source_text_content"),
+            sourceElement = getString("source_element"),
+            sourceLocalReferenceKey = getString("source_local_reference_key"),
+            localReferenceKeyOrigin = getString("local_reference_key_origin") ?: "UNKNOWN",
+            identifiers = getString("identifiers")?.let {
+                JsonUtil.fromJson<List<ParsedBibliographyIdentifier>>(it, JsonUtil.collectionType(List::class.java, ParsedBibliographyIdentifier::class.java))
+            }.orEmpty(),
+            sourceLocations = getString("source_locations")?.let {
+                JsonUtil.fromJson<List<ParsedBibliographySourceLocation>>(it, JsonUtil.collectionType(List::class.java, ParsedBibliographySourceLocation::class.java))
+            }.orEmpty(),
+            provisionalArtifactSignals = getString("provisional_artifact_signals")?.let {
+                JsonUtil.fromJson<List<String>>(it, JsonUtil.collectionType(List::class.java, String::class.java))
+            }.orEmpty(),
+            extractionLimitations = getString("extraction_limitations")?.let {
+                JsonUtil.fromJson<List<String>>(it, JsonUtil.collectionType(List::class.java, String::class.java))
+            } ?: listOfNotCapturedLimitation(getString("provenance_capture_status")),
+            provenanceCaptureStatus = getString("provenance_capture_status") ?: "UNAVAILABLE",
         )
     }
 }

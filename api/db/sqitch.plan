@@ -19,3 +19,4 @@ persisted_analysis_run_pipeline [laya_evidence_passage_spans] 2026-09-30T00:00:0
 analysis_run_execution [persisted_analysis_run_pipeline] 2026-09-30T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist run-linked execution spans and sanitized inspectable artifacts
 detailed_cited_paper_access_causes [analysis_run_execution] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist detailed cited-paper access causes
 recovery_pdf_staging [detailed_cited_paper_access_causes] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Stage rights-declared bounded recovery PDFs separately from immutable Analysis Runs
+bibliography_entry_provenance [recovery_pdf_staging] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Preserve versioned bibliography identifiers and extraction provenance
