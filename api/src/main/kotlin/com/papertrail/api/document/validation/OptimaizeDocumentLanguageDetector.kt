@@ -20,4 +20,9 @@ class OptimaizeDocumentLanguageDetector : DocumentLanguageDetector {
             ?: return LanguageDetection(null, 0.0)
         return LanguageDetection(best.locale.language, best.probability)
     }
+
+    companion object {
+        const val DETECTOR_ID = "optimaize"
+        const val DETECTOR_VERSION = "0.6"
+    }
 }

@@ -1,0 +1,14 @@
+DROP TRIGGER IF EXISTS recovery_upload_asset_selections_require_active_source_document ON recovery_upload_asset_selections;
+DROP TRIGGER IF EXISTS recovery_validation_attempts_clear_stale_selection ON recovery_upload_validation_attempts;
+DROP TRIGGER IF EXISTS recovery_upload_identity_confirmations_require_active_source_document ON recovery_upload_identity_confirmations;
+DROP TRIGGER IF EXISTS recovery_upload_asset_selections_are_immutable ON recovery_upload_asset_selections;
+DROP TRIGGER IF EXISTS recovery_upload_asset_selections_validate ON recovery_upload_asset_selections;
+DROP TRIGGER IF EXISTS recovery_upload_identity_confirmations_validate ON recovery_upload_identity_confirmations;
+DROP TRIGGER IF EXISTS recovery_upload_identity_confirmations_are_immutable ON recovery_upload_identity_confirmations;
+DROP FUNCTION IF EXISTS clear_recovery_upload_selection_after_new_validation();
+DROP FUNCTION IF EXISTS prevent_recovery_upload_asset_selection_update();
+DROP FUNCTION IF EXISTS enforce_recovery_upload_asset_selection();
+DROP FUNCTION IF EXISTS enforce_recovery_upload_identity_confirmation();
+DROP FUNCTION IF EXISTS prevent_recovery_identity_confirmation_update();
+DROP TABLE IF EXISTS recovery_upload_asset_selections;
+DROP TABLE IF EXISTS recovery_upload_identity_confirmations;

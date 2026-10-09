@@ -10,4 +10,6 @@ data class ParsedScientificDocument(
     val rawParserOutput: ByteArray = ByteArray(0),
     val bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection? = null,
     val bibliographicMetadataCandidates: List<ParsedBibliographicMetadataCandidate> = emptyList(),
+    val bibliographicMetadataExtractionPolicyVersion: String? = null,
+    val bibliographicMetadataExtractionOptions: Map<String, String> = emptyMap(),
 )

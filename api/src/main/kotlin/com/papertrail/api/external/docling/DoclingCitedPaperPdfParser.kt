@@ -42,9 +42,10 @@ class DoclingCitedPaperPdfParser(
                     override fun getFilename(): String = "cited-paper.pdf"
                 }, headers),
             )
-            add("from_formats", "pdf")
-            add("to_formats", "md")
-            add("to_formats", "json")
+            val options = BIBLIOGRAPHIC_METADATA_EXTRACTION_OPTIONS
+            add("from_formats", options.getValue("from_formats"))
+            options.getValue("to_formats").split(',').forEach { add("to_formats", it) }
+            add("do_ocr", options.getValue("do_ocr"))
         }
         val responseBytes = client.post()
             .uri("/v1/convert/file")
@@ -72,6 +73,8 @@ class DoclingCitedPaperPdfParser(
             bibliographicMetadataCandidates = parseBibliographicMetadataCandidates(
                 response.path("document").path("json_content"),
             ),
+            bibliographicMetadataExtractionPolicyVersion = METADATA_EXTRACTION_POLICY_VERSION,
+            bibliographicMetadataExtractionOptions = BIBLIOGRAPHIC_METADATA_EXTRACTION_OPTIONS,
         )
     }
 
@@ -230,6 +233,12 @@ class DoclingCitedPaperPdfParser(
         const val PARSER_ID = "docling"
         private const val SUCCESS_STATUS = "success"
         private const val FIRST_PAGE = 1
+        const val METADATA_EXTRACTION_POLICY_VERSION = "docling-first-page-metadata-candidates-v1"
+        val BIBLIOGRAPHIC_METADATA_EXTRACTION_OPTIONS = mapOf(
+            "from_formats" to "pdf",
+            "to_formats" to "md,json",
+            "do_ocr" to "false",
+        )
         private val TITLE_LABELS = setOf("title", "section_header")
         private val DOI_PATTERN = Regex("(?:\\bdoi\\s*:\\s*|\\bhttps?://(?:dx\\.)?doi\\.org/)(10\\.[0-9]{4,9}/[^\\s<>\"{}|\\\\^`\\[\\]]+)", RegexOption.IGNORE_CASE)
         private val MARKDOWN_HEADING = Regex("^#{1,6}\\s+(.+?)\\s*#*\\s*$")

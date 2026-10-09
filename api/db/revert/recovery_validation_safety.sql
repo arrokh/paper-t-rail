@@ -1,0 +1,3 @@
+DROP TRIGGER IF EXISTS recovery_upload_validation_active_document_guard ON recovery_upload_validation_attempts;
+DROP TRIGGER IF EXISTS recovery_upload_validation_attempts_validate ON recovery_upload_validation_attempts;
+DROP FUNCTION IF EXISTS enforce_recovery_upload_validation_attempt_state();

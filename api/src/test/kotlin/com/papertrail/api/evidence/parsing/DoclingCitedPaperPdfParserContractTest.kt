@@ -69,6 +69,8 @@ class DoclingCitedPaperPdfParserContractTest {
             .andExpect(content().string(containsString("name=\"to_formats\"")))
             .andExpect(content().string(containsString("md")))
             .andExpect(content().string(containsString("json")))
+            .andExpect(content().string(containsString("name=\"do_ocr\"")))
+            .andExpect(content().string(containsString("false")))
             .andRespond(
                 withSuccess(
                     """{"status":"success","document":{"md_content":"# Synthetic Cited Paper\n\nBody text.","json_content":{"texts":[{"self_ref":"#/texts/0","label":"section_header","text":"Synthetic Cited Paper","prov":[{"page_no":1,"charspan":[0,21]}]},{"self_ref":"#/texts/1","label":"text","text":"Avery Example and Rowan Sample","prov":[{"page_no":1,"charspan":[0,30]}]},{"self_ref":"#/texts/2","label":"text","text":"DOI: 10.5555/papertrail.synthetic.article.2025","prov":[{"page_no":1,"charspan":[0,46]}]},{"label":"text","text":"References DOI: 10.5555/papertrail.unrelated.reference.2024","prov":[{"page_no":4}]}]}}}""",
@@ -84,6 +86,11 @@ class DoclingCitedPaperPdfParserContractTest {
 
         val parsed = parser.parse("pdf-bytes".toByteArray())
 
+        assertEquals("docling-first-page-metadata-candidates-v1", parsed.bibliographicMetadataExtractionPolicyVersion)
+        assertEquals(
+            mapOf("from_formats" to "pdf", "to_formats" to "md,json", "do_ocr" to "false"),
+            parsed.bibliographicMetadataExtractionOptions,
+        )
         assertEquals(
             listOf(
                 ParsedBibliographicMetadataCandidate(

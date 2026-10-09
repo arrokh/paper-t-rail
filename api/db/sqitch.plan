@@ -19,5 +19,8 @@ persisted_analysis_run_pipeline [laya_evidence_passage_spans] 2026-09-30T00:00:0
 analysis_run_execution [persisted_analysis_run_pipeline] 2026-09-30T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist run-linked execution spans and sanitized inspectable artifacts
 detailed_cited_paper_access_causes [analysis_run_execution] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist detailed cited-paper access causes
 recovery_pdf_staging [detailed_cited_paper_access_causes] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Stage rights-declared bounded recovery PDFs separately from immutable Analysis Runs
+recovery_pdf_validation [recovery_pdf_staging] 2026-10-09T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist Docling-backed metadata validation for staged recovery PDFs
+recovery_identity_selection [recovery_pdf_validation] 2026-10-09T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Record human confirmation and select one exact recovery asset version per entry
 bibliography_entry_provenance [recovery_pdf_staging] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Preserve versioned bibliography identifiers and extraction provenance
 reference_resolution_candidate_evidence [bibliography_entry_provenance] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Preserve bounded reference-match candidate evidence and reasons
+recovery_validation_safety [recovery_identity_selection] 2026-10-09T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Guard active validation writes and enforce source-deletion safety

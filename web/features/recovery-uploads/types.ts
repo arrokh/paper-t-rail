@@ -44,6 +44,66 @@ export type RecoveryBatch = {
   uploads: RecoveryUpload[];
 };
 
+export type RecoveryIdentityOutcome = "VALIDATED" | "NEEDS_CONFIRMATION" | "MISMATCH";
+export type RecoveryLanguageEligibility = "ELIGIBLE" | "INELIGIBLE" | "INDETERMINATE";
+export type RecoveryValidationStatus = "COMPLETED" | "FAILED";
+
+export type RecoveryMetadataCandidate = {
+  field: "TITLE" | "AUTHORS" | "DOI";
+  value: string;
+  pageNumber: number;
+  sourceLabel: string;
+  extractionMethod: string;
+  sourceElementId: string | null;
+  sourceCharSpanStart: number | null;
+  sourceCharSpanEnd: number | null;
+};
+
+export type RecoveryUploadValidation = {
+  id: string;
+  batchId: string;
+  uploadId: string;
+  analysisRunId: string;
+  contentSha256: string;
+  parserId: string;
+  parserVersion: string;
+  metadataExtractionPolicyVersion: string;
+  parserOptions: Record<string, string>;
+  languageDetectorId: string;
+  languageDetectorVersion: string;
+  minimumLanguageConfidence: number;
+  validationStatus: RecoveryValidationStatus;
+  identityOutcome: RecoveryIdentityOutcome | null;
+  identityReasonCode: string | null;
+  humanConfirmation: {
+    id: string;
+    batchId: string;
+    uploadId: string;
+    validationAttemptId: string;
+    contentSha256: string;
+    decision: string;
+    confirmedAt: string;
+  } | null;
+  selection: {
+    id: string;
+    batchId: string;
+    analysisRunId: string;
+    bibliographyEntryId: string;
+    uploadId: string;
+    validationAttemptId: string;
+    contentSha256: string;
+    selectionMethod: "MACHINE_VALIDATED" | "HUMAN_CONFIRMED";
+    selectedAt: string;
+  } | null;
+  metadataCandidates: RecoveryMetadataCandidate[];
+  languageEligibility: RecoveryLanguageEligibility;
+  detectedLanguage: string | null;
+  languageConfidence: number | null;
+  languageReasonCode: string;
+  failureCode: string | null;
+  createdAt: string;
+};
+
 export type RecoveryUploadIntent = {
   upload: RecoveryUpload;
   uploadUrl: string | null;
