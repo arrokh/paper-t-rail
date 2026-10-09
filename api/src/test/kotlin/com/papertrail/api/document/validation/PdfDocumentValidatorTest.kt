@@ -9,6 +9,7 @@ import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
@@ -28,6 +29,41 @@ class PdfDocumentValidatorTest {
         assertEquals(expectedHash, validated.sha256)
         assertEquals("draft.pdf", validated.sanitizedFilename)
         assertEquals(ENGLISH.repeat(80).count { !it.isWhitespace() }, validated.extractedCharacterCount)
+    }
+
+    @Test
+    fun `accepts a PDF with exactly the configured maximum page count`() {
+        val maxPages = 2
+        val content = pdfWithText(ENGLISH.repeat(80), pageCount = maxPages)
+
+        val validated = validator(maxPages = maxPages).validate(
+            "draft.pdf",
+            "application/pdf",
+            content,
+            contentHash(content),
+        )
+
+        assertEquals(maxPages, validated.pageCount)
+    }
+
+    @Test
+    fun `rejects one page above the configured maximum with observed count and limit`() {
+        val maxPages = 2
+        val actualPageCount = maxPages + 1
+        val content = pdfWithText(ENGLISH.repeat(80), pageCount = actualPageCount)
+
+        val exception = assertThrows(DocumentValidationException::class.java) {
+            validator(maxPages = maxPages).validate(
+                "draft.pdf",
+                "application/pdf",
+                content,
+                contentHash(content),
+            )
+        }
+
+        assertEquals("PDF_TOO_MANY_PAGES", exception.code)
+        assertTrue(exception.message.contains("$actualPageCount pages"))
+        assertTrue(exception.message.contains("configured limit is $maxPages"))
     }
 
     @Test
@@ -158,9 +194,8 @@ class PdfDocumentValidatorTest {
         parserVersion = "3.0.5",
     )
 
-    private fun pdfWithText(text: String): ByteArray {
-        val document = PDDocument()
-        document.use { pdf ->
+    private fun pdfWithText(text: String, pageCount: Int = 1): ByteArray = PDDocument().use { pdf ->
+        repeat(pageCount) {
             val page = PDPage(PDRectangle.LETTER)
             pdf.addPage(page)
             PDPageContentStream(pdf, page).use { stream ->
@@ -170,10 +205,10 @@ class PdfDocumentValidatorTest {
                 stream.showText(text)
                 stream.endText()
             }
-            return ByteArrayOutputStream().use { output ->
-                pdf.save(output)
-                output.toByteArray()
-            }
+        }
+        ByteArrayOutputStream().use { output ->
+            pdf.save(output)
+            output.toByteArray()
         }
     }
 
