@@ -1,0 +1,61 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 741 >>
+stream
+BT
+/F1 10 Tf
+48 760 Td
+14 TL
+(Synthetic upload-to-report fixture study) Tj
+T*
+(Riley Example and Jordan Researcher) Tj
+T*
+(DOI: 10.5555/papertrail.system-test.upload-report.2026) Tj
+T*
+T*
+(Results) Tj
+T*
+(Conservative reference resolution prevents ambiguous citations from being assigned unsupported paper identities.) Tj
+T*
+(This synthetic document exists only to exercise the local upload, parsing, indexing, and report workflow.) Tj
+T*
+(Its citation and evidence are test fixtures and do not describe a real study or establish model accuracy.) Tj
+T*
+T*
+(References) Tj
+T*
+([1] Synthetic upload-to-report fixture study. Riley Example and Jordan Researcher. 2026. https://doi.org/10.5555/papertrail.system-test.upload-report.2026) Tj
+T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Title (Synthetic upload-to-report fixture study) /Author (Paper T-Rail system-test fixture) >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000247 00000 n 
+0000001038 00000 n 
+0000001108 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R /Info 6 0 R >>
+startxref
+1222
+%%EOF

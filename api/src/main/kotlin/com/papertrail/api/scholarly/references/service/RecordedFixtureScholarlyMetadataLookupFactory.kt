@@ -1,19 +1,23 @@
 package com.papertrail.api.scholarly.references.service
 
 import com.fasterxml.jackson.databind.JsonNode
-import com.papertrail.api.utils.JsonUtil
+import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.scholarly.references.client.BibliographyReference
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookup
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookupFactory
 import com.papertrail.api.scholarly.references.client.ScholarlyWork
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
-import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.utils.JsonUtil
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.io.ClassPathResource
 import org.springframework.stereotype.Component
 
 @Component
-class RecordedFixtureScholarlyMetadataLookupFactory : ScholarlyMetadataLookupFactory {
-    private val works: List<ScholarlyWork> = JsonUtil.parseTree(ClassPathResource("provider-fixtures/recorded-scholarly-works.json").inputStream)
+class RecordedFixtureScholarlyMetadataLookupFactory(
+    @Value("\${paper-trail.providers.recorded-fixtures.scholarly-works-resource}")
+    resourcePath: String = "provider-fixtures/recorded-scholarly-works.json",
+) : ScholarlyMetadataLookupFactory {
+    private val works: List<ScholarlyWork> = JsonUtil.parseTree(ClassPathResource(resourcePath).inputStream)
         .map { node ->
             ScholarlyWork(
                 doi = node.path("doi").takeIf(JsonNode::isTextual)?.asText(),
