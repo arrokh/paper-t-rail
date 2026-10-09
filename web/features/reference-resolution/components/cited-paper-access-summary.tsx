@@ -29,6 +29,9 @@ const ACCESS_CAUSE_LABELS: Record<CitedPaperAccess["accessReasons"][number], str
   FULL_TEXT_DOWNLOAD_FAILED: "A permitted full-text download failed.",
   FULL_TEXT_FORMAT_UNSUPPORTED: "The returned file format is not supported for text extraction.",
   FULL_TEXT_PARSE_FAILED: "The returned PDF or text file could not be parsed into usable text.",
+  FULL_TEXT_IDENTITY_UNVERIFIED: "The file's identity could not be confirmed from its metadata; it was not sent for evidence assessment.",
+  FULL_TEXT_IDENTITY_MISMATCH: "The file failed the identity check because of a mismatch or unsupported reference type; it was not sent for evidence assessment.",
+  FULL_TEXT_IDENTITY_VALIDATION_FAILED: "The system could not complete the file identity check; it was not sent for evidence assessment.",
   LANGUAGE_UNSUPPORTED: "Full text was acquired, but its language was not confirmed as supported English; semantic assessment was not run."
 };
 

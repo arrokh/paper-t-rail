@@ -76,7 +76,7 @@ _Avoid_: claim verification when the specific cited work is material.
 ## Analysis and review
 
 **Analysis Run**:
-One analysis of a Source Document under a defined analysis configuration. Results are immutable during normal use; explicit user deletion is the privacy exception. Re-analysis creates a new run rather than replacing prior results.
+One analysis of a Source Document under a defined analysis configuration. Results are immutable during normal use; explicit user deletion is the privacy exception. Re-analysis creates a new run rather than replacing prior results. A successor may reuse an external-provider result only when its consent snapshot for that provider matches the originating run's snapshot; otherwise the result is incompatible and any new provider call requires explicit successor consent ([ADR 0020](docs/adr/0020-require-matching-consent-for-provider-output-reuse.md)).
 _Avoid_: analysis when referring to a specific execution.
 
 **Recovery Batch**:

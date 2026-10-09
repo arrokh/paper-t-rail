@@ -1,5 +1,6 @@
 package com.papertrail.api.scholarly.acquisition.service
 
+import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
 import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
@@ -36,6 +37,7 @@ class CitedPaperAccessService(
     private val objectStore: SourceDocumentObjectStore,
     private val languageDetector: DocumentLanguageDetector,
     private val textExtractor: CitedPaperTextExtractor,
+    private val identityValidator: CitedPaperIdentityValidator,
     private val providerFactories: List<OpenAccessProviderFactory>,
     private val executionService: AnalysisRunExecutionService? = null,
 ) {
@@ -82,7 +84,15 @@ class CitedPaperAccessService(
         val checkedLocations = locations.map { location -> location to locationPolicy.rejectionReasons(location) }
         val permittedLocations = checkedLocations.filter { (_, reasons) -> reasons.isEmpty() }.map { it.first }
         val rejectedLocationCauses = checkedLocations.flatMap { it.second }.distinct()
-        val acquisition = acquireExtractableFullText(analysisRunId, context.documentId, providerSelection.provider, provider, permittedLocations)
+        val acquisition = acquireExtractableFullText(
+            analysisRunId = analysisRunId,
+            documentId = context.documentId,
+            providerId = providerSelection.provider,
+            provider = provider,
+            locations = permittedLocations,
+            reference = reference,
+            configuration = context.configuration,
+        )
         val acquired = acquisition.fullText
         val extractedText = acquisition.extractedText
         val languageDetection = extractedText?.let { text ->
@@ -98,12 +108,17 @@ class CitedPaperAccessService(
         val supportedLanguage = languageDetection?.takeIf { it.confidence >= confidenceThreshold }?.language
         val metadataAvailable = discovery?.metadataAvailable == true || discovery?.abstractAvailable == true ||
             discovery?.locations?.isNotEmpty() == true || acquired != null
-        val decision = accessPolicy.decide(
+        val accessDecision = accessPolicy.decide(
             metadataAvailable = metadataAvailable,
             abstractAvailable = discovery?.abstractAvailable == true,
             fullTextAvailable = acquired != null,
             language = supportedLanguage,
         )
+        val decision = if (accessDecision.accessStatus == CitedPaperAccessStatus.METADATA_ONLY) {
+            acquisition.identityFailureReason?.let { accessDecision.copy(terminalReason = it) } ?: accessDecision
+        } else {
+            accessDecision
+        }
         val accessReason = when {
             permittedLocations.isNotEmpty() && acquired == null -> CitedPaperAccessReason.FULL_TEXT_ACQUISITION_FAILED
             decision.accessStatus == CitedPaperAccessStatus.ABSTRACT_ONLY -> CitedPaperAccessReason.ABSTRACT_ONLY
@@ -119,7 +134,7 @@ class CitedPaperAccessService(
             permittedLocations.isEmpty() -> rejectedLocationCauses
             else -> (rejectedLocationCauses + acquisition.failureCauses).distinct()
         }
-        val provenanceLocation = acquired?.location ?: permittedLocations.firstOrNull()
+        val provenanceLocation = acquired?.location ?: acquisition.identityFailureLocation ?: permittedLocations.firstOrNull()
         val contentHash = acquired?.bytes?.let(::sha256Hex)
         val objectKey = if (acquired != null && contentHash != null) {
             val extension = if (acquired.mediaType.substringBefore(';').trim().equals("application/pdf", ignoreCase = true)) "pdf" else "txt"
@@ -175,8 +190,12 @@ class CitedPaperAccessService(
         providerId: String,
         provider: OpenAccessProvider,
         locations: List<OpenAccessLocation>,
+        reference: ResolvedCitedReference,
+        configuration: AnalysisConfigurationSnapshot,
     ): FullTextAcquisitionResult {
         val failureCauses = linkedSetOf<CitedPaperAccessCause>()
+        var identityFailureReason: String? = null
+        var identityFailureLocation: OpenAccessLocation? = null
         for ((index, location) in locations.take(MAX_LOCATIONS_TO_TRY).withIndex()) {
             sourceDocumentRepository.requireActiveSourceDocument(documentId)
             val fetch = { provider.fetch(location) }
@@ -213,9 +232,36 @@ class CitedPaperAccessService(
                 failureCauses += CitedPaperAccessCause.FULL_TEXT_PARSE_FAILED
                 continue
             }
-            return FullTextAcquisitionResult(acquired, text, emptyList())
+            val identity = try {
+                identityValidator.validate(acquired, reference, configuration)
+            } catch (exception: ProviderCallRejectedException) {
+                throw exception
+            } catch (exception: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw exception
+            } catch (_: Exception) {
+                CitedPaperIdentityValidationResult(
+                    status = CitedPaperIdentityValidationStatus.FAILED,
+                    reasonCode = "IDENTITY_VALIDATION_FAILED",
+                    failureCause = CitedPaperAccessCause.FULL_TEXT_IDENTITY_VALIDATION_FAILED,
+                )
+            }
+            val identityCause = identity.accessCause()
+            if (identityCause != null) {
+                failureCauses += identityCause
+                identityFailureReason = identity.reasonCode
+                identityFailureLocation = location
+                continue
+            }
+            return FullTextAcquisitionResult(acquired, text, emptyList(), null, null)
         }
-        return FullTextAcquisitionResult(null, null, failureCauses.toList())
+        return FullTextAcquisitionResult(
+            fullText = null,
+            extractedText = null,
+            failureCauses = failureCauses.toList(),
+            identityFailureReason = identityFailureReason,
+            identityFailureLocation = identityFailureLocation,
+        )
     }
 
     private fun recordAccessCauses(analysisRunId: UUID, causes: List<CitedPaperAccessCause>) {
@@ -257,6 +303,8 @@ class CitedPaperAccessService(
         val fullText: AcquiredFullText?,
         val extractedText: String?,
         val failureCauses: List<CitedPaperAccessCause>,
+        val identityFailureReason: String?,
+        val identityFailureLocation: OpenAccessLocation?,
     )
 
     companion object {

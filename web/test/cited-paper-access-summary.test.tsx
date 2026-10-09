@@ -45,6 +45,37 @@ describe("Cited Paper access summary", () => {
     expect(screen.getByText("Full text was acquired and parsed, but its language was not confirmed as supported English; semantic assessment was not run. Availability is not evidence of support.")).toBeTruthy();
   });
 
+  it.each([
+    ["FULL_TEXT_IDENTITY_UNVERIFIED", "The file's identity could not be confirmed from its metadata; it was not sent for evidence assessment."],
+    ["FULL_TEXT_IDENTITY_MISMATCH", "The file failed the identity check because of a mismatch or unsupported reference type; it was not sent for evidence assessment."],
+    ["FULL_TEXT_IDENTITY_VALIDATION_FAILED", "The system could not complete the file identity check; it was not sent for evidence assessment."],
+  ] as const)("explains the automatic identity gate for %s", (cause, explanation) => {
+    render(
+      <CitedPaperAccessSummary
+        access={{
+          accessStatus: "METADATA_ONLY",
+          accessReason: "FULL_TEXT_ACQUISITION_FAILED",
+          accessReasons: [cause],
+          providerId: "recorded-fixtures",
+          sourceUrl: null,
+          license: "CC0-1.0",
+          version: "publishedVersion",
+          hostType: "repository",
+          discoveredAt: "2025-01-01T00:00:00Z",
+          contentSha256: null,
+          language: null,
+          languageDetectorVersion: null,
+          verificationOutcomes: [],
+          evidenceIndexing: null,
+        }}
+        progressStatus="COMPLETED"
+        progressReason={null}
+      />,
+    );
+
+    expect(screen.getByText(explanation)).toBeTruthy();
+  });
+
   it("keeps legacy access reasons coarse when detailed causes were not persisted", () => {
     render(
       <CitedPaperAccessSummary
