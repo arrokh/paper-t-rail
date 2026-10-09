@@ -48,14 +48,61 @@ class DoclingCitedPaperIdentityValidatorTest {
     }
 
     @Test
-    fun `leaves missing DOI metadata unverified instead of accepting an acquired asset`() {
-        val validator = validator(parsedDocument(candidates = emptyList()))
+    fun `does not treat title and positional author candidates alone as identity proof`() {
+        val validator = validator(parsedDocument(candidates = listOf(
+            candidate(ParsedBibliographicMetadataField.TITLE, "The expected work"),
+            candidate(ParsedBibliographicMetadataField.AUTHORS, "A. Author"),
+        )))
 
         val result = validator.validate(pdf(), reference(), configuration())
 
         assertEquals(CitedPaperIdentityValidationStatus.NEEDS_CONFIRMATION, result.status)
         assertEquals("DOI_NOT_EXTRACTED", result.reasonCode)
         assertEquals(CitedPaperAccessCause.FULL_TEXT_IDENTITY_UNVERIFIED, result.accessCause())
+    }
+
+    @Test
+    fun `accepts a differing DOI only when the extracted title exactly matches`() {
+        val validator = validator(parsedDocument(candidates = listOf(
+            candidate(ParsedBibliographicMetadataField.DOI, "10.1234/alternate-version"),
+            candidate(ParsedBibliographicMetadataField.TITLE, "The expected work"),
+        )))
+
+        val result = validator.validate(pdf(), reference(), configuration())
+
+        assertEquals(CitedPaperIdentityValidationStatus.VALIDATED, result.status)
+        assertEquals("TITLE_MATCH_DIFFERENT_DOI", result.reasonCode)
+        assertNull(result.accessCause())
+    }
+
+    @Test
+    fun `blocks an inconclusive book chapter from automatic identity validation`() {
+        val validator = validator(parsedDocument(candidates = emptyList()))
+
+        val result = validator.validate(
+            pdf(),
+            reference().copy(referenceType = "BOOK_CHAPTER"),
+            configuration(),
+        )
+
+        assertEquals(CitedPaperIdentityValidationStatus.MISMATCH, result.status)
+        assertEquals("CHAPTER_IDENTITY_UNSUPPORTED", result.reasonCode)
+        assertEquals(CitedPaperAccessCause.FULL_TEXT_IDENTITY_MISMATCH, result.accessCause())
+    }
+
+    @Test
+    fun `blocks an inconclusive legacy book whose parser policy could not distinguish chapters`() {
+        val validator = validator(parsedDocument(candidates = emptyList()))
+
+        val result = validator.validate(
+            pdf(),
+            reference().copy(referenceType = "BOOK"),
+            configuration().copy(bibliographyNormalizationPolicy = BibliographyNormalizationPolicySelection.VERSION_2),
+        )
+
+        assertEquals(CitedPaperIdentityValidationStatus.MISMATCH, result.status)
+        assertEquals("BOOK_CHAPTER_IDENTITY_UNSUPPORTED", result.reasonCode)
+        assertEquals(CitedPaperAccessCause.FULL_TEXT_IDENTITY_MISMATCH, result.accessCause())
     }
 
     @Test
