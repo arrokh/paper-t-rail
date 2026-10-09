@@ -155,6 +155,276 @@ describe("Recovery Upload workspace", () => {
     expect(await screen.findByText(/This upload is removed\./)).toBeTruthy();
   });
 
+  it("explains that scanned PDFs are unsupported when server validation rejects one", async () => {
+    const rejectedUpload = {
+      ...stagedUpload(),
+      status: "REJECTED" as const,
+      failureCode: "PDF_NO_EXTRACTABLE_TEXT",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([rejectedUpload])]);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText(/Scanned PDFs are not supported/)).toBeTruthy();
+    expect(screen.getByText(/no selectable text/)).toBeTruthy();
+  });
+
+  it("explains that encrypted PDFs are unsupported when server validation rejects one", async () => {
+    const rejectedUpload = {
+      ...stagedUpload(),
+      status: "REJECTED" as const,
+      failureCode: "PDF_ENCRYPTED",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([rejectedUpload])]);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText("Encrypted PDFs are not supported for Recovery Upload validation.")).toBeTruthy();
+  });
+
+  it("waits for saved validation state before allowing a new validation", async () => {
+    let resolveValidation!: (response: Response) => void;
+    const savedValidation = new Promise<Response>((resolve) => { resolveValidation = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([stagedUpload()])]);
+      if (url.endsWith("/uploads/upload-1/validation")) return savedValidation;
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    const validateButton = await screen.findByRole("button", { name: "Validate PDF metadata" });
+    expect(validateButton.hasAttribute("disabled")).toBe(true);
+    expect(await screen.findByText("Loading saved result…")).toBeTruthy();
+
+    resolveValidation(new Response(null, { status: 204 }));
+
+    await waitFor(() => expect(validateButton.hasAttribute("disabled")).toBe(false));
+  });
+
+  it("runs local validation and displays machine identity, language, metadata provenance, and parser options separately", async () => {
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    let latestValidation: object | null = null;
+    const validation = {
+      id: "validation-1",
+      batchId: "batch-1",
+      uploadId: "upload-1",
+      analysisRunId: "run-1",
+      contentSha256: "b".repeat(64),
+      parserId: "docling",
+      parserVersion: "1.30.0",
+      metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
+      languageDetectorId: "optimaize",
+      languageDetectorVersion: "0.6",
+      minimumLanguageConfidence: 0.65,
+      validationStatus: "COMPLETED",
+      identityOutcome: "NEEDS_CONFIRMATION",
+      identityReasonCode: "DOI_DIFFERS_REQUIRES_CONFIRMATION",
+      humanConfirmation: null,
+      selection: null,
+      metadataCandidates: [{
+        field: "DOI",
+        value: "10.1234/alternate",
+        pageNumber: 1,
+        sourceLabel: "doi",
+        extractionMethod: "EXPLICIT_DOI_PREFIX",
+        sourceElementId: "docling-doi-1",
+        sourceCharSpanStart: 110,
+        sourceCharSpanEnd: 130,
+      }],
+      languageEligibility: "ELIGIBLE",
+      detectedLanguage: "en",
+      languageConfidence: 0.99,
+      languageReasonCode: "ENGLISH_DETECTED",
+      failureCode: null,
+      createdAt: "2026-10-09T00:00:00Z",
+    };
+    const humanConfirmation = {
+      id: "confirmation-1",
+      batchId: "batch-1",
+      uploadId: "upload-1",
+      validationAttemptId: "validation-1",
+      contentSha256: "b".repeat(64),
+      decision: "CONFIRM_EXACT_VERSION",
+      confirmedAt: "2026-10-09T00:01:00Z",
+    };
+    const selection = {
+      id: "selection-1",
+      batchId: "batch-1",
+      analysisRunId: "run-1",
+      bibliographyEntryId: "entry-1",
+      uploadId: "upload-1",
+      validationAttemptId: "validation-1",
+      contentSha256: "b".repeat(64),
+      selectionMethod: "HUMAN_CONFIRMED",
+      selectedAt: "2026-10-09T00:02:00Z",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([stagedUpload()])]);
+      if (url.endsWith("/uploads/upload-1/validation")) {
+        return latestValidation ? Response.json(latestValidation) : new Response(null, { status: 204 });
+      }
+      if (url.endsWith("/uploads/upload-1/validate") && options?.method === "POST") {
+        latestValidation = validation;
+        return Response.json(validation);
+      }
+      if (url.endsWith("/validation/validation-1/confirm-identity") && options?.method === "POST") {
+        latestValidation = { ...validation, humanConfirmation };
+        return Response.json(humanConfirmation);
+      }
+      if (url.endsWith("/uploads/upload-1/select") && options?.method === "POST") {
+        latestValidation = { ...validation, humanConfirmation, selection };
+        return Response.json(selection);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+    const validateButton = await screen.findByRole("button", { name: "Validate PDF metadata" });
+    await waitFor(() => expect(validateButton.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(validateButton);
+
+    expect(await screen.findByText("Needs human confirmation")).toBeTruthy();
+    expect(screen.getByText("10.1234/alternate")).toBeTruthy();
+    expect(screen.getByText(/Page 1/)).toBeTruthy();
+    expect(screen.getByText(/English detected/)).toBeTruthy();
+    expect(screen.getByText(/not evidence assessment/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "I confirm this exact PDF version" }));
+    expect(await screen.findByText(/Human confirmation recorded/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Select this exact version" }));
+    expect(await screen.findByText(/Selected exact version/)).toBeTruthy();
+    expect(requests.some(({ url, options }) => url.endsWith("/uploads/upload-1/validate") && options?.method === "POST")).toBe(true);
+    const confirmationRequest = requests.find(({ url, options }) => url.endsWith("/validation/validation-1/confirm-identity") && options?.method === "POST");
+    expect(JSON.parse(String(confirmationRequest?.options?.body))).toEqual({ confirmExactVersion: true });
+    expect(requests.some(({ url, options }) => url.endsWith("/uploads/upload-1/select") && options?.method === "POST")).toBe(true);
+    expect(requests.some(({ url }) => url.includes("/assess") || url.includes("/providers"))).toBe(false);
+  });
+
+  it("blocks human confirmation and exact-version selection for a clear mismatch", async () => {
+    const mismatch = {
+      id: "validation-mismatch",
+      batchId: "batch-1",
+      uploadId: "upload-1",
+      analysisRunId: "run-1",
+      contentSha256: "b".repeat(64),
+      parserId: "docling",
+      parserVersion: "1.30.0",
+      metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
+      languageDetectorId: "optimaize",
+      languageDetectorVersion: "0.6",
+      minimumLanguageConfidence: 0.65,
+      validationStatus: "COMPLETED",
+      identityOutcome: "MISMATCH",
+      identityReasonCode: "DOI_TITLE_CONFLICT",
+      humanConfirmation: null,
+      selection: null,
+      metadataCandidates: [],
+      languageEligibility: "ELIGIBLE",
+      detectedLanguage: "en",
+      languageConfidence: 0.99,
+      languageReasonCode: "ENGLISH_DETECTED",
+      failureCode: null,
+      createdAt: "2026-10-09T00:00:00Z",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([stagedUpload()])]);
+      if (url.endsWith("/uploads/upload-1/validation")) return Response.json(mismatch);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText("Mismatch")).toBeTruthy();
+    expect(screen.getByText("This mismatch cannot be selected.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "I confirm this exact PDF version" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Select this exact version" })).toBeNull();
+  });
+
+  it("records identity confirmation separately when English eligibility blocks selection", async () => {
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    const validation = {
+      id: "validation-language-gate",
+      batchId: "batch-1",
+      uploadId: "upload-1",
+      analysisRunId: "run-1",
+      contentSha256: "b".repeat(64),
+      parserId: "docling",
+      parserVersion: "1.30.0",
+      metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
+      languageDetectorId: "optimaize",
+      languageDetectorVersion: "0.6",
+      minimumLanguageConfidence: 0.65,
+      validationStatus: "COMPLETED",
+      identityOutcome: "NEEDS_CONFIRMATION",
+      identityReasonCode: "DOI_DIFFERS_REQUIRES_CONFIRMATION",
+      humanConfirmation: null,
+      selection: null,
+      metadataCandidates: [],
+      languageEligibility: "INELIGIBLE",
+      detectedLanguage: "fr",
+      languageConfidence: 0.99,
+      languageReasonCode: "NON_ENGLISH_DETECTED",
+      failureCode: null,
+      createdAt: "2026-10-09T00:00:00Z",
+    };
+    const confirmation = {
+      id: "confirmation-language-gate",
+      batchId: "batch-1",
+      uploadId: "upload-1",
+      validationAttemptId: validation.id,
+      contentSha256: validation.contentSha256,
+      decision: "CONFIRM_EXACT_VERSION",
+      confirmedAt: "2026-10-09T00:01:00Z",
+    };
+    let latestValidation: object = validation;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([stagedUpload()])]);
+      if (url.endsWith("/uploads/upload-1/validation")) return Response.json(latestValidation);
+      if (url.endsWith("/validation/validation-language-gate/confirm-identity") && options?.method === "POST") {
+        latestValidation = { ...validation, humanConfirmation: confirmation };
+        return Response.json(confirmation);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText("Needs human confirmation")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "I confirm this exact PDF version" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Select this exact version" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "I confirm this exact PDF version" }));
+
+    expect(await screen.findByText(/Human confirmation recorded/)).toBeTruthy();
+    expect(screen.getByText(/not eligible for English-only assessment/)).toBeTruthy();
+    expect(screen.getByText(/Selection is blocked/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Select this exact version" })).toBeNull();
+    expect(requests.some(({ url, options }) => url.includes("confirm-identity") && options?.method === "POST")).toBe(true);
+    expect(requests.some(({ url }) => url.endsWith("/select"))).toBe(false);
+  });
+
   it("shows a staged PDF as a verified candidate, preserves the declaration, and offers removal", async () => {
     const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
     let activeBatch = makeBatch([stagedUpload()]);

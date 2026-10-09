@@ -12,6 +12,7 @@ import type {
   RecoveryRightsDeclaration,
   RecoveryUpload,
   RecoveryUploadIntent,
+  RecoveryUploadValidation,
 } from "../types.ts";
 
 export function recoveryRightsDeclarationQueryOptions() {
@@ -57,6 +58,31 @@ export function useRecoveryRightsDeclaration() {
 
 export function useRecoveryBatch(analysisRunId: string, enabled: boolean) {
   return useQuery({ ...recoveryBatchQueryOptions(analysisRunId), enabled });
+}
+
+export function recoveryUploadValidationQueryKey(batchId: string, uploadId: string) {
+  return ["recovery-uploads", "validation", batchId, uploadId] as const;
+}
+
+export function recoveryUploadValidationQueryOptions(batchId: string, uploadId: string) {
+  return queryOptions({
+    queryKey: recoveryUploadValidationQueryKey(batchId, uploadId),
+    queryFn: async ({ signal }): Promise<RecoveryUploadValidation | null> => {
+      const response = await fetch(
+        `/api/v1/recovery-batches/${encodeURIComponent(batchId)}/uploads/${encodeURIComponent(uploadId)}/validation`,
+        { cache: "no-store", signal },
+      );
+      if (response.status === 204) return null;
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as RecoveryUploadValidation;
+    },
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useRecoveryUploadValidation(batchId: string, uploadId: string, enabled: boolean) {
+  return useQuery({ ...recoveryUploadValidationQueryOptions(batchId, uploadId), enabled });
 }
 
 function invalidateRecoveryBatch(queryClient: QueryClient, analysisRunId: string) {
@@ -191,6 +217,83 @@ export function finalizeRecoveryUploadMutationOptions(queryClient: QueryClient) 
   });
 }
 
+export type ValidateRecoveryUpload = {
+  analysisRunId: string;
+  batchId: string;
+  uploadId: string;
+};
+
+export function validateRecoveryUploadMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationKey: ["recovery-uploads", "validate"] as const,
+    mutationFn: async ({ batchId, uploadId }: ValidateRecoveryUpload): Promise<RecoveryUploadValidation> => {
+      const response = await fetch(
+        `/api/v1/recovery-batches/${encodeURIComponent(batchId)}/uploads/${encodeURIComponent(uploadId)}/validate`,
+        { method: "POST" },
+      );
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as RecoveryUploadValidation;
+    },
+    onSettled: (_attempt, _error, input) => queryClient.invalidateQueries({
+      queryKey: recoveryUploadValidationQueryKey(input.batchId, input.uploadId),
+      refetchType: "active",
+    }),
+  });
+}
+
+export type ConfirmRecoveryIdentity = {
+  analysisRunId: string;
+  batchId: string;
+  uploadId: string;
+  validationAttemptId: string;
+};
+
+export function confirmRecoveryIdentityMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationKey: ["recovery-uploads", "confirm-identity"] as const,
+    mutationFn: async ({ batchId, uploadId, validationAttemptId }: ConfirmRecoveryIdentity) => {
+      const response = await fetch(
+        `/api/v1/recovery-batches/${encodeURIComponent(batchId)}/uploads/${encodeURIComponent(uploadId)}/validation/${encodeURIComponent(validationAttemptId)}/confirm-identity`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ confirmExactVersion: true }),
+        },
+      );
+      if (!response.ok) throw new Error(await readApiError(response));
+      return response.json();
+    },
+    onSettled: (_confirmation, _error, input) => queryClient.invalidateQueries({
+      queryKey: recoveryUploadValidationQueryKey(input.batchId, input.uploadId),
+      refetchType: "active",
+    }),
+  });
+}
+
+export type SelectRecoveryUpload = {
+  analysisRunId: string;
+  batchId: string;
+  uploadId: string;
+};
+
+export function selectRecoveryUploadMutationOptions(queryClient: QueryClient) {
+  return mutationOptions({
+    mutationKey: ["recovery-uploads", "select-version"] as const,
+    mutationFn: async ({ batchId, uploadId }: SelectRecoveryUpload) => {
+      const response = await fetch(
+        `/api/v1/recovery-batches/${encodeURIComponent(batchId)}/uploads/${encodeURIComponent(uploadId)}/select`,
+        { method: "POST" },
+      );
+      if (!response.ok) throw new Error(await readApiError(response));
+      return response.json();
+    },
+    onSettled: (_selection, _error, input) => queryClient.invalidateQueries({
+      queryKey: recoveryUploadValidationQueryKey(input.batchId, input.uploadId),
+      refetchType: "active",
+    }),
+  });
+}
+
 export type RemoveRecoveryUpload = {
   analysisRunId: string;
   batchId: string;
@@ -230,4 +333,19 @@ export function useFinalizeRecoveryUpload() {
 export function useRemoveRecoveryUpload() {
   const queryClient = useQueryClient();
   return useMutation(removeRecoveryUploadMutationOptions(queryClient));
+}
+
+export function useValidateRecoveryUpload() {
+  const queryClient = useQueryClient();
+  return useMutation(validateRecoveryUploadMutationOptions(queryClient));
+}
+
+export function useConfirmRecoveryIdentity() {
+  const queryClient = useQueryClient();
+  return useMutation(confirmRecoveryIdentityMutationOptions(queryClient));
+}
+
+export function useSelectRecoveryUpload() {
+  const queryClient = useQueryClient();
+  return useMutation(selectRecoveryUploadMutationOptions(queryClient));
 }

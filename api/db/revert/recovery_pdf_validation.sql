@@ -1,0 +1,3 @@
+DROP TRIGGER IF EXISTS recovery_upload_validation_attempts_are_immutable ON recovery_upload_validation_attempts;
+DROP FUNCTION IF EXISTS prevent_recovery_upload_validation_attempt_update();
+DROP TABLE IF EXISTS recovery_upload_validation_attempts;

@@ -46,10 +46,23 @@ import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
 import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.document.service.SourceDocumentDeletionService
 import com.papertrail.api.analysis.recovery.domain.RecoveryRightsDeclaration
+import com.papertrail.api.analysis.recovery.domain.RecoveryAssetSelectionMethod
+import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityConfirmation
+import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityOutcome
+import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibility
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadAssetSelection
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
+import com.papertrail.api.analysis.recovery.domain.RecoveryValidationStatus
+import com.papertrail.api.analysis.recovery.http.RecoveryUploadValidationResponse
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingService
+import com.papertrail.api.analysis.recovery.service.RecoveryUploadIdentityService
+import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingSettings
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadLimits
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataCandidate
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataExtractionMethod
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataField
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -114,6 +127,12 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var recoveryStagingService: RecoveryStagingService
+
+    @MockitoBean
+    private lateinit var recoveryUploadValidationService: RecoveryUploadValidationService
+
+    @MockitoBean
+    private lateinit var recoveryUploadIdentityService: RecoveryUploadIdentityService
 
     @MockitoBean
     private lateinit var configurationFactory: RunConfigurationFactory
@@ -360,7 +379,31 @@ class OpenApiDocumentationTest {
         assertTrue(finalizeUpload.path("responses").path("409").path("description").asText().contains("bytes are missing"))
         assertTrue(finalizeUpload.path("responses").has("422"))
         assertTrue(finalizeUpload.path("responses").path("422").path("description").asText().contains("byte size or SHA-256"))
-        assertTrue(finalizeUpload.path("responses").path("422").path("description").asText().contains("supported PDF"))
+        assertTrue(finalizeUpload.path("responses").path("422").path("description").asText().contains("selectable text"))
+        assertTrue(finalizeUpload.path("responses").path("422").path("description").asText().contains("scanned PDFs are unsupported"))
+        assertTrue(finalizeUpload.path("responses").path("422").path("description").asText().contains("encrypted"))
+        assertTrue(finalizeUpload.path("responses").path("422").path("description").asText().contains("incomplete"))
+        val validateUpload = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validate").path("post")
+        assertTrue(validateUpload.path("responses").has("200"))
+        assertTrue(validateUpload.path("responses").has("404"))
+        assertTrue(validateUpload.path("responses").has("409"))
+        assertTrue(validateUpload.path("description").asText().contains("does not confirm identity"))
+        assertTrue(validateUpload.path("description").asText().contains("start evidence assessment"))
+        val validationSchemaName = validateUpload.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val validationProperties = document.path("components").path("schemas").path(validationSchemaName).path("properties")
+        listOf("parserVersion", "metadataExtractionPolicyVersion", "parserOptions", "metadataCandidates", "identityOutcome", "humanConfirmation", "selection", "languageEligibility", "failureCode").forEach { assertTrue(validationProperties.has(it)) }
+        val confirmIdentity = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validation/{attemptId}/confirm-identity").path("post")
+        assertTrue(confirmIdentity.path("responses").has("200"))
+        assertTrue(confirmIdentity.path("responses").has("400"))
+        assertTrue(confirmIdentity.path("responses").has("409"))
+        assertTrue(confirmIdentity.path("description").asText().contains("mismatches cannot be overridden"))
+        val selectVersion = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/select").path("post")
+        assertTrue(selectVersion.path("responses").has("200"))
+        assertTrue(selectVersion.path("responses").has("409"))
+        assertTrue(selectVersion.path("description").asText().contains("one exact asset version"))
+        val latestValidation = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validation").path("get")
+        assertTrue(latestValidation.path("responses").has("200"))
+        assertTrue(latestValidation.path("responses").has("204"))
         val removeUpload = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}").path("delete")
         assertTrue(removeUpload.path("responses").has("200"))
         assertTrue(removeUpload.path("responses").has("404"))
@@ -1124,6 +1167,109 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.entries[0].verificationOutcomes[0].finalStatus").value("INSUFFICIENT_EVIDENCE"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].verificationOutcomes[0].citationMarkers[0]").value("[1]"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].verificationOutcomes[0].processingStatus").value("COMPLETED"))
+    }
+
+    @Test
+    fun `validation endpoint returns persisted metadata provenance and separate outcomes`() {
+        val batchId = UUID.randomUUID()
+        val uploadId = UUID.randomUUID()
+        val attempt = RecoveryUploadValidationAttempt(
+            id = UUID.randomUUID(),
+            batchId = batchId,
+            uploadId = uploadId,
+            analysisRunId = UUID.randomUUID(),
+            contentSha256 = "a".repeat(64),
+            parserId = "docling",
+            parserVersion = "1.30.0",
+            metadataExtractionPolicyVersion = "docling-first-page-metadata-candidates-v1",
+            parserOptions = mapOf("from_formats" to "pdf", "to_formats" to "md,json", "do_ocr" to "false"),
+            languageDetectorId = "optimaize",
+            languageDetectorVersion = "0.6",
+            minimumLanguageConfidence = 0.65,
+            validationStatus = RecoveryValidationStatus.COMPLETED,
+            identityOutcome = RecoveryIdentityOutcome.NEEDS_CONFIRMATION,
+            identityReasonCode = "DOI_DIFFERS_REQUIRES_CONFIRMATION",
+            metadataCandidates = listOf(
+                ParsedBibliographicMetadataCandidate(
+                    field = ParsedBibliographicMetadataField.TITLE,
+                    value = "Synthetic Candidate",
+                    pageNumber = 1,
+                    sourceLabel = "title",
+                    extractionMethod = ParsedBibliographicMetadataExtractionMethod.DOCLING_LABEL,
+                    sourceElementId = "docling-1",
+                    sourceCharSpanStart = 0,
+                    sourceCharSpanEnd = 18,
+                ),
+            ),
+            languageEligibility = RecoveryLanguageEligibility.ELIGIBLE,
+            detectedLanguage = "en",
+            languageConfidence = 0.99,
+            languageReasonCode = "ENGLISH_DETECTED",
+            failureCode = null,
+            createdAt = Instant.parse("2026-10-09T00:00:00Z"),
+        )
+        Mockito.`when`(recoveryUploadValidationService.validate(batchId, uploadId)).thenReturn(attempt)
+        Mockito.`when`(recoveryUploadIdentityService.confirmation(batchId, uploadId, attempt)).thenReturn(null)
+        Mockito.`when`(recoveryUploadIdentityService.selection(batchId, uploadId)).thenReturn(null)
+
+        mockMvc.perform(post("/api/v1/recovery-batches/$batchId/uploads/$uploadId/validate"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.identityOutcome").value("NEEDS_CONFIRMATION"))
+            .andExpect(jsonPath("$.identityReasonCode").value("DOI_DIFFERS_REQUIRES_CONFIRMATION"))
+            .andExpect(jsonPath("$.languageEligibility").value("ELIGIBLE"))
+            .andExpect(jsonPath("$.validationStatus").value("COMPLETED"))
+            .andExpect(jsonPath("$.parserOptions.do_ocr").value("false"))
+            .andExpect(jsonPath("$.metadataCandidates[0].sourceElementId").value("docling-1"))
+            .andExpect(jsonPath("$.failureCode").doesNotExist())
+    }
+
+    @Test
+    fun `identity confirmation and exact-version selection are distinct API actions`() {
+        val batchId = UUID.randomUUID()
+        val uploadId = UUID.randomUUID()
+        val attemptId = UUID.randomUUID()
+        val runId = UUID.randomUUID()
+        val entryId = UUID.randomUUID()
+        val hash = "c".repeat(64)
+        val confirmedAt = Instant.parse("2026-10-09T00:01:00Z")
+        val confirmation = RecoveryIdentityConfirmation(
+            id = UUID.randomUUID(),
+            batchId = batchId,
+            uploadId = uploadId,
+            validationAttemptId = attemptId,
+            contentSha256 = hash,
+            decision = "CONFIRM_EXACT_VERSION",
+            confirmedAt = confirmedAt,
+        )
+        val selection = RecoveryUploadAssetSelection(
+            id = UUID.randomUUID(),
+            batchId = batchId,
+            analysisRunId = runId,
+            bibliographyEntryId = entryId,
+            uploadId = uploadId,
+            validationAttemptId = attemptId,
+            contentSha256 = hash,
+            selectionMethod = RecoveryAssetSelectionMethod.HUMAN_CONFIRMED,
+            selectedAt = confirmedAt.plusSeconds(1),
+        )
+        Mockito.`when`(recoveryUploadIdentityService.confirmExactVersion(batchId, uploadId, attemptId, true)).thenReturn(confirmation)
+        Mockito.`when`(recoveryUploadIdentityService.selectExactVersion(batchId, uploadId)).thenReturn(selection)
+
+        mockMvc.perform(
+            post("/api/v1/recovery-batches/$batchId/uploads/$uploadId/validation/$attemptId/confirm-identity")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"confirmExactVersion":true}"""),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.decision").value("CONFIRM_EXACT_VERSION"))
+            .andExpect(jsonPath("$.validationAttemptId").value(attemptId.toString()))
+            .andExpect(jsonPath("$.contentSha256").value(hash))
+
+        mockMvc.perform(post("/api/v1/recovery-batches/$batchId/uploads/$uploadId/select"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.selectionMethod").value("HUMAN_CONFIRMED"))
+            .andExpect(jsonPath("$.bibliographyEntryId").value(entryId.toString()))
+            .andExpect(jsonPath("$.contentSha256").value(hash))
     }
 
     @Test

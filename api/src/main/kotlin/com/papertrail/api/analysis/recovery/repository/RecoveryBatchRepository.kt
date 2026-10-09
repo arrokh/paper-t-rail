@@ -323,11 +323,15 @@ class RecoveryBatchRepository(
         val batch = lockBatch(batchId) ?: throw RecoveryStagingException("RECOVERY_BATCH_NOT_FOUND", 404, "Recovery Batch not found.")
         val upload = loadUpload(uploadId, batchId)
             ?: throw RecoveryStagingException("RECOVERY_UPLOAD_NOT_FOUND", 404, "Recovery Upload not found.")
-        if (upload.status == RecoveryUploadStatus.REMOVED) return upload
+        if (upload.status == RecoveryUploadStatus.REMOVED) {
+            jdbc.update("DELETE FROM recovery_upload_validation_attempts WHERE upload_id = ?", uploadId)
+            return upload
+        }
         if (batch.status != RecoveryBatchStatus.OPEN || batch.expiresAt <= now) {
             throw RecoveryStagingException("RECOVERY_BATCH_EXPIRED", 410, "This Recovery Batch has expired.")
         }
         val latestExpiry = maxOf(now, upload.presignedUrlExpiresAt)
+        jdbc.update("DELETE FROM recovery_upload_validation_attempts WHERE upload_id = ?", uploadId)
         insertCleanup(
             upload.stagingObjectKey,
             latestExpiry.plusSeconds(settings.inFlightGraceSeconds),
@@ -389,7 +393,15 @@ class RecoveryBatchRepository(
 
     private fun expireBatch(batchId: UUID, now: Instant) {
         val uploads = jdbc.query(
-            "SELECT * FROM recovery_batch_uploads WHERE batch_id = ? FOR UPDATE",
+            """
+            SELECT upload.*, entry.local_reference_key
+              FROM recovery_batch_uploads upload
+              JOIN bibliography_entries entry
+                ON entry.analysis_run_id = upload.analysis_run_id
+               AND entry.id = upload.bibliography_entry_id
+             WHERE upload.batch_id = ?
+             FOR UPDATE OF upload
+            """.trimIndent(),
             { rs, _ -> mapUpload(rs) },
             batchId,
         )
@@ -398,6 +410,7 @@ class RecoveryBatchRepository(
             insertCleanup(upload.stagingObjectKey, notBefore, notBefore.plusSeconds(settings.cleanupRetryWindowSeconds), now)
             insertCleanup(upload.finalizedObjectKey, now, now.plusSeconds(settings.cleanupRetryWindowSeconds), now)
         }
+        jdbc.update("DELETE FROM recovery_upload_validation_attempts WHERE batch_id = ?", batchId)
         jdbc.update(
             "UPDATE recovery_batch_uploads SET status = 'EXPIRED', updated_at = ? WHERE batch_id = ? AND status <> 'REMOVED'",
             java.sql.Timestamp.from(now),

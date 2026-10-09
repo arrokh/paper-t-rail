@@ -2,13 +2,20 @@ package com.papertrail.api.analysis.recovery.controller
 
 import com.papertrail.api.analysis.recovery.domain.RecoveryBatch
 import com.papertrail.api.analysis.recovery.domain.RecoveryUpload
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
 import com.papertrail.api.analysis.recovery.http.CreateRecoveryBatchRequest
 import com.papertrail.api.analysis.recovery.http.CreateRecoveryUploadRequest
+import com.papertrail.api.analysis.recovery.http.ConfirmRecoveryIdentityRequest
 import com.papertrail.api.analysis.recovery.http.RecoveryBatchResponse
+import com.papertrail.api.analysis.recovery.http.RecoveryIdentityConfirmationResponse
 import com.papertrail.api.analysis.recovery.http.RecoveryRightsDeclarationResponse
 import com.papertrail.api.analysis.recovery.http.RecoveryUploadIntentResponse
 import com.papertrail.api.analysis.recovery.http.RecoveryUploadResponse
+import com.papertrail.api.analysis.recovery.http.RecoveryUploadAssetSelectionResponse
+import com.papertrail.api.analysis.recovery.http.RecoveryUploadValidationResponse
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingService
+import com.papertrail.api.analysis.recovery.service.RecoveryUploadIdentityService
+import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
 import com.papertrail.api.http.ApiError
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
@@ -37,6 +44,8 @@ import java.util.UUID
 @Tag(name = "Recovery Uploads", description = "Temporarily stage rights-declared user PDFs for Bibliography Entries without changing immutable Analysis Runs or starting provider assessment.")
 class RecoveryBatchController(
     private val recoveryStagingService: RecoveryStagingService,
+    private val recoveryUploadValidationService: RecoveryUploadValidationService,
+    private val recoveryUploadIdentityService: RecoveryUploadIdentityService,
 ) {
     @Operation(
         summary = "Read the current Recovery Upload rights declaration",
@@ -171,7 +180,7 @@ class RecoveryBatchController(
             ApiResponse(responseCode = "404", description = "Recovery Batch or upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "409", description = "Staging bytes are missing or another finalization completed first", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "410", description = "Recovery Batch or upload has expired or was removed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "422", description = "Actual byte size or SHA-256 differs from the intent, or the bytes are not a valid supported PDF", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "422", description = "Actual byte size or SHA-256 differs from the intent, the PDF is invalid, encrypted, incomplete or unreadable, over the page limit, or has no selectable text (scanned PDFs are unsupported)", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "503", description = "Storage or stable-snapshot verification failed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
@@ -184,6 +193,103 @@ class RecoveryBatchController(
     ): ResponseEntity<RecoveryUploadResponse> = ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
         .body(recoveryStagingService.finalizeUpload(batchId, uploadId).toResponse())
+
+    @Operation(
+        summary = "Validate a finalized Recovery Upload",
+        description = "Runs the Analysis Run's pinned local Docling parser on the exact finalized PDF snapshot, persists metadata candidates with provenance and parser options, and records separate machine-identity and language-eligibility outcomes. This operation does not confirm identity, change the immutable Analysis Run, or start evidence assessment.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Persisted validation attempt; FAILED parsing is represented separately from identity and upload validity", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryUploadValidationResponse::class))]),
+            ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "The upload or Recovery Batch became inactive during validation", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/validate", produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun validateUpload(
+        @Parameter(description = "Recovery Batch identifier.", required = true)
+        @PathVariable batchId: UUID,
+        @Parameter(description = "Finalized Recovery Upload identifier.", required = true)
+        @PathVariable uploadId: UUID,
+    ): ResponseEntity<RecoveryUploadValidationResponse> = ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(recoveryUploadValidationService.validate(batchId, uploadId).toResponse(batchId, uploadId))
+
+    @Operation(
+        summary = "Read the latest Recovery Upload validation attempt",
+        description = "Returns the latest persisted attempt for an active finalized upload, or 204 when validation has not run. Validation state does not imply human confirmation, English eligibility, legal permission, or evidence assessment.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Latest persisted validation attempt", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryUploadValidationResponse::class))]),
+            ApiResponse(responseCode = "204", description = "No validation attempt exists"),
+            ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @GetMapping("/recovery-batches/{batchId}/uploads/{uploadId}/validation", produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun latestValidation(
+        @Parameter(description = "Recovery Batch identifier.", required = true)
+        @PathVariable batchId: UUID,
+        @Parameter(description = "Finalized Recovery Upload identifier.", required = true)
+        @PathVariable uploadId: UUID,
+    ): ResponseEntity<RecoveryUploadValidationResponse> {
+        val attempt = recoveryUploadValidationService.latest(batchId, uploadId)
+            ?: return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build()
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(attempt.toResponse(batchId, uploadId))
+    }
+
+    @Operation(
+        summary = "Confirm the exact Recovery Upload version",
+        description = "Records a separate human decision that the exact staged PDF is the cited work or intended version. Only NEEDS_CONFIRMATION results can be confirmed; mismatches cannot be overridden. This does not change machine metadata, Analysis Run state, language eligibility, or evidence assessment.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Recorded human confirmation for this exact validation attempt", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryIdentityConfirmationResponse::class))]),
+            ApiResponse(responseCode = "400", description = "Explicit confirmation was not provided", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "The attempt is stale, not inconclusive, or cannot be confirmed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/validation/{attemptId}/confirm-identity", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun confirmIdentity(
+        @Parameter(description = "Recovery Batch identifier.", required = true)
+        @PathVariable batchId: UUID,
+        @Parameter(description = "Finalized Recovery Upload identifier.", required = true)
+        @PathVariable uploadId: UUID,
+        @Parameter(description = "Persisted validation-attempt identifier.", required = true)
+        @PathVariable attemptId: UUID,
+        @RequestBody(description = "Explicit human confirmation for the exact PDF version.", required = true, content = [Content(schema = Schema(implementation = ConfirmRecoveryIdentityRequest::class))])
+        @Valid @SpringRequestBody request: ConfirmRecoveryIdentityRequest,
+    ): ResponseEntity<RecoveryIdentityConfirmationResponse> = ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(
+            RecoveryIdentityConfirmationResponse.from(
+                recoveryUploadIdentityService.confirmExactVersion(batchId, uploadId, attemptId, request.confirmExactVersion),
+            ),
+        )
+
+    @Operation(
+        summary = "Select one exact Recovery Upload version",
+        description = "Selects the exact staged bytes for one Bibliography Entry after completed validation, English-language eligibility, and any required human confirmation. MISMATCH results are rejected, and only one exact asset version can be selected per entry. Selection does not start evidence assessment.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Selected exact asset version", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryUploadAssetSelectionResponse::class))]),
+            ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "Validation, confirmation, language eligibility, or unique-version requirements are not satisfied", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/select", produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun selectExactVersion(
+        @Parameter(description = "Recovery Batch identifier.", required = true)
+        @PathVariable batchId: UUID,
+        @Parameter(description = "Finalized Recovery Upload identifier.", required = true)
+        @PathVariable uploadId: UUID,
+    ): ResponseEntity<RecoveryUploadAssetSelectionResponse> = ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(RecoveryUploadAssetSelectionResponse.from(recoveryUploadIdentityService.selectExactVersion(batchId, uploadId)))
 
     @Operation(
         summary = "Remove a Recovery Upload",
@@ -205,6 +311,17 @@ class RecoveryBatchController(
     ): ResponseEntity<RecoveryUploadResponse> = ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
         .body(recoveryStagingService.removeUpload(batchId, uploadId).toResponse())
+
+    private fun RecoveryUploadValidationAttempt.toResponse(
+        batchId: UUID,
+        uploadId: UUID,
+    ) = RecoveryUploadValidationResponse.from(
+        attempt = this,
+        humanConfirmation = recoveryUploadIdentityService.confirmation(batchId, uploadId, this)
+            ?.let(RecoveryIdentityConfirmationResponse::from),
+        selection = recoveryUploadIdentityService.selection(batchId, uploadId)
+            ?.let(RecoveryUploadAssetSelectionResponse::from),
+    )
 
     private fun RecoveryBatch.toResponse() = RecoveryBatchResponse(
         id = id,

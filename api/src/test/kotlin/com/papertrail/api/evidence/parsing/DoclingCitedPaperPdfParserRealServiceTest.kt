@@ -40,6 +40,11 @@ class DoclingCitedPaperPdfParserRealServiceTest {
         val candidates = parsed.bibliographicMetadataCandidates
         assertEquals("docling", parsed.parserId)
         assertEquals("1.30.0", parsed.parserVersion)
+        assertEquals("docling-first-page-metadata-candidates-v1", parsed.bibliographicMetadataExtractionPolicyVersion)
+        assertEquals(
+            mapOf("from_formats" to "pdf", "to_formats" to "md,json", "do_ocr" to "false"),
+            parsed.bibliographicMetadataExtractionOptions,
+        )
         assertTrue(candidates.any { it.field == ParsedBibliographicMetadataField.TITLE && it.value == TITLE })
         assertTrue(candidates.any { it.field == ParsedBibliographicMetadataField.AUTHORS && it.value == AUTHORS })
         assertTrue(candidates.any {
