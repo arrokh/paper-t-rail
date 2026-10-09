@@ -6,6 +6,10 @@
 
 Public first-party documentation supports a small set of distinct options for later, baseline-driven evaluation: OpenAlex as a broad metadata/location graph; DataCite as a DOI registry complement for research outputs and explicit version relationships; OpenAIRE Graph as an aggregator of publication/repository/research-output metadata; and PubMed/PMC as a biomedical specialist. Semantic Scholar offers useful paper-ID and batch APIs, but its current public license wording appears not to authorize an ordinary product-resolution integration without an expanded license. These are roles to evaluate, **not a selected provider set or ordering**; neither #86’s baseline gate nor human approval of choices, disclosures, and budgets is satisfied. ([Issue #94](https://github.com/arrokh/paper-t-rail/issues/94); [Issue #86](https://github.com/arrokh/paper-t-rail/issues/86))
 
+## Approved cross-run consent constraint
+
+[ADR 0020](../adr/0020-require-matching-consent-for-provider-output-reuse.md) settles one shared policy: a successor may reuse a historical external-provider output only when its consent snapshot for that provider exactly matches the originating run's snapshot, including provider identity, authorized data categories, and recorded retention disclosure. Missing or changed consent makes the output incompatible; new outbound work requires explicit successor consent. This is necessary but not sufficient: stage-specific compatibility still applies. A cache hit must independently pass the requesting run's authorization checks. This rule does not select providers or settle cache keys, not-found versus transient-error handling, provider-specific disclosures, budgets, or the full consent design.
+
 ## Findings
 
 ### 1. OpenAlex — broad metadata and version/location graph candidate
@@ -66,8 +70,9 @@ These are **unranked roles for a later evaluation**, not an initial selected cha
 | Compare provider coverage, identifiers/versions, API limits/reliability/configuration, trust categories and retention using primary evidence | **Desk-research comparison provided** for the five options above. | No live API tests, baseline subgroup rates, SLA validation, legal review, or complete provider-specific log-retention evidence. |
 | Recommend an initial set and separate optional integrations | **Options/roles only; acceptance not met.** | Do not select/order until #86 identifies baseline gaps and a human approves provider choices. |
 | Specify immutable ordered selections/fingerprints/disclosures, per-provider consent, and legacy single-provider reader behavior | **Not specified.** | Requires a separate design decision and human approval; provider documentation does not determine Paper T-Rail’s chain schema or consent UX. |
+| Carry the approved cross-run consent rule into output reuse/cache design | **Policy constraint specified in ADR 0020.** | No historical external-provider output reuse when successor consent is missing or differs; new outbound calls need explicit successor consent. This does not settle cache keys or error semantics. |
 | Define bounded query/candidate/response-byte/time/concurrency budgets and combined retry accounting, including `Retry-After` | **Provider-published limits recorded only; acceptance not met.** | Product-level budgets and queue/client retry policy require #86 workload evidence and human approval. No budget is approved here. |
-| Specify cache keys and not-found vs transient-error/consent-rejection semantics; authorization on cache reuse | **Not specified.** | Requires integration design, security/privacy review, and human approval; no source documentation establishes the application semantics. |
+| Specify cache keys and not-found vs transient-error/consent-rejection semantics; authorization on cache reuse | **Partially specified.** | ADR 0020 governs cross-run historical-output consent compatibility; the application cache key, not-found/transient-error/consent-rejection semantics, and run-authorization behavior still require integration design and human approval. |
 | Record human-approved choices/budgets and durable ADR trade-offs before integration tickets are ready | **Not met; no approval or ADR recorded.** | Explicit human approval remains required; no implementation tickets are unblocked by this report. |
 
 Issue #94 explicitly permits basic source reading in parallel but says #86 blocks final coverage priorities. Issue #86 was still open in the fetched issue record (created 2026-10-08); its adjudicated bibliography identity/full-text baseline is not available in this research. Therefore this report does **not** assert representative cross-discipline coverage, satisfy the baseline/evaluation gate, or select final provider ordering. Human approval of provider choices and bounded budgets remains unresolved. ([Issue #94](https://github.com/arrokh/paper-t-rail/issues/94); [Issue #86](https://github.com/arrokh/paper-t-rail/issues/86))
@@ -84,7 +89,7 @@ Issue #94 explicitly permits basic source reading in parallel but says #86 block
 - No live request measurements, service-health/SLA comparison, latency, outages, or validation that documented quotas remain stable. API limits cited are documentation statements, not observed service behavior.
 - API-specific query logging/retention is not stated in the reviewed DataCite, OpenAIRE, PubMed/NCBI, and Semantic Scholar sources; OpenAlex gives more explicit query-log detail. No log-retention conclusion should be inferred from silence.
 - DataCite’s privacy policy page is effective 2020-10-20; OpenAIRE rate/terms evidence is on documentation version 10.1.0; Semantic Scholar’s API license page did not show a revision date. Recheck current versions before approval.
-- No determination of legal fit for the application’s persistence, display, attribution, or execution-artifact retention; no privacy impact assessment or consent/disclosure text; no final provider-chain, cache, error-state, retry, or system-budget specification.
+- No determination of legal fit for the application’s persistence, display, attribution, or execution-artifact retention; no privacy impact assessment or provider-specific consent/disclosure text; no final provider-chain, cache-key, error-state, retry, or system-budget specification. ADR 0020 settles only the cross-run consent compatibility rule described above.
 - Automated source-check tooling returned “unclear” for semantic verdicts; cited provider pages/policy text were manually inspected. This is not a legal opinion or API conformance test.
 
 ## Next steps
@@ -94,10 +99,11 @@ Issue #94 explicitly permits basic source reading in parallel but says #86 block
 
 ## Sources and document dates
 
-All sources below were accessed 2026-10-08. If the source did not display a publication/update date, that is stated rather than inferred.
+External provider and documentation sources below were accessed 2026-10-08. Project issue records and ADR 0020 are included as scope/policy context, not as evidence about provider behavior. If a provider source did not display a publication/update date, that is stated rather than inferred.
 
 - [GitHub issue #94](https://github.com/arrokh/paper-t-rail/issues/94) — created 2026-10-08; scope and acceptance gates.
 - [GitHub issue #86](https://github.com/arrokh/paper-t-rail/issues/86) — created 2026-10-08; baseline audit and blocker.
+- [ADR 0020](../adr/0020-require-matching-consent-for-provider-output-reuse.md) — approved cross-run external-provider output reuse constraint (2026-10-09).
 - [OpenAlex Work attributes](https://help.openalex.org/data/works/attributes/) — last updated 2026-10-07; IDs and work version fields.
 - [OpenAlex Work types](https://help.openalex.org/data/work-types/) — last updated 2026-08-17; type categories and acknowledged low/zero coverage.
 - [OpenAlex Locations](https://help.openalex.org/data/locations/) — last updated 2026-09-18; locations and version labels.
