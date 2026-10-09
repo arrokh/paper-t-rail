@@ -90,6 +90,9 @@ import com.papertrail.api.evidence.parsing.CitedPaperParser
 import com.papertrail.api.evidence.parsing.CitedPaperPdfParser
 import com.papertrail.api.evidence.parsing.DefaultCitedPaperParser
 import com.papertrail.api.scholarly.acquisition.service.CitedPaperAccessService
+import com.papertrail.api.scholarly.acquisition.service.CitedPaperIdentityValidationResult
+import com.papertrail.api.scholarly.acquisition.service.CitedPaperIdentityValidationStatus
+import com.papertrail.api.scholarly.acquisition.service.CitedPaperIdentityValidator
 import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepository
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProvider
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProviderFactory
@@ -2395,6 +2398,73 @@ class AnalysisRunQueueIntegrationTest {
         val outcomes = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "ref1" }.verificationOutcomes
         assertTrue(outcomes.all { it.finalStatus == "INSUFFICIENT_EVIDENCE" })
+    }
+
+    @Test
+    fun `unconfirmed or mismatched automatic full-text identity is not stored or assessed`() {
+        val cases = listOf(
+            Triple(CitedPaperIdentityValidationStatus.NEEDS_CONFIRMATION, "DOI_NOT_EXTRACTED", "FULL_TEXT_IDENTITY_UNVERIFIED"),
+            Triple(CitedPaperIdentityValidationStatus.MISMATCH, "DOI_TITLE_CONFLICT", "FULL_TEXT_IDENTITY_MISMATCH"),
+        )
+
+        cases.forEach { (status, reasonCode, accessCause) ->
+            val created = createQueuedRun()
+            val documentEvent = jdbc.queryForObject(
+                "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+                String::class.java,
+                created.analysisRunId,
+                DOCUMENT_ANALYSIS_REQUESTED,
+            )!!
+            eventHandler().handle(documentEvent)
+            val location = OpenAccessLocation(
+                "fixture://controlled/${reasonCode.lowercase()}",
+                "CC0-1.0",
+                "publishedVersion",
+                "repository",
+                "recorded-fixtures",
+            )
+            val fetchCalls = AtomicInteger()
+            val identityValidator = CitedPaperIdentityValidator { _, _, _ ->
+                CitedPaperIdentityValidationResult(status, reasonCode)
+            }
+
+            processReferenceResolutionEvents(
+                analysisRunId = created.analysisRunId,
+                providerFactories = listOf(
+                    controlledOpenAccessFactory(
+                        OpenAccessDiscovery(true, false, listOf(location), "recorded-fixtures", Instant.now()),
+                        fullText = "English full-text evidence from an unapproved work.",
+                        fetchCalls = fetchCalls,
+                    ),
+                ),
+                identityValidator = identityValidator,
+            )
+
+            val reference = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
+                .single { it.localReferenceKey == "ref1" }
+            val access = reference.citedPaperAccess!!
+            assertEquals(1, fetchCalls.get())
+            assertEquals("METADATA_ONLY", access.accessStatus)
+            assertEquals(listOf(accessCause), access.accessReasons)
+            assertNull(access.contentSha256)
+            assertEquals(location.url, access.sourceUrl)
+            assertFalse(objectStore.containsUnder("papers/${reference.canonicalPaper!!.id}/analysis-runs/${created.analysisRunId}/references/"))
+            assertTrue(reference.verificationOutcomes.isNotEmpty())
+            assertTrue(reference.verificationOutcomes.all {
+                it.verificationScope == "NONE" && it.finalStatus == "INACCESSIBLE" && it.terminalReason == reasonCode
+            })
+            assertEquals(0, jdbc.queryForObject(
+                "SELECT count(*) FROM cited_paper_indexing WHERE analysis_run_id = ?",
+                Int::class.java,
+                created.analysisRunId,
+            ))
+            assertEquals(0, jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+                Int::class.java,
+                created.analysisRunId,
+                CITED_PAPER_INDEXING_REQUESTED,
+            ))
+        }
     }
 
     @Test
@@ -5062,6 +5132,7 @@ class AnalysisRunQueueIntegrationTest {
             ),
         ),
         languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
+        identityValidator: CitedPaperIdentityValidator = matchingCitedPaperIdentityValidator(),
     ) = CitedPaperAccessService(
         sourceDocumentRepository = SourceDocumentRepository(jdbc),
         transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
@@ -5070,6 +5141,7 @@ class AnalysisRunQueueIntegrationTest {
         objectStore = objectStore,
         languageDetector = languageDetector,
         textExtractor = PdfBoxCitedPaperTextExtractor(5_000_000),
+        identityValidator = identityValidator,
         providerFactories = providerFactories,
         executionService = executionService(),
     )
@@ -5082,12 +5154,13 @@ class AnalysisRunQueueIntegrationTest {
             ),
         ),
         languageDetector: DocumentLanguageDetector = OptimaizeDocumentLanguageDetector(),
+        identityValidator: CitedPaperIdentityValidator = matchingCitedPaperIdentityValidator(),
     ) = CitedPaperAcquisitionRequestedHandler(
         processingRepository = AnalysisRunProcessingRepository(jdbc),
         sourceDocumentRepository = SourceDocumentRepository(jdbc),
         inboxRepository = InboxRepository(jdbc),
         transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
-        citedPaperAccessService = citedPaperAccessService(providerFactories, languageDetector),
+        citedPaperAccessService = citedPaperAccessService(providerFactories, languageDetector, identityValidator),
         citedPaperIndexingQueue = CitedPaperIndexingQueue(
             CitedPaperIndexingRepository(jdbc),
             OutboxRepository(jdbc),
@@ -5170,6 +5243,7 @@ class AnalysisRunQueueIntegrationTest {
         systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
         providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
         retryIndexingOnce: Boolean = false,
+        identityValidator: CitedPaperIdentityValidator = matchingCitedPaperIdentityValidator(),
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -5189,6 +5263,7 @@ class AnalysisRunQueueIntegrationTest {
             systemOneProvider,
             providerCatalog,
             retryIndexingOnce,
+            identityValidator,
         )
     }
 
@@ -5202,6 +5277,7 @@ class AnalysisRunQueueIntegrationTest {
         systemOneProvider: SystemOneProvider = MockSystemOneProvider(),
         providerCatalog: ProviderCatalog = ProviderCatalog.safeDefaults(),
         retryIndexingOnce: Boolean = false,
+        identityValidator: CitedPaperIdentityValidator = matchingCitedPaperIdentityValidator(),
     ) {
         val events = jdbc.query(
             "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
@@ -5213,6 +5289,7 @@ class AnalysisRunQueueIntegrationTest {
             resolutionService = resolutionService,
             providerFactories = providerFactories,
             languageDetector = languageDetector,
+            identityValidator = identityValidator,
         )
         events.forEach(handler::handle)
         val indexingEvents = jdbc.query(
@@ -5242,6 +5319,13 @@ class AnalysisRunQueueIntegrationTest {
             }
         }
         if (retryIndexingOnce) assertTrue(retriedAfterProviderFailure)
+    }
+
+    private fun matchingCitedPaperIdentityValidator() = CitedPaperIdentityValidator { _, _, _ ->
+        CitedPaperIdentityValidationResult(
+            status = CitedPaperIdentityValidationStatus.VALIDATED,
+            reasonCode = "FIXTURE_IDENTITY_MATCH",
+        )
     }
 
     private fun issueSevenConfigurationJson(): String {
@@ -5360,6 +5444,7 @@ class AnalysisRunQueueIntegrationTest {
         override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey); checksums.remove(objectKey) }
         fun contentType(objectKey: String): String? = contentTypes[objectKey]
         fun contains(objectKey: String): Boolean = objectKey in content
+        fun containsUnder(prefix: String): Boolean = content.keys.any { it.startsWith(prefix) }
         fun clear() { content.clear(); contentTypes.clear(); checksums.clear(); reads.set(0) }
     }
 
@@ -5476,6 +5561,14 @@ class AnalysisRunQueueIntegrationTest {
             val detailedAccessCausesMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("detailed_cited_paper_access_causes.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(detailedAccessCausesMigrationVerification)) }
+            }
+            val automaticIdentityGateMigration = migrationDirectory.resolve("automatic_cited_paper_identity_gate.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(automaticIdentityGateMigration)) }
+            }
+            val automaticIdentityGateMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("automatic_cited_paper_identity_gate.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(automaticIdentityGateMigrationVerification)) }
             }
             val recoveryPdfStagingMigration = migrationDirectory.resolve("recovery_pdf_staging.sql")
             dataSource.connection.use { connection ->

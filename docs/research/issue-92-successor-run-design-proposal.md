@@ -1,6 +1,6 @@
 # Issue #92: Successor Analysis Run design proposal
 
-**Status: The materialized-run-local architecture was approved by the maintainer in the #92 comment accompanying PR #108. This approves the design choices below, not implementation readiness. Native dependencies #89/#91 remain open, and the policy for reusing historical provider outputs when successor consent differs is unresolved.**
+**Status: The materialized-run-local architecture was approved by the maintainer in the #92 comment accompanying PR #108. The consent policy is now approved: historical output from an external provider is not reusable when the successor's consent snapshot differs from the originating run's snapshot. The native dependency #91 remains open; #89 evaluation is deferred by maintainer direction in #85.**
 
 ## Approved design decision
 
@@ -75,7 +75,7 @@ Existing immutable acquired bytes may be shared by exact hash/key only if retent
 | Claim–Paper Verification and evidence outputs | Same mapped claim/context/target, Canonical Paper, exact asset hash, retrieval profile, assessment provider/configuration, and aggregation policy | Reassess every affected Claim–Reference pair for the selected entry. Incompatible global changes invalidate all dependent pairs. |
 | Human Reviews | Never copied as review of a new assessment | Keep each review attached to its original verification. The successor may link to the prior run for navigation, not inherit its review. |
 
-Consent for new outbound work is checked against the successor snapshot, including cache-backed work. Reuse does not masquerade as a new call: the original provider and configuration remain inspectable. Do not copy execution spans as if a provider call happened in the successor; durable reuse provenance is separate from optional trace capture. Whether prior provider outputs may be reused under a changed consent state is a product/policy decision that must be made explicit before implementation.
+Consent for new outbound work is checked against the successor snapshot, including cache-backed work. Historical output from an external provider is reusable only when the successor's consent snapshot for that provider exactly matches the snapshot under which the output originated, including provider identity, authorized data categories, and recorded retention disclosure. Missing or changed consent makes the output incompatible; any replacement external call requires explicit successor consent. This consent match is necessary but not sufficient: all other stage-specific compatibility rules still apply. Reuse does not masquerade as a new call: the original provider and configuration remain inspectable. Do not copy execution spans as if a provider call happened in the successor; durable reuse provenance is separate from optional trace capture.
 
 ## Current pipeline implications
 
@@ -114,7 +114,7 @@ The current access table cannot yet represent a supplied PDF without fake automa
 - expected-pair accounting, partial success, terminal retry as a new successor, aggregate recomputation, and Human Reviews remaining on the predecessor;
 - report/API navigation that distinguishes recomputed, reused, and incomplete results without exposing sensitive content in logs.
 
-## Remaining policy decision and implementation gates
+## Resolved consent policy and implementation gates
 
 The maintainer approved the following materialized-run-local choices in the #92 issue comment:
 
@@ -123,5 +123,6 @@ The maintainer approved the following materialized-run-local choices in the #92 
 3. A durable per-result provenance map records both immediate source and actual originating run/provider/configuration.
 4. Stage-specific compatibility fingerprints govern reuse; global config changes invalidate dependent outputs and are disclosed before submission.
 5. Human Reviews never transfer to successor assessments.
+6. Historical output from an external provider is not reused when the successor's provider consent snapshot is absent or differs from the originating run's snapshot. Any new outbound call independently requires explicit consent recorded on the successor.
 
-Whether prior provider outputs may be reused when successor consent differs remains an explicit, unresolved policy decision; do not implement that reuse path until it is settled. Provider selection, numerical budgets, and #86 evaluation targets are separate decisions. S7 implementation remains gated by open native dependencies #89/#91 and the required evidence and policy decisions.
+This resolves the consent-difference policy without waiving stage-specific compatibility, rights, retention, or deletion requirements. Provider selection, numerical budgets, and #86 evaluation targets remain separate decisions. S7 implementation remains gated by native dependency #91; #89 evaluation is deferred under the maintainer's #85 direction.

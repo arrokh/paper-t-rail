@@ -1,0 +1,3 @@
+# Require Matching Consent to Reuse External Provider Outputs
+
+A successor Analysis Run may reuse an external-provider output only when its consent snapshot for that provider exactly matches the snapshot under which the output originated, including provider identity, authorized data categories, and recorded retention disclosure. Missing or changed consent makes the historical output incompatible; any new outbound work requires explicit consent on the successor, and all other stage-specific compatibility rules still apply. This prevents historical results from crossing a changed consent boundary, at the cost of recomputing affected work when consent changes.
