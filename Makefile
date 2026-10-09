@@ -5,7 +5,7 @@ LAYA_EVALUATION_SOURCE_PATHS = api infra/laya infra/docker-compose.yml Makefile 
 # Keep command-line CHANGE data out of shell source text in the revert target.
 export CHANGE
 
-.PHONY: local dev dev-stop dev-laya dev-app homepage-dev homepage-build infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-local test-api test-laya test-web lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
+.PHONY: local dev dev-stop dev-laya dev-app homepage-dev homepage-build infra-up migrate migrate\:ls migrate\:revert verify-db infra-down clean test test-local test-api test-laya test-web test-system-upload-to-report lint-web typecheck-web build-web calibrate benchmark-processing laya-up laya-model-download benchmark-laya laya-evaluation-fingerprint laya-evaluate validate
 
 DEV_SELECTABLE_SERVICES := api worker web homepage laya
 DEV_STOP_SELECTABLE_SERVICES := $(DEV_SELECTABLE_SERVICES) docling
@@ -238,13 +238,17 @@ infra-down:
 clean:
 	$(COMPOSE) --profile laya-evaluation down --volumes --remove-orphans
 
-test: test-local test-api test-laya test-web lint-web typecheck-web build-web
+test: test-local test-api test-laya test-web test-system-upload-to-report lint-web typecheck-web build-web
 
 test-local:
 	python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
 test-api:
 	cd api && $(MISE) ./gradlew test
+
+# Requires Docker Compose and agent-browser; uses its own internal-only Compose project and temporary resources.
+test-system-upload-to-report:
+	$(MISE) python3 scripts/run_upload_to_report_system_test.py
 
 test-laya:
 	python3 -m unittest discover -s infra/laya -p 'test_*.py' -v

@@ -3552,6 +3552,12 @@ Keep one small English paper fixture with:
 
 Expected output should be asserted at a structural level, not exact AI confidence values. The representative article/dissertation benchmark, chosen byte/page/pair defaults, reproducible command, and runtime/provider pins are recorded in [the V1 runtime matrix](benchmarks/v1-runtime-matrix.md); keep the numeric caps configurable.
 
+The issue #55 full-path system test is `make test-system-upload-to-report`, included in `make test` and `make validate`. It builds a unique Compose project with isolated PostgreSQL+pgvector, Redis, MinIO, the real API/worker/web services, and deterministic GROBID, Docling, and System One API fixtures. Sqitch deploys the database. The test uses a synthetic PDF and local recorded scholarly-work/open-access fixtures; external providers are disabled.
+
+The authenticated System One fixture host is trusted only inside the isolated network and returns a fixed response through the real Laya adapter. The Laya model/runtime is not run. The API, worker, fixtures, web server, and MinIO server use an internal-only network. Loopback-bound Nginx proxies expose only the web, API, and MinIO S3 endpoints to the host browser. The test-only MinIO image is built from pinned upstream commit `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`. `agent-browser` drives the actual workspace upload in a named isolated session. The report assertion links a completed Claim–Paper outcome and its evidence passage's cited-paper asset ID, hash, and parser provenance to the access record. The test cleans up its Compose project and browser session.
+
+The synthetic provider response and outcome exercise pipeline/report plumbing only; they are not research evidence, Laya inference, calibrated scores, or an evaluation of model accuracy. The test requires Docker Compose and `agent-browser`. The current Lightpanda engine lacks the required file-upload capability, so the test defaults to an isolated Chrome session; set `PAPER_T_RAIL_TEST_BROWSER=lightpanda` only when the installed Lightpanda supports file upload.
+
 ## 56.5 TDD and Test Quality
 
 For test-first implementation, agree on public behavior seams and work in vertical red-green slices. Follow root `AGENTS.md` for the test-quality guardrails: tautological tests and change-detector tests are harmful, and bug-fix regression tests require a genuine gap in existing behavior coverage.

@@ -1,2 +1,3 @@
 docs/qa/*.pdf binary
 api/src/test/resources/cited-paper-fixtures/*.pdf binary
+api/src/main/resources/provider-fixtures/cited-full-text/*.pdf binary

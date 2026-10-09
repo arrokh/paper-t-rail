@@ -142,6 +142,8 @@ paper-trail:
       external-retention-disclosure: "${OLLAMA_EXTERNAL_RETENTION_DISCLOSURE:}"
     system-one:
       default-provider: ${SYSTEM_ONE_DEFAULT_PROVIDER:jev}
+    recorded-fixtures:
+      scholarly-works-resource: ${RECORDED_SCHOLARLY_WORKS_RESOURCE:provider-fixtures/recorded-scholarly-works.json}
     laya:
       # Keep the authenticated local candidate available; Jev is preferred when configured.
       enabled: ${LAYA_ENABLED:true}

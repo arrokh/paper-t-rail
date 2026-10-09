@@ -11,5 +11,19 @@
         "textResource": "provider-fixtures/cited-full-text/reference-resolution-2024.txt"
       }
     ]
+  },
+  {
+    "doi": "10.5555/papertrail.system-test.upload-report.2026",
+    "abstract": "Synthetic local fixture for the upload-to-report system test; not a real study.",
+    "locations": [
+      {
+        "url": "fixture://open-access/issue-55-upload-to-report",
+        "license": "CC0-1.0",
+        "version": "publishedVersion",
+        "hostType": "repository",
+        "pdfResource": "provider-fixtures/cited-full-text/issue-55-upload-to-report.pdf",
+        "mediaType": "application/pdf"
+      }
+    ]
   }
 ]

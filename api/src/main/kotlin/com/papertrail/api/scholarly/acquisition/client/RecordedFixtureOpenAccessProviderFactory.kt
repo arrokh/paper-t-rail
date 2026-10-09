@@ -64,10 +64,13 @@ class RecordedFixtureOpenAccessProviderFactory(
                 val matching = records.flatMap { it.path("locations").toList() }
                     .firstOrNull { it.path("url").asText() == location.url }
                     ?: throw IllegalArgumentException("Recorded full-text location is not present in the fixture set.")
-                val resource = matching.path("textResource").asText()
+                val resource = matching.path("pdfResource").takeIf(JsonNode::isTextual)?.asText()
+                    ?: matching.path("textResource").asText()
+                val mediaType = matching.path("mediaType").takeIf(JsonNode::isTextual)?.asText()
+                    ?: "text/plain"
                 AcquiredFullText(
                     bytes = ClassPathResource(resource).inputStream.use { it.readBytes() },
-                    mediaType = "text/plain",
+                    mediaType = mediaType,
                     location = location,
                 )
             }
