@@ -34,7 +34,7 @@ The *Scientific Data* fixture exposed a candidate-selection defect: Docling labe
 
 The *Scientific Data* article has a DOI, but Docling's first-page footer output contains Unicode glyph substitutions in the DOI digits, so the strict explicit-prefix DOI matcher emits no DOI candidate. The test preserves this as a missing-field observation rather than inferring a DOI from external metadata.
 
-The PLOS article yields its explicitly prefixed article DOI and a shorter DOI candidate from first-page peer-review-history text. These remain untrusted candidates; a focused identity-policy test confirms that multiple DOI candidates require confirmation even when one matches the cited DOI. Two real articles are still not a representative corpus or an accuracy result. Cross-discipline coverage, alternate versions, book/chapter handling, OCR, mismatch workflow gates, and broad evaluation remain outstanding.
+The PLOS article yields its explicitly prefixed article DOI and a shorter DOI candidate from first-page peer-review-history text. These remain untrusted candidates; the opt-in local-service test passes the extracted candidates through the identity policy and confirms that multiple DOI candidates require confirmation even when one matches the cited DOI. Two real articles are still not a representative corpus or an accuracy result. Cross-discipline coverage, alternate versions, book/chapter handling, OCR, mismatch workflow gates, and broad evaluation remain outstanding.
 
 ## What remains unknown
 

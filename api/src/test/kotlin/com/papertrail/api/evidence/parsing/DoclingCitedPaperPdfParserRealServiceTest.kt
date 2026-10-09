@@ -4,6 +4,9 @@ import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataExtraction
 import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataField
 import com.papertrail.api.external.docling.DoclingCitedPaperParserConfiguration
 import com.papertrail.api.external.docling.DoclingCitedPaperPdfParser
+import com.papertrail.api.scholarly.references.client.BibliographyReference
+import com.papertrail.api.scholarly.references.identity.CitedWorkIdentityOutcome
+import com.papertrail.api.scholarly.references.identity.CitedWorkIdentityPolicy
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
@@ -79,6 +82,21 @@ class DoclingCitedPaperPdfParserRealServiceTest {
         assertTrue(candidates.any {
             it.field == ParsedBibliographicMetadataField.DOI && it.value == PLOS_ARTICLE_DOI && it.pageNumber == 1
         })
+
+        val identity = CitedWorkIdentityPolicy.evaluate(
+            referenceType = "ARTICLE",
+            bibliographyPolicy = null,
+            reference = BibliographyReference(
+                title = PLOS_ARTICLE_TITLE,
+                authors = emptyList(),
+                year = 2025,
+                doi = PLOS_ARTICLE_DOI,
+                referenceType = "ARTICLE",
+            ),
+            candidates = candidates,
+        )
+        assertEquals(CitedWorkIdentityOutcome.NEEDS_CONFIRMATION, identity.outcome)
+        assertEquals("MULTIPLE_DOI_CANDIDATES", identity.reasonCode)
     }
 
     private fun parserForLocalService(): DoclingCitedPaperPdfParser {
