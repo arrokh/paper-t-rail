@@ -1,15 +1,13 @@
 package com.papertrail.api.analysis.recovery.service
 
-import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityOutcome
 import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibility
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentityPolicy
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationContext
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationResult
 import com.papertrail.api.analysis.recovery.domain.RecoveryValidationStatus
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadValidationRepository
-import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataCandidate
-import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataField
 import com.papertrail.api.document.validation.DocumentLanguageDetector
 import com.papertrail.api.document.validation.OptimaizeDocumentLanguageDetector
 import com.papertrail.api.evidence.parsing.CitedPaperPdfParser
@@ -19,7 +17,6 @@ import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import java.time.Instant
-import java.util.Locale
 import java.util.UUID
 
 @Service
@@ -64,6 +61,7 @@ class RecoveryUploadValidationService(
                     contentSha256 = contentSha256,
                     parserId = parserSelection.provider,
                     parserVersion = parserSelection.version,
+                    identityPolicyVersion = RecoveryUploadIdentityPolicy.VERSION,
                     parserOptions = parserOptions,
                     languageDetectorId = languageSelection.provider,
                     languageDetectorVersion = languageSelection.version,
@@ -122,7 +120,12 @@ class RecoveryUploadValidationService(
             configuration.validationLimits.minimumExtractedCharacters,
             configuration.validationLimits.minimumLanguageConfidence,
         )
-        val identity = evaluateIdentity(context, parsed.bibliographicMetadataCandidates)
+        val identity = RecoveryUploadIdentityPolicy.evaluate(
+            referenceType = context.referenceType,
+            bibliographyPolicy = context.configuration.bibliographyNormalizationPolicy,
+            reference = context.resolvedReference,
+            candidates = parsed.bibliographicMetadataCandidates,
+        )
         return saveAttempt(
             context = context,
             contentSha256 = contentSha256,
@@ -146,6 +149,7 @@ class RecoveryUploadValidationService(
         val now = Instant.now()
         validationContext(batchId, uploadId, now)
         return repository.latestAttempt(batchId, uploadId, now)
+            ?.takeIf { it.identityPolicyVersion == RecoveryUploadIdentityPolicy.VERSION }
     }
 
     private fun validationContext(batchId: UUID, uploadId: UUID, now: Instant = Instant.now()): RecoveryUploadValidationContext =
@@ -156,6 +160,7 @@ class RecoveryUploadValidationService(
         contentSha256: String,
         parserId: String,
         parserVersion: String,
+        identityPolicyVersion: String,
         parserOptions: Map<String, String>,
         languageDetectorId: String,
         languageDetectorVersion: String,
@@ -164,43 +169,12 @@ class RecoveryUploadValidationService(
         this.contentSha256 == contentSha256 &&
         this.parserId == parserId &&
         this.parserVersion == parserVersion &&
+        this.identityPolicyVersion == identityPolicyVersion &&
         metadataExtractionPolicyVersion == DoclingCitedPaperPdfParser.METADATA_EXTRACTION_POLICY_VERSION &&
         this.parserOptions == parserOptions &&
         this.languageDetectorId == languageDetectorId &&
         this.languageDetectorVersion == languageDetectorVersion &&
         this.minimumLanguageConfidence == minimumLanguageConfidence
-
-    private fun evaluateIdentity(
-        context: RecoveryUploadValidationContext,
-        candidates: List<ParsedBibliographicMetadataCandidate>,
-    ): Pair<RecoveryIdentityOutcome, String> {
-        if (context.referenceType.uppercase(Locale.ROOT) in BOOK_REFERENCE_TYPES) {
-            return RecoveryIdentityOutcome.NEEDS_CONFIRMATION to "CHAPTER_BOOK_IDENTITY_REQUIRES_CONFIRMATION"
-        }
-        val reference = context.resolvedReference
-            ?: return RecoveryIdentityOutcome.NEEDS_CONFIRMATION to "REFERENCE_IDENTITY_UNRESOLVED"
-        val candidateDois = candidates
-            .filter { it.field == ParsedBibliographicMetadataField.DOI }
-            .mapNotNull { normalizeDoi(it.value) }
-            .distinct()
-        if (candidateDois.isEmpty()) return RecoveryIdentityOutcome.NEEDS_CONFIRMATION to "DOI_NOT_EXTRACTED"
-        if (candidateDois.size > 1) return RecoveryIdentityOutcome.NEEDS_CONFIRMATION to "MULTIPLE_DOI_CANDIDATES"
-        val expectedDoi = reference.doi?.let(::normalizeDoi)
-            ?: return RecoveryIdentityOutcome.NEEDS_CONFIRMATION to "REFERENCE_DOI_UNAVAILABLE"
-        val expectedTitle = normalizeTitle(reference.title)
-        val candidateTitles = candidates
-            .filter { it.field == ParsedBibliographicMetadataField.TITLE }
-            .mapNotNull { normalizeTitle(it.value) }
-            .distinct()
-        if (candidateTitles.size > 1) return RecoveryIdentityOutcome.NEEDS_CONFIRMATION to "MULTIPLE_TITLE_CANDIDATES"
-        val titleConflicts = expectedTitle != null &&
-            candidateTitles.singleOrNull()?.let { it != expectedTitle } == true
-        if (candidateDois.single() != expectedDoi && !titleConflicts) {
-            return RecoveryIdentityOutcome.NEEDS_CONFIRMATION to "DOI_DIFFERS_REQUIRES_CONFIRMATION"
-        }
-        if (titleConflicts) return RecoveryIdentityOutcome.MISMATCH to "DOI_TITLE_CONFLICT"
-        return RecoveryIdentityOutcome.VALIDATED to "DOI_MATCH"
-    }
 
     private fun evaluateLanguage(
         text: String,
@@ -254,6 +228,7 @@ class RecoveryUploadValidationService(
             parserId = parserId,
             parserVersion = parserVersion,
             metadataExtractionPolicyVersion = DoclingCitedPaperPdfParser.METADATA_EXTRACTION_POLICY_VERSION,
+            identityPolicyVersion = RecoveryUploadIdentityPolicy.VERSION,
             parserOptions = parserOptions,
             languageDetectorId = context.configuration.languageDetector.provider,
             languageDetectorVersion = context.configuration.languageDetector.version,
@@ -285,20 +260,6 @@ class RecoveryUploadValidationService(
         failureCode = code,
     )
 
-    private fun normalizeDoi(value: String): String? = value
-        .trim()
-        .lowercase(Locale.ROOT)
-        .replace(Regex("^https?://(?:dx\\.)?doi\\.org/"), "")
-        .replace(Regex("^doi:\\s*"), "")
-        .takeIf(String::isNotBlank)
-
-    private fun normalizeTitle(value: String?): String? = value
-        ?.lowercase(Locale.ROOT)
-        ?.replace(Regex("[^\\p{L}\\p{N}]+"), " ")
-        ?.trim()
-        ?.replace(Regex("\\s+"), " ")
-        ?.takeIf(String::isNotBlank)
-
     private data class LanguageResult(
         val eligibility: RecoveryLanguageEligibility,
         val language: String?,
@@ -306,7 +267,4 @@ class RecoveryUploadValidationService(
         val reasonCode: String,
     )
 
-    companion object {
-        private val BOOK_REFERENCE_TYPES = setOf("BOOK", "BOOK_CHAPTER", "INBOOK", "INCOLLECTION")
-    }
 }

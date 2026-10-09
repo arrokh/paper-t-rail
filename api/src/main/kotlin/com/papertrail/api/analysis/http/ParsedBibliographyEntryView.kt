@@ -12,6 +12,7 @@ data class ParsedBibliographyEntryView(
     val authors: List<String>,
     val year: Int?,
     val doi: String?,
+    @field:Schema(description = "GROBID-derived reference type. Under bibliography normalization policy v3, an analytic work inside a monograph is BOOK_CHAPTER and a monograph without an analytic work is BOOK; earlier policy versions may retain BOOK for either form.")
     val referenceType: String,
     val resolutionStatus: String,
     @field:Schema(description = "Unnormalized element text content extracted from GROBID TEI; raw TEI bytes are stored separately.")

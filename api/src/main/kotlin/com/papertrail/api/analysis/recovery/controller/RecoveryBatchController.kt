@@ -196,7 +196,7 @@ class RecoveryBatchController(
 
     @Operation(
         summary = "Validate a finalized Recovery Upload",
-        description = "Runs the Analysis Run's pinned local Docling parser on the exact finalized PDF snapshot, persists metadata candidates with provenance and parser options, and records separate machine-identity and language-eligibility outcomes. This operation does not confirm identity, change the immutable Analysis Run, or start evidence assessment.",
+        description = "Runs the Analysis Run's pinned local Docling parser on the exact finalized PDF snapshot, persists metadata candidates with provenance and parser options, and records separate machine-identity and language-eligibility outcomes with the identity policy version. This operation does not confirm identity, change the immutable Analysis Run, or start evidence assessment.",
     )
     @ApiResponses(
         value = [
@@ -217,12 +217,12 @@ class RecoveryBatchController(
 
     @Operation(
         summary = "Read the latest Recovery Upload validation attempt",
-        description = "Returns the latest persisted attempt for an active finalized upload, or 204 when validation has not run. Validation state does not imply human confirmation, English eligibility, legal permission, or evidence assessment.",
+        description = "Returns the latest attempt evaluated with the current identity policy for an active finalized upload, or 204 when no current-policy attempt exists. Validation state does not imply human confirmation, English eligibility, legal permission, or evidence assessment.",
     )
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "200", description = "Latest persisted validation attempt", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryUploadValidationResponse::class))]),
-            ApiResponse(responseCode = "204", description = "No validation attempt exists"),
+            ApiResponse(responseCode = "204", description = "No validation attempt exists for the current identity policy; run validation again"),
             ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
@@ -242,14 +242,14 @@ class RecoveryBatchController(
 
     @Operation(
         summary = "Confirm the exact Recovery Upload version",
-        description = "Records a separate human decision that the exact staged PDF is the cited work or intended version. Only NEEDS_CONFIRMATION results can be confirmed; mismatches cannot be overridden. This does not change machine metadata, Analysis Run state, language eligibility, or evidence assessment.",
+        description = "Records a separate human decision that the exact staged PDF is the cited work or intended version. Only current-policy NEEDS_CONFIRMATION results can be confirmed; mismatches, unsupported chapter identities, and inconclusive legacy book/chapter identities cannot be overridden. This does not change machine metadata, Analysis Run state, language eligibility, or evidence assessment.",
     )
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "200", description = "Recorded human confirmation for this exact validation attempt", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryIdentityConfirmationResponse::class))]),
             ApiResponse(responseCode = "400", description = "Explicit confirmation was not provided", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "409", description = "The attempt is stale, not inconclusive, or cannot be confirmed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "The attempt is stale, uses an old identity policy, is not inconclusive, or cannot be confirmed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/validation/{attemptId}/confirm-identity", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -278,7 +278,7 @@ class RecoveryBatchController(
         value = [
             ApiResponse(responseCode = "200", description = "Selected exact asset version", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryUploadAssetSelectionResponse::class))]),
             ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "409", description = "Validation, confirmation, language eligibility, or unique-version requirements are not satisfied", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "Validation is missing or stale, the identity policy is outdated, confirmation or language eligibility is not satisfied, or another version is already selected", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/select", produces = [MediaType.APPLICATION_JSON_VALUE])

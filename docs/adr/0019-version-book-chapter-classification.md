@@ -1,0 +1,3 @@
+# Version Book-Chapter Classification
+
+Bibliography normalization policy v3 supersedes ADR 0018's current-version choice and classifies an analytic work inside a monograph as `BOOK_CHAPTER`, while v1/v2 parsing remains unchanged so queued and historical Analysis Runs keep their pinned behavior. Recovery identity policy v2 allows inconclusive current-policy `BOOK` references to follow normal confirmation, but blocks inconclusive `BOOK` entries from v1/v2 because their stored type cannot distinguish a monograph from a cited chapter; a chapter may proceed only when its identity is established. This preserves immutable history and avoids letting a whole-book PDF stand in for an unidentified chapter.

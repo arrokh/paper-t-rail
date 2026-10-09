@@ -27,6 +27,8 @@ import { cn } from "@/lib/utils";
 
 type BibliographyEntry = ParsedDocument["bibliographyEntries"][number];
 
+const CURRENT_IDENTITY_POLICY_VERSION = "recovery-upload-identity-v2";
+
 type RecoveryUploadWorkspaceProps = {
   analysisRunId: string;
   entries: BibliographyEntry[] | null;
@@ -63,12 +65,15 @@ function identityOutcomeLabel(outcome: RecoveryUploadValidation["identityOutcome
 function identityReasonMessage(code: string | null): string {
   switch (code) {
     case "DOI_MATCH": return "The extracted DOI matches the resolved cited work and no title conflict was found. This is machine evidence, not human confirmation.";
-    case "CHAPTER_BOOK_IDENTITY_REQUIRES_CONFIRMATION": return "The chapter could not be distinguished from its parent book. Human confirmation is required.";
+    case "TITLE_MATCH_DIFFERENT_DOI": return "The extracted title candidate matches the resolved cited work despite a different DOI. This is machine evidence, not human confirmation.";
+    case "CHAPTER_IDENTITY_UNSUPPORTED": return "The upload could not be identified as the cited chapter. Whole-book PDFs are blocked until chapter identity can be established.";
+    case "BOOK_CHAPTER_IDENTITY_UNSUPPORTED":
+    case "CHAPTER_BOOK_IDENTITY_REQUIRES_CONFIRMATION": return "This Analysis Run cannot distinguish an older book entry from a cited chapter. Inconclusive whole-book uploads are blocked; re-analyze the Source Document with current bibliography classification.";
     case "REFERENCE_IDENTITY_UNRESOLVED": return "This Bibliography Entry has no resolved identity. Human confirmation is required.";
     case "DOI_NOT_EXTRACTED": return "No DOI was extracted. Confirm the cited work before selecting this version.";
-    case "DOI_DIFFERS_REQUIRES_CONFIRMATION": return "The extracted DOI differs from the resolved work. It may be another version, so human confirmation is required.";
+    case "DOI_DIFFERS_REQUIRES_CONFIRMATION": return "The extracted DOI differs, and the title evidence does not establish a match. Confirm this exact version before selecting it.";
     case "REFERENCE_DOI_UNAVAILABLE": return "The resolved work has no DOI to compare. Human confirmation is required.";
-    case "DOI_TITLE_CONFLICT": return "The DOI matches, but the extracted title conflicts with the cited work. This mismatch cannot be selected.";
+    case "DOI_TITLE_CONFLICT": return "The extracted title conflicts with the resolved cited work. This mismatch cannot be selected.";
     case "MULTIPLE_DOI_CANDIDATES":
     case "MULTIPLE_TITLE_CANDIDATES": return "Docling found conflicting metadata candidates. Human confirmation is required.";
     default: return code ? `Identity reason: ${code}.` : "No identity outcome was produced.";
@@ -354,6 +359,7 @@ function RecoveryUploadValidationPanel({
   const options = Object.entries(validation.parserOptions)
     .map(([name, value]) => `${name}=${value}`)
     .join(" · ");
+  const usesCurrentIdentityPolicy = validation.identityPolicyVersion === CURRENT_IDENTITY_POLICY_VERSION;
 
   return (
     <div className="space-y-3 text-sm">
@@ -407,12 +413,16 @@ function RecoveryUploadValidationPanel({
       <details className="rounded-md border border-border px-3 py-2">
         <summary className="min-h-7 cursor-pointer py-1 font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">Parser provenance and options</summary>
         <p className="mb-0 mt-2 break-all text-xs leading-relaxed text-muted-foreground">
-          {validation.parserId} {validation.parserVersion} · policy {validation.metadataExtractionPolicyVersion}
+          {validation.parserId} {validation.parserVersion} · metadata policy {validation.metadataExtractionPolicyVersion} · identity policy {validation.identityPolicyVersion ?? "not reported"}
           <br />Options: {options || "none recorded"}
           <br />Asset SHA-256: {validation.contentSha256}
         </p>
       </details>
-      {validation.validationStatus === "COMPLETED" && (
+      {validation.validationStatus === "COMPLETED" && !usesCurrentIdentityPolicy ? (
+        <div className="rounded-md border border-border p-3 text-muted-foreground" role="status">
+          Identity policy is not reported as current. Validate again before confirming or selecting this PDF version.
+        </div>
+      ) : validation.validationStatus === "COMPLETED" ? (
         <div className="rounded-md border border-border p-3">
           {validation.selection ? (
             <div>
@@ -447,7 +457,7 @@ function RecoveryUploadValidationPanel({
             </div>
           )}
         </div>
-      )}
+      ) : null}
       <p className="m-0 text-xs leading-relaxed text-muted-foreground">Validation does not record human confirmation or start evidence assessment.</p>
     </div>
   );
@@ -553,10 +563,10 @@ function RecoveryUploadReferenceCard({
             type="button"
             variant="outline"
             size="sm"
-            disabled={disabled || validationPending || validationQuery.isPending || validationQuery.data?.validationStatus === "COMPLETED"}
+            disabled={disabled || validationPending || validationQuery.isPending || (validationQuery.data?.validationStatus === "COMPLETED" && validationQuery.data.identityPolicyVersion === CURRENT_IDENTITY_POLICY_VERSION)}
             onClick={() => onValidate(batchId, upload.id)}
           >
-            {validationPending ? <><Spinner /> Validating locally…</> : validationQuery.data?.validationStatus === "FAILED" ? "Retry validation" : validationQuery.data?.validationStatus === "COMPLETED" ? "Validation saved" : "Validate PDF metadata"}
+            {validationPending ? <><Spinner /> Validating locally…</> : validationQuery.data?.validationStatus === "FAILED" ? "Retry validation" : validationQuery.data?.validationStatus === "COMPLETED" && validationQuery.data.identityPolicyVersion !== CURRENT_IDENTITY_POLICY_VERSION ? "Revalidate with current identity policy" : validationQuery.data?.validationStatus === "COMPLETED" ? "Validation saved" : "Validate PDF metadata"}
           </Button>
         </section>
       )}

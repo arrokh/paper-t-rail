@@ -261,7 +261,7 @@ class GrobidTeiParser(
                 ?.let(YEAR_PATTERN::find)?.value?.toIntOrNull()
             val identifiers = readBibliographyIdentifiers(element, normalizationPolicy)
             val doi = identifiers.firstOrNull { it.type.equals("doi", ignoreCase = true) }?.normalizedValue
-            val type = referenceType(element)
+            val type = referenceType(element, normalizationPolicy)
             val sourceLocations = readSourceLocations(element)
             val entry = ParsedBibliographyEntry(
                 entryOrder = index,
@@ -363,19 +363,31 @@ class GrobidTeiParser(
         .trimEnd(':', '.')
         .lowercase(Locale.ROOT)
 
-    private fun referenceType(element: Element): String {
-        val reportDescription = descendants(element)
+    private fun referenceType(
+        element: Element,
+        normalizationPolicy: BibliographyNormalizationPolicySelection,
+    ): String {
+        val elements = descendants(element)
+        val reportDescription = elements
             .filter { it.localName == "note" && it.getAttribute("type") in setOf("report", "report_type") }
             .joinToString(" ") { normalizeWhitespace(it.textContent) }
-        val hasArxivIdentifier = descendants(element).any {
+        val hasArxivIdentifier = elements.any {
             it.localName == "idno" && it.getAttribute("type").equals("arXiv", ignoreCase = true)
         }
+        val hasAnalyticWork = elements.any { it.localName == "analytic" }
+        val hasJournalTitle = elements.any { it.localName == "title" && it.getAttribute("level") == "j" }
+        val hasMonographTitle = elements.any { it.localName == "title" && it.getAttribute("level") == "m" }
+        val hasChapterClassification = hasAnalyticWork &&
+            hasMonographTitle &&
+            !hasJournalTitle &&
+            normalizationPolicy.supportsChapterTypeClassification()
         return when {
             THESIS_PATTERN.containsMatchIn(reportDescription) -> "ACADEMIC_MANUSCRIPT"
             hasArxivIdentifier || PREPRINT_PATTERN.containsMatchIn(reportDescription) -> "PREPRINT"
-            descendants(element).any { it.localName == "meeting" } -> "CONFERENCE_PAPER"
-            descendants(element).any { it.localName == "title" && it.getAttribute("level") == "j" } -> "JOURNAL_ARTICLE"
-            descendants(element).any { it.localName == "title" && it.getAttribute("level") == "m" } -> "BOOK"
+            hasChapterClassification -> "BOOK_CHAPTER"
+            elements.any { it.localName == "meeting" } -> "CONFERENCE_PAPER"
+            hasJournalTitle -> "JOURNAL_ARTICLE"
+            hasMonographTitle -> "BOOK"
             else -> "OTHER"
         }
     }
@@ -447,6 +459,7 @@ class GrobidTeiParser(
     companion object {
         private val SUPPORTED_BIBLIOGRAPHY_POLICIES = setOf(
             BibliographyNormalizationPolicySelection.LEGACY,
+            BibliographyNormalizationPolicySelection.VERSION_2,
             BibliographyNormalizationPolicySelection.CURRENT,
         )
         private val BIBLIOGRAPHY_SECTION_HEADINGS = setOf("references", "bibliography", "works cited", "literature cited")

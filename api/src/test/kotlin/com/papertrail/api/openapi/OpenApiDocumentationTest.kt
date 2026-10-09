@@ -391,19 +391,22 @@ class OpenApiDocumentationTest {
         assertTrue(validateUpload.path("description").asText().contains("start evidence assessment"))
         val validationSchemaName = validateUpload.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val validationProperties = document.path("components").path("schemas").path(validationSchemaName).path("properties")
-        listOf("parserVersion", "metadataExtractionPolicyVersion", "parserOptions", "metadataCandidates", "identityOutcome", "humanConfirmation", "selection", "languageEligibility", "failureCode").forEach { assertTrue(validationProperties.has(it)) }
+        listOf("parserVersion", "metadataExtractionPolicyVersion", "identityPolicyVersion", "parserOptions", "metadataCandidates", "identityOutcome", "humanConfirmation", "selection", "languageEligibility", "failureCode").forEach { assertTrue(validationProperties.has(it)) }
         val confirmIdentity = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validation/{attemptId}/confirm-identity").path("post")
         assertTrue(confirmIdentity.path("responses").has("200"))
         assertTrue(confirmIdentity.path("responses").has("400"))
         assertTrue(confirmIdentity.path("responses").has("409"))
-        assertTrue(confirmIdentity.path("description").asText().contains("mismatches cannot be overridden"))
+        assertTrue(confirmIdentity.path("description").asText().contains("mismatches, unsupported chapter identities, and inconclusive legacy book/chapter identities cannot be overridden"))
+        assertTrue(confirmIdentity.path("responses").path("409").path("description").asText().contains("old identity policy"))
         val selectVersion = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/select").path("post")
         assertTrue(selectVersion.path("responses").has("200"))
         assertTrue(selectVersion.path("responses").has("409"))
         assertTrue(selectVersion.path("description").asText().contains("one exact asset version"))
+        assertTrue(selectVersion.path("responses").path("409").path("description").asText().contains("identity policy is outdated"))
         val latestValidation = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validation").path("get")
         assertTrue(latestValidation.path("responses").has("200"))
         assertTrue(latestValidation.path("responses").has("204"))
+        assertTrue(latestValidation.path("responses").path("204").path("description").asText().contains("current identity policy"))
         val removeUpload = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}").path("delete")
         assertTrue(removeUpload.path("responses").has("200"))
         assertTrue(removeUpload.path("responses").has("404"))
@@ -446,8 +449,16 @@ class OpenApiDocumentationTest {
         val parsedDocumentSchemaName = parsedDocument.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val parsedDocumentProperties = document.path("components").path("schemas").path(parsedDocumentSchemaName).path("properties")
         assertTrue(parsedDocumentProperties.has("bibliographyNormalizationPolicy"))
+        val normalizationPolicySchemaName = parsedDocumentProperties.path("bibliographyNormalizationPolicy").path("oneOf").path(0).path("${'$'}ref").asText().substringAfterLast('/')
+        val normalizationPolicyProperties = document.path("components").path("schemas").path(normalizationPolicySchemaName).path("properties")
+        assertTrue(
+            normalizationPolicyProperties.path("version").path("description").asText().contains("Version 3"),
+            normalizationPolicyProperties.toPrettyString(),
+        )
         val parsedBibliographySchemaName = parsedDocumentProperties.path("bibliographyEntries").path("items").path("${'$'}ref").asText().substringAfterLast('/')
         val parsedBibliographyProperties = document.path("components").path("schemas").path(parsedBibliographySchemaName).path("properties")
+        assertTrue(parsedBibliographyProperties.path("referenceType").path("description").asText().contains("policy v3"))
+        assertTrue(parsedBibliographyProperties.path("referenceType").path("description").asText().contains("earlier policy versions may retain BOOK"))
         assertTrue(parsedBibliographyProperties.path("sourceTextContent").path("description").asText().contains("Unnormalized"))
         assertTrue(parsedBibliographyProperties.path("provisionalArtifactSignals").path("description").asText().contains("not human adjudication"))
         assertTrue(parsedBibliographyProperties.has("identifiers"))
@@ -1016,7 +1027,7 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.normalizedSourceText").value("Claim [1]."))
             .andExpect(jsonPath("$.citationContexts[0].occurrences[0].bibliographyReferenceKeys[0]").value("ref1"))
             .andExpect(jsonPath("$.citationContexts[0].occurrences[0].unmatchedBibliographyReferenceKeys[0]").value("missing-tei-key"))
-            .andExpect(jsonPath("$.bibliographyNormalizationPolicy.version").value("2"))
+            .andExpect(jsonPath("$.bibliographyNormalizationPolicy.version").value("3"))
             .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].text").value("Claim"))
             .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].sourceStartOffset").value(0))
             .andExpect(jsonPath("$.citationContexts[0].atomicClaims[0].citationTargets[0].associationKind").value("INFERRED_PROVISIONAL"))
@@ -1149,7 +1160,7 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.summary.unsupportedReferenceType").value(1))
             .andExpect(jsonPath("$.referenceResolution.summary.failed").value(0))
             .andExpect(jsonPath("$.referenceResolution.summary.provisionalArtifactSignalEntries").value(1))
-            .andExpect(jsonPath("$.referenceResolution.bibliographyNormalizationPolicy.version").value("2"))
+            .andExpect(jsonPath("$.referenceResolution.bibliographyNormalizationPolicy.version").value("3"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].title").value("Example paper"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].rankingScore").value(1.0))
             .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].reasonCodes[0]").value("TITLE_EXACT"))
@@ -1182,6 +1193,7 @@ class OpenApiDocumentationTest {
             parserId = "docling",
             parserVersion = "1.30.0",
             metadataExtractionPolicyVersion = "docling-first-page-metadata-candidates-v1",
+            identityPolicyVersion = "recovery-upload-identity-v2",
             parserOptions = mapOf("from_formats" to "pdf", "to_formats" to "md,json", "do_ocr" to "false"),
             languageDetectorId = "optimaize",
             languageDetectorVersion = "0.6",
@@ -1216,6 +1228,7 @@ class OpenApiDocumentationTest {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.identityOutcome").value("NEEDS_CONFIRMATION"))
             .andExpect(jsonPath("$.identityReasonCode").value("DOI_DIFFERS_REQUIRES_CONFIRMATION"))
+            .andExpect(jsonPath("$.identityPolicyVersion").value("recovery-upload-identity-v2"))
             .andExpect(jsonPath("$.languageEligibility").value("ELIGIBLE"))
             .andExpect(jsonPath("$.validationStatus").value("COMPLETED"))
             .andExpect(jsonPath("$.parserOptions.do_ocr").value("false"))

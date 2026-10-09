@@ -343,13 +343,16 @@ class AnalysisRunQueueIntegrationTest {
             run.analysisRunId,
         )
         val entryReferences = listOf(
-            Triple("b0", "JOURNAL_ARTICLE", "Validated synthetic study"),
-            Triple("b1", "BOOK", "Ambiguous book title"),
+            Triple("b0", "BOOK", "Validated synthetic book"),
+            Triple("b1", "BOOK_CHAPTER", "Unresolved chapter title"),
             Triple("b2", "JOURNAL_ARTICLE", "Expected work title"),
             Triple("b3", "JOURNAL_ARTICLE", "Unresolved work title"),
             Triple("b4", "JOURNAL_ARTICLE", "English-ineligible identity match"),
             Triple("b5", "JOURNAL_ARTICLE", "Unconfirmed non-English version"),
             Triple("b6", "JOURNAL_ARTICLE", "Different DOI and different title"),
+            Triple("b7", "JOURNAL_ARTICLE", "Alternate DOI with matching title"),
+            Triple("b8", "JOURNAL_ARTICLE", "Alternate DOI with missing title"),
+            Triple("b9", "BOOK_CHAPTER", "Identified synthetic chapter"),
         )
         val expectedDois = entryReferences.indices.map { "10.5555/papertrail.recovery.validation.$it" }
         entryReferences.forEachIndexed { index, (localKey, referenceType, title) ->
@@ -419,30 +422,44 @@ class AnalysisRunQueueIntegrationTest {
             override fun parse(pdf: ByteArray): ParsedScientificDocument {
                 val index = parserCalls.getAndIncrement()
                 if (index == 3) throw IllegalStateException("must not be persisted")
-                val candidateTitle = if (index in setOf(2, 6)) "Unrelated candidate title" else entryReferences[index].third
-                val candidateDoi = if (index in setOf(5, 6)) "10.5555/papertrail.alternate-version" else expectedDois[index]
-                val candidates = listOf(
-                    ParsedBibliographicMetadataCandidate(
-                        field = ParsedBibliographicMetadataField.TITLE,
-                        value = candidateTitle,
-                        pageNumber = 1,
-                        sourceLabel = "title",
-                        extractionMethod = ParsedBibliographicMetadataExtractionMethod.DOCLING_LABEL,
-                        sourceElementId = "docling-title-$index",
-                        sourceCharSpanStart = 0,
-                        sourceCharSpanEnd = candidateTitle.length,
-                    ),
-                    ParsedBibliographicMetadataCandidate(
-                        field = ParsedBibliographicMetadataField.DOI,
-                        value = candidateDoi,
-                        pageNumber = 1,
-                        sourceLabel = "doi",
-                        extractionMethod = ParsedBibliographicMetadataExtractionMethod.EXPLICIT_DOI_PREFIX,
-                        sourceElementId = "docling-doi-$index",
-                        sourceCharSpanStart = 100,
-                        sourceCharSpanEnd = 100 + candidateDoi.length,
-                    ),
-                )
+                val candidateTitle = when (index) {
+                    1, 5, 8 -> null
+                    2, 6 -> "Unrelated candidate title"
+                    else -> entryReferences[index].third
+                }
+                val candidateDoi = if (index in setOf(1, 5, 6, 7, 8)) {
+                    "10.5555/papertrail.alternate-version"
+                } else {
+                    expectedDois[index]
+                }
+                val candidates = buildList {
+                    candidateTitle?.let { title ->
+                        add(
+                            ParsedBibliographicMetadataCandidate(
+                                field = ParsedBibliographicMetadataField.TITLE,
+                                value = title,
+                                pageNumber = 1,
+                                sourceLabel = "title",
+                                extractionMethod = ParsedBibliographicMetadataExtractionMethod.DOCLING_LABEL,
+                                sourceElementId = "docling-title-$index",
+                                sourceCharSpanStart = 0,
+                                sourceCharSpanEnd = title.length,
+                            ),
+                        )
+                    }
+                    add(
+                        ParsedBibliographicMetadataCandidate(
+                            field = ParsedBibliographicMetadataField.DOI,
+                            value = candidateDoi,
+                            pageNumber = 1,
+                            sourceLabel = "doi",
+                            extractionMethod = ParsedBibliographicMetadataExtractionMethod.EXPLICIT_DOI_PREFIX,
+                            sourceElementId = "docling-doi-$index",
+                            sourceCharSpanStart = 100,
+                            sourceCharSpanEnd = 100 + candidateDoi.length,
+                        ),
+                    )
+                }
                 return ParsedScientificDocument(
                     parserId = parserId,
                     parserVersion = "1.30.0",
@@ -502,17 +519,29 @@ class AnalysisRunQueueIntegrationTest {
         val englishIneligible = validationService.validate(batch.id, stagedUploads[4].id)
         val nonEnglishNeedsConfirmation = validationService.validate(batch.id, stagedUploads[5].id)
         val differentDoiAndTitleMismatch = validationService.validate(batch.id, stagedUploads[6].id)
+        val differentDoiMatchingTitle = validationService.validate(batch.id, stagedUploads[7].id)
+        val differentDoiMissingTitle = validationService.validate(batch.id, stagedUploads[8].id)
+        val identifiedChapter = validationService.validate(batch.id, stagedUploads[9].id)
 
         assertEquals(RecoveryIdentityOutcome.VALIDATED, validated.identityOutcome)
         assertEquals("DOI_MATCH", validated.identityReasonCode)
         assertEquals(RecoveryLanguageEligibility.ELIGIBLE, validated.languageEligibility)
-        assertEquals(RecoveryIdentityOutcome.NEEDS_CONFIRMATION, chapter.identityOutcome)
-        assertEquals("CHAPTER_BOOK_IDENTITY_REQUIRES_CONFIRMATION", chapter.identityReasonCode)
+        assertEquals(RecoveryIdentityOutcome.MISMATCH, chapter.identityOutcome)
+        assertEquals("CHAPTER_IDENTITY_UNSUPPORTED", chapter.identityReasonCode)
         assertEquals(RecoveryIdentityOutcome.MISMATCH, mismatch.identityOutcome)
         assertEquals("DOI_TITLE_CONFLICT", mismatch.identityReasonCode)
         assertEquals(RecoveryLanguageEligibility.INELIGIBLE, mismatch.languageEligibility)
         assertEquals("fr", mismatch.detectedLanguage)
         assertEquals("docling-first-page-metadata-candidates-v1", validated.metadataExtractionPolicyVersion)
+        assertEquals("recovery-upload-identity-v2", validated.identityPolicyVersion)
+        assertEquals(
+            "recovery-upload-identity-v2",
+            jdbc.queryForObject(
+                "SELECT identity_policy_version FROM recovery_upload_validation_attempts WHERE id = ?",
+                String::class.java,
+                validated.id,
+            ),
+        )
         assertEquals("false", validated.parserOptions["do_ocr"])
         assertEquals("docling-title-0", validated.metadataCandidates.first().sourceElementId)
         assertEquals("DOCLING_PARSE_FAILED", failed.failureCode)
@@ -523,7 +552,13 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(RecoveryLanguageEligibility.INELIGIBLE, nonEnglishNeedsConfirmation.languageEligibility)
         assertEquals(RecoveryIdentityOutcome.MISMATCH, differentDoiAndTitleMismatch.identityOutcome)
         assertEquals("DOI_TITLE_CONFLICT", differentDoiAndTitleMismatch.identityReasonCode)
-        assertEquals(7, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_validation_attempts WHERE analysis_run_id = ?", Int::class.java, run.analysisRunId))
+        assertEquals(RecoveryIdentityOutcome.VALIDATED, differentDoiMatchingTitle.identityOutcome)
+        assertEquals("TITLE_MATCH_DIFFERENT_DOI", differentDoiMatchingTitle.identityReasonCode)
+        assertEquals(RecoveryIdentityOutcome.NEEDS_CONFIRMATION, differentDoiMissingTitle.identityOutcome)
+        assertEquals("DOI_DIFFERS_REQUIRES_CONFIRMATION", differentDoiMissingTitle.identityReasonCode)
+        assertEquals(RecoveryIdentityOutcome.VALIDATED, identifiedChapter.identityOutcome)
+        assertEquals("DOI_MATCH", identifiedChapter.identityReasonCode)
+        assertEquals(10, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_validation_attempts WHERE analysis_run_id = ?", Int::class.java, run.analysisRunId))
         assertEquals("false", jdbc.queryForObject("SELECT parser_options ->> 'do_ocr' FROM recovery_upload_validation_attempts WHERE id = ?", String::class.java, validated.id))
         assertEquals(validated.id, validationService.latest(batch.id, stagedUploads[0].id)?.id)
         val identityService = RecoveryUploadIdentityService(
@@ -531,16 +566,24 @@ class AnalysisRunQueueIntegrationTest {
             decisionRepository = RecoveryUploadIdentityDecisionRepository(jdbc, stagingSettings),
         )
         val unconfirmedSelection = assertThrows(RecoveryStagingException::class.java) {
-            identityService.selectExactVersion(batch.id, stagedUploads[1].id)
+            identityService.selectExactVersion(batch.id, stagedUploads[8].id)
         }
         assertEquals("RECOVERY_IDENTITY_CONFIRMATION_REQUIRED", unconfirmedSelection.code)
+        val chapterSelection = assertThrows(RecoveryStagingException::class.java) {
+            identityService.selectExactVersion(batch.id, stagedUploads[1].id)
+        }
+        assertEquals("RECOVERY_UPLOAD_IDENTITY_MISMATCH", chapterSelection.code)
+        val chapterConfirmation = assertThrows(RecoveryStagingException::class.java) {
+            identityService.confirmExactVersion(batch.id, stagedUploads[1].id, chapter.id, true)
+        }
+        assertEquals("RECOVERY_IDENTITY_NOT_CONFIRMABLE", chapterConfirmation.code)
         val confirmationStartedAt = Instant.now()
         jdbc.update(
             "UPDATE recovery_batches SET expires_at = ? WHERE id = ?",
             Timestamp.from(confirmationStartedAt.plusSeconds(30)),
             batch.id,
         )
-        val chapterConfirmation = identityService.confirmExactVersion(batch.id, stagedUploads[1].id, chapter.id, true)
+        val alternateDoiConfirmation = identityService.confirmExactVersion(batch.id, stagedUploads[8].id, differentDoiMissingTitle.id, true)
         val afterConfirmation = jdbc.queryForObject(
             "SELECT last_activity_at, expires_at FROM recovery_batches WHERE id = ?",
             { rs, _ -> rs.getTimestamp("last_activity_at").toInstant() to rs.getTimestamp("expires_at").toInstant() },
@@ -548,15 +591,18 @@ class AnalysisRunQueueIntegrationTest {
         )!!
         assertTrue(afterConfirmation.first >= confirmationStartedAt)
         assertTrue(afterConfirmation.second >= confirmationStartedAt.plusSeconds(stagingSettings.inactivityTtlSeconds - 1))
-        assertEquals("CONFIRM_EXACT_VERSION", chapterConfirmation.decision)
-        assertEquals(chapter.contentSha256, chapterConfirmation.contentSha256)
-        assertEquals(RecoveryIdentityOutcome.NEEDS_CONFIRMATION, validationService.latest(batch.id, stagedUploads[1].id)?.identityOutcome)
+        assertEquals("CONFIRM_EXACT_VERSION", alternateDoiConfirmation.decision)
+        assertEquals(differentDoiMissingTitle.contentSha256, alternateDoiConfirmation.contentSha256)
+        assertEquals(RecoveryIdentityOutcome.NEEDS_CONFIRMATION, validationService.latest(batch.id, stagedUploads[8].id)?.identityOutcome)
         val selectionStartedAt = Instant.now()
         jdbc.update(
             "UPDATE recovery_batches SET expires_at = ? WHERE id = ?",
             Timestamp.from(selectionStartedAt.plusSeconds(30)),
             batch.id,
         )
+        val identifiedChapterSelection = identityService.selectExactVersion(batch.id, stagedUploads[9].id)
+        assertEquals(RecoveryAssetSelectionMethod.MACHINE_VALIDATED, identifiedChapterSelection.selectionMethod)
+        assertEquals(identifiedChapter.contentSha256, identifiedChapterSelection.contentSha256)
         val machineSelection = identityService.selectExactVersion(batch.id, stagedUploads[0].id)
         val afterSelection = jdbc.queryForObject(
             "SELECT last_activity_at, expires_at FROM recovery_batches WHERE id = ?",
@@ -568,6 +614,9 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(RecoveryAssetSelectionMethod.MACHINE_VALIDATED, machineSelection.selectionMethod)
         assertEquals(validated.contentSha256, machineSelection.contentSha256)
         assertEquals(machineSelection.id, identityService.selectExactVersion(batch.id, stagedUploads[0].id).id)
+        val alternateDoiMachineSelection = identityService.selectExactVersion(batch.id, stagedUploads[7].id)
+        assertEquals(RecoveryAssetSelectionMethod.MACHINE_VALIDATED, alternateDoiMachineSelection.selectionMethod)
+        assertEquals(differentDoiMatchingTitle.contentSha256, alternateDoiMachineSelection.contentSha256)
         assertEquals(validated.id, validationService.validate(batch.id, stagedUploads[0].id).id)
         assertEquals(machineSelection.id, identityService.selection(batch.id, stagedUploads[0].id)?.id)
         objectStore.put(stagedUploads[0].finalizedObjectKey, "%PDF-1.7".toByteArray(Charsets.US_ASCII), "application/pdf")
@@ -578,9 +627,9 @@ class AnalysisRunQueueIntegrationTest {
             identityService.selectExactVersion(batch.id, stagedUploads[0].id)
         }
         assertEquals("RECOVERY_VALIDATION_REQUIRED", staleSelection.code)
-        val humanSelection = identityService.selectExactVersion(batch.id, stagedUploads[1].id)
+        val humanSelection = identityService.selectExactVersion(batch.id, stagedUploads[8].id)
         assertEquals(RecoveryAssetSelectionMethod.HUMAN_CONFIRMED, humanSelection.selectionMethod)
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_asset_selections WHERE batch_id = ?", Int::class.java, batch.id))
+        assertEquals(3, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_asset_selections WHERE batch_id = ?", Int::class.java, batch.id))
         val mismatchSelection = assertThrows(RecoveryStagingException::class.java) {
             identityService.selectExactVersion(batch.id, stagedUploads[2].id)
         }
@@ -612,9 +661,44 @@ class AnalysisRunQueueIntegrationTest {
             identityService.selectExactVersion(batch.id, stagedUploads[5].id)
         }
         assertEquals("RECOVERY_UPLOAD_NOT_ENGLISH_ELIGIBLE", nonEnglishConfirmedSelection.code)
+
+        val legacyAttemptId = UUID.randomUUID()
+        jdbc.update(
+            """
+            INSERT INTO recovery_upload_validation_attempts (
+                id, batch_id, upload_id, analysis_run_id, content_sha256,
+                parser_id, parser_version, metadata_extraction_policy_version, identity_policy_version, parser_options,
+                language_detector_id, language_detector_version, minimum_language_confidence,
+                validation_status, identity_outcome, identity_reason_code, metadata_candidates,
+                language_eligibility, detected_language, language_confidence, language_reason_code,
+                failure_code, created_at
+            )
+            SELECT ?, batch_id, upload_id, analysis_run_id, content_sha256,
+                   parser_id, parser_version, metadata_extraction_policy_version, 'recovery-upload-identity-v1', parser_options,
+                   language_detector_id, language_detector_version, minimum_language_confidence,
+                   validation_status, identity_outcome, identity_reason_code, metadata_candidates,
+                   language_eligibility, detected_language, language_confidence, language_reason_code,
+                   failure_code, ?
+              FROM recovery_upload_validation_attempts
+             WHERE id = ?
+            """.trimIndent(),
+            legacyAttemptId,
+            Timestamp.from(Instant.now().plusMillis(100)),
+            identifiedChapter.id,
+        )
+        assertNull(validationService.latest(batch.id, stagedUploads[9].id))
+        val stalePolicySelection = assertThrows(RecoveryStagingException::class.java) {
+            identityService.selectExactVersion(batch.id, stagedUploads[9].id)
+        }
+        assertEquals("RECOVERY_IDENTITY_POLICY_STALE", stalePolicySelection.code)
+        val stalePolicyConfirmation = assertThrows(RecoveryStagingException::class.java) {
+            identityService.confirmExactVersion(batch.id, stagedUploads[9].id, legacyAttemptId, true)
+        }
+        assertEquals("RECOVERY_IDENTITY_POLICY_STALE", stalePolicyConfirmation.code)
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_asset_selections WHERE batch_id = ?", Int::class.java, batch.id))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE analysis_run_id = ? AND event_type IN (?, ?)", Int::class.java, run.analysisRunId, CITED_PAPER_ACQUISITION_REQUESTED, CITED_PAPER_INDEXING_REQUESTED))
         stagingService.removeUpload(batch.id, stagedUploads[0].id)
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_asset_selections WHERE batch_id = ?", Int::class.java, batch.id))
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_asset_selections WHERE batch_id = ?", Int::class.java, batch.id))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_validation_attempts WHERE upload_id = ?", Int::class.java, stagedUploads[0].id))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_identity_confirmations WHERE upload_id = ?", Int::class.java, stagedUploads[0].id))
         stagingService.removeUpload(batch.id, stagedUploads[1].id)
@@ -5416,6 +5500,22 @@ class AnalysisRunQueueIntegrationTest {
             val recoveryIdentitySelectionMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("recovery_identity_selection.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryIdentitySelectionMigrationVerification)) }
+            }
+            val recoveryValidationSafetyMigration = migrationDirectory.resolve("recovery_validation_safety.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryValidationSafetyMigration)) }
+            }
+            val recoveryValidationSafetyMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("recovery_validation_safety.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryValidationSafetyMigrationVerification)) }
+            }
+            val recoveryIdentityPolicyVersionMigration = migrationDirectory.resolve("recovery_identity_policy_version.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryIdentityPolicyVersionMigration)) }
+            }
+            val recoveryIdentityPolicyVersionMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("recovery_identity_policy_version.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryIdentityPolicyVersionMigrationVerification)) }
             }
             val bibliographyProvenanceMigration = migrationDirectory.resolve("bibliography_entry_provenance.sql")
             dataSource.connection.use { connection ->

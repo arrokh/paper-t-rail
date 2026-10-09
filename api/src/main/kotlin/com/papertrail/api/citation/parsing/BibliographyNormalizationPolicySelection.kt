@@ -6,7 +6,7 @@ import io.swagger.v3.oas.annotations.media.Schema
 data class BibliographyNormalizationPolicySelection(
     @field:Schema(description = "Stable identifier for the application bibliography normalization policy.")
     val policyId: String,
-    @field:Schema(description = "Policy version applied to the parsed bibliography.")
+    @field:Schema(description = "Policy version applied to the parsed bibliography. Version 3 adds GROBID analytic-work chapter classification; earlier versions preserve their historical type output.")
     val version: String,
 ) {
     init {
@@ -14,9 +14,14 @@ data class BibliographyNormalizationPolicySelection(
         require(version.isNotBlank()) { "Bibliography normalization policy version must not be blank." }
     }
 
+    fun supportsChapterTypeClassification(): Boolean =
+        policyId == POLICY_ID && version.toIntOrNull()?.let { it >= CHAPTER_CLASSIFICATION_VERSION } == true
+
     companion object {
         const val POLICY_ID = "grobid-bibliography-normalization"
+        const val CHAPTER_CLASSIFICATION_VERSION = 3
         val LEGACY = BibliographyNormalizationPolicySelection(POLICY_ID, "1")
-        val CURRENT = BibliographyNormalizationPolicySelection(POLICY_ID, "2")
+        val VERSION_2 = BibliographyNormalizationPolicySelection(POLICY_ID, "2")
+        val CURRENT = BibliographyNormalizationPolicySelection(POLICY_ID, CHAPTER_CLASSIFICATION_VERSION.toString())
     }
 }
