@@ -1195,7 +1195,7 @@ class OpenApiDocumentationTest {
             contentSha256 = "a".repeat(64),
             parserId = "docling",
             parserVersion = "1.30.0",
-            metadataExtractionPolicyVersion = "docling-first-page-metadata-candidates-v1",
+            metadataExtractionPolicyVersion = "docling-first-page-metadata-candidates-v2",
             identityPolicyVersion = "recovery-upload-identity-v2",
             parserOptions = mapOf("from_formats" to "pdf", "to_formats" to "md,json", "do_ocr" to "false"),
             languageDetectorId = "optimaize",

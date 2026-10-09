@@ -86,7 +86,7 @@ class DoclingCitedPaperPdfParserContractTest {
 
         val parsed = parser.parse("pdf-bytes".toByteArray())
 
-        assertEquals("docling-first-page-metadata-candidates-v1", parsed.bibliographicMetadataExtractionPolicyVersion)
+        assertEquals("docling-first-page-metadata-candidates-v2", parsed.bibliographicMetadataExtractionPolicyVersion)
         assertEquals(
             mapOf("from_formats" to "pdf", "to_formats" to "md,json", "do_ocr" to "false"),
             parsed.bibliographicMetadataExtractionOptions,
@@ -126,6 +126,64 @@ class DoclingCitedPaperPdfParserContractTest {
             ),
             parsed.bibliographicMetadataCandidates,
         )
+        server.verify()
+    }
+
+    @Test
+    fun `selects the article title after publication headings rather than the first section header`() {
+        val builder = RestClient.builder().baseUrl("http://docling.test")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("http://docling.test/v1/convert/file"))
+            .andRespond(
+                withSuccess(
+                    """{"status":"success","document":{"md_content":"# Journal Production Guidance for Software and Data Citations\n\nBody text.","json_content":{"texts":[{"self_ref":"#/texts/0","label":"section_header","text":"OPEN","prov":[{"page_no":1,"charspan":[0,4]}]},{"self_ref":"#/texts/1","label":"section_header","text":"Comment","prov":[{"page_no":1,"charspan":[0,7]}]},{"self_ref":"#/texts/2","label":"section_header","text":"Journal Production Guidance for Software and Data Citations","prov":[{"page_no":1,"charspan":[0,59]}]},{"self_ref":"#/texts/3","label":"text","text":"Shelley Stall and Geoffrey Bilder","prov":[{"page_no":1,"charspan":[0,34]}]},{"self_ref":"#/texts/4","label":"text","text":"Body text.","prov":[{"page_no":1,"charspan":[0,10]}]},{"self_ref":"#/texts/5","label":"section_header","text":"Introduction","prov":[{"page_no":1,"charspan":[0,12]}]}]}}}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+        val parser = DoclingCitedPaperPdfParser(
+            client = builder.build(),
+            parserVersion = "1.30.0",
+            maximumResponseBytes = 64 * 1024,
+            maximumCharacters = 5_000,
+        )
+
+        val parsed = parser.parse("pdf-bytes".toByteArray())
+
+        val title = parsed.bibliographicMetadataCandidates.single { it.field == ParsedBibliographicMetadataField.TITLE }
+        val authors = parsed.bibliographicMetadataCandidates.single { it.field == ParsedBibliographicMetadataField.AUTHORS }
+        assertEquals("Journal Production Guidance for Software and Data Citations", title.value)
+        assertEquals("#/texts/2", title.sourceElementId)
+        assertEquals(ParsedBibliographicMetadataExtractionMethod.FIRST_PAGE_SECTION_HEADER, title.extractionMethod)
+        assertEquals("Shelley Stall and Geoffrey Bilder", authors.value)
+        assertEquals("#/texts/3", authors.sourceElementId)
+        server.verify()
+    }
+
+    @Test
+    fun `uses a uniquely prominent title heading when page text precedes the title`() {
+        val builder = RestClient.builder().baseUrl("http://docling.test")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("http://docling.test/v1/convert/file"))
+            .andRespond(
+                withSuccess(
+                    """{"status":"success","document":{"md_content":"# Inferring pathway activity from single-cell and spatial transcriptomics data with PaaSc\n\nBody text.","json_content":{"texts":[{"self_ref":"#/texts/0","label":"text","text":"METHODS","prov":[{"page_no":1,"bbox":{"l":198,"t":672,"r":238,"b":665}}]},{"self_ref":"#/texts/1","label":"section_header","text":"Inferring pathway activity from single-cell and spatial transcriptomics data with PaaSc","prov":[{"page_no":1,"bbox":{"l":198,"t":658,"r":551,"b":626}}]},{"self_ref":"#/texts/2","label":"text","text":"Xiqi Liao and Jiantao Shi","prov":[{"page_no":1,"bbox":{"l":198,"t":612,"r":532,"b":604}}]},{"self_ref":"#/texts/3","label":"section_header","text":"Abstract","prov":[{"page_no":1,"bbox":{"l":198,"t":485,"r":259,"b":473}}]},{"self_ref":"#/texts/4","label":"text","text":"Recent advances in transcriptomics.","prov":[{"page_no":1,"bbox":{"l":198,"t":462,"r":575,"b":213}}]},{"self_ref":"#/texts/5","label":"section_header","text":"Author summary","prov":[{"page_no":1,"bbox":{"l":208,"t":174,"r":296,"b":163}}]}]}}}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+        val parser = DoclingCitedPaperPdfParser(
+            client = builder.build(),
+            parserVersion = "1.30.0",
+            maximumResponseBytes = 64 * 1024,
+            maximumCharacters = 5_000,
+        )
+
+        val parsed = parser.parse("pdf-bytes".toByteArray())
+
+        val title = parsed.bibliographicMetadataCandidates.single { it.field == ParsedBibliographicMetadataField.TITLE }
+        val authors = parsed.bibliographicMetadataCandidates.single { it.field == ParsedBibliographicMetadataField.AUTHORS }
+        assertEquals("Inferring pathway activity from single-cell and spatial transcriptomics data with PaaSc", title.value)
+        assertEquals("#/texts/1", title.sourceElementId)
+        assertEquals("Xiqi Liao and Jiantao Shi", authors.value)
         server.verify()
     }
 
