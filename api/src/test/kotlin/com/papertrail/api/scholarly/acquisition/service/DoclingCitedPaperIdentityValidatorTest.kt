@@ -62,6 +62,25 @@ class DoclingCitedPaperIdentityValidatorTest {
     }
 
     @Test
+    fun `requires confirmation when a page produces multiple DOI candidates`() {
+        val validator = validator(parsedDocument(candidates = listOf(
+            candidate(ParsedBibliographicMetadataField.DOI, "10.1371/journal.pcbi.1013666"),
+            candidate(ParsedBibliographicMetadataField.DOI, "10.1371/journal"),
+            candidate(ParsedBibliographicMetadataField.TITLE, "Inferring pathway activity from single-cell and spatial transcriptomics data with PaaSc"),
+        )))
+        val reference = reference().copy(
+            title = "Inferring pathway activity from single-cell and spatial transcriptomics data with PaaSc",
+            doi = "10.1371/journal.pcbi.1013666",
+        )
+
+        val result = validator.validate(pdf(), reference, configuration())
+
+        assertEquals(CitedPaperIdentityValidationStatus.NEEDS_CONFIRMATION, result.status)
+        assertEquals("MULTIPLE_DOI_CANDIDATES", result.reasonCode)
+        assertEquals(CitedPaperAccessCause.FULL_TEXT_IDENTITY_UNVERIFIED, result.accessCause())
+    }
+
+    @Test
     fun `accepts a differing DOI only when the extracted title exactly matches`() {
         val validator = validator(parsedDocument(candidates = listOf(
             candidate(ParsedBibliographicMetadataField.DOI, "10.1234/alternate-version"),

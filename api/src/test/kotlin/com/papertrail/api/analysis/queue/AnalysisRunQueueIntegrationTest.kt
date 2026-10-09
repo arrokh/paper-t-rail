@@ -535,7 +535,7 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("DOI_TITLE_CONFLICT", mismatch.identityReasonCode)
         assertEquals(RecoveryLanguageEligibility.INELIGIBLE, mismatch.languageEligibility)
         assertEquals("fr", mismatch.detectedLanguage)
-        assertEquals("docling-first-page-metadata-candidates-v1", validated.metadataExtractionPolicyVersion)
+        assertEquals("docling-first-page-metadata-candidates-v2", validated.metadataExtractionPolicyVersion)
         assertEquals("recovery-upload-identity-v2", validated.identityPolicyVersion)
         assertEquals(
             "recovery-upload-identity-v2",

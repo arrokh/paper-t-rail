@@ -23,24 +23,12 @@ import java.net.URI
 class DoclingCitedPaperPdfParserRealServiceTest {
     @Test
     fun `extracts first-page metadata candidates from the pinned local Docling service`() {
-        val baseUrl = System.getenv("DOCLING_TEST_BASE_URL")?.trim()?.takeIf(String::isNotEmpty)
-        assumeTrue(baseUrl != null, "Set DOCLING_TEST_BASE_URL to run the real Docling contract test.")
-        val configuredBaseUrl = requireNotNull(baseUrl)
-        val uri = URI(configuredBaseUrl)
-        assumeTrue(uri.host in LOCAL_DOCLING_HOSTS, "The Docling contract test only sends synthetic files to localhost.")
-
-        val parser = DoclingCitedPaperPdfParser(
-            client = DoclingCitedPaperParserConfiguration().doclingRestClient(configuredBaseUrl, 600_000L),
-            parserVersion = "1.30.0",
-            maximumResponseBytes = 64 * 1024 * 1024,
-            maximumCharacters = 5_000_000,
-        )
-        val parsed = parser.parse(syntheticCitedPaperPdf())
+        val parsed = parserForLocalService().parse(syntheticCitedPaperPdf())
 
         val candidates = parsed.bibliographicMetadataCandidates
         assertEquals("docling", parsed.parserId)
         assertEquals("1.30.0", parsed.parserVersion)
-        assertEquals("docling-first-page-metadata-candidates-v1", parsed.bibliographicMetadataExtractionPolicyVersion)
+        assertEquals("docling-first-page-metadata-candidates-v2", parsed.bibliographicMetadataExtractionPolicyVersion)
         assertEquals(
             mapOf("from_formats" to "pdf", "to_formats" to "md,json", "do_ocr" to "false"),
             parsed.bibliographicMetadataExtractionOptions,
@@ -56,6 +44,61 @@ class DoclingCitedPaperPdfParserRealServiceTest {
         assertTrue(candidates.all { it.sourceElementId != null && it.sourceCharSpanStart != null && it.sourceCharSpanEnd != null })
         assertFalse(candidates.any { it.value.contains("papertrail.unrelated.reference") })
     }
+
+    @Test
+    fun `extracts a ground-truthed title and authors from a real cited paper`() {
+        val parsed = parserForLocalService().parse(realCitedPaperPdf("PMC10522580.1.pdf"))
+        val candidates = parsed.bibliographicMetadataCandidates
+        val title = candidates.filter { it.field == ParsedBibliographicMetadataField.TITLE }
+        val authors = candidates.filter { it.field == ParsedBibliographicMetadataField.AUTHORS }
+
+        assertEquals(1, title.size)
+        assertEquals(REAL_PAPER_TITLE, title.single().value)
+        assertEquals(1, title.single().pageNumber)
+        assertTrue(title.single().sourceElementId != null)
+        assertTrue(title.single().sourceCharSpanStart != null && title.single().sourceCharSpanEnd != null)
+        assertEquals(1, authors.size)
+        assertTrue(authors.single().value.contains("Shelley"))
+        assertTrue(authors.single().value.contains("Bilder"))
+        assertTrue(authors.single().sourceElementId != null)
+        assertTrue(candidates.none { it.field == ParsedBibliographicMetadataField.DOI })
+    }
+
+    @Test
+    fun `extracts title authors and an explicitly prefixed DOI from a PLOS article`() {
+        val parsed = parserForLocalService().parse(realCitedPaperPdf("PMC12622815.1.pdf"))
+        val candidates = parsed.bibliographicMetadataCandidates
+        val title = candidates.filter { it.field == ParsedBibliographicMetadataField.TITLE }
+        val authors = candidates.filter { it.field == ParsedBibliographicMetadataField.AUTHORS }
+
+        assertEquals(1, title.size)
+        assertEquals(PLOS_ARTICLE_TITLE, title.single().value)
+        assertEquals(1, authors.size)
+        assertTrue(authors.single().value.contains("Xiqi"))
+        assertTrue(authors.single().value.contains("Jiantao"))
+        assertTrue(candidates.any {
+            it.field == ParsedBibliographicMetadataField.DOI && it.value == PLOS_ARTICLE_DOI && it.pageNumber == 1
+        })
+    }
+
+    private fun parserForLocalService(): DoclingCitedPaperPdfParser {
+        val baseUrl = System.getenv("DOCLING_TEST_BASE_URL")?.trim()?.takeIf(String::isNotEmpty)
+        assumeTrue(baseUrl != null, "Set DOCLING_TEST_BASE_URL to run the real Docling contract test.")
+        val configuredBaseUrl = requireNotNull(baseUrl)
+        val uri = URI(configuredBaseUrl)
+        assumeTrue(uri.host in LOCAL_DOCLING_HOSTS, "The Docling contract test only sends fixtures to localhost.")
+        return DoclingCitedPaperPdfParser(
+            client = DoclingCitedPaperParserConfiguration().doclingRestClient(configuredBaseUrl, 600_000L),
+            parserVersion = "1.30.0",
+            maximumResponseBytes = 64 * 1024 * 1024,
+            maximumCharacters = 5_000_000,
+        )
+    }
+
+    private fun realCitedPaperPdf(fileName: String): ByteArray =
+        requireNotNull(javaClass.getResourceAsStream("/cited-paper-fixtures/$fileName")) {
+            "The licensed real Cited Paper test fixture $fileName is missing."
+        }.use { it.readBytes() }
 
     private fun syntheticCitedPaperPdf(): ByteArray = PDDocument().use { document ->
         val titlePage = PDPage(PDRectangle.LETTER)
@@ -98,5 +141,8 @@ class DoclingCitedPaperPdfParserRealServiceTest {
         private const val TITLE = "Synthetic Cited Paper for Local Contract Testing"
         private const val AUTHORS = "Avery Example and Rowan Sample"
         private const val DOI = "10.5555/papertrail.synthetic.article.2025"
+        private const val REAL_PAPER_TITLE = "Journal Production Guidance for Software and Data Citations"
+        private const val PLOS_ARTICLE_TITLE = "Inferring pathway activity from single-cell and spatial transcriptomics data with PaaSc"
+        private const val PLOS_ARTICLE_DOI = "10.1371/journal.pcbi.1013666"
     }
 }

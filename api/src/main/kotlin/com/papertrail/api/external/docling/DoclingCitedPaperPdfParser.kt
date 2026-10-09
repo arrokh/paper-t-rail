@@ -9,6 +9,7 @@ import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
 import com.papertrail.api.evidence.parsing.CitedPaperPdfParser
 import com.papertrail.api.utils.JsonUtil
+import kotlin.math.abs
 import org.springframework.core.io.ByteArrayResource
 import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
@@ -86,10 +87,7 @@ class DoclingCitedPaperPdfParser(
             item.path("prov").any { provenance -> provenance.path("page_no").asInt(-1) == FIRST_PAGE }
         }
         val candidates = mutableListOf<ParsedBibliographicMetadataCandidate>()
-        val title = firstPageItems.firstOrNull { item ->
-            val text = item.path("text")
-            item.path("label").asText() in TITLE_LABELS && text.isTextual && text.asText().isNotBlank()
-        }
+        val title = findTitleCandidate(firstPageItems)
         if (title != null) {
             candidates += metadataCandidate(
                 field = ParsedBibliographicMetadataField.TITLE,
@@ -134,6 +132,56 @@ class DoclingCitedPaperPdfParser(
         }
         return candidates.distinct()
     }
+
+    private fun findTitleCandidate(firstPageItems: List<JsonNode>): JsonNode? {
+        firstPageItems.firstOrNull { item ->
+            item.path("label").asText() == "title" && hasNonBlankText(item)
+        }?.let { return it }
+
+        val sectionHeaders = firstPageItems.filter { item ->
+            item.path("label").asText() == "section_header" && hasNonBlankText(item)
+        }
+        findMostProminentSectionHeader(sectionHeaders)?.let { return it }
+
+        val firstBodyTextIndex = firstPageItems.indexOfFirst { item ->
+            item.path("label").asText() == "text" && hasNonBlankText(item)
+        }
+        if (firstBodyTextIndex < 0) return null
+
+        return firstPageItems.take(firstBodyTextIndex).lastOrNull { item ->
+            item.path("label").asText() == "section_header" && hasNonBlankText(item)
+        }
+    }
+
+    private fun findMostProminentSectionHeader(sectionHeaders: List<JsonNode>): JsonNode? {
+        if (sectionHeaders.isEmpty()) return null
+        val candidatesWithAreas = sectionHeaders.map { it to firstPageBoundingBoxArea(it) }
+        if (candidatesWithAreas.any { it.second == null }) return null
+
+        val largestArea = candidatesWithAreas.maxOf { requireNotNull(it.second) }
+        if (largestArea <= 0.0) return null
+        return candidatesWithAreas.singleOrNull { it.second == largestArea }?.first
+    }
+
+    private fun firstPageBoundingBoxArea(item: JsonNode): Double? {
+        val boundingBox = item.path("prov")
+            .firstOrNull { it.path("page_no").asInt(-1) == FIRST_PAGE }
+            ?.path("bbox")
+            ?: return null
+        if (boundingBox.isMissingNode || boundingBox.isNull) return null
+
+        val left = boundingBox.path("l")
+        val top = boundingBox.path("t")
+        val right = boundingBox.path("r")
+        val bottom = boundingBox.path("b")
+        if (listOf(left, top, right, bottom).any { !it.isNumber }) return null
+
+        return (abs(right.asDouble() - left.asDouble()) * abs(top.asDouble() - bottom.asDouble()))
+            .takeIf { it.isFinite() && it > 0.0 }
+    }
+
+    private fun hasNonBlankText(item: JsonNode): Boolean =
+        item.path("text").let { it.isTextual && it.asText().isNotBlank() }
 
     private fun metadataCandidate(
         field: ParsedBibliographicMetadataField,
@@ -233,13 +281,12 @@ class DoclingCitedPaperPdfParser(
         const val PARSER_ID = "docling"
         private const val SUCCESS_STATUS = "success"
         private const val FIRST_PAGE = 1
-        const val METADATA_EXTRACTION_POLICY_VERSION = "docling-first-page-metadata-candidates-v1"
+        const val METADATA_EXTRACTION_POLICY_VERSION = "docling-first-page-metadata-candidates-v2"
         val BIBLIOGRAPHIC_METADATA_EXTRACTION_OPTIONS = mapOf(
             "from_formats" to "pdf",
             "to_formats" to "md,json",
             "do_ocr" to "false",
         )
-        private val TITLE_LABELS = setOf("title", "section_header")
         private val DOI_PATTERN = Regex("(?:\\bdoi\\s*:\\s*|\\bhttps?://(?:dx\\.)?doi\\.org/)(10\\.[0-9]{4,9}/[^\\s<>\"{}|\\\\^`\\[\\]]+)", RegexOption.IGNORE_CASE)
         private val MARKDOWN_HEADING = Regex("^#{1,6}\\s+(.+?)\\s*#*\\s*$")
         private val MARKDOWN_LIST_LINE = Regex("^(?:[-*+]\\s+|\\d+[.)]\\s+).+")
