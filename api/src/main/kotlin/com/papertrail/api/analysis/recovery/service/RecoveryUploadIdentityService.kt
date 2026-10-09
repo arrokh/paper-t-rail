@@ -6,6 +6,7 @@ import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityOutcome
 import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibility
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadAssetSelection
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentityPolicy
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
 import com.papertrail.api.analysis.recovery.domain.RecoveryValidationStatus
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadIdentityDecisionRepository
@@ -108,9 +109,14 @@ class RecoveryUploadIdentityService(
 
     fun selection(batchId: UUID, uploadId: UUID) = decisionRepository.selection(batchId, uploadId)
 
-    private fun latestAttempt(batchId: UUID, uploadId: UUID): RecoveryUploadValidationAttempt =
-        validationRepository.latestAttempt(batchId, uploadId, Instant.now())
+    private fun latestAttempt(batchId: UUID, uploadId: UUID): RecoveryUploadValidationAttempt {
+        val attempt = validationRepository.latestAttempt(batchId, uploadId, Instant.now())
             ?: throw RecoveryStagingException("RECOVERY_VALIDATION_REQUIRED", 409, "Complete metadata validation before continuing.")
+        if (attempt.identityPolicyVersion != RecoveryUploadIdentityPolicy.VERSION) {
+            throw RecoveryStagingException("RECOVERY_IDENTITY_POLICY_STALE", 409, "Run validation again with the current identity policy before continuing.")
+        }
+        return attempt
+    }
 
     private fun validationContext(batchId: UUID, uploadId: UUID) =
         validationRepository.validationContext(batchId, uploadId, Instant.now())

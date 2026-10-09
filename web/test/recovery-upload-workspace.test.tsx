@@ -226,6 +226,7 @@ describe("Recovery Upload workspace", () => {
       parserId: "docling",
       parserVersion: "1.30.0",
       metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      identityPolicyVersion: "recovery-upload-identity-v2",
       parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
       languageDetectorId: "optimaize",
       languageDetectorVersion: "0.6",
@@ -316,6 +317,64 @@ describe("Recovery Upload workspace", () => {
     expect(requests.some(({ url }) => url.includes("/assess") || url.includes("/providers"))).toBe(false);
   });
 
+  it("blocks identity actions but offers revalidation when the API does not report the current policy", async () => {
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    const legacyValidation = {
+      id: "legacy-validation",
+      batchId: "batch-1",
+      uploadId: "upload-1",
+      analysisRunId: "run-1",
+      contentSha256: "b".repeat(64),
+      parserId: "docling",
+      parserVersion: "1.30.0",
+      metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
+      languageDetectorId: "optimaize",
+      languageDetectorVersion: "0.6",
+      minimumLanguageConfidence: 0.65,
+      validationStatus: "COMPLETED",
+      identityOutcome: "NEEDS_CONFIRMATION",
+      identityReasonCode: "DOI_DIFFERS_REQUIRES_CONFIRMATION",
+      humanConfirmation: null,
+      selection: {
+        id: "legacy-selection",
+        batchId: "batch-1",
+        analysisRunId: "run-1",
+        bibliographyEntryId: "entry-1",
+        uploadId: "upload-1",
+        validationAttemptId: "legacy-validation",
+        contentSha256: "b".repeat(64),
+        selectionMethod: "HUMAN_CONFIRMED",
+        selectedAt: "2026-10-09T00:02:00Z",
+      },
+      metadataCandidates: [],
+      languageEligibility: "ELIGIBLE",
+      detectedLanguage: "en",
+      languageConfidence: 0.99,
+      languageReasonCode: "ENGLISH_DETECTED",
+      failureCode: null,
+      createdAt: "2026-10-09T00:00:00Z",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([stagedUpload()])]);
+      if (url.endsWith("/uploads/upload-1/validation")) return Response.json(legacyValidation);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText(/Identity policy is not reported as current/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "I confirm this exact PDF version" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Select this exact version" })).toBeNull();
+    expect(screen.queryByText("Selected exact version")).toBeNull();
+    const revalidateButton = screen.getByRole("button", { name: "Revalidate with current identity policy" });
+    expect(revalidateButton.hasAttribute("disabled")).toBe(false);
+    expect(requests.some(({ options }) => options?.method === "POST")).toBe(false);
+  });
+
   it("blocks human confirmation and exact-version selection for a clear mismatch", async () => {
     const mismatch = {
       id: "validation-mismatch",
@@ -326,6 +385,7 @@ describe("Recovery Upload workspace", () => {
       parserId: "docling",
       parserVersion: "1.30.0",
       metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      identityPolicyVersion: "recovery-upload-identity-v2",
       parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
       languageDetectorId: "optimaize",
       languageDetectorVersion: "0.6",
@@ -359,6 +419,168 @@ describe("Recovery Upload workspace", () => {
     expect(screen.queryByRole("button", { name: "Select this exact version" })).toBeNull();
   });
 
+  it("selects a title-matching alternate DOI without asking for human confirmation", async () => {
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    const validation = {
+      id: "validation-alternate-doi",
+      batchId: "batch-1",
+      uploadId: "upload-1",
+      analysisRunId: "run-1",
+      contentSha256: "b".repeat(64),
+      parserId: "docling",
+      parserVersion: "1.30.0",
+      metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      identityPolicyVersion: "recovery-upload-identity-v2",
+      parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
+      languageDetectorId: "optimaize",
+      languageDetectorVersion: "0.6",
+      minimumLanguageConfidence: 0.65,
+      validationStatus: "COMPLETED",
+      identityOutcome: "VALIDATED",
+      identityReasonCode: "TITLE_MATCH_DIFFERENT_DOI",
+      humanConfirmation: null,
+      selection: null,
+      metadataCandidates: [{
+        field: "TITLE",
+        value: "A study of evidence",
+        pageNumber: 1,
+        sourceLabel: "section_header",
+        extractionMethod: "DOCLING_LABEL",
+        sourceElementId: "docling-title-1",
+        sourceCharSpanStart: 0,
+        sourceCharSpanEnd: 20,
+      }],
+      languageEligibility: "ELIGIBLE",
+      detectedLanguage: "en",
+      languageConfidence: 0.99,
+      languageReasonCode: "ENGLISH_DETECTED",
+      failureCode: null,
+      createdAt: "2026-10-09T00:00:00Z",
+    };
+    const selection = {
+      id: "selection-alternate-doi",
+      batchId: "batch-1",
+      analysisRunId: "run-1",
+      bibliographyEntryId: "entry-1",
+      uploadId: "upload-1",
+      validationAttemptId: validation.id,
+      contentSha256: validation.contentSha256,
+      selectionMethod: "MACHINE_VALIDATED",
+      selectedAt: "2026-10-09T00:02:00Z",
+    };
+    let latestValidation: object = validation;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([stagedUpload()])]);
+      if (url.endsWith("/uploads/upload-1/validation")) return Response.json(latestValidation);
+      if (url.endsWith("/uploads/upload-1/select") && options?.method === "POST") {
+        latestValidation = { ...validation, selection };
+        return Response.json(selection);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText("Validated (machine evidence)")).toBeTruthy();
+    expect(screen.getByText(/title candidate matches the resolved cited work despite a different DOI/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "I confirm this exact PDF version" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Select this exact version" }));
+    expect(await screen.findByText(/Selected exact version/)).toBeTruthy();
+    expect(requests.some(({ url, options }) => url.endsWith("/uploads/upload-1/select") && options?.method === "POST")).toBe(true);
+    expect(requests.some(({ url, options }) => url.includes("confirm-identity") && options?.method === "POST")).toBe(false);
+  });
+
+  it("blocks confirmation of a whole-book upload when chapter identity is unsupported", async () => {
+    const validation = {
+      id: "validation-chapter-unsupported",
+      batchId: "batch-1",
+      uploadId: "upload-1",
+      analysisRunId: "run-1",
+      contentSha256: "b".repeat(64),
+      parserId: "docling",
+      parserVersion: "1.30.0",
+      metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      identityPolicyVersion: "recovery-upload-identity-v2",
+      parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
+      languageDetectorId: "optimaize",
+      languageDetectorVersion: "0.6",
+      minimumLanguageConfidence: 0.65,
+      validationStatus: "COMPLETED",
+      identityOutcome: "MISMATCH",
+      identityReasonCode: "CHAPTER_IDENTITY_UNSUPPORTED",
+      humanConfirmation: null,
+      selection: null,
+      metadataCandidates: [],
+      languageEligibility: "ELIGIBLE",
+      detectedLanguage: "en",
+      languageConfidence: 0.99,
+      languageReasonCode: "ENGLISH_DETECTED",
+      failureCode: null,
+      createdAt: "2026-10-09T00:00:00Z",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([stagedUpload()])]);
+      if (url.endsWith("/uploads/upload-1/validation")) return Response.json(validation);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText("Mismatch")).toBeTruthy();
+    expect(screen.getByText(/Whole-book PDFs are blocked until chapter identity can be established/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "I confirm this exact PDF version" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Select this exact version" })).toBeNull();
+  });
+
+  it("blocks inconclusive book uploads from older bibliography policies", async () => {
+    const validation = {
+      id: "validation-legacy-book",
+      batchId: "batch-1",
+      uploadId: "upload-1",
+      analysisRunId: "run-1",
+      contentSha256: "b".repeat(64),
+      parserId: "docling",
+      parserVersion: "1.30.0",
+      metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      identityPolicyVersion: "recovery-upload-identity-v2",
+      parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
+      languageDetectorId: "optimaize",
+      languageDetectorVersion: "0.6",
+      minimumLanguageConfidence: 0.65,
+      validationStatus: "COMPLETED",
+      identityOutcome: "MISMATCH",
+      identityReasonCode: "BOOK_CHAPTER_IDENTITY_UNSUPPORTED",
+      humanConfirmation: null,
+      selection: null,
+      metadataCandidates: [],
+      languageEligibility: "ELIGIBLE",
+      detectedLanguage: "en",
+      languageConfidence: 0.99,
+      languageReasonCode: "ENGLISH_DETECTED",
+      failureCode: null,
+      createdAt: "2026-10-09T00:00:00Z",
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([makeBatch([stagedUpload()])]);
+      if (url.endsWith("/uploads/upload-1/validation")) return Response.json(validation);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText("Mismatch")).toBeTruthy();
+    expect(screen.getByText(/older book entry from a cited chapter/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "I confirm this exact PDF version" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Select this exact version" })).toBeNull();
+  });
+
   it("records identity confirmation separately when English eligibility blocks selection", async () => {
     const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
     const validation = {
@@ -370,6 +592,7 @@ describe("Recovery Upload workspace", () => {
       parserId: "docling",
       parserVersion: "1.30.0",
       metadataExtractionPolicyVersion: "docling-first-page-metadata-candidates-v1",
+      identityPolicyVersion: "recovery-upload-identity-v2",
       parserOptions: { from_formats: "pdf", to_formats: "md,json", do_ocr: "false" },
       languageDetectorId: "optimaize",
       languageDetectorVersion: "0.6",

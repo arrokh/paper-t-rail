@@ -16,6 +16,8 @@ data class RecoveryUploadValidationResponse(
     val parserId: String,
     val parserVersion: String,
     val metadataExtractionPolicyVersion: String,
+    @field:Schema(description = "Version of the identity decision policy applied to this persisted validation attempt.")
+    val identityPolicyVersion: String,
     @field:Schema(description = "Effective local Docling conversion options recorded for this attempt.")
     val parserOptions: Map<String, String>,
     val languageDetectorId: String,
@@ -54,6 +56,7 @@ data class RecoveryUploadValidationResponse(
             parserId = attempt.parserId,
             parserVersion = attempt.parserVersion,
             metadataExtractionPolicyVersion = attempt.metadataExtractionPolicyVersion,
+            identityPolicyVersion = attempt.identityPolicyVersion,
             parserOptions = attempt.parserOptions,
             languageDetectorId = attempt.languageDetectorId,
             languageDetectorVersion = attempt.languageDetectorVersion,

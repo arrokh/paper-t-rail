@@ -168,6 +168,40 @@ class GrobidTeiParserTest {
     }
 
     @Test
+    fun `classifies an analytic work within a monograph as a book chapter`() {
+        val tei = """
+            <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+              <text><body><div><p>Chapter citation.</p></div></body>
+                <back><listBibl>
+                  <biblStruct xml:id="chapter">
+                    <analytic><title level="a">A chapter title</title></analytic>
+                    <monogr>
+                      <title level="m">The containing proceedings</title>
+                      <meeting><title>Annual Research Meeting</title></meeting>
+                    </monogr>
+                  </biblStruct>
+                </listBibl></back>
+              </text>
+            </TEI>
+        """.trimIndent()
+
+        val entry = GrobidTeiParser("grobid", "0.9.1-crf").parse(tei).bibliographyEntries.single()
+
+        assertEquals("A chapter title", entry.title)
+        assertEquals("BOOK_CHAPTER", entry.referenceType)
+
+        val version2Entry = GrobidTeiParser("grobid", "0.9.1-crf")
+            .parse(tei, BibliographyNormalizationPolicySelection.VERSION_2)
+            .bibliographyEntries.single()
+        assertEquals("CONFERENCE_PAPER", version2Entry.referenceType)
+
+        val legacyEntry = GrobidTeiParser("grobid", "0.9.1-crf")
+            .parse(tei, BibliographyNormalizationPolicySelection.LEGACY)
+            .bibliographyEntries.single()
+        assertEquals("CONFERENCE_PAPER", legacyEntry.referenceType)
+    }
+
+    @Test
     fun `preserves empty extraction candidates and their Citation Target associations`() {
         val tei = """
             <TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xml="http://www.w3.org/XML/1998/namespace">

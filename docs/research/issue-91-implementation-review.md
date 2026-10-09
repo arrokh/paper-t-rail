@@ -1,7 +1,7 @@
 # Issue #91 implementation and verification record
 
 **Date:** 2026-10-09
-**Branch:** `feat/issue-91-recovery-validation`
+**Branch:** `feat/issue-91-identity-policy`
 **State at the original implementation handoff:** The worktree was uncommitted and no publication actions had been taken. A later explicit user request authorized review, commit, PR creation, merge, and issue updates.
 
 ## Final diff review
@@ -31,12 +31,33 @@ This establishes test-before-implementation order for those API and UI vertical 
 
 The chronology of the **initial** implementation was not uniform: `RecoveryUploadValidationService.kt` was first written at 02:29:32Z, while the broad persisted-validation integration test was added at 02:33:37Z. The follow-up is a test-first rework of its persisted-validation/idempotency seam; it does not rewrite that historical fact or claim every original implementation change followed TDD.
 
-A second API red-green slice addresses the wrong-work mismatch gate: a synthetic reference with both a differing DOI and a conflicting extracted title was added to the integration test first. The focused test failed when that case was classified as `NEEDS_CONFIRMATION`; identity evaluation now returns non-overridable `MISMATCH`, and the focused test passes while verifying that confirmation and selection are rejected. A differing DOI with a matching or absent title remains `NEEDS_CONFIRMATION`, preserving the conservative alternate-version path; a clear DOI/title conflict cannot be human-overridden.
+A second API red-green slice addresses the wrong-work mismatch gate: a synthetic reference with both a differing DOI and a conflicting extracted title was added to the integration test first. The focused test failed when that case was classified as `NEEDS_CONFIRMATION`; identity evaluation now returns non-overridable `MISMATCH`, and the focused test passes while verifying that confirmation and selection are rejected. At that earlier implementation point, a differing DOI with a matching or absent title remained `NEEDS_CONFIRMATION`; the later maintainer-approved Option A below changes only an exact title match to machine-validated. Missing/unclear matching title remains confirmable, and a clear DOI/title conflict cannot be human-overridden.
+
+## Maintainer-confirmed policy update (2026-10-09)
+
+After PR #111 merged, the maintainer confirmed these follow-up rules:
+
+- Docling title, positional author, and explicitly prefixed DOI values remain metadata candidates, not identity proof by themselves.
+- A differing DOI with a matching extracted title may be machine-validated. A differing DOI without a matching title remains confirmable; a conflicting title remains a non-overridable mismatch.
+- Bibliography normalization policy v3 classifies GROBID TEI with an analytic work inside a monograph as `BOOK_CHAPTER`; v1/v2 parsing behavior stays unchanged for queued and historical Analysis Runs. `BOOK_CHAPTER` is supported by the existing conservative resolver.
+- An inconclusive `BOOK_CHAPTER`, `INBOOK`, or `INCOLLECTION` identity is blocked and cannot be human-confirmed as a whole-book substitute. A chapter that is identified by the current metadata policy may proceed; current-policy `BOOK` references use normal identity checks. Older `BOOK` references are type-ambiguous because earlier policies did not preserve chapter boundaries, so inconclusive identities are blocked pending a new Analysis Run with chapter-aware parsing.
+- OCR remains disabled; scanned/image-only PDFs remain unsupported.
+- Evaluation evidence is expected, but does not block engineering work. No accuracy, held-out, representative-coverage, or calibrated-threshold claim is made; #86, #88, and #89 remain open.
+
+Identity decisions now carry a separate policy version. Legacy v1 attempts are not reused or returned as current; users must rerun validation under v2 before confirmation or selection. The web UI also withholds confirmation/selection when an API response does not report the current policy, protecting mixed-version rollout. Validation still does not start evidence assessment.
+
+A complete follow-up review found two additional API/parser policy-versioning gaps and fixed them:
+
+- Chapter classification was not tied to the run-pinned bibliography policy, and a TEI `meeting` element could take precedence over an analytic work in a monograph. Normalization v3 now classifies that explicit analytic/monograph structure as `BOOK_CHAPTER` before conference-meeting fallback, unless a journal title is present. GROBID parsing with v1/v2 remains unchanged for historical and queued Analysis Runs, and the v3 type is documented in Springdoc/OpenAPI.
+- A pre-v3 `BOOK` entry cannot show whether its cited work was a chapter. If identity is inconclusive, Recovery Upload now blocks confirmation/selection instead of treating it as an ordinary book. An exact DOI match or the approved exact-title alternate-DOI rule can still identify the work. Current v3 `BOOK` entries continue through normal identity checks. This behavior and the stale-validation error are covered by the API, web, and OpenAPI tests and recorded in ADR 0019.
+
+The final staged-diff review also found that the UI said to revalidate an attempt from an older or unreported identity policy, but disabled the validation button for every completed attempt. The UI now offers explicit revalidation for non-current policy responses while continuing to block confirmation and selection. The Recovery Upload workspace test covers this behavior.
 
 ## Verification
 
-- `mise exec -- make verify-db` — passed; Sqitch verified `recovery_pdf_validation`, `recovery_identity_selection`, `recovery_validation_safety`, and the existing migration plan.
-- `mise exec -- make validate` — passed after the final code/test changes: API Gradle suite (including OpenAPI and Recovery Upload integration tests), repository Python suites, web Node tests, 140 web Vitest tests, ESLint, TypeScript, and production build.
+- `mise exec -- make verify-db` — passed; Sqitch verified the full migration plan, including `recovery_identity_policy_version`.
+- `mise exec -- make validate` — passed before the final UI revalidation-control follow-up: API Gradle suite (including OpenAPI and Recovery Upload integration tests), repository Python suites, 37 web Node tests, 144 web Vitest tests, ESLint, TypeScript, and production build.
+- After the UI follow-up, `mise exec -- pnpm --dir web exec vitest run test/recovery-upload-workspace.test.tsx` passed (13 tests), and `mise exec -- pnpm --dir web exec tsc --noEmit` passed.
 - `cd api && mise exec -- ./gradlew test --rerun-tasks --tests 'com.papertrail.api.analysis.queue.AnalysisRunQueueIntegrationTest.Recovery Upload validation persists Docling provenance and separates identity, language, and assessment'` — passed after shortening the PostgreSQL trigger name; exercises fresh Sqitch deployment and expiry/activity/retention behavior.
 - `mise exec -- pnpm --dir web exec tsc --noEmit` — passed after restoring the generated `next-env.d.ts` change.
 - Browser check — isolated Chromium with synthetic API responses only. The Recovery Upload confirmation/selection flow rendered at desktop and 390px mobile widths. At mobile size, document width equaled viewport width. Axe reported zero violations; its one incomplete color-contrast check was manually measured at 13.42:1. No Analysis Run text or private data was used.

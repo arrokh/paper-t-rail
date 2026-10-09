@@ -113,6 +113,9 @@ class ConservativeReferenceResolver(
             "PREPRINT",
             "ACADEMIC_MANUSCRIPT",
             "BOOK",
+            "BOOK_CHAPTER",
+            "INBOOK",
+            "INCOLLECTION",
         )
     }
 }

@@ -24,3 +24,4 @@ recovery_identity_selection [recovery_pdf_validation] 2026-10-09T00:00:00Z Paper
 bibliography_entry_provenance [recovery_pdf_staging] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Preserve versioned bibliography identifiers and extraction provenance
 reference_resolution_candidate_evidence [bibliography_entry_provenance] 2026-10-08T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Preserve bounded reference-match candidate evidence and reasons
 recovery_validation_safety [recovery_identity_selection] 2026-10-09T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Guard active validation writes and enforce source-deletion safety
+recovery_identity_policy_version [recovery_validation_safety] 2026-10-09T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Version identity rules for persisted Recovery Upload validation attempts

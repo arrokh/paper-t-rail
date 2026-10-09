@@ -138,13 +138,13 @@ class RecoveryUploadValidationRepository(
             """
             INSERT INTO recovery_upload_validation_attempts (
                 id, batch_id, upload_id, analysis_run_id, content_sha256,
-                parser_id, parser_version, metadata_extraction_policy_version, parser_options,
+                parser_id, parser_version, metadata_extraction_policy_version, identity_policy_version, parser_options,
                 language_detector_id, language_detector_version, minimum_language_confidence,
                 validation_status, identity_outcome, identity_reason_code, metadata_candidates,
                 language_eligibility, detected_language, language_confidence, language_reason_code,
                 failure_code, created_at
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?
             )
             """.trimIndent(),
             attempt.id,
@@ -155,6 +155,7 @@ class RecoveryUploadValidationRepository(
             attempt.parserId,
             attempt.parserVersion,
             attempt.metadataExtractionPolicyVersion,
+            attempt.identityPolicyVersion,
             JsonUtil.toJson(attempt.parserOptions),
             attempt.languageDetectorId,
             attempt.languageDetectorVersion,
@@ -253,6 +254,7 @@ class RecoveryUploadValidationRepository(
         parserId = getString("parser_id"),
         parserVersion = getString("parser_version"),
         metadataExtractionPolicyVersion = getString("metadata_extraction_policy_version"),
+        identityPolicyVersion = getString("identity_policy_version"),
         parserOptions = JsonUtil.fromJson(getString("parser_options"), object : TypeReference<Map<String, String>>() {}),
         languageDetectorId = getString("language_detector_id"),
         languageDetectorVersion = getString("language_detector_version"),

@@ -13,6 +13,7 @@ data class RecoveryUploadValidationAttempt(
     val parserId: String,
     val parserVersion: String,
     val metadataExtractionPolicyVersion: String,
+    val identityPolicyVersion: String,
     val parserOptions: Map<String, String>,
     val languageDetectorId: String,
     val languageDetectorVersion: String,

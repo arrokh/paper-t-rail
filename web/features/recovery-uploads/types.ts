@@ -68,6 +68,7 @@ export type RecoveryUploadValidation = {
   parserId: string;
   parserVersion: string;
   metadataExtractionPolicyVersion: string;
+  identityPolicyVersion?: string;
   parserOptions: Record<string, string>;
   languageDetectorId: string;
   languageDetectorVersion: string;
