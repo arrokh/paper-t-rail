@@ -188,6 +188,60 @@ class DoclingCitedPaperPdfParserContractTest {
     }
 
     @Test
+    fun `prefers an explicit title label over a larger section header`() {
+        val builder = RestClient.builder().baseUrl("http://docling.test")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("http://docling.test/v1/convert/file"))
+            .andRespond(
+                withSuccess(
+                    """{"status":"success","document":{"md_content":"# The actual article title\n\nBody text.","json_content":{"texts":[{"self_ref":"#/texts/0","label":"section_header","text":"Journal","prov":[{"page_no":1,"bbox":{"l":0,"t":100,"r":100,"b":90}}]},{"self_ref":"#/texts/1","label":"title","text":"The actual article title","prov":[{"page_no":1,"bbox":{"l":0,"t":80,"r":50,"b":70}}]},{"self_ref":"#/texts/2","label":"text","text":"Avery Example and Rowan Sample","prov":[{"page_no":1,"bbox":{"l":0,"t":60,"r":80,"b":50}}]}]}}}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+        val parser = DoclingCitedPaperPdfParser(
+            client = builder.build(),
+            parserVersion = "1.30.0",
+            maximumResponseBytes = 64 * 1024,
+            maximumCharacters = 5_000,
+        )
+
+        val parsed = parser.parse("pdf-bytes".toByteArray())
+
+        val title = parsed.bibliographicMetadataCandidates.single { it.field == ParsedBibliographicMetadataField.TITLE }
+        assertEquals("The actual article title", title.value)
+        assertEquals("#/texts/1", title.sourceElementId)
+        assertEquals(ParsedBibliographicMetadataExtractionMethod.DOCLING_LABEL, title.extractionMethod)
+        server.verify()
+    }
+
+    @Test
+    fun `falls back to the last header before body text when section header geometry ties`() {
+        val builder = RestClient.builder().baseUrl("http://docling.test")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("http://docling.test/v1/convert/file"))
+            .andRespond(
+                withSuccess(
+                    """{"status":"success","document":{"md_content":"# The actual article title\n\nBody text.","json_content":{"texts":[{"self_ref":"#/texts/0","label":"section_header","text":"OPEN","prov":[{"page_no":1,"bbox":{"l":0,"t":100,"r":100,"b":90}}]},{"self_ref":"#/texts/1","label":"section_header","text":"The actual article title","prov":[{"page_no":1,"bbox":{"l":0,"t":100,"r":100,"b":90}}]},{"self_ref":"#/texts/2","label":"text","text":"Avery Example and Rowan Sample","prov":[{"page_no":1,"bbox":{"l":0,"t":80,"r":80,"b":70}}]},{"self_ref":"#/texts/3","label":"section_header","text":"Introduction","prov":[{"page_no":1,"bbox":{"l":0,"t":60,"r":100,"b":50}}]}]}}}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+        val parser = DoclingCitedPaperPdfParser(
+            client = builder.build(),
+            parserVersion = "1.30.0",
+            maximumResponseBytes = 64 * 1024,
+            maximumCharacters = 5_000,
+        )
+
+        val parsed = parser.parse("pdf-bytes".toByteArray())
+
+        val title = parsed.bibliographicMetadataCandidates.single { it.field == ParsedBibliographicMetadataField.TITLE }
+        assertEquals("The actual article title", title.value)
+        assertEquals("#/texts/1", title.sourceElementId)
+        assertEquals(ParsedBibliographicMetadataExtractionMethod.FIRST_PAGE_SECTION_HEADER, title.extractionMethod)
+        server.verify()
+    }
+
+    @Test
     fun `keeps candidate metadata empty when the Docling JSON export is unavailable`() {
         val builder = RestClient.builder().baseUrl("http://docling.test")
         val server = MockRestServiceServer.bindTo(builder).build()
