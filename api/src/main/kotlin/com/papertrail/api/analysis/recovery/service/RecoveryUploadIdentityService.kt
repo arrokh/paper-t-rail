@@ -8,7 +8,9 @@ import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadAssetSelection
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentityPolicy
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationContext
 import com.papertrail.api.analysis.recovery.domain.RecoveryValidationStatus
+import com.papertrail.api.analysis.recovery.domain.languageEligibilityPolicy
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadIdentityDecisionRepository
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadValidationRepository
 import org.springframework.stereotype.Service
@@ -30,7 +32,7 @@ class RecoveryUploadIdentityService(
             throw RecoveryStagingException("RECOVERY_IDENTITY_CONFIRMATION_REQUIRED", 400, "Explicitly confirm the exact PDF version before continuing.")
         }
         val context = validationContext(batchId, uploadId)
-        val attempt = latestAttempt(batchId, uploadId)
+        val attempt = latestAttempt(batchId, uploadId, context)
         if (attempt.id != validationAttemptId) {
             throw RecoveryStagingException("RECOVERY_VALIDATION_ATTEMPT_STALE", 409, "Run validation again before confirming this PDF version.")
         }
@@ -39,14 +41,18 @@ class RecoveryUploadIdentityService(
         ) {
             throw RecoveryStagingException("RECOVERY_IDENTITY_NOT_CONFIRMABLE", 409, "Only an inconclusive identity result can be confirmed by a person.")
         }
+        val actualSha = context.upload.actualSha256
+            ?: throw RecoveryStagingException("RECOVERY_UPLOAD_NOT_STAGED", 409, "The finalized PDF checksum is unavailable.")
+        if (attempt.contentSha256 != actualSha) {
+            throw RecoveryStagingException("RECOVERY_VALIDATION_STALE", 409, "The validated PDF bytes no longer match the staged snapshot.")
+        }
         return decisionRepository.recordConfirmation(
             RecoveryIdentityConfirmation(
                 id = UUID.randomUUID(),
                 batchId = batchId,
                 uploadId = uploadId,
                 validationAttemptId = attempt.id,
-                contentSha256 = context.upload.actualSha256
-                    ?: throw RecoveryStagingException("RECOVERY_UPLOAD_NOT_STAGED", 409, "The finalized PDF checksum is unavailable."),
+                contentSha256 = actualSha,
                 decision = CONFIRM_EXACT_VERSION,
                 confirmedAt = Instant.now(),
             ),
@@ -55,7 +61,7 @@ class RecoveryUploadIdentityService(
 
     fun selectExactVersion(batchId: UUID, uploadId: UUID): RecoveryUploadAssetSelection {
         val context = validationContext(batchId, uploadId)
-        val attempt = latestAttempt(batchId, uploadId)
+        val attempt = latestAttempt(batchId, uploadId, context)
         if (attempt.validationStatus != RecoveryValidationStatus.COMPLETED) {
             throw RecoveryStagingException("RECOVERY_VALIDATION_REQUIRED", 409, "Complete metadata validation before selecting this PDF version.")
         }
@@ -109,11 +115,29 @@ class RecoveryUploadIdentityService(
 
     fun selection(batchId: UUID, uploadId: UUID) = decisionRepository.selection(batchId, uploadId)
 
-    private fun latestAttempt(batchId: UUID, uploadId: UUID): RecoveryUploadValidationAttempt {
+    private fun latestAttempt(
+        batchId: UUID,
+        uploadId: UUID,
+        context: RecoveryUploadValidationContext,
+    ): RecoveryUploadValidationAttempt {
         val attempt = validationRepository.latestAttempt(batchId, uploadId, Instant.now())
             ?: throw RecoveryStagingException("RECOVERY_VALIDATION_REQUIRED", 409, "Complete metadata validation before continuing.")
         if (attempt.identityPolicyVersion != RecoveryUploadIdentityPolicy.VERSION) {
             throw RecoveryStagingException("RECOVERY_IDENTITY_POLICY_STALE", 409, "Run validation again with the current identity policy before continuing.")
+        }
+        if (!attempt.matchesLanguagePolicy(context.languageEligibilityPolicy())) {
+            throw RecoveryStagingException(
+                "RECOVERY_LANGUAGE_POLICY_STALE",
+                409,
+                "Run validation again with the current language-eligibility policy before continuing.",
+            )
+        }
+        if (!RecoveryUploadValidationCompatibility.matchesParserPolicy(attempt, context)) {
+            throw RecoveryStagingException(
+                "RECOVERY_VALIDATION_POLICY_STALE",
+                409,
+                "Run validation again with the current parser options and finalized PDF version before continuing.",
+            )
         }
         return attempt
     }

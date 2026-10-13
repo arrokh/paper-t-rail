@@ -549,6 +549,29 @@ class AnalysisRunQueueIntegrationTest {
             ),
         )
         assertEquals("false", validated.parserOptions["do_ocr"])
+        val configuredMinimumExtractedCharacters = jdbc.queryForObject(
+            "SELECT (configuration_snapshot #>> '{validationLimits,minimumExtractedCharacters}')::integer FROM analysis_runs WHERE id = ?",
+            Int::class.java,
+            run.analysisRunId,
+        )!!
+        assertEquals(configuredMinimumExtractedCharacters, validated.minimumExtractedCharacters)
+        assertTrue(validated.languagePolicyFingerprint?.matches(Regex("^[0-9a-f]{64}$")) == true)
+        assertEquals(
+            configuredMinimumExtractedCharacters,
+            jdbc.queryForObject(
+                "SELECT minimum_extracted_characters FROM recovery_upload_validation_attempts WHERE id = ?",
+                Int::class.java,
+                validated.id,
+            ),
+        )
+        assertEquals(
+            validated.languagePolicyFingerprint,
+            jdbc.queryForObject(
+                "SELECT language_policy_fingerprint FROM recovery_upload_validation_attempts WHERE id = ?",
+                String::class.java,
+                validated.id,
+            ),
+        )
         assertEquals("docling-title-0", validated.metadataCandidates.first().sourceElementId)
         assertEquals("DOCLING_PARSE_FAILED", failed.failureCode)
         assertNull(failed.identityOutcome)
@@ -628,6 +651,7 @@ class AnalysisRunQueueIntegrationTest {
         objectStore.put(stagedUploads[0].finalizedObjectKey, "%PDF-1.7".toByteArray(Charsets.US_ASCII), "application/pdf")
         val changedSnapshot = validationService.validate(batch.id, stagedUploads[0].id)
         assertEquals("UPLOAD_SNAPSHOT_MISMATCH", changedSnapshot.failureCode)
+        assertEquals(changedSnapshot.id, validationService.latest(batch.id, stagedUploads[0].id)?.id)
         assertNull(identityService.selection(batch.id, stagedUploads[0].id))
         val staleSelection = assertThrows(RecoveryStagingException::class.java) {
             identityService.selectExactVersion(batch.id, stagedUploads[0].id)
@@ -720,6 +744,204 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_validation_attempts WHERE batch_id = ?", Int::class.java, batch.id))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_identity_confirmations WHERE batch_id = ?", Int::class.java, batch.id))
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_asset_selections WHERE batch_id = ?", Int::class.java, batch.id))
+    }
+
+    @Test
+    fun `replacement and same-work selection keep per-entry assets and rights without assessment`() {
+        val run = createQueuedRun()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'Parsed source fixture')",
+            run.analysisRunId,
+            run.hash,
+        )
+        jdbc.update(
+            "UPDATE analysis_runs SET status = 'PROCESSING', progress = '{\"stage\":\"PROCESSING\"}'::jsonb WHERE id = ?",
+            run.analysisRunId,
+        )
+        jdbc.update(
+            "UPDATE analysis_runs SET status = 'PARSED', progress = '{\"stage\":\"PARSED\"}'::jsonb WHERE id = ?",
+            run.analysisRunId,
+        )
+
+        val canonicalPaperId = UUID.randomUUID()
+        val doi = "10.5555/papertrail.same-work"
+        val title = "A shared academic work"
+        jdbc.update(
+            "INSERT INTO canonical_papers (id, identity_key, doi, title, authors, publication_year, metadata_provider_id) VALUES (?, ?, ?, ?, '[]'::jsonb, 2025, 'recorded-fixtures')",
+            canonicalPaperId,
+            "same-work-${UUID.randomUUID()}",
+            doi,
+            title,
+        )
+        val entries = listOf("b0", "b1").associateWith { UUID.randomUUID() }
+        entries.entries.forEachIndexed { index, (localKey, entryId) ->
+            jdbc.update(
+                "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, parsed_title, parsed_doi, reference_type) VALUES (?, ?, ?, ?, ?, ?, ?, 'JOURNAL_ARTICLE')",
+                entryId,
+                run.analysisRunId,
+                index,
+                localKey,
+                "Citation to $title, DOI $doi",
+                title,
+                doi,
+            )
+            jdbc.update(
+                """INSERT INTO bibliography_entry_resolutions (
+                       analysis_run_id, bibliography_entry_id, status, reason_code, canonical_paper_id,
+                       matched_doi, matched_title, matched_authors, matched_year, confidence_score, match_method, provider_id
+                   ) VALUES (?, ?, 'RESOLVED', 'DOI_CONFIRMED', ?, ?, ?, '[]'::jsonb, 2025, 1.0, 'DOI', 'recorded-fixtures')""",
+                run.analysisRunId,
+                entryId,
+                canonicalPaperId,
+                doi,
+                title,
+            )
+        }
+
+        val settings = recoveryStagingSettings()
+        val stagingService = RecoveryStagingService(
+            repository = RecoveryBatchRepository(jdbc, settings),
+            objectStore = objectStore,
+            settings = settings,
+            corsPolicy = RecoveryUploadCorsPolicy(objectStore, settings),
+            pdfValidator = RecoveryPdfValidator(500),
+        )
+        val batch = stagingService.createBatch(run.analysisRunId, UUID.randomUUID(), "recovery-rights-v1", true)
+        val parserCalls = AtomicInteger()
+        val parser = object : CitedPaperPdfParser {
+            override val parserId = "docling"
+
+            override fun parse(pdf: ByteArray): ParsedScientificDocument {
+                parserCalls.incrementAndGet()
+                val candidates = listOf(
+                    ParsedBibliographicMetadataCandidate(
+                        field = ParsedBibliographicMetadataField.TITLE,
+                        value = title,
+                        pageNumber = 1,
+                        sourceLabel = "title",
+                        extractionMethod = ParsedBibliographicMetadataExtractionMethod.DOCLING_LABEL,
+                        sourceElementId = "shared-work-title",
+                        sourceCharSpanStart = 0,
+                        sourceCharSpanEnd = title.length,
+                    ),
+                    ParsedBibliographicMetadataCandidate(
+                        field = ParsedBibliographicMetadataField.DOI,
+                        value = doi,
+                        pageNumber = 1,
+                        sourceLabel = "doi",
+                        extractionMethod = ParsedBibliographicMetadataExtractionMethod.EXPLICIT_DOI_PREFIX,
+                        sourceElementId = "shared-work-doi",
+                        sourceCharSpanStart = 0,
+                        sourceCharSpanEnd = doi.length,
+                    ),
+                )
+                return ParsedScientificDocument(
+                    parserId = parserId,
+                    parserVersion = "1.30.0",
+                    normalizedSourceText = ENGLISH.repeat(10),
+                    sections = emptyList(),
+                    citationContexts = emptyList(),
+                    bibliographyEntries = emptyList(),
+                    bibliographicMetadataCandidates = candidates,
+                    bibliographicMetadataExtractionPolicyVersion = DoclingCitedPaperPdfParser.METADATA_EXTRACTION_POLICY_VERSION,
+                    bibliographicMetadataExtractionOptions = DoclingCitedPaperPdfParser.BIBLIOGRAPHIC_METADATA_EXTRACTION_OPTIONS,
+                )
+            }
+        }
+        val validationRepository = RecoveryUploadValidationRepository(jdbc, settings)
+        val validationService = RecoveryUploadValidationService(
+            repository = validationRepository,
+            objectStore = objectStore,
+            parser = parser,
+            languageDetector = object : DocumentLanguageDetector {
+                override fun detect(text: String) = LanguageDetection("en", 0.99)
+            },
+        )
+        val identityService = RecoveryUploadIdentityService(
+            validationRepository = validationRepository,
+            decisionRepository = RecoveryUploadIdentityDecisionRepository(jdbc, settings),
+        )
+
+        fun stageUpload(localKey: String, filename: String, pdf: ByteArray) =
+            stagingService.createUploadIntent(
+                batch.id,
+                localKey,
+                UUID.randomUUID(),
+                filename,
+                pdf.size.toLong(),
+                expectedSha256(pdf),
+            ).let { intent ->
+                objectStore.put(intent.upload.stagingObjectKey, pdf, "application/pdf")
+                stagingService.finalizeUpload(batch.id, intent.upload.id)
+            }
+
+        val firstVersion = englishPdf()
+        val firstUpload = stageUpload("b0", "first-version.pdf", firstVersion)
+        val firstAttempt = validationService.validate(batch.id, firstUpload.id)
+        val firstSelection = identityService.selectExactVersion(batch.id, firstUpload.id)
+        assertEquals(firstUpload.id, firstSelection.uploadId)
+        assertEquals(firstAttempt.id, firstSelection.validationAttemptId)
+
+        stagingService.removeUpload(batch.id, firstUpload.id)
+        assertNull(identityService.selection(batch.id, firstUpload.id))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_validation_attempts WHERE upload_id = ?", Int::class.java, firstUpload.id))
+
+        val replacementVersion = englishPdf((ENGLISH.repeat(49)) + "This replacement retains the same cited work.")
+        val replacementUpload = stageUpload("b0", "replacement-version.pdf", replacementVersion)
+        val replacementAttempt = validationService.validate(batch.id, replacementUpload.id)
+        val replacementSelection = identityService.selectExactVersion(batch.id, replacementUpload.id)
+
+        val reusedWorkUpload = stageUpload("b1", "same-work-first-version.pdf", firstVersion)
+        val reusedWorkAttempt = validationService.validate(batch.id, reusedWorkUpload.id)
+        val reusedWorkSelection = identityService.selectExactVersion(batch.id, reusedWorkUpload.id)
+
+        assertNotEquals(firstAttempt.contentSha256, replacementAttempt.contentSha256)
+        assertEquals(RecoveryIdentityOutcome.VALIDATED, replacementAttempt.identityOutcome)
+        assertEquals(RecoveryIdentityOutcome.VALIDATED, reusedWorkAttempt.identityOutcome)
+        assertNotEquals(replacementSelection.id, reusedWorkSelection.id)
+        assertEquals(entries.getValue("b0"), replacementSelection.bibliographyEntryId)
+        assertEquals(entries.getValue("b1"), reusedWorkSelection.bibliographyEntryId)
+        assertEquals(replacementUpload.id, replacementSelection.uploadId)
+        assertEquals(reusedWorkUpload.id, reusedWorkSelection.uploadId)
+        assertEquals(replacementAttempt.id, replacementSelection.validationAttemptId)
+        assertEquals(reusedWorkAttempt.id, reusedWorkSelection.validationAttemptId)
+        assertEquals(replacementAttempt.contentSha256, replacementSelection.contentSha256)
+        assertEquals(reusedWorkAttempt.contentSha256, reusedWorkSelection.contentSha256)
+        assertNotEquals(replacementSelection.contentSha256, reusedWorkSelection.contentSha256)
+        assertEquals(3, parserCalls.get())
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_asset_selections WHERE batch_id = ?", Int::class.java, batch.id))
+        assertEquals(
+            2,
+            jdbc.queryForObject(
+                """SELECT count(*) FROM recovery_upload_asset_selections selection
+                   JOIN bibliography_entry_resolutions resolution
+                     ON resolution.analysis_run_id = selection.analysis_run_id
+                    AND resolution.bibliography_entry_id = selection.bibliography_entry_id
+                   WHERE selection.batch_id = ? AND resolution.canonical_paper_id = ?""",
+                Int::class.java,
+                batch.id,
+                canonicalPaperId,
+            ),
+        )
+        assertEquals(
+            "recovery-rights-v1",
+            jdbc.queryForObject("SELECT rights_declaration_version FROM recovery_batches WHERE id = ?", String::class.java, batch.id),
+        )
+        val recordedRights = jdbc.queryForObject("SELECT rights_declaration_text FROM recovery_batches WHERE id = ?", String::class.java, batch.id)
+        assertEquals(RecoveryRightsDeclaration.CURRENT.text, recordedRights)
+        assertTrue(jdbc.queryForObject("SELECT rights_declared_at IS NOT NULL FROM recovery_batches WHERE id = ?", Boolean::class.java, batch.id)!!)
+        assertEquals("PARSED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, run.analysisRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cited_paper_parses WHERE analysis_run_id = ?", Int::class.java, run.analysisRunId))
+        assertEquals(
+            0,
+            jdbc.queryForObject(
+                "SELECT count(*) FROM outbox_events WHERE analysis_run_id = ? AND event_type IN (?, ?)",
+                Int::class.java,
+                run.analysisRunId,
+                CITED_PAPER_ACQUISITION_REQUESTED,
+                CITED_PAPER_INDEXING_REQUESTED,
+            ),
+        )
     }
 
     @Test
@@ -5457,8 +5679,7 @@ class AnalysisRunQueueIntegrationTest {
         return DocumentAnalysisRequestedHandler(processingService)
     }
 
-    private fun englishPdf(): ByteArray {
-        val text = ENGLISH.repeat(50)
+    private fun englishPdf(text: String = ENGLISH.repeat(50)): ByteArray {
         PDDocument().use { pdf ->
             val page = PDPage(PDRectangle.LETTER)
             pdf.addPage(page)
@@ -5682,6 +5903,14 @@ class AnalysisRunQueueIntegrationTest {
             val recoveryPdfValidationMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("recovery_pdf_validation.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryPdfValidationMigrationVerification)) }
+            }
+            val recoveryLanguagePolicyMigration = migrationDirectory.resolve("recovery_upload_language_policy.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryLanguagePolicyMigration)) }
+            }
+            val recoveryLanguagePolicyMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("recovery_upload_language_policy.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryLanguagePolicyMigrationVerification)) }
             }
             val recoveryIdentitySelectionMigration = migrationDirectory.resolve("recovery_identity_selection.sql")
             dataSource.connection.use { connection ->

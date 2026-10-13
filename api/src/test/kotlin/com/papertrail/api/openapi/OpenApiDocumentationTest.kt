@@ -428,22 +428,22 @@ class OpenApiDocumentationTest {
         assertTrue(validateUpload.path("description").asText().contains("start evidence assessment"))
         val validationSchemaName = validateUpload.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val validationProperties = document.path("components").path("schemas").path(validationSchemaName).path("properties")
-        listOf("parserVersion", "metadataExtractionPolicyVersion", "identityPolicyVersion", "parserOptions", "metadataCandidates", "identityOutcome", "humanConfirmation", "selection", "languageEligibility", "failureCode").forEach { assertTrue(validationProperties.has(it)) }
+        listOf("parserVersion", "metadataExtractionPolicyVersion", "identityPolicyVersion", "parserOptions", "metadataCandidates", "identityOutcome", "humanConfirmation", "selection", "languageEligibility", "minimumExtractedCharacters", "languagePolicyFingerprint", "failureCode").forEach { assertTrue(validationProperties.has(it)) }
         val confirmIdentity = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validation/{attemptId}/confirm-identity").path("post")
         assertTrue(confirmIdentity.path("responses").has("200"))
         assertTrue(confirmIdentity.path("responses").has("400"))
         assertTrue(confirmIdentity.path("responses").has("409"))
-        assertTrue(confirmIdentity.path("description").asText().contains("mismatches, unsupported chapter identities, and inconclusive legacy book/chapter identities cannot be overridden"))
-        assertTrue(confirmIdentity.path("responses").path("409").path("description").asText().contains("old identity policy"))
+        assertTrue(confirmIdentity.path("description").asText().contains("mismatches, unsupported chapter identities, inconclusive legacy book/chapter identities, and stale policy attempts cannot be overridden"))
+        assertTrue(confirmIdentity.path("responses").path("409").path("description").asText().contains("old parser, identity, or language policy"))
         val selectVersion = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/select").path("post")
         assertTrue(selectVersion.path("responses").has("200"))
         assertTrue(selectVersion.path("responses").has("409"))
         assertTrue(selectVersion.path("description").asText().contains("one exact asset version"))
-        assertTrue(selectVersion.path("responses").path("409").path("description").asText().contains("identity policy is outdated"))
+        assertTrue(selectVersion.path("responses").path("409").path("description").asText().contains("parser, identity, or language policy is outdated"))
         val latestValidation = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validation").path("get")
         assertTrue(latestValidation.path("responses").has("200"))
         assertTrue(latestValidation.path("responses").has("204"))
-        assertTrue(latestValidation.path("responses").path("204").path("description").asText().contains("current identity policy"))
+        assertTrue(latestValidation.path("responses").path("204").path("description").asText().contains("current parser, identity, and language-eligibility policies"))
         val removeUpload = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}").path("delete")
         assertTrue(removeUpload.path("responses").has("200"))
         assertTrue(removeUpload.path("responses").has("404"))
@@ -1270,6 +1270,8 @@ class OpenApiDocumentationTest {
             languageDetectorId = "optimaize",
             languageDetectorVersion = "0.6",
             minimumLanguageConfidence = 0.65,
+            minimumExtractedCharacters = 120,
+            languagePolicyFingerprint = "b".repeat(64),
             validationStatus = RecoveryValidationStatus.COMPLETED,
             identityOutcome = RecoveryIdentityOutcome.NEEDS_CONFIRMATION,
             identityReasonCode = "DOI_DIFFERS_REQUIRES_CONFIRMATION",
@@ -1302,6 +1304,8 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.identityReasonCode").value("DOI_DIFFERS_REQUIRES_CONFIRMATION"))
             .andExpect(jsonPath("$.identityPolicyVersion").value("recovery-upload-identity-v2"))
             .andExpect(jsonPath("$.languageEligibility").value("ELIGIBLE"))
+            .andExpect(jsonPath("$.minimumExtractedCharacters").value(120))
+            .andExpect(jsonPath("$.languagePolicyFingerprint").value("b".repeat(64)))
             .andExpect(jsonPath("$.validationStatus").value("COMPLETED"))
             .andExpect(jsonPath("$.parserOptions.do_ocr").value("false"))
             .andExpect(jsonPath("$.metadataCandidates[0].sourceElementId").value("docling-1"))

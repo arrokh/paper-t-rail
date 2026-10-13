@@ -1,12 +1,14 @@
 package com.papertrail.api.analysis.recovery.service
 
 import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibility
+import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibilityPolicy
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentityPolicy
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationContext
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationResult
 import com.papertrail.api.analysis.recovery.domain.RecoveryValidationStatus
+import com.papertrail.api.analysis.recovery.domain.languageEligibilityPolicy
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadValidationRepository
 import com.papertrail.api.document.validation.DocumentLanguageDetector
 import com.papertrail.api.document.validation.OptimaizeDocumentLanguageDetector
@@ -30,7 +32,7 @@ class RecoveryUploadValidationService(
         val context = validationContext(batchId, uploadId)
         val configuration = context.configuration
         val parserSelection = configuration.citedPaperParserSelection()
-        val languageSelection = configuration.languageDetector
+        val languagePolicy = context.languageEligibilityPolicy()
         val parserOptions = DoclingCitedPaperPdfParser.BIBLIOGRAPHIC_METADATA_EXTRACTION_OPTIONS
         val bytes = try {
             objectStore.get(context.upload.finalizedObjectKey)
@@ -56,18 +58,7 @@ class RecoveryUploadValidationService(
             )
         }
         val reusableAttempt = repository.latestAttempt(batchId, uploadId, Instant.now())
-            ?.takeIf { attempt ->
-                attempt.canBeReusedFor(
-                    contentSha256 = contentSha256,
-                    parserId = parserSelection.provider,
-                    parserVersion = parserSelection.version,
-                    identityPolicyVersion = RecoveryUploadIdentityPolicy.VERSION,
-                    parserOptions = parserOptions,
-                    languageDetectorId = languageSelection.provider,
-                    languageDetectorVersion = languageSelection.version,
-                    minimumLanguageConfidence = configuration.validationLimits.minimumLanguageConfidence,
-                )
-            }
+            ?.takeIf { attempt -> RecoveryUploadValidationCompatibility.canReuse(attempt, context, contentSha256) }
         if (reusableAttempt != null) return reusableAttempt
         if (parserSelection.provider != parser.parserId) {
             return saveAttempt(
@@ -113,13 +104,7 @@ class RecoveryUploadValidationService(
             )
         }
 
-        val language = evaluateLanguage(
-            parsed.normalizedSourceText,
-            languageSelection.provider,
-            languageSelection.version,
-            configuration.validationLimits.minimumExtractedCharacters,
-            configuration.validationLimits.minimumLanguageConfidence,
-        )
+        val language = evaluateLanguage(parsed.normalizedSourceText, languagePolicy)
         val identity = RecoveryUploadIdentityPolicy.evaluate(
             referenceType = context.referenceType,
             bibliographyPolicy = context.configuration.bibliographyNormalizationPolicy,
@@ -147,48 +132,25 @@ class RecoveryUploadValidationService(
 
     fun latest(batchId: UUID, uploadId: UUID): RecoveryUploadValidationAttempt? {
         val now = Instant.now()
-        validationContext(batchId, uploadId, now)
+        val context = validationContext(batchId, uploadId, now)
         return repository.latestAttempt(batchId, uploadId, now)
-            ?.takeIf { it.identityPolicyVersion == RecoveryUploadIdentityPolicy.VERSION }
+            ?.takeIf { RecoveryUploadValidationCompatibility.matchesCurrentPolicy(it, context) }
     }
 
     private fun validationContext(batchId: UUID, uploadId: UUID, now: Instant = Instant.now()): RecoveryUploadValidationContext =
         repository.validationContext(batchId, uploadId, now)
             ?: throw RecoveryStagingException("RECOVERY_UPLOAD_NOT_VALIDATABLE", 404, "A finalized Recovery Upload was not found.")
 
-    private fun RecoveryUploadValidationAttempt.canBeReusedFor(
-        contentSha256: String,
-        parserId: String,
-        parserVersion: String,
-        identityPolicyVersion: String,
-        parserOptions: Map<String, String>,
-        languageDetectorId: String,
-        languageDetectorVersion: String,
-        minimumLanguageConfidence: Double,
-    ): Boolean = validationStatus == RecoveryValidationStatus.COMPLETED &&
-        this.contentSha256 == contentSha256 &&
-        this.parserId == parserId &&
-        this.parserVersion == parserVersion &&
-        this.identityPolicyVersion == identityPolicyVersion &&
-        metadataExtractionPolicyVersion == DoclingCitedPaperPdfParser.METADATA_EXTRACTION_POLICY_VERSION &&
-        this.parserOptions == parserOptions &&
-        this.languageDetectorId == languageDetectorId &&
-        this.languageDetectorVersion == languageDetectorVersion &&
-        this.minimumLanguageConfidence == minimumLanguageConfidence
-
     private fun evaluateLanguage(
         text: String,
-        detectorId: String,
-        detectorVersion: String,
-        minimumExtractedCharacters: Int,
-        minimumConfidence: Double,
+        policy: RecoveryLanguageEligibilityPolicy,
     ): LanguageResult {
-        if (detectorId != OptimaizeDocumentLanguageDetector.DETECTOR_ID ||
-            detectorVersion != OptimaizeDocumentLanguageDetector.DETECTOR_VERSION
+        if (policy.detectorId != OptimaizeDocumentLanguageDetector.DETECTOR_ID ||
+            policy.detectorVersion != OptimaizeDocumentLanguageDetector.DETECTOR_VERSION
         ) {
             return LanguageResult(RecoveryLanguageEligibility.INDETERMINATE, null, null, "PINNED_LANGUAGE_DETECTOR_UNAVAILABLE")
         }
-        if (text.length < minimumExtractedCharacters) {
+        if (text.length < policy.minimumExtractedCharacters) {
             return LanguageResult(RecoveryLanguageEligibility.INDETERMINATE, null, null, "INSUFFICIENT_EXTRACTED_TEXT")
         }
         val detection = try {
@@ -196,7 +158,7 @@ class RecoveryUploadValidationService(
         } catch (_: Exception) {
             return LanguageResult(RecoveryLanguageEligibility.INDETERMINATE, null, null, "LANGUAGE_DETECTION_FAILED")
         }
-        if (detection.language == null || detection.confidence < minimumConfidence) {
+        if (detection.language == null || detection.confidence < policy.minimumConfidence) {
             return LanguageResult(
                 RecoveryLanguageEligibility.INDETERMINATE,
                 detection.language,
@@ -219,6 +181,7 @@ class RecoveryUploadValidationService(
         parserOptions: Map<String, String>,
         result: RecoveryUploadValidationResult,
     ): RecoveryUploadValidationAttempt {
+        val languagePolicy = context.languageEligibilityPolicy()
         val attempt = RecoveryUploadValidationAttempt(
             id = UUID.randomUUID(),
             batchId = context.upload.batchId,
@@ -230,9 +193,11 @@ class RecoveryUploadValidationService(
             metadataExtractionPolicyVersion = DoclingCitedPaperPdfParser.METADATA_EXTRACTION_POLICY_VERSION,
             identityPolicyVersion = RecoveryUploadIdentityPolicy.VERSION,
             parserOptions = parserOptions,
-            languageDetectorId = context.configuration.languageDetector.provider,
-            languageDetectorVersion = context.configuration.languageDetector.version,
-            minimumLanguageConfidence = context.configuration.validationLimits.minimumLanguageConfidence,
+            languageDetectorId = languagePolicy.detectorId,
+            languageDetectorVersion = languagePolicy.detectorVersion,
+            minimumLanguageConfidence = languagePolicy.minimumConfidence,
+            minimumExtractedCharacters = languagePolicy.minimumExtractedCharacters,
+            languagePolicyFingerprint = languagePolicy.fingerprint,
             validationStatus = result.validationStatus,
             identityOutcome = result.identityOutcome,
             identityReasonCode = result.identityReasonCode,
