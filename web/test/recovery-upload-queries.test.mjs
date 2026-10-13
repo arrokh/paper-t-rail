@@ -158,6 +158,8 @@ test("recovery PDF mutation signs, directly uploads, and finalizes without retai
   assert.equal(storageRequest.options.method, "PUT");
   assert.equal(storageRequest.options.mode, "cors");
   assert.equal(storageRequest.options.credentials, "omit");
+  assert.equal(storageRequest.options.referrerPolicy, "no-referrer");
+  assert.equal(storageRequest.options.cache, "no-store");
   assert.deepEqual(storageRequest.options.headers, {
     "Content-Type": "application/pdf",
     "x-amz-checksum-sha256": "checksum-base64",
