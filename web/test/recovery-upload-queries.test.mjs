@@ -3,9 +3,15 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { QueryClient } from "@tanstack/react-query";
 import {
+  acceptRecoveryRightsMutationOptions,
   createRecoveryBatchMutationOptions,
   confirmRecoveryIdentityMutationOptions,
+  previewRecoverySuccessorMutationOptions,
   recoveryBatchQueryKey,
+  recoveryHistoryQueryOptions,
+  removeRecoveryIdentifierAssistanceMutationOptions,
+  stageRecoveryIdentifierAssistanceMutationOptions,
+  submitRecoverySuccessorMutationOptions,
   recoveryBatchQueryOptions,
   recoveryRightsDeclarationQueryOptions,
   uploadRecoveryPdfMutationOptions,
@@ -102,6 +108,102 @@ test("recovery batch creation records the exact displayed declaration version an
     rightsDeclarationVersion: "recovery-rights-v1",
     rightsDeclarationAccepted: true,
   });
+});
+
+test("identifier-only batch creation sends no PDF-rights declaration", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options = {}) => {
+    request = { url, options };
+    return jsonResponse({ id: "batch-1", analysisRunId: "run-1" });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; client.clear(); });
+
+  const mutation = client.getMutationCache().build(client, createRecoveryBatchMutationOptions(client));
+  await mutation.execute({ analysisRunId: "run-1", idempotencyKey: "batch-key-1" });
+
+  assert.equal(request.url, "/api/v1/analysis-runs/run-1/recovery-batches");
+  assert.deepEqual(JSON.parse(request.options.body), { idempotencyKey: "batch-key-1" });
+});
+
+test("PDF-rights acceptance and DOI assistance use explicit same-origin mutation contracts", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    return options.method === "DELETE" ? new Response(null, { status: 204 }) : jsonResponse({ accepted: true });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; client.clear(); });
+
+  const accept = client.getMutationCache().build(client, acceptRecoveryRightsMutationOptions(client));
+  await accept.execute({ analysisRunId: "run-1", batchId: "batch-1", rightsDeclarationVersion: "recovery-rights-v2" });
+  const stage = client.getMutationCache().build(client, stageRecoveryIdentifierAssistanceMutationOptions(client));
+  await stage.execute({ analysisRunId: "run-1", batchId: "batch-1", localReferenceKey: "b0", identifierValue: " 10.1234/asserted " });
+  const remove = client.getMutationCache().build(client, removeRecoveryIdentifierAssistanceMutationOptions(client));
+  await remove.execute({ analysisRunId: "run-1", batchId: "batch-1", localReferenceKey: "b0" });
+
+  assert.equal(requests[0].url, "/api/v1/recovery-batches/batch-1/rights-declaration");
+  assert.equal(requests[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(requests[0].options.body), { rightsDeclarationVersion: "recovery-rights-v2", accepted: true });
+  assert.equal(requests[1].url, "/api/v1/recovery-batches/batch-1/entries/b0/identifier-assistance");
+  assert.equal(requests[1].options.method, "PUT");
+  assert.deepEqual(JSON.parse(requests[1].options.body), {
+    identifierType: "DOI",
+    identifierValue: "10.1234/asserted",
+    confirmsBibliographyIdentity: true,
+  });
+  assert.equal(requests[2].url, requests[1].url);
+  assert.equal(requests[2].options.method, "DELETE");
+});
+
+test("predecessor recovery history queries keyset pages without logging event values", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    return jsonResponse({ analysisRunId: "run-1", events: [], nextCursor: "older-page-cursor" });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; });
+
+  const options = recoveryHistoryQueryOptions("run-1");
+  await options.queryFn({ pageParam: null, signal: new AbortController().signal });
+  await options.queryFn({ pageParam: "older-page-cursor", signal: new AbortController().signal });
+
+  assert.equal(requests[0].url, "/api/v1/analysis-runs/run-1/recovery-history?limit=50");
+  assert.equal(requests[1].url, "/api/v1/analysis-runs/run-1/recovery-history?limit=50&cursor=older-page-cursor");
+  assert.ok(requests.every(({ options: requestOptions }) => requestOptions.cache === "no-store"));
+});
+
+test("successor preview and one idempotent submission send the explicitly approved configuration", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url, options });
+    return jsonResponse({ eligible: true, successorAnalysisRunId: "successor-1" });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; client.clear(); });
+  const configuration = {
+    captureExecution: false,
+    claimExtractorProvider: "local-claims",
+    embeddingProvider: "local-embedding",
+    systemOneProvider: "local-review",
+    scholarlyMetadataProvider: "crossref",
+    openAccessProvider: "unpaywall",
+    externalProviderConsents: [{ providerId: "crossref", dataCategories: ["bibliography"], retentionDisclosureFingerprint: "a".repeat(64) }],
+  };
+  const preview = client.getMutationCache().build(client, previewRecoverySuccessorMutationOptions());
+  await preview.execute({ analysisRunId: "run-1", batchId: "batch-1", expectedRevision: 12, configuration });
+  const submit = client.getMutationCache().build(client, submitRecoverySuccessorMutationOptions(client));
+  await submit.execute({ analysisRunId: "run-1", batchId: "batch-1", expectedRevision: 12, configuration, idempotencyKey: "e25a0c19-f13b-4d81-9d55-9755b770ca6e" });
+
+  assert.equal(requests[0].url, "/api/v1/recovery-batches/batch-1/successor/preview");
+  assert.equal(requests[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(requests[0].options.body), { expectedRevision: 12, configuration });
+  assert.equal(requests[1].url, "/api/v1/recovery-batches/batch-1/successor");
+  assert.deepEqual(JSON.parse(requests[1].options.body), { idempotencyKey: "e25a0c19-f13b-4d81-9d55-9755b770ca6e", expectedRevision: 12, configuration });
 });
 
 test("identity confirmation submits the selected DOI candidate fingerprint with the exact PDF version decision", async (context) => {

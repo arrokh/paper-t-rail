@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DELETE, GET, PATCH, POST } from "../app/api/v1/[...path]/route.ts";
+import { DELETE, GET, PATCH, POST, PUT } from "../app/api/v1/[...path]/route.ts";
 
 test("DELETE is proxied only for a Source Document UUID, not other API operations", async (context) => {
   const originalFetch = globalThis.fetch;
@@ -34,6 +34,37 @@ test("DELETE is proxied only for a Source Document UUID, not other API operation
   assert.equal(response.status, 204);
   assert.equal(upstreamRequest.options.method, "DELETE");
   assert.equal(new URL(upstreamRequest.url).pathname, `/api/v1/documents/${documentId}`);
+});
+
+test("DOI identity assistance PUT and DELETE are proxied only for safe batch entry paths", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const upstreamRequests = [];
+  globalThis.fetch = async (url, options) => {
+    upstreamRequests.push({ url, options });
+    return new Response(options.method === "DELETE" ? null : "{}", { status: options.method === "DELETE" ? 204 : 200 });
+  };
+  context.after(() => { globalThis.fetch = originalFetch; });
+
+  const batchId = "e25a0c19-f13b-4d81-9d55-9755b770ca6e";
+  const validPath = ["recovery-batches", batchId, "entries", "b0", "identifier-assistance"];
+  const invalidPath = ["recovery-batches", batchId, "entries", "b0/other", "identifier-assistance"];
+  const request = (method, path) => ({
+    method,
+    headers: new Headers({ "content-type": "application/json" }),
+    nextUrl: new URL(`http://localhost/api/v1/${path.join("/")}`),
+    arrayBuffer: async () => new TextEncoder().encode("{}").buffer,
+  });
+
+  const invalidDelete = await DELETE(request("DELETE", invalidPath), { params: Promise.resolve({ path: invalidPath }) });
+  assert.equal(invalidDelete.status, 404);
+  assert.equal(upstreamRequests.length, 0);
+
+  const putResponse = await PUT(request("PUT", validPath), { params: Promise.resolve({ path: validPath }) });
+  const deleteResponse = await DELETE(request("DELETE", validPath), { params: Promise.resolve({ path: validPath }) });
+  assert.equal(putResponse.status, 200);
+  assert.equal(deleteResponse.status, 204);
+  assert.deepEqual(upstreamRequests.map(({ options }) => options.method), ["PUT", "DELETE"]);
+  assert.equal(new URL(upstreamRequests[0].url).pathname, `/api/v1/${validPath.join("/")}`);
 });
 
 test("recovery upload DELETE is proxied only for a batch-scoped UUID path", async (context) => {

@@ -7,23 +7,28 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
-import type { ParsedDocument } from "@/features/analysis-runs/types";
+import { LocalDateTime } from "@/components/local-date-time";
+import type { AnalysisRun, ParsedDocument } from "@/features/analysis-runs/types";
 import {
+  useAcceptRecoveryRights,
   useCreateRecoveryBatch,
   useFinalizeRecoveryUpload,
   useRecoveryBatch,
   useRecoveryRightsDeclaration,
+  useRemoveRecoveryIdentifierAssistance,
   useRemoveRecoveryUpload,
+  useStageRecoveryIdentifierAssistance,
   useUploadRecoveryPdf,
   useRecoveryUploadValidation,
   useValidateRecoveryUpload,
   useConfirmRecoveryIdentity,
   useSelectRecoveryUpload,
 } from "@/features/recovery-uploads/queries/recovery-upload-queries";
-import type { RecoveryUpload, RecoveryUploadStatus, RecoveryUploadValidation } from "@/features/recovery-uploads/types";
-import { LocalDateTime } from "@/components/local-date-time";
+import type { RecoveryIdentifierAssistance, RecoveryUpload, RecoveryUploadStatus, RecoveryUploadValidation } from "@/features/recovery-uploads/types";
+import { RecoverySuccessorWorkflow } from "@/features/recovery-uploads/components/recovery-successor-workflow";
 import { cn } from "@/lib/utils";
 
 type BibliographyEntry = ParsedDocument["bibliographyEntries"][number];
@@ -32,6 +37,8 @@ const CURRENT_IDENTITY_POLICY_VERSION = "recovery-upload-identity-v2";
 
 type RecoveryUploadWorkspaceProps = {
   analysisRunId: string;
+  predecessorConfiguration: AnalysisRun["configuration"];
+  predecessorRunStatus: AnalysisRun["status"];
   entries: BibliographyEntry[] | null;
   entriesLoading: boolean;
   entriesError: string | null;
@@ -104,6 +111,8 @@ function rejectionMessage(code: string | null): string {
 
 export function RecoveryUploadWorkspace({
   analysisRunId,
+  predecessorConfiguration,
+  predecessorRunStatus,
   entries,
   entriesLoading,
   entriesError,
@@ -112,33 +121,25 @@ export function RecoveryUploadWorkspace({
   const rightsQuery = useRecoveryRightsDeclaration();
   const batchQuery = useRecoveryBatch(analysisRunId, enabled);
   const createBatch = useCreateRecoveryBatch();
+  const acceptRights = useAcceptRecoveryRights();
   const uploadPdf = useUploadRecoveryPdf();
   const finalizeUpload = useFinalizeRecoveryUpload();
   const removeUpload = useRemoveRecoveryUpload();
   const validateUpload = useValidateRecoveryUpload();
   const confirmIdentity = useConfirmRecoveryIdentity();
   const selectVersion = useSelectRecoveryUpload();
-  const [rightsAccepted, setRightsAccepted] = useState(false);
+  const stageIdentifier = useStageRecoveryIdentifierAssistance();
+  const removeIdentifier = useRemoveRecoveryIdentifierAssistance();
+  const [rightsAcceptedVersion, setRightsAcceptedVersion] = useState<string | null>(null);
   const batch = batchQuery.data ?? null;
   const rights = rightsQuery.data;
-  const isBusy = createBatch.isPending || uploadPdf.isPending || finalizeUpload.isPending || removeUpload.isPending || validateUpload.isPending || confirmIdentity.isPending || selectVersion.isPending;
-  const activeError = [createBatch.error, uploadPdf.error, finalizeUpload.error, removeUpload.error, validateUpload.error, confirmIdentity.error, selectVersion.error]
+  const isBusy = createBatch.isPending || acceptRights.isPending || uploadPdf.isPending || finalizeUpload.isPending || removeUpload.isPending || validateUpload.isPending || confirmIdentity.isPending || selectVersion.isPending || stageIdentifier.isPending || removeIdentifier.isPending;
+  const activeError = [createBatch.error, acceptRights.error, uploadPdf.error, finalizeUpload.error, removeUpload.error, validateUpload.error, confirmIdentity.error, selectVersion.error, stageIdentifier.error, removeIdentifier.error]
     .find((error): error is Error => error instanceof Error);
-  const uploadedByReferenceKey = new Map(batch?.uploads.map((upload) => [upload.localReferenceKey, upload] as const) ?? []);
 
-  function createBatchForRun() {
-    if (!rights || !rightsAccepted) return;
-    createBatch.reset();
-    createBatch.mutate({
-      analysisRunId,
-      idempotencyKey: globalThis.crypto.randomUUID(),
-      rightsDeclarationVersion: rights.version,
-      rightsDeclarationAccepted: true,
-    });
-  }
 
   function startUpload(localReferenceKey: string, file: File, idempotencyKey: string) {
-    if (!batch) return;
+    if (!batch || !rights || !batch.rightsDeclaredAt || batch.rightsDeclarationVersion !== rights.version || batch.status !== "OPEN") return;
     uploadPdf.reset();
     uploadPdf.mutate({ analysisRunId, batchId: batch.id, localReferenceKey, file, idempotencyKey });
   }
@@ -178,9 +179,9 @@ export function RecoveryUploadWorkspace({
     <section id="recovery-staging" className="space-y-5" aria-labelledby="recovery-staging-heading">
       <header className="space-y-2">
         <p className="font-mono text-xs tracking-[0.13em] text-muted-foreground uppercase">Local recovery workflow</p>
-        <h2 id="recovery-staging-heading" className="m-0 font-serif text-2xl font-semibold tracking-tight">Recovery PDF staging</h2>
+        <h2 id="recovery-staging-heading" className="m-0 font-serif text-2xl font-semibold tracking-tight">Recovery and identity assistance</h2>
         <p className="m-0 max-w-3xl text-sm leading-relaxed text-muted-foreground">
-          Add a PDF for a Bibliography Entry without changing this immutable Analysis Run. A verified upload is only a user-supplied candidate; it does not confirm the paper identity, language eligibility, legal permission, or support for any claim. Uploading never starts provider assessment.
+          Keep this immutable predecessor Analysis Run unchanged while reviewing candidate PDF versions or asserting a DOI identity. A DOI assertion does not verify an exact PDF, lawful access, language eligibility, or claim support. Staging and preview do not start provider assessment.
         </p>
       </header>
 
@@ -202,16 +203,13 @@ export function RecoveryUploadWorkspace({
         </Alert>
       )}
 
-      {enabled && !entriesLoading && entries && entries.length > 0 && rightsQuery.isPending && (
-        <Card className="shadow-sm"><CardContent className="flex items-center gap-3 py-6 text-sm text-muted-foreground"><Spinner /> Loading the current rights declaration…</CardContent></Card>
-      )}
-
-      {enabled && !entriesLoading && entries && entries.length > 0 && rightsQuery.isError && (
+      {enabled && rightsQuery.isError && !batch && (
         <Alert variant="destructive">
-          <AlertTitle>Recovery Upload service unavailable</AlertTitle>
-          <AlertDescription>{rightsQuery.error instanceof Error ? rightsQuery.error.message : "The current rights declaration could not be loaded."}</AlertDescription>
+          <AlertTitle>Current PDF-rights declaration unavailable</AlertTitle>
+          <AlertDescription>{rightsQuery.error instanceof Error ? rightsQuery.error.message : "PDF upload cannot begin until the current declaration is available."} You may still create an identifier-only batch.</AlertDescription>
         </Alert>
       )}
+      {enabled && rightsQuery.isPending && <p className="sr-only" role="status">Loading the current PDF-rights declaration</p>}
 
       {enabled && !entriesLoading && entries && entries.length > 0 && rights && batchQuery.isPending && (
         <Card className="shadow-sm"><CardContent className="flex items-center gap-3 py-6 text-sm text-muted-foreground"><Spinner /> Checking for an active Recovery Batch…</CardContent></Card>
@@ -230,33 +228,19 @@ export function RecoveryUploadWorkspace({
         </Alert>
       )}
 
-      {enabled && !entriesLoading && entries && entries.length > 0 && rights && batchQuery.data === null && !batchQuery.isPending && (
+      {enabled && !entriesLoading && entries && entries.length > 0 && batchQuery.data === null && !batchQuery.isPending && (
         <Card className="shadow-sm">
           <CardHeader>
             <CardTitle className="font-serif text-lg">Start a temporary Recovery Batch</CardTitle>
-            <CardDescription>
-              The batch allows up to {rights.maxFilesPerBatch} PDFs and {formatBytes(rights.maxBatchBytes)} total. Each file is limited to {formatBytes(rights.maxFileBytes)}. Upload links last {Math.ceil(rights.uploadUrlTtlSeconds / 60)} minutes; an inactive batch expires after {Math.ceil(rights.inactivityTtlSeconds / 86_400)} days.
-            </CardDescription>
+            <CardDescription>A batch may be created for DOI-only work without accepting PDF rights. Explicit acceptance of the current declaration is required separately before any PDF upload.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <section className="rounded-lg border border-border bg-background p-4" aria-labelledby="rights-declaration-heading">
-              <h3 id="rights-declaration-heading" className="m-0 text-sm font-semibold">Rights declaration · {rights.version}</h3>
-              <p className="mt-2 mb-0 text-sm leading-relaxed">{rights.text}</p>
-              <Field orientation="horizontal" className="mt-4 items-start gap-3">
-                <Checkbox
-                  id="recovery-rights-accepted"
-                  checked={rightsAccepted}
-                  disabled={isBusy}
-                  onCheckedChange={(checked) => setRightsAccepted(checked === true)}
-                />
-                <div className="min-w-0 space-y-1">
-                  <FieldLabel htmlFor="recovery-rights-accepted" className="text-sm font-medium">I have read and accept this declaration</FieldLabel>
-                  <FieldDescription>This records your assertion. It is not a license grant and does not authorize external processing.</FieldDescription>
-                </div>
-              </Field>
-            </section>
-            <Button type="button" disabled={!rightsAccepted || isBusy} onClick={createBatchForRun}>
-              {createBatch.isPending ? <><Spinner /> Creating batch…</> : "Create Recovery Batch"}
+            {rights && <p className="m-0 text-sm leading-relaxed text-muted-foreground">Up to {rights.maxFilesPerBatch} PDF versions · {formatBytes(rights.maxBatchBytes)} total · {formatBytes(rights.maxFileBytes)} per file · expires after {Math.ceil(rights.inactivityTtlSeconds / 86_400)} inactive days.</p>}
+            <Button type="button" disabled={createBatch.isPending} onClick={() => {
+              createBatch.reset();
+              createBatch.mutate({ analysisRunId, idempotencyKey: globalThis.crypto.randomUUID() });
+            }}>
+              {createBatch.isPending ? <><Spinner /> Creating identifier-only batch…</> : "Create Recovery Batch"}
             </Button>
           </CardContent>
         </Card>
@@ -268,18 +252,45 @@ export function RecoveryUploadWorkspace({
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 space-y-1">
-                  <CardTitle className="font-serif text-lg">Active Recovery Batch</CardTitle>
+                  <CardTitle className="font-serif text-lg">{batch.status === "SUBMITTED" ? "Submitted Recovery Batch" : "Recovery Batch"}</CardTitle>
                   <CardDescription>Created <LocalDateTime value={batch.createdAt} /> · last user change <LocalDateTime value={batch.lastActivityAt} /> · expires <LocalDateTime value={batch.expiresAt} /></CardDescription>
                 </div>
-                <Badge variant="outline">{batch.uploads.filter((upload) => ["PENDING_UPLOAD", "FINALIZING", "STAGED"].includes(upload.status)).length} active uploads</Badge>
+                <Badge variant="outline">{batch.uploads.filter((upload) => ["PENDING_UPLOAD", "FINALIZING", "STAGED"].includes(upload.status)).length} active PDF versions</Badge>
               </div>
-              <p className="m-0 text-sm leading-relaxed text-muted-foreground">
-                Rights declaration {batch.rightsDeclarationVersion} was recorded at <LocalDateTime value={batch.rightsDeclaredAt} />. Reads and polling do not extend expiry. Staged PDFs stay inside this trusted workspace and are not sent to an external provider; no user-account isolation is implied.
-              </p>
-              <details className="rounded-md border border-border bg-background px-3 py-2 text-sm">
-                <summary className="min-h-8 cursor-pointer py-1 font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">View recorded rights declaration</summary>
-                <p className="mb-1 mt-2 leading-relaxed text-muted-foreground">{batch.rightsDeclarationText}</p>
-              </details>
+              <p className="m-0 text-sm leading-relaxed text-muted-foreground">DOI-only identity assistance does not require the PDF-rights declaration. Before any PDF upload, accept the current declaration below. It is not a license grant or provider consent.</p>
+              {rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version ? (
+                <p className="m-0 text-sm text-success-foreground" role="status">Current PDF-rights declaration {rights.version} accepted at <LocalDateTime value={batch.rightsDeclaredAt} />.</p>
+              ) : rights && batch.status === "OPEN" ? (
+                <section className="space-y-3 rounded-md border border-border bg-background p-4" aria-labelledby="recovery-rights-heading">
+                  <div className="space-y-1">
+                    <h3 id="recovery-rights-heading" className="m-0 text-sm font-semibold">Current PDF-rights declaration · {rights.version}</h3>
+                    <p className="m-0 text-sm leading-relaxed">{rights.text}</p>
+                  </div>
+                  <Field orientation="horizontal" className="items-start gap-3">
+                    <Checkbox id="recovery-current-rights-accepted" checked={rightsAcceptedVersion === rights.version} disabled={isBusy} onCheckedChange={(checked) => setRightsAcceptedVersion(checked === true ? rights.version : null)} />
+                    <div className="min-w-0 space-y-1">
+                      <FieldLabel htmlFor="recovery-current-rights-accepted" className="text-sm font-medium">I have read and accept the current PDF-rights declaration</FieldLabel>
+                      <FieldDescription>This records your assertion for PDF upload only. It does not authorize provider processing or state that a DOI identifies a PDF.</FieldDescription>
+                    </div>
+                  </Field>
+                  <Button type="button" variant="secondary" disabled={rightsAcceptedVersion !== rights.version || isBusy} onClick={() => {
+                    acceptRights.reset();
+                    acceptRights.mutate({ analysisRunId, batchId: batch.id, rightsDeclarationVersion: rights.version });
+                  }}>
+                    {acceptRights.isPending ? <><Spinner /> Recording acceptance…</> : "Accept current declaration for PDF upload"}
+                  </Button>
+                </section>
+              ) : rights ? (
+                <p className="m-0 text-sm text-muted-foreground" role="status">This batch no longer accepts PDF-rights changes or uploads.</p>
+              ) : (
+                <Alert variant="destructive"><AlertTitle>Current PDF-rights declaration unavailable</AlertTitle><AlertDescription>Identifier-only assistance remains available. PDF uploads stay blocked until the current declaration can be displayed and explicitly accepted.</AlertDescription></Alert>
+              )}
+              {batch.rightsDeclarationText && (
+                <details className="rounded-md border border-border bg-background px-3 py-2 text-sm">
+                  <summary className="min-h-8 cursor-pointer py-1 font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">View recorded PDF-rights declaration</summary>
+                  <p className="mb-1 mt-2 leading-relaxed text-muted-foreground">{batch.rightsDeclarationText}</p>
+                </details>
+              )}
             </CardHeader>
             <CardContent className="space-y-3">
               {activeError && (
@@ -288,53 +299,80 @@ export function RecoveryUploadWorkspace({
                   <AlertDescription>{activeError.message}</AlertDescription>
                 </Alert>
               )}
-              {!entries && batch.uploads.length === 0 && (
-                <p className="m-0 text-sm text-muted-foreground">Bibliography Entries are unavailable, and this batch has no uploads to display yet.</p>
+              {!entries && batch.uploads.length === 0 && batch.identifierAssistance.length === 0 && (
+                <p className="m-0 text-sm text-muted-foreground">Bibliography Entries are unavailable, and this batch has no staged work to display yet.</p>
               )}
               <ul className="m-0 grid list-none gap-3 p-0">
-                {entries?.map((entry) => (
+                {entries?.map((entry) => {
+                  const uploads = batch.uploads.filter((upload) => upload.localReferenceKey === entry.localReferenceKey);
+                  const selectedUploadIds = new Set(batch.selectedAssets.map((selection) => selection.uploadId));
+                  const assistance = batch.identifierAssistance.find((identifier) => identifier.localReferenceKey === entry.localReferenceKey);
+                  return (
+                    <RecoveryUploadReferenceCard
+                      key={entry.localReferenceKey}
+                      batchId={batch.id}
+                      localReferenceKey={entry.localReferenceKey}
+                      label={entry.title || entry.rawText || `Bibliography Entry ${entry.entryOrder + 1}`}
+                      entry={entry}
+                      uploads={uploads}
+                      selectedUploadIds={selectedUploadIds}
+                      identifierAssistance={assistance}
+                      maxFileBytes={rights?.maxFileBytes ?? null}
+                      canUpload={Boolean(rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version && batch.status === "OPEN")}
+                      disabled={isBusy || batch.status !== "OPEN"}
+                      onUpload={startUpload}
+                      onFinalize={finalize}
+                      onRemove={remove}
+                      onValidate={validate}
+                      validationPendingUploadId={validateUpload.variables?.uploadId}
+                      onConfirmIdentity={confirm}
+                      onSelectVersion={select}
+                      identityActionPending={confirmIdentity.isPending || selectVersion.isPending}
+                      onStageIdentifier={(referenceKey, identifierValue) => stageIdentifier.mutate({ analysisRunId, batchId: batch.id, localReferenceKey: referenceKey, identifierValue })}
+                      onRemoveIdentifier={(referenceKey) => removeIdentifier.mutate({ analysisRunId, batchId: batch.id, localReferenceKey: referenceKey })}
+                      identifierActionPending={stageIdentifier.isPending || removeIdentifier.isPending}
+                    />
+                  );
+                })}
+                {!entries && [...new Set(batch.uploads.map((upload) => upload.localReferenceKey))].map((referenceKey) => (
                   <RecoveryUploadReferenceCard
-                    key={entry.localReferenceKey}
+                    key={referenceKey}
                     batchId={batch.id}
-                    localReferenceKey={entry.localReferenceKey}
-                    label={entry.title || entry.rawText || `Bibliography Entry ${entry.entryOrder + 1}`}
-                    upload={uploadedByReferenceKey.get(entry.localReferenceKey)}
+                    localReferenceKey={referenceKey}
+                    label={`Bibliography Entry · ${referenceKey}`}
+                    entry={null}
+                    uploads={batch.uploads.filter((upload) => upload.localReferenceKey === referenceKey)}
+                    selectedUploadIds={new Set(batch.selectedAssets.map((selection) => selection.uploadId))}
+                    identifierAssistance={batch.identifierAssistance.find((identifier) => identifier.localReferenceKey === referenceKey)}
                     maxFileBytes={rights?.maxFileBytes ?? null}
-                    canUpload={rights !== undefined}
-                    disabled={isBusy}
+                    canUpload={Boolean(rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version && batch.status === "OPEN")}
+                    disabled={isBusy || batch.status !== "OPEN"}
                     onUpload={startUpload}
                     onFinalize={finalize}
                     onRemove={remove}
                     onValidate={validate}
-                    validationPending={validateUpload.isPending && validateUpload.variables?.uploadId === uploadedByReferenceKey.get(entry.localReferenceKey)?.id}
+                    validationPendingUploadId={validateUpload.variables?.uploadId}
                     onConfirmIdentity={confirm}
                     onSelectVersion={select}
                     identityActionPending={confirmIdentity.isPending || selectVersion.isPending}
-                  />
-                ))}
-                {!entries && batch.uploads.map((upload) => (
-                  <RecoveryUploadReferenceCard
-                    key={upload.id}
-                    batchId={batch.id}
-                    localReferenceKey={upload.localReferenceKey}
-                    label={`Bibliography Entry · ${upload.localReferenceKey}`}
-                    upload={upload}
-                    maxFileBytes={rights?.maxFileBytes ?? null}
-                    canUpload={rights !== undefined}
-                    disabled={isBusy}
-                    onUpload={startUpload}
-                    onFinalize={finalize}
-                    onRemove={remove}
-                    onValidate={validate}
-                    validationPending={validateUpload.isPending && validateUpload.variables?.uploadId === upload.id}
-                    onConfirmIdentity={confirm}
-                    onSelectVersion={select}
-                    identityActionPending={confirmIdentity.isPending || selectVersion.isPending}
+                    onStageIdentifier={(referenceKey, identifierValue) => stageIdentifier.mutate({ analysisRunId, batchId: batch.id, localReferenceKey: referenceKey, identifierValue })}
+                    onRemoveIdentifier={(referenceKey) => removeIdentifier.mutate({ analysisRunId, batchId: batch.id, localReferenceKey: referenceKey })}
+                    identifierActionPending={stageIdentifier.isPending || removeIdentifier.isPending}
                   />
                 ))}
               </ul>
+              {!entries && batch.identifierAssistance.length > 0 && (
+                <ul className="m-0 grid list-none gap-2 p-0" aria-label="Staged DOI-only identity assistance">
+                  {batch.identifierAssistance.map((assistance) => (
+                    <li key={assistance.localReferenceKey} className="break-words rounded border border-border bg-background p-3 text-sm">
+                      DOI-only assertion for Bibliography Entry · {assistance.localReferenceKey}: {assistance.identifierValue} · confirmed <LocalDateTime value={assistance.recordedAt} />
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
+          <RecoverySuccessorWorkflow analysisRunId={analysisRunId} predecessorConfiguration={predecessorConfiguration} predecessorRunStatus={predecessorRunStatus} batch={batch} />
         </>
       )}
 
@@ -554,11 +592,223 @@ function RecoveryUploadValidationPanel({
   );
 }
 
+const DOI_ASSISTANCE_REFERENCE_TYPES = new Set([
+  "JOURNAL_ARTICLE",
+  "CONFERENCE_PAPER",
+  "PREPRINT",
+  "ACADEMIC_MANUSCRIPT",
+  "BOOK",
+  "BOOK_CHAPTER",
+  "INBOOK",
+  "INCOLLECTION",
+]);
+
 function RecoveryUploadReferenceCard({
   batchId,
   localReferenceKey,
   label,
+  entry,
+  uploads,
+  selectedUploadIds,
+  identifierAssistance,
+  maxFileBytes,
+  canUpload,
+  disabled,
+  onUpload,
+  onFinalize,
+  onRemove,
+  onValidate,
+  validationPendingUploadId,
+  onConfirmIdentity,
+  onSelectVersion,
+  identityActionPending,
+  onStageIdentifier,
+  onRemoveIdentifier,
+  identifierActionPending,
+}: {
+  batchId: string;
+  localReferenceKey: string;
+  label: string;
+  entry: BibliographyEntry | null;
+  uploads: RecoveryUpload[];
+  selectedUploadIds: Set<string>;
+  identifierAssistance: RecoveryIdentifierAssistance | undefined;
+  maxFileBytes: number | null;
+  canUpload: boolean;
+  disabled: boolean;
+  onUpload: (localReferenceKey: string, file: File, idempotencyKey: string) => void;
+  onFinalize: (batchId: string, uploadId: string) => void;
+  onRemove: (batchId: string, uploadId: string) => void;
+  onValidate: (batchId: string, uploadId: string) => void;
+  validationPendingUploadId: string | undefined;
+  onConfirmIdentity: (batchId: string, uploadId: string, validationAttemptId: string, confirmedDoi?: string, doiCandidateFingerprint?: string) => void;
+  onSelectVersion: (batchId: string, uploadId: string) => void;
+  identityActionPending: boolean;
+  onStageIdentifier: (localReferenceKey: string, identifierValue: string) => void;
+  onRemoveIdentifier: (localReferenceKey: string) => void;
+  identifierActionPending: boolean;
+}) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [identifierValue, setIdentifierValue] = useState(entry?.doi ?? "");
+  const [confirmsBibliographyIdentity, setConfirmsBibliographyIdentity] = useState(false);
+  const canStageDoi = Boolean(entry
+    && entry.resolutionStatus === "UNRESOLVED"
+    && DOI_ASSISTANCE_REFERENCE_TYPES.has(entry.referenceType));
+  const unsupportedDoiType = Boolean(entry && entry.resolutionStatus === "UNRESOLVED" && !canStageDoi);
+  const stagedVersionCount = uploads.filter((upload) => upload.status === "STAGED").length;
+  const pendingVersionCount = uploads.filter((upload) => upload.status === "PENDING_UPLOAD" || upload.status === "FINALIZING").length;
+  const selectedVersionCount = uploads.filter((upload) => selectedUploadIds.has(upload.id)).length;
+  const fullTextRecoveryState = selectedVersionCount > 0
+    ? `${selectedVersionCount} exact PDF version${selectedVersionCount === 1 ? "" : "s"} selected`
+    : stagedVersionCount > 0
+      ? `${stagedVersionCount} candidate PDF version${stagedVersionCount === 1 ? "" : "s"} staged; none selected`
+      : pendingVersionCount > 0
+        ? `${pendingVersionCount} PDF upload${pendingVersionCount === 1 ? "" : "s"} in progress; none selected`
+        : "No available PDF version staged";
+  const fileInputId = `recovery-new-version-${batchId}-${encodeURIComponent(localReferenceKey)}`;
+  const fileDescriptionId = `${fileInputId}-description`;
+
+  function addVersion(file: File | undefined) {
+    if (!file) return;
+    setLocalError(null);
+    if (!file.name.toLocaleLowerCase().endsWith(".pdf")) {
+      setLocalError("Choose a file with a .pdf filename.");
+      return;
+    }
+    if (file.size === 0) {
+      setLocalError("Choose a non-empty PDF file.");
+      return;
+    }
+    if (maxFileBytes !== null && file.size > maxFileBytes) {
+      setLocalError(`This file exceeds the configured ${formatBytes(maxFileBytes)} per-file limit.`);
+      return;
+    }
+    onUpload(localReferenceKey, file, globalThis.crypto.randomUUID());
+  }
+
+  return (
+    <li className="min-w-0 rounded-lg border border-border bg-card p-4">
+      <div className="min-w-0 space-y-1">
+        <p className="m-0 font-mono text-xs text-muted-foreground">Bibliography Entry · {localReferenceKey}</p>
+        <p className="m-0 break-words text-sm leading-relaxed">{label}</p>
+      </div>
+      {entry ? (
+        <dl className="mt-3 grid min-w-0 gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+          <div className="min-w-0"><dt className="text-muted-foreground">Bibliography identity</dt><dd className="m-0 break-words">{entry.resolutionStatus.toLocaleLowerCase().replaceAll("_", " ")}</dd></div>
+          <div className="min-w-0"><dt className="text-muted-foreground">Reference type</dt><dd className="m-0 break-words">{entry.referenceType.toLocaleLowerCase().replaceAll("_", " ")}</dd></div>
+          <div className="min-w-0"><dt className="text-muted-foreground">Bibliography DOI</dt><dd className="m-0 break-all font-mono">{entry.doi ?? "Not recorded"}</dd></div>
+          <div className="min-w-0"><dt className="text-muted-foreground">Full-text recovery</dt><dd className="m-0 break-words">{fullTextRecoveryState}</dd></div>
+        </dl>
+      ) : (
+        <p className="mt-2 mb-0 text-xs text-muted-foreground">Bibliography identity and full-text state are unavailable; existing recovery assets remain inspectable.</p>
+      )}
+      <div className="mt-4 space-y-3">
+        {identifierAssistance ? (
+          <div className="space-y-2 rounded-md border border-border bg-background p-3" role="status">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">DOI-only researcher assertion</Badge>
+              <span className="break-all font-mono text-sm">{identifierAssistance.identifierValue}</span>
+            </div>
+            <p className="m-0 text-xs leading-relaxed text-muted-foreground">This assertion identifies the Bibliography Entry only. It is not provider verification, exact PDF identity, lawful access, language eligibility, or claim support.</p>
+            <p className="m-0 text-xs text-muted-foreground">Confirmed <LocalDateTime value={identifierAssistance.recordedAt} /></p>
+            <Button type="button" variant="ghost" size="sm" disabled={disabled || identifierActionPending} onClick={() => onRemoveIdentifier(localReferenceKey)}>Remove DOI assistance</Button>
+          </div>
+        ) : null}
+        {canStageDoi && (
+          <section className="space-y-3 rounded-md border border-border bg-background p-3" aria-label={`DOI-only identity assistance for ${localReferenceKey}`}>
+            <div className="space-y-1">
+              <p className="m-0 text-sm font-medium">{identifierAssistance ? "Replace DOI-only identity assertion" : "DOI-only identity assistance"}</p>
+              <p className="m-0 text-xs leading-relaxed text-muted-foreground">You may assert that a normalized DOI identifies this unresolved Bibliography Entry without uploading a PDF. This does not identify any exact PDF version and does not make a provider-verified match.</p>
+            </div>
+            <Field>
+              <FieldLabel htmlFor={`recovery-asserted-doi-${batchId}-${encodeURIComponent(localReferenceKey)}`}>DOI you assert identifies this Bibliography Entry</FieldLabel>
+              <Input
+                id={`recovery-asserted-doi-${batchId}-${encodeURIComponent(localReferenceKey)}`}
+                value={identifierValue}
+                disabled={disabled || identifierActionPending}
+                placeholder="10.1234/example"
+                autoComplete="off"
+                onChange={(event) => setIdentifierValue(event.currentTarget.value)}
+              />
+              <FieldDescription>The API normalizes the DOI before recording this assertion. It remains separate from any PDF identity validation.</FieldDescription>
+            </Field>
+            <Field orientation="horizontal" className="items-start gap-3">
+              <Checkbox id={`recovery-confirm-doi-${batchId}-${encodeURIComponent(localReferenceKey)}`} checked={confirmsBibliographyIdentity} disabled={disabled || identifierActionPending} onCheckedChange={(checked) => setConfirmsBibliographyIdentity(checked === true)} />
+              <FieldLabel htmlFor={`recovery-confirm-doi-${batchId}-${encodeURIComponent(localReferenceKey)}`} className="text-sm font-medium">I confirm this DOI identifies this Bibliography Entry</FieldLabel>
+            </Field>
+            <Button type="button" variant="secondary" size="sm" disabled={disabled || identifierActionPending || !confirmsBibliographyIdentity || !identifierValue.trim()} onClick={() => onStageIdentifier(localReferenceKey, identifierValue)}>
+              {identifierActionPending ? <><Spinner /> Recording assertion…</> : identifierAssistance ? "Replace DOI identity assertion" : "Stage DOI-only assistance"}
+            </Button>
+          </section>
+        )}
+        {unsupportedDoiType && <p className="m-0 text-xs text-muted-foreground">DOI-only assistance is unavailable for this unsupported Bibliography Entry type.</p>}
+        {uploads.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="m-0 text-sm font-semibold">Candidate PDF versions</h3>
+              <p className="m-0 text-xs text-muted-foreground">Each version is validated independently; selecting a new version replaces the current selection without removing older outcomes.</p>
+            </div>
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+              {uploads.map((upload) => (
+                <RecoveryUploadVersionCard
+                  key={upload.id}
+                  batchId={batchId}
+                  localReferenceKey={localReferenceKey}
+                  label={label}
+                  upload={upload}
+                  isSelected={selectedUploadIds.has(upload.id)}
+                  maxFileBytes={maxFileBytes}
+                  canUpload={canUpload && (upload.status === "PENDING_UPLOAD" || upload.status === "FINALIZING")}
+                  disabled={disabled}
+                  onUpload={onUpload}
+                  onFinalize={onFinalize}
+                  onRemove={onRemove}
+                  onValidate={onValidate}
+                  validationPending={validationPendingUploadId === upload.id}
+                  onConfirmIdentity={onConfirmIdentity}
+                  onSelectVersion={onSelectVersion}
+                  identityActionPending={identityActionPending}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+        {canUpload ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" size="sm" disabled={disabled || maxFileBytes === null} aria-describedby={fileDescriptionId} onClick={() => fileInput.current?.click()}>
+              Choose another PDF version
+            </Button>
+            <input
+              ref={fileInput}
+              id={fileInputId}
+              type="file"
+              accept="application/pdf,.pdf"
+              disabled={disabled || maxFileBytes === null}
+              className="sr-only"
+              aria-label={`Choose a new PDF version for ${label}`}
+              onChange={(event) => {
+                addVersion(event.currentTarget.files?.[0]);
+                event.currentTarget.value = "";
+              }}
+            />
+            <span id={fileDescriptionId} className="text-xs text-muted-foreground">Current PDF-rights acceptance is recorded before upload intent.</span>
+          </div>
+        ) : (
+          <p className="m-0 text-xs leading-relaxed text-muted-foreground">{maxFileBytes === null ? "Upload limits are unavailable; PDF upload is blocked." : "Accept the current PDF-rights declaration before uploading any PDF version."}</p>
+        )}
+        {localError && <p className="m-0 text-sm text-destructive" role="alert">{localError}</p>}
+      </div>
+    </li>
+  );
+}
+
+function RecoveryUploadVersionCard({
+  batchId,
+  localReferenceKey,
+  label,
   upload,
+  isSelected,
   maxFileBytes,
   canUpload,
   disabled,
@@ -575,6 +825,7 @@ function RecoveryUploadReferenceCard({
   localReferenceKey: string;
   label: string;
   upload: RecoveryUpload | undefined;
+  isSelected: boolean;
   maxFileBytes: number | null;
   canUpload: boolean;
   disabled: boolean;
@@ -591,7 +842,7 @@ function RecoveryUploadReferenceCard({
   const [localError, setLocalError] = useState<string | null>(null);
   const isResumable = upload?.status === "PENDING_UPLOAD" || upload?.status === "FINALIZING";
   const canStartNew = !upload || upload.status === "REMOVED" || upload.status === "EXPIRED";
-  const fileInputId = `recovery-file-${batchId}-${encodeURIComponent(localReferenceKey)}`;
+  const fileInputId = `recovery-file-${batchId}-${encodeURIComponent(localReferenceKey)}-${upload?.id ?? "new"}`;
   const descriptionId = `${fileInputId}-description`;
   const validationQuery = useRecoveryUploadValidation(batchId, upload?.id ?? "", upload?.status === "STAGED");
 
@@ -615,13 +866,16 @@ function RecoveryUploadReferenceCard({
   }
 
   return (
-    <li className="min-w-0 rounded-lg border border-border bg-background p-4">
+    <div className="min-w-0 rounded-lg border border-border bg-background p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-1">
           <p className="m-0 font-mono text-xs text-muted-foreground">Bibliography Entry · {localReferenceKey}</p>
           <p className="m-0 line-clamp-4 break-words text-sm leading-relaxed">{label}</p>
         </div>
-        {upload && <Badge variant="outline" className="shrink-0">{statusLabel(upload.status)}</Badge>}
+        <div className="flex flex-wrap items-center gap-2">
+          {upload && <Badge variant="outline" className="shrink-0">{statusLabel(upload.status)}</Badge>}
+          {isSelected && <Badge variant="outline" className="shrink-0 border-success-foreground/30 bg-success text-success-foreground">Current selected exact version</Badge>}
+        </div>
       </div>
 
       {upload?.status === "STAGED" && (
@@ -735,6 +989,6 @@ function RecoveryUploadReferenceCard({
         {upload?.status === "REMOVED" && !canStartNew && <span className="text-xs text-muted-foreground">Removal recorded</span>}
       </div>
       {localError && <p className="mt-3 mb-0 text-sm text-destructive" role="alert">{localError}</p>}
-    </li>
+    </div>
   );
 }

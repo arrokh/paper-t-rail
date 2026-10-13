@@ -443,6 +443,8 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
         <TabsContent value="recovery" className="analysis-run-view-panel">
           <RecoveryUploadWorkspace
             analysisRunId={analysisRunId}
+            predecessorConfiguration={run.configuration}
+            predecessorRunStatus={run.status}
             entries={parsedDocument?.bibliographyEntries ?? null}
             entriesLoading={parsedReady && parsedQuery.isPending}
             entriesError={parsedError}
