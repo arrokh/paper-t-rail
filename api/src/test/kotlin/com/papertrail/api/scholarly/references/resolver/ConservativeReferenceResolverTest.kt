@@ -137,8 +137,11 @@ class ConservativeReferenceResolverTest {
     }
 
     @Test
-    fun `resolves books book chapters preprints and journal articles`() {
-        val supportedTypes = listOf("BOOK", "BOOK_CHAPTER", "INBOOK", "INCOLLECTION", "PREPRINT", "JOURNAL_ARTICLE")
+    fun `resolves supported academic reference kinds by DOI`() {
+        val supportedTypes = listOf(
+            "BOOK", "BOOK_CHAPTER", "INBOOK", "INCOLLECTION", "PREPRINT", "JOURNAL_ARTICLE",
+            "CONFERENCE_PAPER", "ACADEMIC_MANUSCRIPT",
+        )
 
         supportedTypes.forEach { type ->
             val provider = RecordingMetadataProvider(doiResult = work("10.1234/work", "A scholarly work", listOf("A Author"), 2020))
