@@ -170,6 +170,8 @@ async function uploadRecoveryPdf(input: UploadRecoveryPdf): Promise<RecoveryUplo
       method: "PUT",
       mode: "cors",
       credentials: "omit",
+      referrerPolicy: "no-referrer",
+      cache: "no-store",
       headers: intent.requiredHeaders,
       body: input.file,
     });
