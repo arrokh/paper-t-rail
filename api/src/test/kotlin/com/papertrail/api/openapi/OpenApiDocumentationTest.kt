@@ -20,6 +20,7 @@ import com.papertrail.api.scholarly.references.report.BibliographyResolutionRepo
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
 import com.papertrail.api.scholarly.references.resolver.ScholarlyCandidateEvidence
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
+import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessOrigin
 import com.papertrail.api.external.unpaywall.UnpaywallDiscoveryCache
 import com.papertrail.api.external.unpaywall.http.UnpaywallCacheInvalidationRequest
 import com.papertrail.api.external.unpaywall.service.UnpaywallCacheInvalidationService
@@ -157,6 +158,42 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var unpaywallDiscoveryCache: UnpaywallDiscoveryCache
+
+    @Test
+    fun `supplied cited paper access response preserves rights attribution without a fake license`() {
+        val declaration = "I may use this copy for private analysis."
+        val response = CitedPaperAccessReport(
+            accessStatus = "FULL_TEXT_AVAILABLE",
+            accessOrigin = CitedPaperAccessOrigin.USER_SUPPLIED,
+            accessReason = null,
+            providerId = null,
+            sourceUrl = null,
+            license = null,
+            version = null,
+            hostType = null,
+            discoveredAt = Instant.parse("2026-10-09T00:00:00Z"),
+            contentSha256 = "a".repeat(64),
+            mediaType = "application/pdf",
+            language = "en",
+            languageDetectorVersion = "fixture-detector",
+            rightsDeclarationVersion = "fixture-v1",
+            rightsDeclarationText = declaration,
+            rightsDeclaredAt = Instant.parse("2026-10-09T00:00:00Z"),
+            originatingAnalysisRunId = UUID.randomUUID(),
+            originatingRecoveryBatchId = UUID.randomUUID(),
+            originatingRecoveryUploadId = UUID.randomUUID(),
+        )
+
+        val body = objectMapper.readTree(objectMapper.writeValueAsString(response))
+
+        assertEquals("USER_SUPPLIED", body.path("accessOrigin").asText())
+        assertTrue(body.path("providerId").isNull)
+        assertTrue(body.path("sourceUrl").isNull)
+        assertTrue(body.path("license").isNull)
+        assertEquals("application/pdf", body.path("mediaType").asText())
+        assertEquals(declaration, body.path("rightsDeclarationText").asText())
+        assertTrue(body.path("originatingRecoveryUploadId").isTextual)
+    }
 
     @Test
     fun `legacy execution summary returns an explicit unavailable state without invented timing`() {
@@ -515,6 +552,29 @@ class OpenApiDocumentationTest {
         assertTrue(reportEntryProperties.path("reasonCode").path("description").asText().contains("CONFLICTING_DOI_IDENTIFIERS"))
         assertTrue(reportEntryProperties.has("sourceLocalReferenceKey"))
         assertTrue(reportEntryProperties.has("identifiers"))
+        val citedPaperAccessSchema = reportEntryProperties.path("citedPaperAccess")
+        val citedPaperAccessRef = if (citedPaperAccessSchema.has("${'$'}ref")) {
+            citedPaperAccessSchema.path("${'$'}ref").asText()
+        } else {
+            citedPaperAccessSchema.path("oneOf").firstOrNull { it.has("${'$'}ref") }?.path("${'$'}ref")?.asText()
+        }
+        val citedPaperAccessProperties = if (!citedPaperAccessRef.isNullOrBlank()) {
+            val schemaName = citedPaperAccessRef.substringAfterLast('/')
+            document.path("components").path("schemas").path(schemaName).path("properties")
+        } else {
+            citedPaperAccessSchema.path("properties")
+        }
+        val accessOriginSchema = citedPaperAccessProperties.path("accessOrigin")
+        val accessOriginValues = if (accessOriginSchema.has("${'$'}ref")) {
+            val schemaName = accessOriginSchema.path("${'$'}ref").asText().substringAfterLast('/')
+            document.path("components").path("schemas").path(schemaName).path("enum")
+        } else {
+            accessOriginSchema.path("enum")
+        }
+        assertEquals(setOf("AUTOMATIC", "USER_SUPPLIED"), accessOriginValues.map { it.asText() }.toSet())
+        assertTrue(citedPaperAccessProperties.path("rightsDeclarationText").path("description").asText().contains("does not grant publication or external-transfer rights"))
+        assertTrue(citedPaperAccessProperties.path("discoveredAt").path("description").asText().contains("user-supplied access record was created"))
+        assertTrue(citedPaperAccessProperties.has("originatingRecoveryUploadId"))
         val candidateEvidence = reportEntryProperties.path("candidateEvidence")
         assertTrue(candidateEvidence.path("description").asText().contains("Up to three"))
         val candidateSchemaName = candidateEvidence.path("items").path("${'$'}ref").asText().substringAfterLast('/')
@@ -1130,6 +1190,7 @@ class OpenApiDocumentationTest {
                             accessProgressReason = null,
                             citedPaperAccess = CitedPaperAccessReport(
                                 accessStatus = "ABSTRACT_ONLY",
+                                accessOrigin = CitedPaperAccessOrigin.AUTOMATIC,
                                 accessReason = "ABSTRACT_ONLY",
                                 accessReasons = listOf("NO_FULL_TEXT_LOCATION_RETURNED"),
                                 providerId = "recorded-fixtures",
@@ -1139,8 +1200,15 @@ class OpenApiDocumentationTest {
                                 hostType = null,
                                 discoveredAt = Instant.parse("2025-01-01T00:00:00Z"),
                                 contentSha256 = null,
+                                mediaType = null,
                                 language = null,
                                 languageDetectorVersion = null,
+                                rightsDeclarationVersion = null,
+                                rightsDeclarationText = null,
+                                rightsDeclaredAt = null,
+                                originatingAnalysisRunId = null,
+                                originatingRecoveryBatchId = null,
+                                originatingRecoveryUploadId = null,
                                 verificationOutcomes = listOf(outcome),
                             ),
                             verificationOutcomes = listOf(outcome),
@@ -1172,6 +1240,7 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.entries[0].identifiers[0].rawValue").value("https://doi.org/10.1234/example"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].provisionalArtifactSignals[0]").value("UNCITED_SECTION_HEADING_PATTERN"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessStatus").value("ABSTRACT_ONLY"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessOrigin").value("AUTOMATIC"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessReason").value("ABSTRACT_ONLY"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].citedPaperAccess.accessReasons[0]").value("NO_FULL_TEXT_LOCATION_RETURNED"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].accessProgressStatus").value("COMPLETED"))

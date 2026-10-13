@@ -101,11 +101,11 @@ export function CitedPaperAccessSummary({
 
       <dl className="grid gap-3 text-sm sm:grid-cols-2">
         <div className="min-w-0 space-y-1">
-          <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Discovery provider</dt>
-          <dd className="m-0 break-words">{access.providerId}</dd>
+          <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">{access.accessOrigin === "USER_SUPPLIED" ? "Access origin" : "Discovery provider"}</dt>
+          <dd className="m-0 break-words">{access.accessOrigin === "USER_SUPPLIED" ? "User-supplied PDF" : access.providerId}</dd>
         </div>
         <div className="space-y-1">
-          <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Discovered</dt>
+          <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">{access.accessOrigin === "USER_SUPPLIED" ? "Access recorded" : "Discovered"}</dt>
           <dd className="m-0"><LocalDateTime value={access.discoveredAt} /></dd>
         </div>
         {access.sourceUrl && (
@@ -158,7 +158,7 @@ export function CitedPaperAccessSummary({
         )}
         {access.contentSha256 && (
           <div className="min-w-0 space-y-1 sm:col-span-2">
-            <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Acquired content SHA-256</dt>
+            <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">{access.accessOrigin === "USER_SUPPLIED" ? "Supplied PDF SHA-256" : "Acquired content SHA-256"}</dt>
             <dd className="m-0 break-all font-mono text-xs">{access.contentSha256}</dd>
           </div>
         )}

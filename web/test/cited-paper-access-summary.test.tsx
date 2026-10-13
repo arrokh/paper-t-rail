@@ -22,6 +22,7 @@ describe("Cited Paper access summary", () => {
       <CitedPaperAccessSummary
         access={{
           accessStatus: "FULL_TEXT_AVAILABLE",
+          accessOrigin: "AUTOMATIC",
           accessReason: null,
           accessReasons: ["LANGUAGE_UNSUPPORTED"],
           providerId: "recorded-fixtures",
@@ -31,8 +32,15 @@ describe("Cited Paper access summary", () => {
           hostType: "repository",
           discoveredAt: "2025-01-01T00:00:00Z",
           contentSha256: "a".repeat(64),
+          mediaType: null,
           language: "fr",
           languageDetectorVersion: "0.6",
+          rightsDeclarationVersion: null,
+          rightsDeclarationText: null,
+          rightsDeclaredAt: null,
+          originatingAnalysisRunId: null,
+          originatingRecoveryBatchId: null,
+          originatingRecoveryUploadId: null,
           verificationOutcomes: [],
           evidenceIndexing: null,
         }}
@@ -45,6 +53,46 @@ describe("Cited Paper access summary", () => {
     expect(screen.getByText("Full text was acquired and parsed, but its language was not confirmed as supported English; semantic assessment was not run. Availability is not evidence of support.")).toBeTruthy();
   });
 
+  it("identifies a supplied PDF without inventing a provider or license", () => {
+    render(
+      <CitedPaperAccessSummary
+        access={{
+          accessStatus: "FULL_TEXT_AVAILABLE",
+          accessOrigin: "USER_SUPPLIED",
+          accessReason: null,
+          accessReasons: [],
+          providerId: null,
+          sourceUrl: null,
+          license: null,
+          version: null,
+          hostType: null,
+          discoveredAt: "2025-01-01T00:00:00Z",
+          contentSha256: "b".repeat(64),
+          mediaType: "application/pdf",
+          language: "en",
+          languageDetectorVersion: "0.6",
+          rightsDeclarationVersion: "recovery-v1",
+          rightsDeclarationText: "I may use this copy for private analysis.",
+          rightsDeclaredAt: "2025-01-01T00:00:00Z",
+          originatingAnalysisRunId: "run-id",
+          originatingRecoveryBatchId: "batch-id",
+          originatingRecoveryUploadId: "upload-id",
+          verificationOutcomes: [],
+          evidenceIndexing: null,
+        }}
+        progressStatus="COMPLETED"
+        progressReason={null}
+      />,
+    );
+
+    expect(screen.getByText("Access origin")).toBeTruthy();
+    expect(screen.getByText("User-supplied PDF")).toBeTruthy();
+    expect(screen.getByText("Access recorded")).toBeTruthy();
+    expect(screen.getByText("Supplied PDF SHA-256")).toBeTruthy();
+    expect(screen.queryByText("Discovery provider")).toBeNull();
+    expect(screen.queryByText("License")).toBeNull();
+  });
+
   it.each([
     ["FULL_TEXT_IDENTITY_UNVERIFIED", "The file's identity could not be confirmed from its metadata; it was not sent for evidence assessment."],
     ["FULL_TEXT_IDENTITY_MISMATCH", "The file failed the identity check because of a mismatch or unsupported reference type; it was not sent for evidence assessment."],
@@ -54,6 +102,7 @@ describe("Cited Paper access summary", () => {
       <CitedPaperAccessSummary
         access={{
           accessStatus: "METADATA_ONLY",
+          accessOrigin: "AUTOMATIC",
           accessReason: "FULL_TEXT_ACQUISITION_FAILED",
           accessReasons: [cause],
           providerId: "recorded-fixtures",
@@ -63,8 +112,15 @@ describe("Cited Paper access summary", () => {
           hostType: "repository",
           discoveredAt: "2025-01-01T00:00:00Z",
           contentSha256: null,
+          mediaType: null,
           language: null,
           languageDetectorVersion: null,
+          rightsDeclarationVersion: null,
+          rightsDeclarationText: null,
+          rightsDeclaredAt: null,
+          originatingAnalysisRunId: null,
+          originatingRecoveryBatchId: null,
+          originatingRecoveryUploadId: null,
           verificationOutcomes: [],
           evidenceIndexing: null,
         }}
@@ -81,6 +137,7 @@ describe("Cited Paper access summary", () => {
       <CitedPaperAccessSummary
         access={{
           accessStatus: "METADATA_ONLY",
+          accessOrigin: "AUTOMATIC",
           accessReason: "NO_LEGAL_FULL_TEXT_LOCATION",
           accessReasons: [],
           providerId: "legacy-provider",
@@ -90,8 +147,15 @@ describe("Cited Paper access summary", () => {
           hostType: null,
           discoveredAt: "2025-01-01T00:00:00Z",
           contentSha256: null,
+          mediaType: null,
           language: null,
           languageDetectorVersion: null,
+          rightsDeclarationVersion: null,
+          rightsDeclarationText: null,
+          rightsDeclaredAt: null,
+          originatingAnalysisRunId: null,
+          originatingRecoveryBatchId: null,
+          originatingRecoveryUploadId: null,
           verificationOutcomes: [],
           evidenceIndexing: null,
         }}
@@ -110,6 +174,7 @@ describe("Cited Paper access summary", () => {
       <CitedPaperAccessSummary
         access={{
           accessStatus: "FULL_TEXT_AVAILABLE",
+          accessOrigin: "AUTOMATIC",
           accessReason: null,
           accessReasons: [],
           providerId: "legacy-provider",
@@ -119,8 +184,15 @@ describe("Cited Paper access summary", () => {
           hostType: null,
           discoveredAt: "2025-01-01T00:00:00Z",
           contentSha256: null,
+          mediaType: null,
           language: "fr",
           languageDetectorVersion: "0.5",
+          rightsDeclarationVersion: null,
+          rightsDeclarationText: null,
+          rightsDeclaredAt: null,
+          originatingAnalysisRunId: null,
+          originatingRecoveryBatchId: null,
+          originatingRecoveryUploadId: null,
           verificationOutcomes: [],
           evidenceIndexing: null,
         }}
