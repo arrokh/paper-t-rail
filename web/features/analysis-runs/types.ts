@@ -355,6 +355,7 @@ export type ReferenceResolutionReportResponse = {
       provenanceCaptureStatus: "CAPTURED" | "UNAVAILABLE";
       citedPaperAccess: {
         accessStatus: "FULL_TEXT_AVAILABLE" | "ABSTRACT_ONLY" | "METADATA_ONLY" | "UNAVAILABLE";
+        accessOrigin: "AUTOMATIC" | "USER_SUPPLIED";
         accessReason: "ABSTRACT_ONLY" | "NO_LEGAL_FULL_TEXT_LOCATION" | "NO_ACCESSIBLE_METADATA" | "FULL_TEXT_ACQUISITION_FAILED" | null;
         accessReasons: Array<
           | "NO_ACCESSIBLE_METADATA"
@@ -370,15 +371,22 @@ export type ReferenceResolutionReportResponse = {
           | "FULL_TEXT_IDENTITY_VALIDATION_FAILED"
           | "LANGUAGE_UNSUPPORTED"
         >;
-        providerId: string;
+        providerId: string | null;
         sourceUrl: string | null;
         license: string | null;
         version: string | null;
         hostType: string | null;
         discoveredAt: string;
         contentSha256: string | null;
+        mediaType: string | null;
         language: string | null;
         languageDetectorVersion: string | null;
+        rightsDeclarationVersion: string | null;
+        rightsDeclarationText: string | null;
+        rightsDeclaredAt: string | null;
+        originatingAnalysisRunId: string | null;
+        originatingRecoveryBatchId: string | null;
+        originatingRecoveryUploadId: string | null;
         verificationOutcomes: ClaimReferenceVerificationOutcome[];
         evidenceIndexing: {
           status: "PENDING" | "COMPLETED" | "FAILED";

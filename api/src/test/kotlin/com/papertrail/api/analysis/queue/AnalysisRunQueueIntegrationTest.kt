@@ -100,6 +100,8 @@ import com.papertrail.api.external.unpaywall.RedisUnpaywallDiscoveryCache
 import com.papertrail.api.external.unpaywall.UnpaywallOpenAccessProviderFactory
 import com.papertrail.api.scholarly.acquisition.client.RecordedFixtureOpenAccessProviderFactory
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
+import com.papertrail.api.scholarly.acquisition.domain.UserSuppliedCitedPaperFullText
+import com.papertrail.api.scholarly.acquisition.domain.UserSuppliedCitedPaperProvenance
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
 import com.papertrail.api.scholarly.acquisition.service.PdfBoxCitedPaperTextExtractor
@@ -118,6 +120,7 @@ import com.papertrail.api.analysis.recovery.repository.RecoveryUploadValidationR
 import com.papertrail.api.analysis.recovery.service.RecoveryPdfValidator
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadIdentityService
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
+import com.papertrail.api.analysis.recovery.domain.RecoveryRightsDeclaration
 import com.papertrail.api.analysis.recovery.domain.RecoveryAssetSelectionMethod
 import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityOutcome
 import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibility
@@ -2636,6 +2639,82 @@ class AnalysisRunQueueIntegrationTest {
             setOf("ACCESS_SKIPPED_IDENTITY_UNRESOLVED", "ACCESS_SKIPPED_UNSUPPORTED_REFERENCE_TYPE"),
             skipSpans.map { it.attributes.path("reasonCode").asText() }.toSet(),
         )
+    }
+
+    @Test
+    fun `persists supplied origin and exact rights attribution without automatic provenance`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val resolutionEvents = jdbc.query(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ? ORDER BY created_at, event_id",
+            { rs, _ -> rs.getString(1) },
+            created.analysisRunId,
+            REFERENCE_RESOLUTION_REQUESTED,
+        )
+        resolutionEvents.forEach(referenceResolutionEventHandler()::handle)
+
+        val bibliographyEntryId = jdbc.queryForObject(
+            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? AND local_reference_key = ?",
+            UUID::class.java,
+            created.analysisRunId,
+            "ref1",
+        )!!
+        val repository = CitedPaperAccessRepository(jdbc)
+        val reference = requireNotNull(repository.resolvedReference(created.analysisRunId, bibliographyEntryId))
+        val bytes = englishPdf()
+        val contentSha256 = expectedSha256(bytes)
+        val objectKey = "papers/${reference.canonicalPaperId}/analysis-runs/${created.analysisRunId}/references/$bibliographyEntryId/full-text-$contentSha256.pdf"
+        objectStore.put(objectKey, bytes, "application/pdf")
+        val declaration = RecoveryRightsDeclaration.CURRENT
+        val declaredAt = Instant.parse("2026-10-09T00:00:00Z")
+        val originatingBatchId = UUID.randomUUID()
+        val originatingUploadId = UUID.randomUUID()
+
+        assertTrue(
+            repository.saveUserSupplied(
+                analysisRunId = created.analysisRunId,
+                reference = reference,
+                objectKey = objectKey,
+                fullText = UserSuppliedCitedPaperFullText(bytes, "application/pdf"),
+                provenance = UserSuppliedCitedPaperProvenance(
+                    contentSha256 = contentSha256,
+                    mediaType = "application/pdf",
+                    language = "en",
+                    languageDetectorVersion = "fixture-detector",
+                    rightsDeclarationVersion = declaration.version,
+                    rightsDeclarationText = declaration.text,
+                    rightsDeclaredAt = declaredAt,
+                    originatingAnalysisRunId = created.analysisRunId,
+                    originatingRecoveryBatchId = originatingBatchId,
+                    originatingRecoveryUploadId = originatingUploadId,
+                ),
+                discoveredAt = declaredAt,
+            ),
+        )
+
+        val access = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
+        assertEquals("USER_SUPPLIED", access.accessOrigin.name)
+        assertNull(access.providerId)
+        assertNull(access.sourceUrl)
+        assertNull(access.license)
+        assertEquals(contentSha256, access.contentSha256)
+        assertEquals("application/pdf", access.mediaType)
+        assertEquals("en", access.language)
+        assertEquals("fixture-detector", access.languageDetectorVersion)
+        assertEquals(declaration.version, access.rightsDeclarationVersion)
+        assertEquals(declaration.text, access.rightsDeclarationText)
+        assertEquals(declaredAt, access.rightsDeclaredAt)
+        assertEquals(created.analysisRunId, access.originatingAnalysisRunId)
+        assertEquals(originatingBatchId, access.originatingRecoveryBatchId)
+        assertEquals(originatingUploadId, access.originatingRecoveryUploadId)
+        assertTrue(objectStore.get(objectKey).contentEquals(bytes))
     }
 
     @Test
@@ -5569,6 +5648,24 @@ class AnalysisRunQueueIntegrationTest {
             val automaticIdentityGateMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("automatic_cited_paper_identity_gate.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(automaticIdentityGateMigrationVerification)) }
+            }
+            val suppliedOriginMigration = migrationDirectory.resolve("user_supplied_cited_paper_origin.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(suppliedOriginMigration)) }
+            }
+            val suppliedOriginMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("user_supplied_cited_paper_origin.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(suppliedOriginMigrationVerification)) }
+            }
+            val suppliedOriginMigrationRevert = migrationDirectory.resolveSibling("revert").resolve("user_supplied_cited_paper_origin.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(suppliedOriginMigrationRevert)) }
+            }
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(suppliedOriginMigration)) }
+            }
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(suppliedOriginMigrationVerification)) }
             }
             val recoveryPdfStagingMigration = migrationDirectory.resolve("recovery_pdf_staging.sql")
             dataSource.connection.use { connection ->
