@@ -56,9 +56,14 @@ class ReferenceResolutionRepository(
     fun pendingEntry(analysisRunId: UUID, bibliographyEntryId: UUID): StoredBibliographyReference? = jdbc.query(
         """
         SELECT b.id, b.entry_order, b.local_reference_key, b.raw_text, b.parsed_title,
-               b.parsed_authors::text AS parsed_authors, b.parsed_year, b.parsed_doi, b.reference_type,
-               b.identifiers::text AS identifiers
+               b.parsed_authors::text AS parsed_authors, b.parsed_year,
+               COALESCE(assistance.identifier_value, b.parsed_doi) AS parsed_doi,
+               assistance.identifier_value AS assisted_doi,
+               b.reference_type, b.identifiers::text AS identifiers
           FROM bibliography_entries b
+          LEFT JOIN analysis_run_successor_resolution_assistance assistance
+            ON assistance.successor_analysis_run_id = b.analysis_run_id
+           AND assistance.bibliography_entry_id = b.id
           LEFT JOIN bibliography_entry_resolutions r
             ON r.analysis_run_id = b.analysis_run_id AND r.bibliography_entry_id = b.id
          WHERE b.analysis_run_id = ? AND b.id = ? AND r.bibliography_entry_id IS NULL
@@ -140,7 +145,8 @@ class ReferenceResolutionRepository(
     fun reportEntries(analysisRunId: UUID): List<BibliographyResolutionReportEntry> = jdbc.query(
         """
         SELECT b.entry_order, b.local_reference_key, b.raw_text, b.parsed_title,
-               b.parsed_authors::text AS parsed_authors, b.parsed_year, b.parsed_doi, b.reference_type,
+               b.parsed_authors::text AS parsed_authors, b.parsed_year, b.parsed_doi,
+               assistance.identifier_value AS assisted_doi, b.reference_type,
                CASE
                    WHEN r.bibliography_entry_id IS NOT NULL THEN r.status
                    WHEN task.event_id IS NOT NULL AND task_inbox.event_id IS NOT NULL THEN 'RESOLUTION_FAILED'
@@ -163,6 +169,9 @@ class ReferenceResolutionRepository(
           FROM bibliography_entries b
           LEFT JOIN bibliography_entry_resolutions r
             ON r.analysis_run_id = b.analysis_run_id AND r.bibliography_entry_id = b.id
+          LEFT JOIN analysis_run_successor_resolution_assistance assistance
+            ON assistance.successor_analysis_run_id = b.analysis_run_id
+           AND assistance.bibliography_entry_id = b.id
           -- A terminal request without a persisted domain outcome is an exhausted processing task, not a domain rejection.
           LEFT JOIN LATERAL (
               SELECT event.event_id
@@ -227,25 +236,29 @@ class ReferenceResolutionRepository(
         val bibliographyNormalizationPolicy: BibliographyNormalizationPolicySelection?,
     )
 
-    private fun ResultSet.toStoredReference() = StoredBibliographyReference(
-        id = getObject("id", UUID::class.java),
-        entryOrder = getInt("entry_order"),
-        localReferenceKey = getString("local_reference_key"),
-        rawText = getString("raw_text"),
-        title = getString("parsed_title"),
-        authors = JsonUtil.fromJson(getString("parsed_authors"), JsonUtil.collectionType(List::class.java, String::class.java)),
-        year = getObject("parsed_year", Integer::class.java)?.toInt(),
-        doi = getString("parsed_doi"),
-        referenceType = getString("reference_type"),
-        doiIdentifiers = getString("identifiers")?.let { json ->
+    private fun ResultSet.toStoredReference(): StoredBibliographyReference {
+        val assistedDoi = getString("assisted_doi")
+        val originalDoiIdentifiers = getString("identifiers")?.let { json ->
             JsonUtil.fromJson<List<ParsedBibliographyIdentifier>>(
                 json,
                 JsonUtil.collectionType(List::class.java, ParsedBibliographyIdentifier::class.java),
             )
         }?.filter { it.type?.equals("doi", ignoreCase = true) == true }
             ?.map { it.normalizedValue ?: it.rawValue }
-            .orEmpty(),
-    )
+            .orEmpty()
+        return StoredBibliographyReference(
+            id = getObject("id", UUID::class.java),
+            entryOrder = getInt("entry_order"),
+            localReferenceKey = getString("local_reference_key"),
+            rawText = getString("raw_text"),
+            title = getString("parsed_title"),
+            authors = JsonUtil.fromJson(getString("parsed_authors"), JsonUtil.collectionType(List::class.java, String::class.java)),
+            year = getObject("parsed_year", Integer::class.java)?.toInt(),
+            doi = getString("parsed_doi"),
+            referenceType = getString("reference_type"),
+            doiIdentifiers = assistedDoi?.let(::listOf) ?: originalDoiIdentifiers,
+        )
+    }
 
     private fun listOfNotCapturedLimitation(provenanceCaptureStatus: String?): List<String> =
         if (provenanceCaptureStatus == "CAPTURED") emptyList() else listOf("BIBLIOGRAPHY_PROVENANCE_UNAVAILABLE")
@@ -270,6 +283,7 @@ class ReferenceResolutionRepository(
             authors = JsonUtil.fromJson(getString("parsed_authors"), JsonUtil.collectionType(List::class.java, String::class.java)),
             year = getObject("parsed_year", Integer::class.java)?.toInt(),
             doi = getString("parsed_doi"),
+            assistedDoi = getString("assisted_doi"),
             referenceType = getString("reference_type"),
             status = status ?: "NOT_ATTEMPTED",
             reasonCode = getString("reason_code"),

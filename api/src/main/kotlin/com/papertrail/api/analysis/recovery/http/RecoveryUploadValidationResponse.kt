@@ -1,7 +1,6 @@
 package com.papertrail.api.analysis.recovery.http
 
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
-import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataCandidate
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.Instant
 import java.util.UUID
@@ -37,7 +36,7 @@ data class RecoveryUploadValidationResponse(
     @field:Schema(description = "Explicitly selected exact asset version; null means no version is selected for this entry.", nullable = true)
     val selection: RecoveryUploadAssetSelectionResponse?,
     @field:Schema(description = "Docling-extracted bibliographic text and source provenance; never includes full document text.")
-    val metadataCandidates: List<ParsedBibliographicMetadataCandidate>,
+    val metadataCandidates: List<RecoveryUploadMetadataCandidateResponse>,
     @field:Schema(description = "Language eligibility under the immutable Analysis Run's pinned detector policy.", allowableValues = ["ELIGIBLE", "INELIGIBLE", "INDETERMINATE"])
     val languageEligibility: String,
     val detectedLanguage: String?,
@@ -72,7 +71,7 @@ data class RecoveryUploadValidationResponse(
             identityReasonCode = attempt.identityReasonCode,
             humanConfirmation = humanConfirmation,
             selection = selection,
-            metadataCandidates = attempt.metadataCandidates,
+            metadataCandidates = attempt.metadataCandidates.map(RecoveryUploadMetadataCandidateResponse::from),
             languageEligibility = attempt.languageEligibility.name,
             detectedLanguage = attempt.detectedLanguage,
             languageConfidence = attempt.languageConfidence,

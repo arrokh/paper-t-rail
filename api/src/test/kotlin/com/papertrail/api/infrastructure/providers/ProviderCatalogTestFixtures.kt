@@ -89,6 +89,64 @@ fun configuredExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
     ),
 )
 
+fun configuredExternalSystemOneProviderCatalog(): ProviderCatalog = ProviderCatalog(
+    listOf(
+        ProviderRegistration(
+            role = OPEN_ACCESS_ROLE,
+            providerId = "recorded-fixtures",
+            displayName = "Recorded open-access fixtures",
+            version = "v1",
+            model = null,
+            trustBoundary = ProviderTrustBoundary.LOCAL,
+            enabled = true,
+            dataCategories = setOf(DataCategory.BIBLIOGRAPHIC_METADATA, DataCategory.CITED_PAPER_LOCATION),
+        ),
+        ProviderRegistration(
+            role = SCHOLARLY_METADATA_ROLE,
+            providerId = "recorded-fixtures",
+            displayName = "Recorded metadata fixtures",
+            version = "v1",
+            model = null,
+            trustBoundary = ProviderTrustBoundary.LOCAL,
+            enabled = true,
+            dataCategories = setOf(DataCategory.BIBLIOGRAPHIC_METADATA),
+        ),
+        ProviderRegistration(
+            role = CLAIM_EXTRACTOR_ROLE,
+            providerId = "heuristic",
+            displayName = "Heuristic",
+            version = "v1",
+            model = null,
+            trustBoundary = ProviderTrustBoundary.LOCAL,
+            enabled = true,
+            dataCategories = setOf(DataCategory.CITATION_CONTEXT),
+        ),
+        ProviderRegistration(
+            role = EMBEDDING_ROLE,
+            providerId = "local",
+            displayName = "Local feature-hash embeddings",
+            version = "v1",
+            model = "feature-hash-384-v1",
+            trustBoundary = ProviderTrustBoundary.LOCAL,
+            enabled = true,
+            dataCategories = setOf(DataCategory.CITED_PAPER_CHUNKS, DataCategory.ATOMIC_CLAIMS, DataCategory.EMBEDDING_INPUT),
+            embeddingDimension = 384,
+        ),
+        ProviderRegistration(
+            role = SYSTEM_ONE_ROLE,
+            providerId = "mock",
+            displayName = "External mock verifier for consent lineage tests",
+            version = "v1",
+            model = "mock-v1",
+            trustBoundary = ProviderTrustBoundary.EXTERNAL,
+            enabled = true,
+            dataCategories = setOf(DataCategory.ATOMIC_CLAIMS, DataCategory.EVIDENCE_PASSAGES),
+            retentionDisclosure = "Synthetic integration fixture; submitted data is deleted after 30 days.",
+            configurationFingerprint = "f".repeat(64),
+        ),
+    ),
+)
+
 fun externalProviderConsent(
     catalog: ProviderCatalog,
     providerId: String,

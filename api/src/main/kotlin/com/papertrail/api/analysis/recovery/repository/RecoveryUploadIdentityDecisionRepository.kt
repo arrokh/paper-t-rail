@@ -3,6 +3,7 @@ package com.papertrail.api.analysis.recovery.repository
 import com.papertrail.api.analysis.recovery.domain.RecoveryAssetSelectionMethod
 import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityConfirmation
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentifierConfirmation
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadAssetSelection
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingSettings
 import org.springframework.jdbc.core.JdbcTemplate
@@ -17,7 +18,10 @@ class RecoveryUploadIdentityDecisionRepository(
     private val settings: RecoveryStagingSettings,
 ) {
     @Transactional
-    fun recordConfirmation(confirmation: RecoveryIdentityConfirmation): RecoveryIdentityConfirmation {
+    fun recordConfirmation(
+        confirmation: RecoveryIdentityConfirmation,
+        identifierConfirmation: RecoveryUploadIdentifierConfirmation? = null,
+    ): RecoveryIdentityConfirmation {
         if (!lockActiveUpload(confirmation.batchId, confirmation.uploadId, confirmation.confirmedAt)) {
             throw RecoveryStagingException("RECOVERY_UPLOAD_NOT_FOUND", 404, "An active finalized Recovery Upload was not found.")
         }
@@ -39,15 +43,70 @@ class RecoveryUploadIdentityDecisionRepository(
             CONFIRMATION_VERSION,
             java.sql.Timestamp.from(confirmation.confirmedAt),
         )
-        touchBatch(confirmation.batchId, confirmation.confirmedAt)
-        return confirmation(confirmation.batchId, confirmation.uploadId, confirmation.validationAttemptId)
+        val persisted = confirmation(confirmation.batchId, confirmation.uploadId, confirmation.validationAttemptId)
             ?: throw IllegalStateException("The Recovery Upload confirmation was not persisted.")
+        identifierConfirmation?.let { requested ->
+            require(requested.batchId == confirmation.batchId && requested.uploadId == confirmation.uploadId &&
+                requested.validationAttemptId == confirmation.validationAttemptId && requested.contentSha256 == confirmation.contentSha256) {
+                "The confirmed DOI candidate must belong to the exact confirmed validation attempt."
+            }
+            val existing = persisted.identifierConfirmation
+            if (existing != null && !existing.matches(requested)) {
+                throw RecoveryStagingException(
+                    "RECOVERY_DOI_CANDIDATE_ALREADY_CONFIRMED",
+                    409,
+                    "A different DOI candidate is already confirmed for this validation attempt. Run validation again before changing the identity decision.",
+                )
+            }
+            if (existing == null) {
+                jdbc.update(
+                    """
+                    INSERT INTO recovery_upload_identifier_confirmations (
+                        id, batch_id, upload_id, analysis_run_id, validation_attempt_id,
+                        identity_confirmation_id, content_sha256, identifier_type, identifier_value,
+                        candidate_fingerprint, confirmed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (validation_attempt_id) DO NOTHING
+                    """.trimIndent(),
+                    requested.id,
+                    requested.batchId,
+                    requested.uploadId,
+                    requested.analysisRunId,
+                    requested.validationAttemptId,
+                    persisted.id,
+                    requested.contentSha256,
+                    requested.identifierType,
+                    requested.identifierValue,
+                    requested.candidateFingerprint,
+                    java.sql.Timestamp.from(requested.confirmedAt),
+                )
+            }
+        }
+        touchBatch(confirmation.batchId, confirmation.confirmedAt)
+        val result = confirmation(confirmation.batchId, confirmation.uploadId, confirmation.validationAttemptId)
+            ?: throw IllegalStateException("The Recovery Upload confirmation was not persisted.")
+        if (identifierConfirmation != null && result.identifierConfirmation?.matches(identifierConfirmation) != true) {
+            throw RecoveryStagingException(
+                "RECOVERY_DOI_CANDIDATE_ALREADY_CONFIRMED",
+                409,
+                "A different DOI candidate is already confirmed for this validation attempt. Run validation again before changing the identity decision.",
+            )
+        }
+        return result
     }
 
     fun confirmation(batchId: UUID, uploadId: UUID, attemptId: UUID): RecoveryIdentityConfirmation? = jdbc.query(
         """
-        SELECT confirmation.*
+        SELECT confirmation.*,
+               doi_confirmation.id AS doi_confirmation_id,
+               doi_confirmation.analysis_run_id AS doi_confirmation_analysis_run_id,
+               doi_confirmation.identifier_type AS doi_identifier_type,
+               doi_confirmation.identifier_value AS doi_identifier_value,
+               doi_confirmation.candidate_fingerprint AS doi_candidate_fingerprint,
+               doi_confirmation.confirmed_at AS doi_confirmed_at
           FROM recovery_upload_identity_confirmations confirmation
+          LEFT JOIN recovery_upload_identifier_confirmations doi_confirmation
+            ON doi_confirmation.validation_attempt_id = confirmation.validation_attempt_id
           JOIN recovery_batch_uploads upload ON upload.id = confirmation.upload_id
           JOIN recovery_batches batch ON batch.id = confirmation.batch_id
           JOIN analysis_runs run ON run.id = confirmation.analysis_run_id
@@ -72,6 +131,20 @@ class RecoveryUploadIdentityDecisionRepository(
                 contentSha256 = rs.getString("content_sha256"),
                 decision = rs.getString("decision"),
                 confirmedAt = rs.getTimestamp("confirmed_at").toInstant(),
+                identifierConfirmation = rs.getObject("doi_confirmation_id", UUID::class.java)?.let { id ->
+                    RecoveryUploadIdentifierConfirmation(
+                        id = id,
+                        batchId = rs.getObject("batch_id", UUID::class.java),
+                        uploadId = rs.getObject("upload_id", UUID::class.java),
+                        analysisRunId = rs.getObject("doi_confirmation_analysis_run_id", UUID::class.java),
+                        validationAttemptId = rs.getObject("validation_attempt_id", UUID::class.java),
+                        contentSha256 = rs.getString("content_sha256"),
+                        identifierType = rs.getString("doi_identifier_type"),
+                        identifierValue = rs.getString("doi_identifier_value"),
+                        candidateFingerprint = rs.getString("doi_candidate_fingerprint"),
+                        confirmedAt = rs.getTimestamp("doi_confirmed_at").toInstant(),
+                    )
+                },
             )
         },
         batchId,
@@ -135,7 +208,8 @@ class RecoveryUploadIdentityDecisionRepository(
             """
             UPDATE recovery_batches
                SET last_activity_at = GREATEST(last_activity_at, ?),
-                   expires_at = GREATEST(expires_at, ?)
+                   expires_at = GREATEST(expires_at, ?),
+                   revision = revision + 1
              WHERE id = ? AND status = 'OPEN' AND expires_at > ?
             """.trimIndent(),
             java.sql.Timestamp.from(now),

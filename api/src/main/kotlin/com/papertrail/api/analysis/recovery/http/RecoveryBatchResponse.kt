@@ -16,5 +16,9 @@ data class RecoveryBatchResponse(
     val createdAt: Instant,
     val lastActivityAt: Instant,
     val expiresAt: Instant,
+    @field:Schema(description = "Monotonic revision of the current batch contents; successor requests must submit the revision they inspected.", minimum = "0")
+    val revision: Long,
     val uploads: List<RecoveryUploadResponse>,
+    @field:Schema(description = "Current exact selected assets that remain staged and match their latest validation attempt.")
+    val selectedAssets: List<RecoveryUploadAssetSelectionResponse>,
 )

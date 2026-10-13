@@ -209,7 +209,8 @@ class RecoveryUploadValidationRepository(
             """
             UPDATE recovery_batches
                SET last_activity_at = GREATEST(last_activity_at, ?),
-                   expires_at = GREATEST(expires_at, ?)
+                   expires_at = GREATEST(expires_at, ?),
+                   revision = revision + 1
              WHERE id = ? AND status = 'OPEN' AND expires_at > ?
             """.trimIndent(),
             java.sql.Timestamp.from(now),

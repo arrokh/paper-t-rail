@@ -86,7 +86,14 @@ class RecoveryBatchController(
         @Parameter(description = "Predecessor Analysis Run identifier.", required = true)
         @PathVariable analysisRunId: UUID,
     ): ResponseEntity<List<RecoveryBatchResponse>> {
-        val batch = recoveryStagingService.activeBatch(analysisRunId)
+        val batch = recoveryStagingService.activeBatch(analysisRunId)?.let { activeBatch ->
+            activeBatch.copy(
+                selectedAssets = activeBatch.selectedAssets.filter { selection ->
+                    recoveryUploadValidationService.latest(activeBatch.id, selection.uploadId)
+                        ?.id == selection.validationAttemptId
+                },
+            )
+        }
         return ResponseEntity.ok()
             .cacheControl(CacheControl.noStore())
             .body(listOfNotNull(batch?.toResponse()))
@@ -242,14 +249,14 @@ class RecoveryBatchController(
 
     @Operation(
         summary = "Confirm the exact Recovery Upload version",
-        description = "Records a separate human decision that the exact staged PDF is the cited work or intended version. Only current parser-, identity-, and language-policy NEEDS_CONFIRMATION results can be confirmed; mismatches, unsupported chapter identities, inconclusive legacy book/chapter identities, and stale policy attempts cannot be overridden. This does not change machine metadata, Analysis Run state, language eligibility, or evidence assessment.",
+        description = "Records a separate human decision that the exact staged PDF is the cited work or intended version. When DOI assistance is requested, the researcher must also confirm one normalized DOI candidate and its exact parser/source-location fingerprint from this validation attempt. Only current parser-, identity-, and language-policy NEEDS_CONFIRMATION results can be confirmed; mismatches, unsupported chapter identities, inconclusive legacy book/chapter identities, and stale policy attempts cannot be overridden. This does not change machine metadata, Analysis Run state, language eligibility, or evidence assessment.",
     )
     @ApiResponses(
         value = [
-            ApiResponse(responseCode = "200", description = "Recorded human confirmation for this exact validation attempt", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryIdentityConfirmationResponse::class))]),
-            ApiResponse(responseCode = "400", description = "Explicit confirmation was not provided", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "200", description = "Recorded exact-PDF confirmation and, when requested, an explicit DOI-candidate confirmation", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryIdentityConfirmationResponse::class))]),
+            ApiResponse(responseCode = "400", description = "Exact-PDF confirmation was not provided or DOI and candidate fingerprint were incomplete or invalid", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "409", description = "The attempt is stale, uses an old parser, identity, or language policy, is not inconclusive, or cannot be confirmed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "The attempt is stale, uses an old parser, identity, or language policy, is not inconclusive, the DOI candidate does not belong to the attempt, or a different candidate is already confirmed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/validation/{attemptId}/confirm-identity", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -260,13 +267,20 @@ class RecoveryBatchController(
         @PathVariable uploadId: UUID,
         @Parameter(description = "Persisted validation-attempt identifier.", required = true)
         @PathVariable attemptId: UUID,
-        @RequestBody(description = "Explicit human confirmation for the exact PDF version.", required = true, content = [Content(schema = Schema(implementation = ConfirmRecoveryIdentityRequest::class))])
+        @RequestBody(description = "Explicit exact-PDF confirmation, optionally paired with the normalized DOI and candidate fingerprint selected from this validation response.", required = true, content = [Content(schema = Schema(implementation = ConfirmRecoveryIdentityRequest::class))])
         @Valid @SpringRequestBody request: ConfirmRecoveryIdentityRequest,
     ): ResponseEntity<RecoveryIdentityConfirmationResponse> = ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
         .body(
             RecoveryIdentityConfirmationResponse.from(
-                recoveryUploadIdentityService.confirmExactVersion(batchId, uploadId, attemptId, request.confirmExactVersion),
+                recoveryUploadIdentityService.confirmExactVersion(
+                    batchId,
+                    uploadId,
+                    attemptId,
+                    request.confirmExactVersion,
+                    request.confirmedDoi,
+                    request.doiCandidateFingerprint,
+                ),
             ),
         )
 
@@ -333,7 +347,9 @@ class RecoveryBatchController(
         createdAt = createdAt,
         lastActivityAt = lastActivityAt,
         expiresAt = expiresAt,
+        revision = revision,
         uploads = uploads.map { it.toResponse() },
+        selectedAssets = selectedAssets.map(RecoveryUploadAssetSelectionResponse::from),
     )
 
     private fun RecoveryUpload.toResponse() = RecoveryUploadResponse(

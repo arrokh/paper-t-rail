@@ -57,6 +57,8 @@ export type RecoveryMetadataCandidate = {
   sourceElementId: string | null;
   sourceCharSpanStart: number | null;
   sourceCharSpanEnd: number | null;
+  candidateFingerprint: string;
+  normalizedDoi: string | null;
 };
 
 export type RecoveryUploadValidation = {
@@ -86,6 +88,18 @@ export type RecoveryUploadValidation = {
     contentSha256: string;
     decision: string;
     confirmedAt: string;
+    identifierConfirmation: {
+      id: string;
+      batchId: string;
+      uploadId: string;
+      analysisRunId: string;
+      validationAttemptId: string;
+      contentSha256: string;
+      identifierType: "DOI";
+      identifierValue: string;
+      candidateFingerprint: string;
+      confirmedAt: string;
+    } | null;
   } | null;
   selection: {
     id: string;

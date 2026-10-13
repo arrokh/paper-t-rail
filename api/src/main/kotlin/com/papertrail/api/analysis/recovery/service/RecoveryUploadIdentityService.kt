@@ -6,11 +6,15 @@ import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityOutcome
 import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibility
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadAssetSelection
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentifierConfirmation
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadMetadataCandidateFingerprint
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentityPolicy
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationContext
 import com.papertrail.api.analysis.recovery.domain.RecoveryValidationStatus
 import com.papertrail.api.analysis.recovery.domain.languageEligibilityPolicy
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataField
+import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadIdentityDecisionRepository
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadValidationRepository
 import org.springframework.stereotype.Service
@@ -27,6 +31,8 @@ class RecoveryUploadIdentityService(
         uploadId: UUID,
         validationAttemptId: UUID,
         confirmExactVersion: Boolean,
+        confirmedDoi: String? = null,
+        doiCandidateFingerprint: String? = null,
     ): RecoveryIdentityConfirmation {
         if (!confirmExactVersion) {
             throw RecoveryStagingException("RECOVERY_IDENTITY_CONFIRMATION_REQUIRED", 400, "Explicitly confirm the exact PDF version before continuing.")
@@ -46,6 +52,45 @@ class RecoveryUploadIdentityService(
         if (attempt.contentSha256 != actualSha) {
             throw RecoveryStagingException("RECOVERY_VALIDATION_STALE", 409, "The validated PDF bytes no longer match the staged snapshot.")
         }
+        if ((confirmedDoi == null) != (doiCandidateFingerprint == null)) {
+            throw RecoveryStagingException(
+                "RECOVERY_DOI_CONFIRMATION_INCOMPLETE",
+                400,
+                "Confirm both a normalized DOI and its metadata-candidate fingerprint, or provide neither.",
+            )
+        }
+        val identifierConfirmation = if (confirmedDoi != null && doiCandidateFingerprint != null) {
+            val normalizedDoi = DoiNormalizer.normalize(confirmedDoi)
+            if (normalizedDoi == null || normalizedDoi != confirmedDoi) {
+                throw RecoveryStagingException("RECOVERY_DOI_CONFIRMATION_INVALID", 400, "Provide the canonical lower-case DOI shown for the selected metadata candidate.")
+            }
+            val matchingCandidates = attempt.metadataCandidates.filter { candidate ->
+                candidate.field == ParsedBibliographicMetadataField.DOI &&
+                    RecoveryUploadMetadataCandidateFingerprint.of(candidate) == doiCandidateFingerprint &&
+                    DoiNormalizer.normalize(candidate.value) == normalizedDoi
+            }
+            if (matchingCandidates.size != 1) {
+                throw RecoveryStagingException(
+                    "RECOVERY_DOI_CANDIDATE_NOT_FOUND",
+                    409,
+                    "Choose one DOI candidate and source location from this exact validation attempt.",
+                )
+            }
+            RecoveryUploadIdentifierConfirmation(
+                id = UUID.randomUUID(),
+                batchId = batchId,
+                uploadId = uploadId,
+                analysisRunId = context.upload.analysisRunId,
+                validationAttemptId = attempt.id,
+                contentSha256 = actualSha,
+                identifierType = DOI_IDENTIFIER_TYPE,
+                identifierValue = normalizedDoi,
+                candidateFingerprint = doiCandidateFingerprint,
+                confirmedAt = Instant.now(),
+            )
+        } else {
+            null
+        }
         return decisionRepository.recordConfirmation(
             RecoveryIdentityConfirmation(
                 id = UUID.randomUUID(),
@@ -56,6 +101,7 @@ class RecoveryUploadIdentityService(
                 decision = CONFIRM_EXACT_VERSION,
                 confirmedAt = Instant.now(),
             ),
+            identifierConfirmation,
         )
     }
 
@@ -148,5 +194,6 @@ class RecoveryUploadIdentityService(
 
     companion object {
         const val CONFIRM_EXACT_VERSION = "CONFIRM_EXACT_VERSION"
+        const val DOI_IDENTIFIER_TYPE = "DOI"
     }
 }

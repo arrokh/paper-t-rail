@@ -5,6 +5,8 @@ import com.papertrail.api.analysis.recovery.domain.RecoveryBatchStatus
 import com.papertrail.api.analysis.recovery.domain.RecoveryRightsDeclaration
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
 import com.papertrail.api.analysis.recovery.domain.RecoveryUpload
+import com.papertrail.api.analysis.recovery.domain.RecoveryAssetSelectionMethod
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadAssetSelection
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadStatus
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingSettings
 import org.springframework.jdbc.core.JdbcTemplate
@@ -49,6 +51,41 @@ class RecoveryBatchRepository(
             java.sql.Timestamp.from(now),
         ).firstOrNull() ?: return null
         return loadBatch(batchId)
+    }
+
+    fun activeBatchById(batchId: UUID, now: Instant): RecoveryBatch {
+        val state = jdbc.query(
+            """
+            SELECT batch.status, batch.expires_at,
+                   EXISTS (
+                       SELECT 1
+                         FROM analysis_runs run
+                         JOIN source_documents document ON document.id = run.document_id
+                         LEFT JOIN source_document_tombstones tombstone ON tombstone.document_id = document.id
+                        WHERE run.id = batch.analysis_run_id
+                          AND tombstone.document_id IS NULL
+                   ) AS source_document_active
+              FROM recovery_batches batch
+             WHERE batch.id = ?
+            """.trimIndent(),
+            { rs, _ ->
+                RecoveryBatchActivity(
+                    status = RecoveryBatchStatus.valueOf(rs.getString("status")),
+                    expiresAt = rs.getTimestamp("expires_at").toInstant(),
+                    sourceDocumentActive = rs.getBoolean("source_document_active"),
+                )
+            },
+            batchId,
+        ).firstOrNull() ?: throw RecoveryStagingException("RECOVERY_BATCH_NOT_FOUND", 404, "Recovery Batch not found.")
+
+        if (!state.sourceDocumentActive) {
+            throw RecoveryStagingException("ANALYSIS_RUN_NOT_FOUND", 404, "Analysis Run not found.")
+        }
+        if (state.status != RecoveryBatchStatus.OPEN || state.expiresAt <= now) {
+            throw RecoveryStagingException("RECOVERY_BATCH_EXPIRED", 410, "This Recovery Batch has expired.")
+        }
+        return loadBatch(batchId)
+            ?: throw RecoveryStagingException("RECOVERY_BATCH_NOT_FOUND", 404, "Recovery Batch not found.")
     }
 
     @Transactional
@@ -417,7 +454,7 @@ class RecoveryBatchRepository(
             batchId,
         )
         jdbc.update(
-            "UPDATE recovery_batches SET status = 'EXPIRED', expired_at = ? WHERE id = ? AND status = 'OPEN'",
+            "UPDATE recovery_batches SET status = 'EXPIRED', expired_at = ?, revision = revision + 1 WHERE id = ? AND status = 'OPEN'",
             java.sql.Timestamp.from(now),
             batchId,
         )
@@ -445,7 +482,7 @@ class RecoveryBatchRepository(
 
     private fun touchBatch(batchId: UUID, now: Instant) {
         jdbc.update(
-            "UPDATE recovery_batches SET last_activity_at = ?, expires_at = ? WHERE id = ? AND status = 'OPEN'",
+            "UPDATE recovery_batches SET last_activity_at = ?, expires_at = ?, revision = revision + 1 WHERE id = ? AND status = 'OPEN'",
             java.sql.Timestamp.from(now),
             java.sql.Timestamp.from(now.plusSeconds(settings.inactivityTtlSeconds)),
             batchId,
@@ -471,7 +508,39 @@ class RecoveryBatchRepository(
             { rs, _ -> mapUpload(rs) },
             batchId,
         )
-        return batch.copy(uploads = uploads)
+        val selectedAssets = jdbc.query(
+            """
+            SELECT selection.*
+              FROM recovery_upload_asset_selections selection
+              JOIN recovery_batch_uploads upload ON upload.id = selection.upload_id
+             WHERE selection.batch_id = ?
+               AND upload.status = 'STAGED'
+               AND upload.actual_sha256 = selection.content_sha256
+               AND selection.validation_attempt_id = (
+                   SELECT latest.id
+                     FROM recovery_upload_validation_attempts latest
+                    WHERE latest.upload_id = selection.upload_id
+                    ORDER BY latest.created_at DESC, latest.id DESC
+                    LIMIT 1
+               )
+             ORDER BY selection.bibliography_entry_id
+            """.trimIndent(),
+            { rs, _ ->
+                RecoveryUploadAssetSelection(
+                    id = rs.getObject("id", UUID::class.java),
+                    batchId = rs.getObject("batch_id", UUID::class.java),
+                    analysisRunId = rs.getObject("analysis_run_id", UUID::class.java),
+                    bibliographyEntryId = rs.getObject("bibliography_entry_id", UUID::class.java),
+                    uploadId = rs.getObject("upload_id", UUID::class.java),
+                    validationAttemptId = rs.getObject("validation_attempt_id", UUID::class.java),
+                    contentSha256 = rs.getString("content_sha256"),
+                    selectionMethod = RecoveryAssetSelectionMethod.valueOf(rs.getString("selection_method")),
+                    selectedAt = rs.getTimestamp("selected_at").toInstant(),
+                )
+            },
+            batchId,
+        )
+        return batch.copy(uploads = uploads, selectedAssets = selectedAssets)
     }
 
     private fun loadUpload(uploadId: UUID, batchId: UUID? = null): RecoveryUpload? {
@@ -510,7 +579,9 @@ class RecoveryBatchRepository(
         createdAt = rs.getTimestamp("created_at").toInstant(),
         lastActivityAt = rs.getTimestamp("last_activity_at").toInstant(),
         expiresAt = rs.getTimestamp("expires_at").toInstant(),
+        revision = rs.getLong("revision"),
         uploads = emptyList(),
+        selectedAssets = emptyList(),
     )
 
     private fun mapUpload(rs: ResultSet) = RecoveryUpload(
@@ -535,3 +606,9 @@ class RecoveryBatchRepository(
         finalizedAt = rs.getTimestamp("finalized_at")?.toInstant(),
     )
 }
+
+private data class RecoveryBatchActivity(
+    val status: RecoveryBatchStatus,
+    val expiresAt: Instant,
+    val sourceDocumentActive: Boolean,
+)
