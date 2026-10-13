@@ -140,11 +140,13 @@ class RecoveryUploadValidationRepository(
                 id, batch_id, upload_id, analysis_run_id, content_sha256,
                 parser_id, parser_version, metadata_extraction_policy_version, identity_policy_version, parser_options,
                 language_detector_id, language_detector_version, minimum_language_confidence,
+                minimum_extracted_characters, language_policy_fingerprint,
                 validation_status, identity_outcome, identity_reason_code, metadata_candidates,
                 language_eligibility, detected_language, language_confidence, language_reason_code,
                 failure_code, created_at
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?::jsonb, ?, ?, ?, ?, ?, ?
             )
             """.trimIndent(),
             attempt.id,
@@ -160,6 +162,8 @@ class RecoveryUploadValidationRepository(
             attempt.languageDetectorId,
             attempt.languageDetectorVersion,
             attempt.minimumLanguageConfidence,
+            attempt.minimumExtractedCharacters,
+            attempt.languagePolicyFingerprint,
             attempt.validationStatus.name,
             attempt.identityOutcome?.name,
             attempt.identityReasonCode,
@@ -259,6 +263,8 @@ class RecoveryUploadValidationRepository(
         languageDetectorId = getString("language_detector_id"),
         languageDetectorVersion = getString("language_detector_version"),
         minimumLanguageConfidence = getDouble("minimum_language_confidence"),
+        minimumExtractedCharacters = getInt("minimum_extracted_characters").let { if (wasNull()) null else it },
+        languagePolicyFingerprint = getString("language_policy_fingerprint"),
         validationStatus = RecoveryValidationStatus.valueOf(getString("validation_status")),
         identityOutcome = getString("identity_outcome")?.let(RecoveryIdentityOutcome::valueOf),
         identityReasonCode = getString("identity_reason_code"),

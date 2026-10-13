@@ -73,6 +73,8 @@ export type RecoveryUploadValidation = {
   languageDetectorId: string;
   languageDetectorVersion: string;
   minimumLanguageConfidence: number;
+  minimumExtractedCharacters?: number | null;
+  languagePolicyFingerprint?: string | null;
   validationStatus: RecoveryValidationStatus;
   identityOutcome: RecoveryIdentityOutcome | null;
   identityReasonCode: string | null;

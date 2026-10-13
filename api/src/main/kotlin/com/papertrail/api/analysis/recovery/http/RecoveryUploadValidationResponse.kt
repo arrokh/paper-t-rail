@@ -23,6 +23,10 @@ data class RecoveryUploadValidationResponse(
     val languageDetectorId: String,
     val languageDetectorVersion: String,
     val minimumLanguageConfidence: Double,
+    @field:Schema(description = "Minimum extracted text characters required before language detection; null means this older attempt did not record the threshold.", nullable = true)
+    val minimumExtractedCharacters: Int?,
+    @field:Schema(description = "SHA-256 fingerprint of the versioned language-eligibility policy used for this attempt; null means compatibility cannot be established.", nullable = true, pattern = "^[0-9a-f]{64}$")
+    val languagePolicyFingerprint: String?,
     @field:Schema(description = "Attempt execution state; this does not indicate identity or evidence assessment.", allowableValues = ["COMPLETED", "FAILED"])
     val validationStatus: String,
     @field:Schema(description = "Machine identity result only; a human confirmation is recorded separately.", nullable = true, allowableValues = ["VALIDATED", "NEEDS_CONFIRMATION", "MISMATCH"])
@@ -61,6 +65,8 @@ data class RecoveryUploadValidationResponse(
             languageDetectorId = attempt.languageDetectorId,
             languageDetectorVersion = attempt.languageDetectorVersion,
             minimumLanguageConfidence = attempt.minimumLanguageConfidence,
+            minimumExtractedCharacters = attempt.minimumExtractedCharacters,
+            languagePolicyFingerprint = attempt.languagePolicyFingerprint,
             validationStatus = attempt.validationStatus.name,
             identityOutcome = attempt.identityOutcome?.name,
             identityReasonCode = attempt.identityReasonCode,

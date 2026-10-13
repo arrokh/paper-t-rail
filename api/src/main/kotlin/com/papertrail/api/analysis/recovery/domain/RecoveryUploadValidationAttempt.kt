@@ -18,6 +18,8 @@ data class RecoveryUploadValidationAttempt(
     val languageDetectorId: String,
     val languageDetectorVersion: String,
     val minimumLanguageConfidence: Double,
+    val minimumExtractedCharacters: Int? = null,
+    val languagePolicyFingerprint: String? = null,
     val validationStatus: RecoveryValidationStatus,
     val identityOutcome: RecoveryIdentityOutcome?,
     val identityReasonCode: String?,
@@ -28,4 +30,11 @@ data class RecoveryUploadValidationAttempt(
     val languageReasonCode: String,
     val failureCode: String?,
     val createdAt: Instant,
-)
+) {
+    fun matchesLanguagePolicy(policy: RecoveryLanguageEligibilityPolicy): Boolean =
+        languageDetectorId == policy.detectorId &&
+            languageDetectorVersion == policy.detectorVersion &&
+            minimumLanguageConfidence == policy.minimumConfidence &&
+            minimumExtractedCharacters == policy.minimumExtractedCharacters &&
+            languagePolicyFingerprint == policy.fingerprint
+}
