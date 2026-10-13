@@ -34,9 +34,15 @@ class SuccessorRunSubmissionService(
 ) {
     fun submit(batchId: UUID, request: SuccessorRunSubmissionRequest): SuccessorSubmissionResult {
         val requestFingerprint = requestFingerprint(request)
-        submissionRepository.existingSubmission(batchId)?.let {
-            assertReplayOrConflict(it, request, requestFingerprint)
-            return it.replay().toResult()
+        submissionRepository.existingSubmission(batchId)?.let { existing ->
+            val replayed = transactionTemplate.execute<PersistedSuccessorSubmission> {
+                lockActiveAnalysisRun(existing.predecessorAnalysisRunId)
+                val current = submissionRepository.existingSubmission(batchId)
+                    ?: throw RecoveryStagingException("RECOVERY_BATCH_NOT_FOUND", 404, "Recovery Batch not found.")
+                assertReplayOrConflict(current, request, requestFingerprint)
+                current.replay()
+            } ?: throw IllegalStateException("Successor replay transaction returned no result.")
+            return replayed.toResult()
         }
 
         val previewRequest = SuccessorRunPreviewRequest(request.expectedRevision, request.configuration)
@@ -59,11 +65,7 @@ class SuccessorRunSubmissionService(
         val context = submissionRepository.submissionContext(batchId)
             ?: throw RecoveryStagingException("RECOVERY_BATCH_NOT_FOUND", 404, "Recovery Batch not found.")
         val persisted = transactionTemplate.execute {
-            try {
-                sourceDocumentRepository.lockActiveAnalysisRun(context.predecessorAnalysisRunId)
-            } catch (_: SourceDocumentDeletedException) {
-                throw RecoveryStagingException("ANALYSIS_RUN_NOT_FOUND", 404, "The predecessor Analysis Run or its Source Document was deleted.")
-            }
+            lockActiveAnalysisRun(context.predecessorAnalysisRunId)
             val predecessor = submissionRepository.lockPredecessor(context.predecessorAnalysisRunId)
                 ?: throw RecoveryStagingException("ANALYSIS_RUN_NOT_FOUND", 404, "Analysis Run not found.")
             if (predecessor.documentId != context.documentId) {
@@ -151,6 +153,14 @@ class SuccessorRunSubmissionService(
             throw RecoveryStagingException("SELECTED_ASSET_HASH_MISMATCH", 409, "Selected finalized asset no longer matches its recorded size and SHA-256.")
         }
         return bytes
+    }
+
+    private fun lockActiveAnalysisRun(analysisRunId: UUID) {
+        try {
+            sourceDocumentRepository.lockActiveAnalysisRun(analysisRunId)
+        } catch (_: SourceDocumentDeletedException) {
+            throw RecoveryStagingException("ANALYSIS_RUN_NOT_FOUND", 404, "The predecessor Analysis Run or its Source Document was deleted.")
+        }
     }
 
     private fun ensureEligible(eligible: Boolean, blockers: List<String>) {

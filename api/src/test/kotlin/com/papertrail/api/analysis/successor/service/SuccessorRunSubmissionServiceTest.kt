@@ -22,6 +22,7 @@ import com.papertrail.api.analysis.successor.domain.SuccessorStageDecision
 import com.papertrail.api.analysis.successor.domain.SuccessorWorkDisposition
 import com.papertrail.api.analysis.successor.http.SuccessorRunPreviewRequest
 import com.papertrail.api.analysis.successor.http.SuccessorRunSubmissionRequest
+import com.papertrail.api.analysis.successor.repository.PersistedSuccessorSubmission
 import com.papertrail.api.analysis.successor.repository.SubmissionContext
 import com.papertrail.api.analysis.successor.repository.SuccessorRunSubmissionRepository
 import com.papertrail.api.document.domain.SourceDocumentDeletedException
@@ -88,6 +89,7 @@ class SuccessorRunSubmissionServiceTest {
         val selectedPlan = SuccessorSelectedEntryPlan(
             predecessorBibliographyEntryId = entryId, localReferenceKey = "ref1", uploadId = uploadId,
             contentSha256 = hash,
+            assistedDoi = null,
             stages = listOf(SuccessorStageDecision("selected-access", SuccessorWorkDisposition.REPROCESS, "EXACT_USER_SELECTED_ASSET")),
             blockers = emptyList(),
         )
@@ -134,6 +136,49 @@ class SuccessorRunSubmissionServiceTest {
         verify(sourceDocumentRepository).lockActiveAnalysisRun(predecessorRunId)
         verify(submissionRepository, Mockito.never()).lockPredecessor(predecessorRunId)
         verify(submissionRepository, Mockito.never()).lockBatch(batchId)
+    }
+
+    @Test
+    fun `idempotent replay checks source deletion before returning the stored successor`() {
+        val batchId = UUID.randomUUID()
+        val predecessorRunId = UUID.randomUUID()
+        val idempotencyKey = UUID.randomUUID()
+        val request = SuccessorRunSubmissionRequest(idempotencyKey, expectedRevision = 3, configuration = RunConfigurationRequest())
+        val existing = PersistedSuccessorSubmission(
+            id = UUID.randomUUID(),
+            batchId = batchId,
+            predecessorAnalysisRunId = predecessorRunId,
+            successorAnalysisRunId = UUID.randomUUID(),
+            idempotencyKey = idempotencyKey,
+            requestFingerprint = "a".repeat(64),
+            planFingerprint = "b".repeat(64),
+            revision = 3,
+            selectedEntryCount = 1,
+            retainedEntryCount = 0,
+            queuedEntryCount = 1,
+        )
+        val submissionRepository = Mockito.mock(SuccessorRunSubmissionRepository::class.java)
+        `when`(submissionRepository.existingSubmission(batchId)).thenReturn(existing)
+        val sourceDocumentRepository = Mockito.mock(SourceDocumentRepository::class.java)
+        doThrow(SourceDocumentDeletedException()).`when`(sourceDocumentRepository).lockActiveAnalysisRun(predecessorRunId)
+        val transactionManager = Mockito.mock(PlatformTransactionManager::class.java)
+        `when`(transactionManager.getTransaction(Mockito.any(TransactionDefinition::class.java))).thenReturn(SimpleTransactionStatus())
+        val service = SuccessorRunSubmissionService(
+            successorRunService = Mockito.mock(SuccessorRunService::class.java),
+            recoveryBatchRepository = Mockito.mock(RecoveryBatchRepository::class.java),
+            recoveryUploadValidationService = Mockito.mock(RecoveryUploadValidationService::class.java),
+            sourceDocumentRepository = sourceDocumentRepository,
+            submissionRepository = submissionRepository,
+            objectStore = Mockito.mock(SourceDocumentObjectStore::class.java),
+            transactionTemplate = TransactionTemplate(transactionManager),
+            configurationFactory = Mockito.mock(RunConfigurationFactory::class.java),
+        )
+
+        val failure = assertThrows(RecoveryStagingException::class.java) { service.submit(batchId, request) }
+
+        assertEquals("ANALYSIS_RUN_NOT_FOUND", failure.code)
+        verify(sourceDocumentRepository).lockActiveAnalysisRun(predecessorRunId)
+        verify(submissionRepository, Mockito.times(1)).existingSubmission(batchId)
     }
 
     private fun anyInstant(): Instant = Mockito.any(Instant::class.java) ?: Instant.EPOCH

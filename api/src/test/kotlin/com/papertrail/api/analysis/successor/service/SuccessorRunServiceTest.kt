@@ -19,19 +19,27 @@ import com.papertrail.api.analysis.recovery.domain.RecoveryUpload
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadAssetSelection
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadStatus
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
+import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityConfirmation
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentifierConfirmation
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadMetadataCandidateFingerprint
 import com.papertrail.api.analysis.recovery.domain.RecoveryValidationStatus
 import com.papertrail.api.analysis.recovery.repository.RecoveryBatchRepository
+import com.papertrail.api.analysis.recovery.repository.RecoveryUploadIdentityDecisionRepository
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
 import com.papertrail.api.analysis.successor.domain.SuccessorWorkDisposition
 import com.papertrail.api.analysis.successor.http.SuccessorRunPreviewRequest
+import com.papertrail.api.analysis.successor.repository.SuccessorAccessProviderSnapshot
 import com.papertrail.api.analysis.successor.repository.SuccessorEntrySnapshot
 import com.papertrail.api.analysis.successor.repository.SuccessorPredecessorSnapshot
 import com.papertrail.api.analysis.successor.repository.SuccessorReferenceKey
 import com.papertrail.api.analysis.successor.repository.SuccessorRunPreviewRepository
 import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataCandidate
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataExtractionMethod
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataField
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -61,14 +69,14 @@ class SuccessorRunServiceTest {
                 "reference-resolution" to SuccessorWorkDisposition.REUSE,
                 "selected-access" to SuccessorWorkDisposition.REPROCESS,
                 "cited-paper-parse" to SuccessorWorkDisposition.REPROCESS,
-                "evidence-retrieval" to SuccessorWorkDisposition.REUSE,
+                "evidence-retrieval" to SuccessorWorkDisposition.REPROCESS,
                 "claim-verification" to SuccessorWorkDisposition.REPROCESS,
             ),
             first.selectedEntries.single().stages.associate { it.stage to it.disposition },
         )
         assertEquals(first.planFingerprint, repeated.planFingerprint)
         assertTrue(first.planFingerprint.matches(Regex("[0-9a-f]{64}")))
-        assertEquals(listOf("evidence-embedding", "claim-verification"), first.expectedProviderWork.map { it.stage })
+        assertEquals(listOf("cited-paper-parser", "evidence-embedding", "claim-verification"), first.expectedProviderWork.map { it.stage })
     }
 
     @Test
@@ -153,6 +161,136 @@ class SuccessorRunServiceTest {
     }
 
     @Test
+    fun `preview blocks unmatched access provider provenance omitted from a legacy snapshot`() {
+        val legacySnapshot = com.papertrail.api.utils.JsonUtil.parseTree(
+            com.papertrail.api.utils.JsonUtil.toJson(configuration()),
+        ) as com.fasterxml.jackson.databind.node.ObjectNode
+        legacySnapshot.remove(listOf("openAccess", "openAccessProviderConfigurationFingerprint", "openAccessRetentionDisclosure"))
+        val legacyConfiguration = com.papertrail.api.utils.JsonUtil.fromJson(
+            legacySnapshot.toString(),
+            AnalysisConfigurationSnapshot::class.java,
+        )
+        assertEquals("recorded-fixtures", legacyConfiguration.openAccess.provider)
+        val fixture = fixture(predecessorConfiguration = legacyConfiguration)
+        Mockito.`when`(fixture.previewRepository.accessProviders(fixture.batch.analysisRunId)).thenReturn(
+            listOf(SuccessorAccessProviderSnapshot(UUID.randomUUID(), "unpaywall")),
+        )
+
+        val plan = fixture.service.preview(fixture.batch.id, fixture.request)
+
+        assertFalse(plan.eligible)
+        assertTrue(plan.blockers.contains("PREDECESSOR_ACCESS_PROVIDER_PROVENANCE_UNVERIFIABLE"))
+    }
+
+    @Test
+    fun `preview retries unresolved identity only with a DOI from the human-confirmed exact PDF`() {
+        val fixture = fixture()
+        val uploadId = fixture.batch.selectedAssets.single().uploadId
+        val candidate = ParsedBibliographicMetadataCandidate(
+            field = ParsedBibliographicMetadataField.DOI,
+            value = "doi: 10.5555/assisted.identity",
+            pageNumber = 1,
+            sourceLabel = "doi",
+            extractionMethod = ParsedBibliographicMetadataExtractionMethod.EXPLICIT_DOI_PREFIX,
+        )
+        val attempt = requireNotNull(fixture.validationService.latest(fixture.batch.id, uploadId)).copy(
+            identityOutcome = RecoveryIdentityOutcome.NEEDS_CONFIRMATION,
+            metadataCandidates = listOf(candidate),
+        )
+        val selection = fixture.batch.selectedAssets.single().copy(
+            selectionMethod = RecoveryAssetSelectionMethod.HUMAN_CONFIRMED,
+        )
+        val batch = fixture.batch.copy(selectedAssets = listOf(selection))
+        Mockito.`when`(fixture.batchRepository.activeBatchById(anyUuid(), anyInstant())).thenReturn(batch)
+        Mockito.`when`(fixture.validationService.latest(fixture.batch.id, uploadId)).thenReturn(attempt)
+        val fingerprint = RecoveryUploadMetadataCandidateFingerprint.of(candidate)
+        val identifierConfirmation = RecoveryUploadIdentifierConfirmation(
+            id = UUID.randomUUID(),
+            batchId = fixture.batch.id,
+            uploadId = uploadId,
+            analysisRunId = fixture.batch.analysisRunId,
+            validationAttemptId = attempt.id,
+            contentSha256 = fixture.upload.actualSha256!!,
+            identifierType = "DOI",
+            identifierValue = "10.5555/assisted.identity",
+            candidateFingerprint = fingerprint,
+            confirmedAt = Instant.parse("2026-10-13T00:00:00Z"),
+        )
+        Mockito.`when`(fixture.identityDecisionRepository.confirmation(fixture.batch.id, uploadId, attempt.id)).thenReturn(
+            RecoveryIdentityConfirmation(
+                id = UUID.randomUUID(),
+                batchId = fixture.batch.id,
+                uploadId = uploadId,
+                validationAttemptId = attempt.id,
+                contentSha256 = attempt.contentSha256,
+                decision = "CONFIRM_EXACT_VERSION",
+                confirmedAt = identifierConfirmation.confirmedAt,
+                identifierConfirmation = identifierConfirmation,
+            ),
+        )
+        Mockito.`when`(fixture.previewRepository.selectedEntry(fixture.batch.analysisRunId, selection.bibliographyEntryId)).thenReturn(
+            SuccessorEntrySnapshot(
+                bibliographyEntryId = selection.bibliographyEntryId,
+                localReferenceKey = "ref1",
+                entryOrder = 0,
+                referenceType = "JOURNAL_ARTICLE",
+                resolutionStatus = "UNRESOLVED",
+                canonicalPaperId = null,
+                claimCount = 1,
+            ),
+        )
+
+        val plan = fixture.service.preview(fixture.batch.id, fixture.request)
+
+        assertTrue(plan.eligible, plan.blockers.joinToString())
+        assertEquals("10.5555/assisted.identity", plan.selectedEntries.single().assistedDoi)
+        assertEquals(
+            "HUMAN_CONFIRMED_IDENTIFIER_ASSISTANCE",
+            plan.selectedEntries.single().stages.single { it.stage == "reference-resolution" }.reasonCode,
+        )
+        assertEquals(
+            listOf("cited-paper-parser", "evidence-embedding", "claim-verification", "reference-resolution"),
+            plan.expectedProviderWork.map { it.stage },
+        )
+
+        Mockito.`when`(fixture.identityDecisionRepository.confirmation(fixture.batch.id, uploadId, attempt.id)).thenReturn(null)
+        val unconfirmedPlan = fixture.service.preview(fixture.batch.id, fixture.request)
+        assertFalse(unconfirmedPlan.eligible)
+        assertEquals(null, unconfirmedPlan.selectedEntries.single().assistedDoi)
+        assertTrue(unconfirmedPlan.blockers.contains("SELECTED_ENTRY_NOT_RESOLVED"))
+
+        Mockito.`when`(fixture.identityDecisionRepository.confirmation(fixture.batch.id, uploadId, attempt.id)).thenReturn(
+            RecoveryIdentityConfirmation(
+                id = UUID.randomUUID(),
+                batchId = fixture.batch.id,
+                uploadId = uploadId,
+                validationAttemptId = attempt.id,
+                contentSha256 = attempt.contentSha256,
+                decision = "CONFIRM_EXACT_VERSION",
+                confirmedAt = identifierConfirmation.confirmedAt,
+                identifierConfirmation = identifierConfirmation,
+            ),
+        )
+        Mockito.`when`(fixture.previewRepository.selectedEntry(fixture.batch.analysisRunId, selection.bibliographyEntryId)).thenReturn(
+            SuccessorEntrySnapshot(
+                bibliographyEntryId = selection.bibliographyEntryId,
+                localReferenceKey = "ref1",
+                entryOrder = 0,
+                referenceType = "REPORT",
+                resolutionStatus = "UNRESOLVED",
+                canonicalPaperId = null,
+                claimCount = 1,
+            ),
+        )
+
+        val unsupportedTypePlan = fixture.service.preview(fixture.batch.id, fixture.request)
+
+        assertFalse(unsupportedTypePlan.eligible)
+        assertNull(unsupportedTypePlan.selectedEntries.single().assistedDoi)
+        assertTrue(unsupportedTypePlan.blockers.contains("SELECTED_ENTRY_REFERENCE_TYPE_UNSUPPORTED"))
+    }
+
+    @Test
     fun `preview reports changed retrieval configuration as reprocess with a separate invalidation reason`() {
         val fixture = fixture(
             successorConfiguration = configuration().copy(
@@ -166,7 +304,7 @@ class SuccessorRunServiceTest {
         assertFalse(plan.eligible)
         assertTrue(plan.invalidationReasons.contains("EVIDENCE_RETRIEVAL_CONFIGURATION_CHANGED"))
         assertEquals(SuccessorWorkDisposition.REPROCESS, retrieval.disposition)
-        assertEquals("EVIDENCE_RETRIEVAL_CONFIGURATION_CHANGED", retrieval.reasonCode)
+        assertEquals("SELECTED_ASSET_RETRIEVED_FOR_SUCCESSOR", retrieval.reasonCode)
     }
 
     @Test
@@ -288,6 +426,7 @@ class SuccessorRunServiceTest {
                 bibliographyEntryId = entryId,
                 localReferenceKey = "ref1",
                 entryOrder = 0,
+                referenceType = "JOURNAL_ARTICLE",
                 resolutionStatus = "RESOLVED",
                 canonicalPaperId = UUID.randomUUID(),
                 claimCount = 1,
@@ -303,14 +442,17 @@ class SuccessorRunServiceTest {
         )
         val configurationFactory = Mockito.mock(RunConfigurationFactory::class.java)
         Mockito.`when`(configurationFactory.from(request.configuration)).thenReturn(successorConfiguration)
+        val identityDecisionRepository = Mockito.mock(RecoveryUploadIdentityDecisionRepository::class.java)
         return Fixture(
-            service = SuccessorRunService(batchRepository, validationService, previewRepository, configurationFactory),
+            service = SuccessorRunService(batchRepository, validationService, previewRepository, configurationFactory, identityDecisionRepository),
+            batchRepository = batchRepository,
             batch = batch,
             upload = upload,
             request = request,
             validationService = validationService,
             previewRepository = previewRepository,
             configurationFactory = configurationFactory,
+            identityDecisionRepository = identityDecisionRepository,
         )
     }
 
@@ -341,11 +483,13 @@ class SuccessorRunServiceTest {
 
     private data class Fixture(
         val service: SuccessorRunService,
+        val batchRepository: RecoveryBatchRepository,
         val batch: RecoveryBatch,
         val upload: RecoveryUpload,
         val request: SuccessorRunPreviewRequest,
         val validationService: RecoveryUploadValidationService,
         val previewRepository: SuccessorRunPreviewRepository,
         val configurationFactory: RunConfigurationFactory,
+        val identityDecisionRepository: RecoveryUploadIdentityDecisionRepository,
     )
 }

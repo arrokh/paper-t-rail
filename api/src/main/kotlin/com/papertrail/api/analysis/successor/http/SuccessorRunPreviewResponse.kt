@@ -47,6 +47,8 @@ data class SuccessorEntryPlanResponse(
     val uploadId: UUID,
     @field:Schema(description = "Exact finalized asset SHA-256.", pattern = "^[0-9a-f]{64}$")
     val contentSha256: String,
+    @field:Schema(description = "A DOI extracted from this exact upload and available for a human-confirmed unresolved-identity retry; null when no such assistance is available.", nullable = true)
+    val assistedDoi: String?,
     @field:Schema(description = "Fresh same-run processing decisions for the selected entry.")
     val stages: List<SuccessorStageDecisionResponse>,
     @field:Schema(description = "Entry-specific blockers, if any.")
@@ -91,6 +93,7 @@ private fun SuccessorSelectedEntryPlan.toResponse() = SuccessorEntryPlanResponse
     localReferenceKey = localReferenceKey,
     uploadId = uploadId,
     contentSha256 = contentSha256,
+    assistedDoi = assistedDoi,
     stages = stages.map(SuccessorStageDecision::toResponse),
     blockers = blockers,
 )

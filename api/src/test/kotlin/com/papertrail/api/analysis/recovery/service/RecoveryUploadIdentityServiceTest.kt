@@ -3,12 +3,15 @@ package com.papertrail.api.analysis.recovery.service
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.ProviderSelection
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
+import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityConfirmation
 import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityOutcome
 import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibility
 import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibilityPolicy
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
 import com.papertrail.api.analysis.recovery.domain.RecoveryUpload
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentityPolicy
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentifierConfirmation
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadMetadataCandidateFingerprint
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadStatus
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationContext
@@ -17,6 +20,8 @@ import com.papertrail.api.analysis.recovery.repository.RecoveryUploadIdentityDec
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadValidationRepository
 import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataCandidate
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataExtractionMethod
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataField
 import com.papertrail.api.external.docling.DoclingCitedPaperPdfParser
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -136,6 +141,59 @@ class RecoveryUploadIdentityServiceTest {
 
         assertEquals("RECOVERY_VALIDATION_STALE", hashRejection.code)
         Mockito.verifyNoInteractions(decisions)
+
+        val doi = "10.5555/identity.confirmed"
+        val candidate = ParsedBibliographicMetadataCandidate(
+            field = ParsedBibliographicMetadataField.DOI,
+            value = "doi: $doi",
+            pageNumber = 1,
+            sourceLabel = "footer text",
+            extractionMethod = ParsedBibliographicMetadataExtractionMethod.DOCLING_LABEL,
+            sourceElementId = "footer-2",
+            sourceCharSpanStart = 880,
+            sourceCharSpanEnd = 910,
+        )
+        val needsConfirmation = priorAttempt.copy(
+            identityOutcome = RecoveryIdentityOutcome.NEEDS_CONFIRMATION,
+            minimumExtractedCharacters = 200,
+            languagePolicyFingerprint = RecoveryLanguageEligibilityPolicy("optimaize", "0.6", 200, 0.65).fingerprint,
+            metadataCandidates = listOf(candidate),
+        )
+        Mockito.`when`(validationRepository.validationContext(anyUuid(), anyUuid(), anyInstant())).thenReturn(context)
+        Mockito.`when`(validationRepository.latestAttempt(anyUuid(), anyUuid(), anyInstant())).thenReturn(needsConfirmation)
+        val wrongCandidate = candidate.copy(sourceElementId = "header-1")
+        val wrongCandidateFailure = assertThrows(RecoveryStagingException::class.java) {
+            service.confirmExactVersion(
+                batchId,
+                uploadId,
+                needsConfirmation.id,
+                confirmExactVersion = true,
+                confirmedDoi = doi,
+                doiCandidateFingerprint = RecoveryUploadMetadataCandidateFingerprint.of(wrongCandidate),
+            )
+        }
+        assertEquals("RECOVERY_DOI_CANDIDATE_NOT_FOUND", wrongCandidateFailure.code)
+        Mockito.verifyNoInteractions(decisions)
+
+        Mockito.doAnswer { invocation ->
+            val exactConfirmation = invocation.getArgument<RecoveryIdentityConfirmation>(0)
+            val doiConfirmation = invocation.getArgument<RecoveryUploadIdentifierConfirmation?>(1)
+            exactConfirmation.copy(identifierConfirmation = doiConfirmation)
+        }.`when`(decisions).recordConfirmation(
+            Mockito.any(RecoveryIdentityConfirmation::class.java)
+                ?: RecoveryIdentityConfirmation(UUID(0L, 0L), batchId, uploadId, needsConfirmation.id, contentSha256, "CONFIRM_EXACT_VERSION", Instant.EPOCH),
+            Mockito.any(RecoveryUploadIdentifierConfirmation::class.java),
+        )
+        val result = service.confirmExactVersion(
+            batchId,
+            uploadId,
+            needsConfirmation.id,
+            confirmExactVersion = true,
+            confirmedDoi = doi,
+            doiCandidateFingerprint = RecoveryUploadMetadataCandidateFingerprint.of(candidate),
+        )
+        assertEquals(doi, result.identifierConfirmation?.identifierValue)
+        assertEquals(RecoveryUploadMetadataCandidateFingerprint.of(candidate), result.identifierConfirmation?.candidateFingerprint)
     }
 
     private fun anyInstant(): Instant = Mockito.any(Instant::class.java) ?: Instant.EPOCH

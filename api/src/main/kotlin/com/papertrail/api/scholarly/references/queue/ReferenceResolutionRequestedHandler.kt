@@ -20,6 +20,7 @@ import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_REQUE
 import com.papertrail.api.scholarly.references.events.ReferenceResolutionRequestedPayload
 import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRepository
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
+import com.papertrail.api.analysis.successor.service.SuccessorSelectedAssetService
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
@@ -36,6 +37,7 @@ class ReferenceResolutionRequestedHandler(
     private val referenceResolutionService: ReferenceResolutionService,
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
+    private val successorSelectedAssetService: SuccessorSelectedAssetService,
     private val executionService: AnalysisRunExecutionService? = null,
 ) {
     fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
@@ -116,6 +118,10 @@ class ReferenceResolutionRequestedHandler(
                     event.payload.bibliographyEntryId,
                     REFERENCE_RESOLUTION_RETRIES_EXHAUSTED,
                 )
+                successorSelectedAssetService.scheduleCleanupIfUnowned(
+                    event.analysisRunId,
+                    event.payload.bibliographyEntryId,
+                )
                 processingRepository.updateFailureReasonIfProcessing(event.analysisRunId, failureReason)
                 pipelineProgressRepository.markBibliographyItem(
                     event.analysisRunId, "references", "resolve-entry", event.payload.bibliographyEntryId,
@@ -124,7 +130,26 @@ class ReferenceResolutionRequestedHandler(
                 skipDownstream(event, REFERENCE_RESOLUTION_RETRIES_EXHAUSTED)
             } else {
                 pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "references", "resolve-entry", event.payload.bibliographyEntryId, "COMPLETED")
-                if (!enqueueAcquisitionIfResolved(event)) skipDownstream(event, accessSkipReason(event))
+                when (
+                    successorSelectedAssetService.handoffIfSelected(
+                        analysisRunId = event.analysisRunId,
+                        bibliographyEntryId = event.payload.bibliographyEntryId,
+                        identityResolved = referenceResolutionRepository.isResolved(event.analysisRunId, event.payload.bibliographyEntryId),
+                        documentId = event.payload.documentId,
+                        sourceContentSha256 = event.payload.sourceContentSha256,
+                        correlationId = event.correlationId,
+                        causationId = event.eventId,
+                        traceparent = W3CTraceContext.child(event.traceparent),
+                        tracestate = event.tracestate,
+                    )
+                ) {
+                    SuccessorSelectedAssetService.HandoffResult.NOT_SELECTED -> {
+                        if (!enqueueAcquisitionIfResolved(event)) skipDownstream(event, accessSkipReason(event))
+                    }
+                    SuccessorSelectedAssetService.HandoffResult.IDENTITY_UNRESOLVED ->
+                        skipDownstream(event, "ACCESS_SKIPPED_IDENTITY_UNRESOLVED")
+                    SuccessorSelectedAssetService.HandoffResult.QUEUED -> Unit
+                }
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }

@@ -8,6 +8,7 @@ import com.papertrail.api.analysis.successor.domain.SuccessorRunPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorWorkDisposition
 import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
 import com.papertrail.api.analysis.execution.repository.AnalysisRunExecutionRepository
+import com.papertrail.api.analysis.successor.queue.SuccessorRunResolutionQueue
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.evidence.queue.EvidenceIndexingEnqueueResult
 import com.papertrail.api.infrastructure.crypto.sha256Hex
@@ -29,6 +30,7 @@ class SuccessorRunSubmissionRepository(
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
     private val analysisRunExecutionRepository: AnalysisRunExecutionRepository,
     private val citedPaperIndexingQueue: CitedPaperIndexingQueue,
+    private val successorRunResolutionQueue: SuccessorRunResolutionQueue,
 ) {
     fun submissionContext(batchId: UUID): SubmissionContext? = jdbc.query(
         """
@@ -171,7 +173,7 @@ class SuccessorRunSubmissionRepository(
             createdAt = now,
             selectedCount = plan.selectedEntries.size,
             retainedCount = plan.retainedReferenceKeys.size,
-            queuedCount = plan.selectedEntries.size,
+            queuedCount = plan.selectedEntries.count { it.assistedDoi == null },
         )
 
         val predecessorConfiguration = com.papertrail.api.utils.JsonUtil.fromJson(predecessor.configurationJson, AnalysisConfigurationSnapshot::class.java)
@@ -188,23 +190,39 @@ class SuccessorRunSubmissionRepository(
         val targetIds = cloneTargets(predecessor.analysisRunId, successorRunId, occurrenceIds, contextIds, bibliographyEntries, now)
         val claimIds = cloneClaims(predecessor.analysisRunId, successorRunId, contextIds, now)
         cloneClaimTargetLinks(predecessor.analysisRunId, successorRunId, contextIds, claimIds, targetIds, now)
-        cloneResolutions(predecessor.analysisRunId, successorRunId, bibliographyEntries, predecessorConfiguration, now)
+        val assistedPredecessorEntryIds = plan.selectedEntries.filter { it.assistedDoi != null }
+            .map { it.predecessorBibliographyEntryId }.toSet()
+        cloneResolutions(
+            predecessor.analysisRunId,
+            successorRunId,
+            bibliographyEntries,
+            predecessorConfiguration,
+            assistedPredecessorEntryIds,
+            now,
+        )
 
-        val selectedSuccessorEntryIds = selectedPredecessorEntryIds.associateWith { predecessorEntryId ->
+        val selectedSuccessorEntryIds: Map<UUID, Pair<UUID, ResolvedCitedReference?>> = selectedPredecessorEntryIds.associateWith { predecessorEntryId ->
             val successorEntryId = bibliographyEntries[predecessorEntryId]
                 ?: error("Selected bibliography entry was not materialized.")
-            val selectedReference = reference(successorRunId, successorEntryId)
-                ?: error("Selected bibliography entry resolution is missing.")
-            val verifiedAsset = selectedAssetsByEntry.getValue(predecessorEntryId)
-            saveSelectedAccess(
-                successorRunId = successorRunId,
-                batch = batch,
-                upload = verifiedAsset.upload,
-                reference = selectedReference,
-                bytes = verifiedAsset.bytes,
-                validationAttempt = verifiedAsset.validationAttempt,
-                now = now,
-            )
+            val selectedPlan = selectedPlansByEntry.getValue(predecessorEntryId)
+            val selectedReference = if (selectedPlan.assistedDoi == null) {
+                reference(successorRunId, successorEntryId)
+                    ?: error("Selected bibliography entry resolution is missing.")
+            } else {
+                null
+            }
+            if (selectedReference != null) {
+                val verifiedAsset = selectedAssetsByEntry.getValue(predecessorEntryId)
+                saveSelectedAccess(
+                    successorRunId = successorRunId,
+                    batch = batch,
+                    upload = verifiedAsset.upload,
+                    reference = selectedReference,
+                    bytes = verifiedAsset.bytes,
+                    validationAttempt = verifiedAsset.validationAttempt,
+                    now = now,
+                )
+            }
             successorEntryId to selectedReference
         }
 
@@ -215,7 +233,10 @@ class SuccessorRunSubmissionRepository(
             successorRunId,
             bibliographyEntries,
             claimIds,
-            selectedSuccessorEntryIds.mapValues { it.value.second.canonicalPaperId },
+            selectedSuccessorEntryIds.mapNotNull { (predecessorEntryId, successorEntryAndReference) ->
+                successorEntryAndReference.second?.canonicalPaperId?.let { predecessorEntryId to it }
+            }.toMap(),
+            assistedPredecessorEntryIds,
             now,
         )
         cloneUnselectedEvidence(
@@ -228,7 +249,13 @@ class SuccessorRunSubmissionRepository(
             now,
         )
         selectedSuccessorEntryIds.values.forEach { (entryId, selectedReference) ->
-            ensureSelectedVerifications(successorRunId, entryId, selectedReference.canonicalPaperId, now)
+            ensureSelectedVerifications(
+                successorRunId = successorRunId,
+                selectedSuccessorEntryId = entryId,
+                canonicalPaperId = selectedReference?.canonicalPaperId,
+                verificationScope = if (selectedReference == null) "NONE" else "FULL_TEXT",
+                now = now,
+            )
         }
 
         val entryByReference = jdbc.query(
@@ -274,8 +301,25 @@ class SuccessorRunSubmissionRepository(
             )
         }
 
+        plan.selectedEntries.filter { it.assistedDoi != null }.forEach { selectedPlan ->
+            val successorEntryId = bibliographyEntries.getValue(selectedPlan.predecessorBibliographyEntryId)
+            val verifiedUpload = selectedAssetsByEntry.getValue(selectedPlan.predecessorBibliographyEntryId)
+            insertResolutionAssistance(
+                successorRunId = successorRunId,
+                predecessorRunId = predecessor.analysisRunId,
+                successorEntryId = successorEntryId,
+                predecessorEntryId = selectedPlan.predecessorBibliographyEntryId,
+                batchId = batch.id,
+                upload = verifiedUpload,
+                contentSha256 = selectedPlan.contentSha256,
+                assistedDoi = requireNotNull(selectedPlan.assistedDoi),
+                createdAt = now,
+            )
+        }
+
         selectedSuccessorEntryIds.forEach { (predecessorEntryId, successorEntryAndReference) ->
             val successorEntryId = successorEntryAndReference.first
+            val selectedReference = successorEntryAndReference.second ?: return@forEach
             val selectedPlan = selectedPlansByEntry.getValue(predecessorEntryId)
             val upload = selectedAssetsByEntry.getValue(predecessorEntryId).upload
             val assetId = jdbc.queryForObject(
@@ -302,20 +346,41 @@ class SuccessorRunSubmissionRepository(
             Triple(predecessorId, entryId, key)
         }
         val selectedSuccessorEntryIdSet = selectedSuccessorEntryIds.values.map { it.first }.toSet()
-        initializeProgress(predecessor.analysisRunId, successorRunId, progressEntries, selectedSuccessorEntryIdSet)
+        val assistedSuccessorEntryIds = plan.selectedEntries.filter { it.assistedDoi != null }
+            .map { bibliographyEntries.getValue(it.predecessorBibliographyEntryId) }.toSet()
+        initializeProgress(
+            predecessor.analysisRunId,
+            successorRunId,
+            progressEntries,
+            selectedSuccessorEntryIdSet,
+            assistedSuccessorEntryIds,
+        )
 
-        selectedSuccessorEntryIdSet.forEach { selectedSuccessorEntryId ->
-            val queued = citedPaperIndexingQueue.enqueueIfEligible(
-                analysisRunId = successorRunId,
-                bibliographyEntryId = selectedSuccessorEntryId,
-                documentId = predecessor.documentId,
-                sourceContentSha256 = predecessor.sourceContentSha256,
-                correlationId = successorRunId,
-                causationId = submissionId,
-                traceparent = "00-${successorRunId.toString().replace("-", "")}-0000000000000001-01",
-            )
-            if (queued != EvidenceIndexingEnqueueResult.QUEUED) {
-                throw IllegalStateException("Selected successor indexing work could not be queued.")
+        selectedSuccessorEntryIds.forEach { (predecessorEntryId, successorEntryAndReference) ->
+            val selectedSuccessorEntryId = successorEntryAndReference.first
+            if (selectedSuccessorEntryId in assistedSuccessorEntryIds) {
+                successorRunResolutionQueue.enqueue(
+                    analysisRunId = successorRunId,
+                    bibliographyEntryId = selectedSuccessorEntryId,
+                    documentId = predecessor.documentId,
+                    sourceContentSha256 = predecessor.sourceContentSha256,
+                    correlationId = successorRunId,
+                    causationId = submissionId,
+                    traceparent = "00-${successorRunId.toString().replace("-", "")}-0000000000000001-01",
+                )
+            } else {
+                val queued = citedPaperIndexingQueue.enqueueIfEligible(
+                    analysisRunId = successorRunId,
+                    bibliographyEntryId = selectedSuccessorEntryId,
+                    documentId = predecessor.documentId,
+                    sourceContentSha256 = predecessor.sourceContentSha256,
+                    correlationId = successorRunId,
+                    causationId = submissionId,
+                    traceparent = "00-${successorRunId.toString().replace("-", "")}-0000000000000001-01",
+                )
+                if (queued != EvidenceIndexingEnqueueResult.QUEUED) {
+                    throw IllegalStateException("Selected successor indexing work could not be queued.")
+                }
             }
         }
 
@@ -337,7 +402,7 @@ class SuccessorRunSubmissionRepository(
             revision = batch.revision,
             selectedEntryCount = plan.selectedEntries.size,
             retainedEntryCount = entryByReference.size - plan.selectedEntries.size,
-            queuedEntryCount = selectedSuccessorEntryIdSet.size,
+            queuedEntryCount = selectedSuccessorEntryIdSet.count { it !in assistedSuccessorEntryIds },
         )
     }
 
@@ -554,6 +619,7 @@ class SuccessorRunSubmissionRepository(
         successorRunId: UUID,
         entries: Map<UUID, UUID>,
         predecessorConfiguration: AnalysisConfigurationSnapshot,
+        reprocessedEntryIds: Set<UUID>,
         now: Instant,
     ) {
         val rows = jdbc.query(
@@ -565,7 +631,7 @@ class SuccessorRunSubmissionRepository(
             """.trimIndent(),
             { rs, _ -> ResolutionRow(rs.uuid("bibliography_entry_id"), rs.getString("status"), rs.getString("reason_code"), rs.uuidOrNull("canonical_paper_id"), rs.getString("matched_doi"), rs.getString("matched_title"), rs.getString("matched_authors"), rs.getObject("matched_year") as Int?, rs.getObject("confidence_score") as Double?, rs.getString("match_method"), rs.getString("provider_id"), rs.getString("candidate_evidence")) },
             predecessorRunId,
-        )
+        ).filterNot { it.entryId in reprocessedEntryIds }
         rows.forEach { row ->
             jdbc.update(
                 """
@@ -636,9 +702,76 @@ class SuccessorRunSubmissionRepository(
                 row.mediaType, row.language, row.detectorVersion, newAssetId, row.origin, row.rightsVersion,
                 row.rightsText, row.rightsAt?.let(Timestamp::from), row.originRun, row.originBatch, row.originUpload,
             )
-            recordLineage(successorRunId, predecessorRunId, "cited-paper-access", newAssetId, row.assetId,
-                row.originRun ?: predecessorRunId, row.assetId, row.providerId, null, null, "UNSELECTED_ACCESS_RETAINED", now)
+            val userSuppliedAccess = row.origin == "USER_SUPPLIED"
+            val originRunId = if (userSuppliedAccess) {
+                row.originRun ?: error("User-supplied access is missing its originating Recovery Batch run.")
+            } else {
+                row.originRun ?: predecessorRunId
+            }
+            val originArtifactId = if (userSuppliedAccess) {
+                row.originUpload ?: error("User-supplied access is missing its originating Recovery Upload.")
+            } else {
+                row.assetId
+            }
+            recordLineage(
+                successorRunId, predecessorRunId, "cited-paper-access", newAssetId, row.assetId,
+                originRunId, originArtifactId, if (userSuppliedAccess) null else row.providerId,
+                null, null, "UNSELECTED_ACCESS_RETAINED", now, userSuppliedAccess,
+            )
         }
+    }
+
+    private fun insertResolutionAssistance(
+        successorRunId: UUID,
+        predecessorRunId: UUID,
+        successorEntryId: UUID,
+        predecessorEntryId: UUID,
+        batchId: UUID,
+        upload: VerifiedSuccessorUpload,
+        contentSha256: String,
+        assistedDoi: String,
+        createdAt: Instant,
+    ) {
+        check(upload.upload.actualSha256 == contentSha256 && upload.validationAttempt.contentSha256 == contentSha256) {
+            "Assisted identifier provenance must match the selected exact upload version."
+        }
+        val doiConfirmation = jdbc.query(
+            """
+            SELECT id, candidate_fingerprint
+              FROM recovery_upload_identifier_confirmations
+             WHERE batch_id = ? AND upload_id = ? AND validation_attempt_id = ?
+               AND content_sha256 = ? AND identifier_type = 'DOI' AND identifier_value = ?
+            """.trimIndent(),
+            { rs, _ -> rs.getObject("id", UUID::class.java) to rs.getString("candidate_fingerprint") },
+            batchId,
+            upload.upload.id,
+            upload.validationAttempt.id,
+            contentSha256,
+            assistedDoi,
+        ).singleOrNull() ?: error("An explicit DOI-candidate confirmation is missing for the selected upload.")
+        jdbc.update(
+            """
+            INSERT INTO analysis_run_successor_resolution_assistance (
+                analysis_run_id, successor_analysis_run_id, predecessor_analysis_run_id, batch_id,
+                bibliography_entry_id, predecessor_bibliography_entry_id, upload_id,
+                validation_attempt_id, doi_confirmation_id, content_sha256, identifier_type,
+                identifier_value, candidate_fingerprint, source_code, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DOI', ?, ?, 'HUMAN_CONFIRMED_PDF_DOI_CANDIDATE', ?)
+            """.trimIndent(),
+            successorRunId,
+            successorRunId,
+            predecessorRunId,
+            batchId,
+            successorEntryId,
+            predecessorEntryId,
+            upload.upload.id,
+            upload.validationAttempt.id,
+            doiConfirmation.first,
+            contentSha256,
+            assistedDoi,
+            doiConfirmation.second,
+            Timestamp.from(createdAt),
+        )
     }
 
     private fun saveSelectedAccess(
@@ -704,6 +837,7 @@ class SuccessorRunSubmissionRepository(
         entries: Map<UUID, UUID>,
         claims: Map<UUID, UUID>,
         selectedCanonicalPaperIds: Map<UUID, UUID>,
+        reprocessedEntryIds: Set<UUID>,
         now: Instant,
     ): Map<UUID, UUID> {
         val rows = jdbc.query(
@@ -722,7 +856,7 @@ class SuccessorRunSubmissionRepository(
                 evidenceConflict = rs.getBoolean("evidence_conflict"), failureReason = rs.getString("processing_failure_reason"), aggregatorVersion = rs.getString("aggregator_version"),
             ) },
             predecessorRunId,
-        )
+        ).filterNot { it.entryId in reprocessedEntryIds }
         val ids = mutableMapOf<UUID, UUID>()
         rows.forEach { row ->
             val newEntryId = entries[row.entryId] ?: return@forEach
@@ -757,7 +891,8 @@ class SuccessorRunSubmissionRepository(
     private fun ensureSelectedVerifications(
         successorRunId: UUID,
         selectedSuccessorEntryId: UUID,
-        canonicalPaperId: UUID,
+        canonicalPaperId: UUID?,
+        verificationScope: String,
         now: Instant,
     ) {
         val existingPairs = jdbc.query(
@@ -766,6 +901,12 @@ class SuccessorRunSubmissionRepository(
             successorRunId,
             selectedSuccessorEntryId,
         ).toSet()
+        if (canonicalPaperId != null) {
+            jdbc.update(
+                "UPDATE claim_paper_verifications SET canonical_paper_id = ?, verification_scope = 'FULL_TEXT', updated_at = ? WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND processing_status = 'PENDING' AND verification_scope = 'NONE' AND (canonical_paper_id IS NULL OR canonical_paper_id = ?)",
+                canonicalPaperId, Timestamp.from(now), successorRunId, selectedSuccessorEntryId, canonicalPaperId,
+            )
+        }
         val selectedClaimIds = jdbc.query(
             """
             SELECT DISTINCT link.atomic_claim_id
@@ -780,8 +921,8 @@ class SuccessorRunSubmissionRepository(
         )
         selectedClaimIds.filterNot { it in existingPairs }.forEach { claimId ->
             jdbc.update(
-                "INSERT INTO claim_paper_verifications (id, analysis_run_id, atomic_claim_id, bibliography_entry_id, canonical_paper_id, processing_status, verification_scope, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'PENDING', 'FULL_TEXT', ?, ?)",
-                UUID.randomUUID(), successorRunId, claimId, selectedSuccessorEntryId, canonicalPaperId, Timestamp.from(now), Timestamp.from(now),
+                "INSERT INTO claim_paper_verifications (id, analysis_run_id, atomic_claim_id, bibliography_entry_id, canonical_paper_id, processing_status, verification_scope, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)",
+                UUID.randomUUID(), successorRunId, claimId, selectedSuccessorEntryId, canonicalPaperId, verificationScope, Timestamp.from(now), Timestamp.from(now),
             )
         }
     }
@@ -970,6 +1111,7 @@ class SuccessorRunSubmissionRepository(
         successorRunId: UUID,
         entries: List<Triple<UUID, UUID, String>>,
         selectedEntryIds: Set<UUID>,
+        assistedResolutionEntryIds: Set<UUID>,
     ) {
         pipelineProgressRepository.initializeRun(successorRunId)
         pipelineProgressRepository.mark(successorRunId, "source", "parse-document", "document", "Source Document", "COMPLETED", "SOURCE_PARSE_REUSED")
@@ -983,8 +1125,11 @@ class SuccessorRunSubmissionRepository(
             listOf("references" to "resolve-entry", "access" to "acquire-source", "evidence" to "prepare-evidence", "verification" to "assess-and-aggregate").forEach { (stage, step) ->
                 val selected = successorEntryId in selectedEntryIds
                 val predecessorItem = predecessorProgress[Triple(stage, step, predecessorEntryId.toString())]
+                val awaitingAssistedResolution = successorEntryId in assistedResolutionEntryIds
                 val (status, reason) = when {
+                    selected && stage == "references" && awaitingAssistedResolution -> "WAITING" to null
                     selected && stage == "references" -> "COMPLETED" to "REFERENCE_OUTCOME_REUSED"
+                    selected && stage == "access" && awaitingAssistedResolution -> "WAITING" to null
                     selected && stage == "access" -> "COMPLETED" to "USER_SUPPLIED_ASSET_SELECTED"
                     selected && stage in setOf("evidence", "verification") -> "WAITING" to null
                     predecessorItem != null -> predecessorItem.status to predecessorItem.reasonCode
@@ -1010,6 +1155,7 @@ class SuccessorRunSubmissionRepository(
         consentFingerprint: String?,
         reasonCode: String,
         now: Instant,
+        userSuppliedAccess: Boolean = false,
     ) {
         if (predecessorArtifactId == null) return
         val inherited = jdbc.query(
@@ -1027,28 +1173,31 @@ class SuccessorRunSubmissionRepository(
             artifactType,
             predecessorArtifactId,
         ).firstOrNull()
-        val actualOriginRunId = inherited?.originatingRunId ?: originatingRunId
-        val actualOriginArtifactId = inherited?.originatingArtifactId ?: originatingArtifactId
+        val actualOriginRunId = if (userSuppliedAccess) originatingRunId else inherited?.originatingRunId ?: originatingRunId
+        val actualOriginArtifactId = if (userSuppliedAccess) originatingArtifactId else inherited?.originatingArtifactId ?: originatingArtifactId
 
-        val originConfiguration = configurationSnapshot(actualOriginRunId, "Origin")
-        val predecessorConfiguration = configurationSnapshot(predecessorRunId, "Predecessor")
-        val originStageSelection = originConfiguration.lineageProviderSelection(artifactType)
+        val originConfiguration = if (userSuppliedAccess) null else configurationSnapshot(actualOriginRunId, "Origin")
+        val predecessorConfiguration = if (userSuppliedAccess) null else configurationSnapshot(predecessorRunId, "Predecessor")
+        val originStageSelection = originConfiguration?.lineageProviderSelection(artifactType)
         val inferProviderFromStage = !(artifactType == "cited-paper-access" && providerId == null && inherited?.providerId == null)
-        val actualProviderId = inherited?.providerId ?: providerId ?: if (inferProviderFromStage) originStageSelection?.provider else null
-        val originProviderSelections = originConfiguration.providerSelections()
+        val actualProviderId = if (userSuppliedAccess) null else inherited?.providerId ?: providerId ?: if (inferProviderFromStage) originStageSelection?.provider else null
+        if (artifactType == "cited-paper-access" && actualProviderId != null && originStageSelection?.provider != actualProviderId) {
+            error("Cited-paper access provider provenance does not match its originating configuration.")
+        }
+        val originProviderSelections = originConfiguration?.providerSelections().orEmpty()
         val selectionsForProvider = actualProviderId?.let { id -> originProviderSelections.filter { it.provider == id } }.orEmpty()
         if (selectionsForProvider.any { it.trustBoundary == "UNREVIEWED" }) {
             error("Outputs from an unreviewed provider cannot be reused in a successor run.")
         }
         val externalSelections = selectionsForProvider.filter { it.trustBoundary == "EXTERNAL" }
-        val externalProvider = externalSelections.isNotEmpty() || originStageSelection?.let {
+        val externalProvider = !userSuppliedAccess && (externalSelections.isNotEmpty() || originStageSelection?.let {
             it.provider == actualProviderId && it.trustBoundary == "EXTERNAL"
-        } == true
+        } == true)
         val originConsent = if (externalProvider && actualProviderId != null) {
             val categories = externalSelections.flatMap(ProviderSelection::dataCategories).distinct().sorted()
             val disclosures = externalSelections.map(ProviderSelection::retentionDisclosure).distinct()
             val disclosure = disclosures.singleOrNull()
-            originConfiguration.externalProviderConsents.singleOrNull { consent ->
+            checkNotNull(originConfiguration).externalProviderConsents.singleOrNull { consent ->
                 consent.providerId == actualProviderId && consent.dataCategories == categories &&
                     disclosure != null && consent.retentionDisclosure == disclosure && !disclosure.isNullOrBlank()
             }
@@ -1056,20 +1205,21 @@ class SuccessorRunSubmissionRepository(
             null
         }
         if (externalProvider) {
+            val predecessorSnapshot = checkNotNull(predecessorConfiguration)
             val originatingSelection = originStageSelection?.takeIf { it.provider == actualProviderId }
             check(originatingSelection?.trustBoundary == "EXTERNAL" && originConsent != null) {
                 "External-provider output is missing matching originating consent."
             }
             val consentHash = com.papertrail.api.infrastructure.crypto.sha256Hex(com.papertrail.api.utils.JsonUtil.toJson(originConsent).toByteArray())
-            val predecessorSelections = predecessorConfiguration.providerSelections()
-            val predecessorStageSelection = predecessorConfiguration.lineageProviderSelection(artifactType)
+            val predecessorSelections = predecessorSnapshot.providerSelections()
+            val predecessorStageSelection = predecessorSnapshot.lineageProviderSelection(artifactType)
             val predecessorExternalSelections = predecessorSelections.filter {
                 it.provider == actualProviderId && it.trustBoundary == "EXTERNAL"
             }
             val predecessorCategories = predecessorExternalSelections.flatMap(ProviderSelection::dataCategories).distinct().sorted()
             val predecessorDisclosures = predecessorExternalSelections.map(ProviderSelection::retentionDisclosure).distinct()
             val predecessorDisclosure = predecessorDisclosures.singleOrNull()
-            val predecessorConsent = predecessorConfiguration.externalProviderConsents.singleOrNull { consent ->
+            val predecessorConsent = predecessorSnapshot.externalProviderConsents.singleOrNull { consent ->
                 consent.providerId == actualProviderId && consent.dataCategories == predecessorCategories &&
                     predecessorDisclosure != null && consent.retentionDisclosure == predecessorDisclosure
             }
@@ -1084,11 +1234,13 @@ class SuccessorRunSubmissionRepository(
                 }
             }
         }
-        val dataCategories = originConsent?.dataCategories ?: inherited?.dataCategories ?: originStageSelection?.dataCategories.orEmpty()
-        val retentionDisclosure = originConsent?.retentionDisclosure ?: inherited?.retentionDisclosure ?: originStageSelection?.retentionDisclosure
-        val resolvedConfigurationFingerprint = inherited?.configurationFingerprint ?: configurationFingerprint
-            ?: originConfiguration.lineageConfigurationFingerprint(artifactType, originStageSelection)
-        val resolvedConsentFingerprint = inherited?.consentFingerprint ?: consentFingerprint ?: originConsent?.let {
+        val dataCategories = if (userSuppliedAccess) emptyList() else
+            originConsent?.dataCategories ?: inherited?.dataCategories ?: originStageSelection?.dataCategories.orEmpty()
+        val retentionDisclosure = if (userSuppliedAccess) null else
+            originConsent?.retentionDisclosure ?: inherited?.retentionDisclosure ?: originStageSelection?.retentionDisclosure
+        val resolvedConfigurationFingerprint = if (userSuppliedAccess) null else inherited?.configurationFingerprint ?: configurationFingerprint
+            ?: checkNotNull(originConfiguration).lineageConfigurationFingerprint(artifactType, originStageSelection)
+        val resolvedConsentFingerprint = if (userSuppliedAccess) null else inherited?.consentFingerprint ?: consentFingerprint ?: originConsent?.let {
             com.papertrail.api.infrastructure.crypto.sha256Hex(com.papertrail.api.utils.JsonUtil.toJson(it).toByteArray())
         }
         jdbc.update(

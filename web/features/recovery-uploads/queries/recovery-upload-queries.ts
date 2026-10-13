@@ -248,18 +248,23 @@ export type ConfirmRecoveryIdentity = {
   batchId: string;
   uploadId: string;
   validationAttemptId: string;
+  confirmedDoi?: string;
+  doiCandidateFingerprint?: string;
 };
 
 export function confirmRecoveryIdentityMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
     mutationKey: ["recovery-uploads", "confirm-identity"] as const,
-    mutationFn: async ({ batchId, uploadId, validationAttemptId }: ConfirmRecoveryIdentity) => {
+    mutationFn: async ({ batchId, uploadId, validationAttemptId, confirmedDoi, doiCandidateFingerprint }: ConfirmRecoveryIdentity) => {
       const response = await fetch(
         `/api/v1/recovery-batches/${encodeURIComponent(batchId)}/uploads/${encodeURIComponent(uploadId)}/validation/${encodeURIComponent(validationAttemptId)}/confirm-identity`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ confirmExactVersion: true }),
+          body: JSON.stringify({
+            confirmExactVersion: true,
+            ...(confirmedDoi && doiCandidateFingerprint ? { confirmedDoi, doiCandidateFingerprint } : {}),
+          }),
         },
       );
       if (!response.ok) throw new Error(await readApiError(response));

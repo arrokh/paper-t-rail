@@ -11,8 +11,12 @@ import com.papertrail.api.analysis.recovery.domain.RecoveryUpload
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadAssetSelection
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadStatus
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadIdentifierConfirmation
+import com.papertrail.api.analysis.recovery.domain.RecoveryUploadMetadataCandidateFingerprint
 import com.papertrail.api.analysis.recovery.domain.RecoveryValidationStatus
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
+import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
+import com.papertrail.api.scholarly.references.resolver.ConservativeReferenceResolver
 import com.papertrail.api.analysis.successor.domain.SuccessorExpectedProviderWork
 import com.papertrail.api.analysis.successor.domain.SuccessorRunPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorSelectedEntryPlan
@@ -22,8 +26,10 @@ import com.papertrail.api.analysis.successor.http.SuccessorRunPreviewRequest
 import com.papertrail.api.analysis.successor.repository.SuccessorEntrySnapshot
 import com.papertrail.api.analysis.successor.repository.SuccessorRunPreviewRepository
 import com.papertrail.api.analysis.successor.repository.SuccessorReferenceKey
+import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataField
 import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibility
 import com.papertrail.api.analysis.recovery.repository.RecoveryBatchRepository
+import com.papertrail.api.analysis.recovery.repository.RecoveryUploadIdentityDecisionRepository
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.utils.JsonUtil
 import org.springframework.stereotype.Service
@@ -39,6 +45,7 @@ class SuccessorRunService(
     private val recoveryUploadValidationService: RecoveryUploadValidationService,
     private val previewRepository: SuccessorRunPreviewRepository,
     private val configurationFactory: RunConfigurationFactory,
+    private val identityDecisionRepository: RecoveryUploadIdentityDecisionRepository,
 ) {
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     fun preview(batchId: UUID, request: SuccessorRunPreviewRequest): SuccessorRunPlan {
@@ -70,16 +77,27 @@ class SuccessorRunService(
                 val upload = batch.uploads.singleOrNull { it.id == selection.uploadId }
                 val entry = previewRepository.selectedEntry(batch.analysisRunId, selection.bibliographyEntryId)
                 val attempt = recoveryUploadValidationService.latest(batch.id, selection.uploadId)
+                    ?.takeIf { it.id == selection.validationAttemptId }
+                val identifierConfirmation = attempt
+                    ?.takeIf {
+                        selection.selectionMethod == RecoveryAssetSelectionMethod.HUMAN_CONFIRMED &&
+                            it.identityOutcome == RecoveryIdentityOutcome.NEEDS_CONFIRMATION
+                    }
+                    ?.let { identityDecisionRepository.confirmation(batch.id, selection.uploadId, it.id)?.identifierConfirmation }
                 toSelectedEntryPlan(
                     selection,
                     upload,
                     entry,
-                    attempt?.takeIf { it.id == selection.validationAttemptId },
+                    attempt,
+                    identifierConfirmation,
                     invalidationReasons,
                 )
             }
             .sortedBy { plan -> referenceOrder[plan.predecessorBibliographyEntryId] ?: Int.MAX_VALUE }
 
+        val selectedIds = selectedEntryPlans.map(SuccessorSelectedEntryPlan::predecessorBibliographyEntryId).toSet()
+        val hasUnrepresentedRetainedAccessProvider = previewRepository.accessProviders(batch.analysisRunId)
+            .any { access -> access.bibliographyEntryId !in selectedIds && access.providerId != predecessor.configuration.openAccess.provider }
         val blockers = buildList {
             if (predecessor.status !in COMPLETED_RUN_STATUSES) add("PREDECESSOR_RUN_NOT_COMPLETED")
             if (!predecessor.hasSourceParse) add("PREDECESSOR_SOURCE_PARSE_UNAVAILABLE")
@@ -88,9 +106,12 @@ class SuccessorRunService(
             if (selectedEntryPlans.isEmpty()) add("NO_CURRENT_SELECTED_ASSETS")
             if (invalidationReasons.isNotEmpty()) add("CONFIGURATION_CHANGE_REQUIRES_UNSUPPORTED_GLOBAL_REPROCESSING")
             if (!hasMatchingExternalProviderConsents(predecessor.configuration)) add("PREDECESSOR_EXTERNAL_PROVIDER_CONSENT_MISSING_OR_MISMATCHED")
+            if (hasUnrepresentedRetainedAccessProvider) add("PREDECESSOR_ACCESS_PROVIDER_PROVENANCE_UNVERIFIABLE")
+            if (selectedEntryPlans.any { it.assistedDoi != null } && configuration.referenceResolution.provider == null) {
+                add("REFERENCE_RESOLUTION_PROVIDER_NOT_CONFIGURED")
+            }
             selectedEntryPlans.flatMap(SuccessorSelectedEntryPlan::blockers).distinct().forEach(::add)
         }
-        val selectedIds = selectedEntryPlans.map(SuccessorSelectedEntryPlan::predecessorBibliographyEntryId).toSet()
         val retainedReferenceKeys = referenceKeys
             .filterNot { it.bibliographyEntryId in selectedIds }
             .map(SuccessorReferenceKey::localReferenceKey)
@@ -99,13 +120,15 @@ class SuccessorRunService(
             disposition = SuccessorWorkDisposition.RETAIN,
             reasonCode = "UNSELECTED_COVERAGE_PRESERVED",
         )
-        val expectedProviderWork = if (selectedEntryPlans.isEmpty()) {
-            emptyList()
-        } else {
-            listOf(
-                configuration.embedding.toExpectedWork("evidence-embedding"),
-                configuration.systemOne.toExpectedWork("claim-verification"),
-            )
+        val expectedProviderWork = buildList {
+            if (selectedEntryPlans.isNotEmpty()) {
+                add(configuration.citedPaperParserSelection().toExpectedWork("cited-paper-parser"))
+                add(configuration.embedding.toExpectedWork("evidence-embedding"))
+                add(configuration.systemOne.toExpectedWork("claim-verification"))
+            }
+            if (selectedEntryPlans.any { it.assistedDoi != null }) {
+                configuration.referenceResolution.provider?.let { add(it.toExpectedWork("reference-resolution")) }
+            }
         }
         val fingerprintInput = SuccessorPlanFingerprintInput(
             batchId = batch.id,
@@ -141,8 +164,21 @@ class SuccessorRunService(
         upload: RecoveryUpload?,
         entry: SuccessorEntrySnapshot?,
         attempt: RecoveryUploadValidationAttempt?,
+        identifierConfirmation: RecoveryUploadIdentifierConfirmation?,
         invalidationReasons: List<String>,
     ): SuccessorSelectedEntryPlan {
+        val entryIdentityUnresolved = entry != null && (entry.resolutionStatus != "RESOLVED" || entry.canonicalPaperId == null)
+        val referenceTypeSupported = entry?.referenceType in ConservativeReferenceResolver.SUPPORTED_REFERENCE_TYPES
+        val assistedDoi = if (
+            entryIdentityUnresolved &&
+            referenceTypeSupported &&
+            selection.selectionMethod == RecoveryAssetSelectionMethod.HUMAN_CONFIRMED &&
+            attempt?.identityOutcome == RecoveryIdentityOutcome.NEEDS_CONFIRMATION
+        ) {
+            confirmedDoi(selection, attempt, identifierConfirmation)
+        } else {
+            null
+        }
         val blockers = buildList {
             if (upload == null || upload.status != RecoveryUploadStatus.STAGED || upload.actualSha256 != selection.contentSha256) {
                 add("SELECTED_UPLOAD_NOT_STAGED_AT_RECORDED_HASH")
@@ -164,7 +200,8 @@ class SuccessorRunService(
             if (entry == null) {
                 add("SELECTED_BIBLIOGRAPHY_ENTRY_NOT_FOUND")
             } else {
-                if (entry.resolutionStatus != "RESOLVED" || entry.canonicalPaperId == null) add("SELECTED_ENTRY_NOT_RESOLVED")
+                if (entryIdentityUnresolved && !referenceTypeSupported) add("SELECTED_ENTRY_REFERENCE_TYPE_UNSUPPORTED")
+                else if (entryIdentityUnresolved && assistedDoi == null) add("SELECTED_ENTRY_NOT_RESOLVED")
                 if (entry.claimCount == 0L) add("SELECTED_ENTRY_HAS_NO_CITATION_CLAIMS")
             }
         }
@@ -173,23 +210,47 @@ class SuccessorRunService(
             localReferenceKey = entry?.localReferenceKey ?: upload?.localReferenceKey.orEmpty(),
             uploadId = selection.uploadId,
             contentSha256 = selection.contentSha256,
-            stages = selectedStageDecisions(invalidationReasons),
+            assistedDoi = assistedDoi,
+            stages = selectedStageDecisions(invalidationReasons, assistedDoi != null),
             blockers = blockers,
         )
     }
 
-    private fun selectedStageDecisions(invalidationReasons: List<String>): List<SuccessorStageDecision> {
+    private fun confirmedDoi(
+        selection: RecoveryUploadAssetSelection,
+        attempt: RecoveryUploadValidationAttempt?,
+        confirmation: RecoveryUploadIdentifierConfirmation?,
+    ): String? {
+        if (attempt == null || confirmation == null ||
+            confirmation.batchId != selection.batchId || confirmation.uploadId != selection.uploadId ||
+            confirmation.analysisRunId != selection.analysisRunId || confirmation.validationAttemptId != attempt.id ||
+            confirmation.contentSha256 != selection.contentSha256 ||
+            confirmation.identifierType != "DOI"
+        ) return null
+
+        val matchingCandidates = attempt.metadataCandidates.filter { candidate ->
+            candidate.field == ParsedBibliographicMetadataField.DOI &&
+                RecoveryUploadMetadataCandidateFingerprint.of(candidate) == confirmation.candidateFingerprint &&
+                DoiNormalizer.normalize(candidate.value) == confirmation.identifierValue
+        }
+        return confirmation.identifierValue.takeIf { matchingCandidates.size == 1 }
+    }
+
+    private fun selectedStageDecisions(invalidationReasons: List<String>, assistedIdentity: Boolean): List<SuccessorStageDecision> {
         val sourceInvalidated = invalidationReasons.any { it in SOURCE_INVALIDATIONS }
         val claimsInvalidated = invalidationReasons.any { it in CLAIM_INVALIDATIONS }
         val resolutionInvalidated = invalidationReasons.any { it in RESOLUTION_INVALIDATIONS }
-        val evidenceInvalidated = invalidationReasons.any { it in EVIDENCE_INVALIDATIONS }
         return listOf(
             decision("source-parse", sourceInvalidated, "SOURCE_INPUTS_UNCHANGED", "SOURCE_CONFIGURATION_CHANGED"),
             decision("claim-extraction", claimsInvalidated, "CLAIM_OUTPUTS_REUSED", "CLAIM_CONFIGURATION_CHANGED"),
-            decision("reference-resolution", resolutionInvalidated, "IDENTITY_OUTPUTS_REUSED", "RESOLUTION_CONFIGURATION_CHANGED"),
+            if (assistedIdentity) {
+                SuccessorStageDecision("reference-resolution", SuccessorWorkDisposition.REPROCESS, "HUMAN_CONFIRMED_IDENTIFIER_ASSISTANCE")
+            } else {
+                decision("reference-resolution", resolutionInvalidated, "IDENTITY_OUTPUTS_REUSED", "RESOLUTION_CONFIGURATION_CHANGED")
+            },
             SuccessorStageDecision("selected-access", SuccessorWorkDisposition.REPROCESS, "EXACT_USER_SELECTED_ASSET"),
             SuccessorStageDecision("cited-paper-parse", SuccessorWorkDisposition.REPROCESS, "SELECTED_ASSET_REPARSED_IN_SUCCESSOR"),
-            decision("evidence-retrieval", evidenceInvalidated, "RETRIEVAL_CONFIGURATION_REUSED", "EVIDENCE_RETRIEVAL_CONFIGURATION_CHANGED"),
+            SuccessorStageDecision("evidence-retrieval", SuccessorWorkDisposition.REPROCESS, "SELECTED_ASSET_RETRIEVED_FOR_SUCCESSOR"),
             SuccessorStageDecision("claim-verification", SuccessorWorkDisposition.REPROCESS, "SELECTED_ENTRY_ONLY"),
         )
     }

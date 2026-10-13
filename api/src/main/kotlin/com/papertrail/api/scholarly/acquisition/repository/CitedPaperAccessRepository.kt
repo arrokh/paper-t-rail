@@ -167,6 +167,45 @@ class CitedPaperAccessRepository(
         ) == 1
     }
 
+    /** Persists provenance for bytes verified before the worker transaction; the object is hash-checked again by the indexing path. */
+    fun saveVerifiedUserSuppliedAssetReference(
+        analysisRunId: UUID,
+        reference: ResolvedCitedReference,
+        objectKey: String,
+        provenance: UserSuppliedCitedPaperProvenance,
+        discoveredAt: Instant,
+    ): Boolean {
+        require(objectKey.isNotBlank()) { "Supplied Cited Paper object key must not be blank" }
+        return jdbc.update(
+            """
+            INSERT INTO cited_paper_access (
+                analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status,
+                provider_id, metadata_available, abstract_available, source_url, license_identifier,
+                discovered_at, object_key, content_sha256, content_media_type, language, language_detector_version,
+                access_origin, rights_declaration_version, rights_declaration_text,
+                rights_declared_at, originating_analysis_run_id, originating_recovery_batch_id, originating_recovery_upload_id
+            ) VALUES (?, ?, ?, 'FULL_TEXT_AVAILABLE', NULL, TRUE, FALSE, NULL, NULL, ?, ?, ?, ?, ?, ?,
+                      'USER_SUPPLIED', ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
+            """.trimIndent(),
+            analysisRunId,
+            reference.bibliographyEntryId,
+            reference.canonicalPaperId,
+            Timestamp.from(discoveredAt),
+            objectKey,
+            provenance.contentSha256,
+            provenance.mediaType.lowercase(),
+            provenance.language,
+            provenance.languageDetectorVersion,
+            provenance.rightsDeclarationVersion,
+            provenance.rightsDeclarationText,
+            Timestamp.from(provenance.rightsDeclaredAt),
+            provenance.originatingAnalysisRunId,
+            provenance.originatingRecoveryBatchId,
+            provenance.originatingRecoveryUploadId,
+        ) == 1
+    }
+
     fun isObjectKeyReferenced(objectKey: String): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM cited_paper_access WHERE object_key = ?)",
         Boolean::class.java,

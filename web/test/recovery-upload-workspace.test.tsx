@@ -233,7 +233,7 @@ describe("Recovery Upload workspace", () => {
       minimumLanguageConfidence: 0.65,
       validationStatus: "COMPLETED",
       identityOutcome: "NEEDS_CONFIRMATION",
-      identityReasonCode: "DOI_DIFFERS_REQUIRES_CONFIRMATION",
+      identityReasonCode: "REFERENCE_IDENTITY_UNRESOLVED",
       humanConfirmation: null,
       selection: null,
       metadataCandidates: [{
@@ -245,6 +245,8 @@ describe("Recovery Upload workspace", () => {
         sourceElementId: "docling-doi-1",
         sourceCharSpanStart: 110,
         sourceCharSpanEnd: 130,
+        candidateFingerprint: `recovery-metadata-candidate-v1:${"c".repeat(64)}`,
+        normalizedDoi: "10.1234/alternate",
       }],
       languageEligibility: "ELIGIBLE",
       detectedLanguage: "en",
@@ -261,6 +263,18 @@ describe("Recovery Upload workspace", () => {
       contentSha256: "b".repeat(64),
       decision: "CONFIRM_EXACT_VERSION",
       confirmedAt: "2026-10-09T00:01:00Z",
+      identifierConfirmation: {
+        id: "doi-confirmation-1",
+        batchId: "batch-1",
+        uploadId: "upload-1",
+        analysisRunId: "run-1",
+        validationAttemptId: "validation-1",
+        contentSha256: "b".repeat(64),
+        identifierType: "DOI",
+        identifierValue: "10.1234/alternate",
+        candidateFingerprint: `recovery-metadata-candidate-v1:${"c".repeat(64)}`,
+        confirmedAt: "2026-10-09T00:01:00Z",
+      },
     };
     const selection = {
       id: "selection-1",
@@ -306,13 +320,20 @@ describe("Recovery Upload workspace", () => {
     expect(screen.getByText(/Page 1/)).toBeTruthy();
     expect(screen.getByText(/English detected/)).toBeTruthy();
     expect(screen.getByText(/not evidence assessment/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "I confirm this exact PDF version" }));
-    expect(await screen.findByText(/Human confirmation recorded/)).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox", { name: "DOI candidate that identifies the cited work" }), {
+      target: { value: `recovery-metadata-candidate-v1:${"c".repeat(64)}` },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm PDF and DOI identity" }));
+    expect(await screen.findByText(/DOI identity confirmed: 10.1234\/alternate/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Select this exact version" }));
     expect(await screen.findByText(/Selected exact version/)).toBeTruthy();
     expect(requests.some(({ url, options }) => url.endsWith("/uploads/upload-1/validate") && options?.method === "POST")).toBe(true);
     const confirmationRequest = requests.find(({ url, options }) => url.endsWith("/validation/validation-1/confirm-identity") && options?.method === "POST");
-    expect(JSON.parse(String(confirmationRequest?.options?.body))).toEqual({ confirmExactVersion: true });
+    expect(JSON.parse(String(confirmationRequest?.options?.body))).toEqual({
+      confirmExactVersion: true,
+      confirmedDoi: "10.1234/alternate",
+      doiCandidateFingerprint: `recovery-metadata-candidate-v1:${"c".repeat(64)}`,
+    });
     expect(requests.some(({ url, options }) => url.endsWith("/uploads/upload-1/select") && options?.method === "POST")).toBe(true);
     expect(requests.some(({ url }) => url.includes("/assess") || url.includes("/providers"))).toBe(false);
   });

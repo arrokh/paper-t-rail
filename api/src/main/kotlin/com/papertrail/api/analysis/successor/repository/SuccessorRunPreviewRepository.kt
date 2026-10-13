@@ -46,6 +46,7 @@ class SuccessorRunPreviewRepository(
         """
         SELECT entry.local_reference_key,
                entry.entry_order,
+               entry.reference_type,
                resolution.status AS resolution_status,
                resolution.canonical_paper_id,
                (
@@ -72,6 +73,7 @@ class SuccessorRunPreviewRepository(
                 bibliographyEntryId = bibliographyEntryId,
                 localReferenceKey = rs.getString("local_reference_key"),
                 entryOrder = rs.getInt("entry_order"),
+                referenceType = rs.getString("reference_type"),
                 resolutionStatus = rs.getString("resolution_status"),
                 canonicalPaperId = rs.getObject("canonical_paper_id", UUID::class.java),
                 claimCount = rs.getLong("claim_count"),
@@ -96,6 +98,23 @@ class SuccessorRunPreviewRepository(
         },
         analysisRunId,
     )
+
+    fun accessProviders(analysisRunId: UUID): List<SuccessorAccessProviderSnapshot> = jdbc.query(
+        """
+        SELECT bibliography_entry_id, provider_id
+          FROM cited_paper_access
+         WHERE analysis_run_id = ?
+           AND provider_id IS NOT NULL
+         ORDER BY bibliography_entry_id, provider_id
+        """.trimIndent(),
+        { rs, _ ->
+            SuccessorAccessProviderSnapshot(
+                bibliographyEntryId = rs.getObject("bibliography_entry_id", UUID::class.java),
+                providerId = rs.getString("provider_id"),
+            )
+        },
+        analysisRunId,
+    )
 }
 
 data class SuccessorPredecessorSnapshot(
@@ -111,6 +130,7 @@ data class SuccessorEntrySnapshot(
     val bibliographyEntryId: UUID,
     val localReferenceKey: String,
     val entryOrder: Int,
+    val referenceType: String,
     val resolutionStatus: String?,
     val canonicalPaperId: UUID?,
     val claimCount: Long,
@@ -119,4 +139,9 @@ data class SuccessorEntrySnapshot(
 data class SuccessorReferenceKey(
     val bibliographyEntryId: UUID,
     val localReferenceKey: String,
+)
+
+data class SuccessorAccessProviderSnapshot(
+    val bibliographyEntryId: UUID,
+    val providerId: String,
 )

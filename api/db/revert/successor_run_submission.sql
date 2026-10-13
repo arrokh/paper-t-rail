@@ -1,3 +1,15 @@
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM recovery_batches WHERE status = 'SUBMITTED')
+       OR EXISTS (SELECT 1 FROM recovery_batch_successor_submissions)
+       OR EXISTS (SELECT 1 FROM analysis_run_successor_work_manifest)
+       OR EXISTS (SELECT 1 FROM analysis_run_successor_artifact_lineage)
+       OR EXISTS (SELECT 1 FROM analysis_run_successor_asset_ownership) THEN
+        RAISE EXCEPTION 'Cannot revert successor-run submission while persisted successor data exists';
+    END IF;
+END;
+$$;
+
 DROP TABLE IF EXISTS analysis_run_successor_asset_ownership;
 DROP INDEX IF EXISTS analysis_run_successor_lineage_predecessor_idx;
 DROP INDEX IF EXISTS analysis_run_successor_lineage_origin_idx;

@@ -4,6 +4,7 @@ import test from "node:test";
 import { QueryClient } from "@tanstack/react-query";
 import {
   createRecoveryBatchMutationOptions,
+  confirmRecoveryIdentityMutationOptions,
   recoveryBatchQueryKey,
   recoveryBatchQueryOptions,
   recoveryRightsDeclarationQueryOptions,
@@ -100,6 +101,38 @@ test("recovery batch creation records the exact displayed declaration version an
     idempotencyKey: "batch-key-1",
     rightsDeclarationVersion: "recovery-rights-v1",
     rightsDeclarationAccepted: true,
+  });
+});
+
+test("identity confirmation submits the selected DOI candidate fingerprint with the exact PDF version decision", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, options = {}) => {
+    request = { url, options };
+    return jsonResponse({ id: "confirmation-1" });
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const mutation = client.getMutationCache().build(client, confirmRecoveryIdentityMutationOptions(client));
+  await mutation.execute({
+    analysisRunId: "run-1",
+    batchId: "batch-1",
+    uploadId: "upload-1",
+    validationAttemptId: "validation-1",
+    confirmedDoi: "10.1234/selected",
+    doiCandidateFingerprint: `recovery-metadata-candidate-v1:${"a".repeat(64)}`,
+  });
+
+  assert.equal(request.url, "/api/v1/recovery-batches/batch-1/uploads/upload-1/validation/validation-1/confirm-identity");
+  assert.equal(request.options.method, "POST");
+  assert.deepEqual(JSON.parse(request.options.body), {
+    confirmExactVersion: true,
+    confirmedDoi: "10.1234/selected",
+    doiCandidateFingerprint: `recovery-metadata-candidate-v1:${"a".repeat(64)}`,
   });
 });
 

@@ -11,4 +11,5 @@ data class RecoveryIdentityConfirmation(
     val contentSha256: String,
     val decision: String,
     val confirmedAt: Instant,
+    val identifierConfirmation: RecoveryUploadIdentifierConfirmation? = null,
 )

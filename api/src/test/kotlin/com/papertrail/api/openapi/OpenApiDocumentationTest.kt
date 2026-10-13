@@ -448,6 +448,7 @@ class OpenApiDocumentationTest {
                         localReferenceKey = "ref1",
                         uploadId = UUID.randomUUID(),
                         contentSha256 = "a".repeat(64),
+                        assistedDoi = null,
                         stages = listOf(SuccessorStageDecision("cited-paper-parse", SuccessorWorkDisposition.REPROCESS, "SELECTED_ASSET_REPARSED_IN_SUCCESSOR")),
                         blockers = emptyList(),
                     ),
@@ -614,6 +615,9 @@ class OpenApiDocumentationTest {
         val previewResponseName = successorPreviewPath.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val previewResponseProperties = document.path("components").path("schemas").path(previewResponseName).path("properties")
         listOf("revision", "planFingerprint", "eligible", "selectedEntries", "retainedReferenceKeys", "retainedDecision", "invalidationReasons", "blockers", "expectedProviderWork", "requiredConsents").forEach { assertTrue(previewResponseProperties.has(it)) }
+        val selectedEntrySchemaName = previewResponseProperties.path("selectedEntries").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val selectedEntryProperties = document.path("components").path("schemas").path(selectedEntrySchemaName).path("properties")
+        assertTrue(selectedEntryProperties.path("assistedDoi").path("description").asText().contains("human-confirmed unresolved-identity retry"))
         val successorSubmissionPath = paths.path("/api/v1/recovery-batches/{batchId}/successor").path("post")
         assertEquals("Submit a Recovery Batch successor", successorSubmissionPath.path("summary").asText())
         listOf("200", "201", "400", "404", "409", "410", "503").forEach { assertTrue(successorSubmissionPath.path("responses").has(it)) }
@@ -668,6 +672,14 @@ class OpenApiDocumentationTest {
         assertTrue(confirmIdentity.path("responses").has("200"))
         assertTrue(confirmIdentity.path("responses").has("400"))
         assertTrue(confirmIdentity.path("responses").has("409"))
+        val confirmRequestSchemaName = confirmIdentity.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val confirmRequestProperties = document.path("components").path("schemas").path(confirmRequestSchemaName).path("properties")
+        listOf("confirmExactVersion", "confirmedDoi", "doiCandidateFingerprint").forEach { assertTrue(confirmRequestProperties.has(it)) }
+        val confirmationSchemaName = confirmIdentity.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        assertTrue(document.path("components").path("schemas").path(confirmationSchemaName).path("properties").has("identifierConfirmation"))
+        val metadataCandidatesSchemaName = validationProperties.path("metadataCandidates").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val metadataCandidateProperties = document.path("components").path("schemas").path(metadataCandidatesSchemaName).path("properties")
+        listOf("candidateFingerprint", "normalizedDoi").forEach { assertTrue(metadataCandidateProperties.has(it)) }
         assertTrue(confirmIdentity.path("description").asText().contains("mismatches, unsupported chapter identities, inconclusive legacy book/chapter identities, and stale policy attempts cannot be overridden"))
         assertTrue(confirmIdentity.path("responses").path("409").path("description").asText().contains("old parser, identity, or language policy"))
         val selectVersion = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/select").path("post")
@@ -787,6 +799,7 @@ class OpenApiDocumentationTest {
         assertTrue(reportEntryProperties.path("reasonCode").path("description").asText().contains("CONFLICTING_DOI_IDENTIFIERS"))
         assertTrue(reportEntryProperties.has("sourceLocalReferenceKey"))
         assertTrue(reportEntryProperties.has("identifiers"))
+        assertTrue(reportEntryProperties.path("assistedDoi").path("description").asText().contains("exact human-confirmed selected PDF"))
         val citedPaperAccessSchema = reportEntryProperties.path("citedPaperAccess")
         val citedPaperAccessRef = if (citedPaperAccessSchema.has("${'$'}ref")) {
             citedPaperAccessSchema.path("${'$'}ref").asText()
@@ -1390,6 +1403,7 @@ class OpenApiDocumentationTest {
                             authors = listOf("Riley Example"),
                             year = 2024,
                             doi = "10.1234/example",
+                            assistedDoi = "10.1234/assisted",
                             referenceType = "JOURNAL_ARTICLE",
                             status = "RESOLVED",
                             reasonCode = null,
@@ -1470,6 +1484,7 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].title").value("Example paper"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].rankingScore").value(1.0))
             .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].reasonCodes[0]").value("TITLE_EXACT"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].assistedDoi").value("10.1234/assisted"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].sourceTextContent").value("Original GROBID source text"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].sourceLocalReferenceKey").value("ref1"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].identifiers[0].rawValue").value("https://doi.org/10.1234/example"))

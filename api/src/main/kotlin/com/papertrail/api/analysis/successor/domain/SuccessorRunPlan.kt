@@ -23,6 +23,7 @@ data class SuccessorSelectedEntryPlan(
     val localReferenceKey: String,
     val uploadId: UUID,
     val contentSha256: String,
+    val assistedDoi: String?,
     val stages: List<SuccessorStageDecision>,
     val blockers: List<String>,
 )

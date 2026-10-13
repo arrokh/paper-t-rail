@@ -58,4 +58,6 @@ data class BibliographyResolutionReportEntry(
     val extractionLimitations: List<String> = emptyList(),
     @field:Schema(description = "Whether extraction provenance was captured; old rows report UNAVAILABLE rather than inferred cause.", allowableValues = ["CAPTURED", "UNAVAILABLE"])
     val provenanceCaptureStatus: String = "UNAVAILABLE",
+    @field:Schema(description = "DOI used to restart successor-run identity resolution from metadata in the exact human-confirmed selected PDF; null when no such assistance was used.")
+    val assistedDoi: String? = null,
 )

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import type { ParsedDocument } from "@/features/analysis-runs/types";
 import {
@@ -157,9 +158,15 @@ export function RecoveryUploadWorkspace({
     validateUpload.mutate({ analysisRunId, batchId, uploadId });
   }
 
-  function confirm(batchId: string, uploadId: string, validationAttemptId: string) {
+  function confirm(
+    batchId: string,
+    uploadId: string,
+    validationAttemptId: string,
+    confirmedDoi?: string,
+    doiCandidateFingerprint?: string,
+  ) {
     confirmIdentity.reset();
-    confirmIdentity.mutate({ analysisRunId, batchId, uploadId, validationAttemptId });
+    confirmIdentity.mutate({ analysisRunId, batchId, uploadId, validationAttemptId, confirmedDoi, doiCandidateFingerprint });
   }
 
   function select(batchId: string, uploadId: string) {
@@ -353,13 +360,24 @@ function RecoveryUploadValidationPanel({
   batchId: string;
   uploadId: string;
   disabled: boolean;
-  onConfirmIdentity: (batchId: string, uploadId: string, validationAttemptId: string) => void;
+  onConfirmIdentity: (batchId: string, uploadId: string, validationAttemptId: string, confirmedDoi?: string, doiCandidateFingerprint?: string) => void;
   onSelectVersion: (batchId: string, uploadId: string) => void;
 }) {
   const options = Object.entries(validation.parserOptions)
     .map(([name, value]) => `${name}=${value}`)
     .join(" · ");
   const usesCurrentIdentityPolicy = validation.identityPolicyVersion === CURRENT_IDENTITY_POLICY_VERSION;
+  const doiCandidates = validation.metadataCandidates.filter(
+    (candidate) => candidate.field === "DOI" && typeof candidate.normalizedDoi === "string" && candidate.normalizedDoi.length > 0,
+  );
+  const [doiCandidateChoice, setDoiCandidateChoice] = useState<{ validationId: string; fingerprint: string } | null>(null);
+  const selectedDoiFingerprint = doiCandidateChoice?.validationId === validation.id ? doiCandidateChoice.fingerprint : "";
+  const selectedDoiCandidate = doiCandidates.find((candidate) => candidate.candidateFingerprint === selectedDoiFingerprint);
+  const confirmedDoi = validation.humanConfirmation?.identifierConfirmation ?? null;
+  const confirmedDoiCandidate = confirmedDoi
+    ? doiCandidates.find((candidate) => candidate.candidateFingerprint === confirmedDoi.candidateFingerprint)
+    : undefined;
+  const needsDoiAssistance = validation.identityReasonCode === "REFERENCE_IDENTITY_UNRESOLVED" && confirmedDoi === null;
 
   return (
     <div className="space-y-3 text-sm">
@@ -433,6 +451,73 @@ function RecoveryUploadValidationPanel({
             </div>
           ) : validation.identityOutcome === "MISMATCH" ? (
             <p className="m-0 text-sm text-destructive">This mismatch cannot be selected.</p>
+          ) : validation.identityOutcome === "NEEDS_CONFIRMATION" && needsDoiAssistance ? (
+            <div className="space-y-3">
+              <p className="m-0 leading-relaxed">
+                This Bibliography Entry has no resolved work identity. Confirming the PDF version alone cannot identify the cited work. Confirm a DOI only if this candidate from the exact PDF identifies that work; this does not say the PDF supports a claim.
+              </p>
+              {validation.humanConfirmation && (
+                <p className="m-0 text-xs text-muted-foreground">
+                  Exact PDF version confirmed · <LocalDateTime value={validation.humanConfirmation.confirmedAt} /> · SHA-256 {validation.humanConfirmation.contentSha256}
+                </p>
+              )}
+              {doiCandidates.length > 0 ? (
+                <>
+                  <Field>
+                    <FieldLabel htmlFor={`recovery-doi-candidate-${uploadId}`}>DOI candidate that identifies the cited work</FieldLabel>
+                    <NativeSelect
+                      id={`recovery-doi-candidate-${uploadId}`}
+                      value={selectedDoiFingerprint}
+                      disabled={disabled}
+                      onChange={(event) => setDoiCandidateChoice({ validationId: validation.id, fingerprint: event.target.value })}
+                      className="w-full"
+                    >
+                      <NativeSelectOption value="">Choose a DOI candidate</NativeSelectOption>
+                      {doiCandidates.map((candidate) => (
+                        <NativeSelectOption key={candidate.candidateFingerprint} value={candidate.candidateFingerprint}>
+                          {candidate.normalizedDoi} · page {candidate.pageNumber} · {candidate.sourceLabel}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <FieldDescription>Check the candidate against the cited work. Its page and source location are evidence; your selection is the identity confirmation.</FieldDescription>
+                  </Field>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={disabled || !selectedDoiCandidate}
+                      onClick={() => {
+                        if (!selectedDoiCandidate?.normalizedDoi) return;
+                        onConfirmIdentity(
+                          batchId,
+                          uploadId,
+                          validation.id,
+                          selectedDoiCandidate.normalizedDoi,
+                          selectedDoiCandidate.candidateFingerprint,
+                        );
+                      }}
+                    >
+                      {validation.humanConfirmation ? "Confirm this DOI identity" : "Confirm PDF and DOI identity"}
+                    </Button>
+                    {!validation.humanConfirmation && (
+                      <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onConfirmIdentity(batchId, uploadId, validation.id)}>
+                        Confirm PDF version only
+                      </Button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="m-0 text-sm text-muted-foreground">This PDF has no usable DOI candidate. Its work identity remains unresolved, so it cannot be selected for a successor run.</p>
+                  {!validation.humanConfirmation && (
+                    <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onConfirmIdentity(batchId, uploadId, validation.id)}>
+                      Confirm PDF version only
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
           ) : validation.identityOutcome === "NEEDS_CONFIRMATION" && !validation.humanConfirmation ? (
             <div className="space-y-2">
               <p className="m-0 leading-relaxed">To continue, confirm that this exact PDF is the cited work or intended version. This records a separate human decision; it does not say the PDF supports a claim.</p>
@@ -443,9 +528,15 @@ function RecoveryUploadValidationPanel({
           ) : (
             <div className="space-y-2">
               {validation.humanConfirmation && (
-                <p className="m-0 text-xs text-muted-foreground">
-                  Human confirmation recorded · <LocalDateTime value={validation.humanConfirmation.confirmedAt} /> · exact PDF SHA-256 {validation.humanConfirmation.contentSha256}
-                </p>
+                <div className="text-xs text-muted-foreground">
+                  <p className="m-0">Human confirmation recorded · <LocalDateTime value={validation.humanConfirmation.confirmedAt} /> · exact PDF SHA-256 {validation.humanConfirmation.contentSha256}</p>
+                  {confirmedDoi && (
+                    <p className="m-0 mt-1">
+                      DOI identity confirmed: {confirmedDoi.identifierValue}
+                      {confirmedDoiCandidate ? ` · page ${confirmedDoiCandidate.pageNumber} · ${confirmedDoiCandidate.sourceLabel}` : " · candidate provenance recorded"}
+                    </p>
+                  )}
+                </div>
               )}
               {validation.languageEligibility !== "ELIGIBLE" ? (
                 <p className="m-0 text-sm text-muted-foreground">Selection is blocked until the exact PDF is eligible under the Analysis Run&apos;s English-language policy.</p>
@@ -492,7 +583,7 @@ function RecoveryUploadReferenceCard({
   onRemove: (batchId: string, uploadId: string) => void;
   onValidate: (batchId: string, uploadId: string) => void;
   validationPending: boolean;
-  onConfirmIdentity: (batchId: string, uploadId: string, validationAttemptId: string) => void;
+  onConfirmIdentity: (batchId: string, uploadId: string, validationAttemptId: string, confirmedDoi?: string, doiCandidateFingerprint?: string) => void;
   onSelectVersion: (batchId: string, uploadId: string) => void;
   identityActionPending: boolean;
 }) {
