@@ -12,5 +12,7 @@ data class RecoveryBatch(
     val createdAt: Instant,
     val lastActivityAt: Instant,
     val expiresAt: Instant,
+    val revision: Long,
     val uploads: List<RecoveryUpload>,
+    val selectedAssets: List<RecoveryUploadAssetSelection>,
 )

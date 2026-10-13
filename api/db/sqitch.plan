@@ -28,3 +28,5 @@ recovery_identity_policy_version [recovery_validation_safety] 2026-10-09T00:00:0
 automatic_cited_paper_identity_gate [recovery_identity_policy_version] 2026-10-09T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Block unverified automatic full-text assets before evidence assessment
 user_supplied_cited_paper_origin [automatic_cited_paper_identity_gate] 2026-10-09T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist truthful user-supplied Cited Paper origin and rights snapshot
 recovery_upload_language_policy [user_supplied_cited_paper_origin] 2026-10-13T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Record complete language-eligibility policy for safe attempt reuse
+recovery_batch_revision [recovery_upload_language_policy] 2026-10-13T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Version Recovery Batch contents for frozen successor submission
+successor_run_submission [recovery_batch_revision] 2026-10-13T00:00:00Z Paper T-Rail Maintainers <noreply@paper-t-rail.local> # Persist idempotent successor submissions, retained-work manifest, and asset ownership

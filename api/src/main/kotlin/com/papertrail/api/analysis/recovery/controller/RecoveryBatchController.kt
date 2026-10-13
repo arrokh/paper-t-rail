@@ -86,7 +86,14 @@ class RecoveryBatchController(
         @Parameter(description = "Predecessor Analysis Run identifier.", required = true)
         @PathVariable analysisRunId: UUID,
     ): ResponseEntity<List<RecoveryBatchResponse>> {
-        val batch = recoveryStagingService.activeBatch(analysisRunId)
+        val batch = recoveryStagingService.activeBatch(analysisRunId)?.let { activeBatch ->
+            activeBatch.copy(
+                selectedAssets = activeBatch.selectedAssets.filter { selection ->
+                    recoveryUploadValidationService.latest(activeBatch.id, selection.uploadId)
+                        ?.id == selection.validationAttemptId
+                },
+            )
+        }
         return ResponseEntity.ok()
             .cacheControl(CacheControl.noStore())
             .body(listOfNotNull(batch?.toResponse()))
@@ -333,7 +340,9 @@ class RecoveryBatchController(
         createdAt = createdAt,
         lastActivityAt = lastActivityAt,
         expiresAt = expiresAt,
+        revision = revision,
         uploads = uploads.map { it.toResponse() },
+        selectedAssets = selectedAssets.map(RecoveryUploadAssetSelectionResponse::from),
     )
 
     private fun RecoveryUpload.toResponse() = RecoveryUploadResponse(

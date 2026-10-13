@@ -40,12 +40,15 @@ import com.papertrail.api.external.crossref.service.CrossrefCacheInvalidationSer
 import com.papertrail.api.analysis.http.AnalysisRunPage
 import com.papertrail.api.analysis.http.AnalysisRunSourcePdfAccess
 import com.papertrail.api.analysis.http.AnalysisRunSummary
+import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.http.AnalysisRunExecutionSummary
 import com.papertrail.api.analysis.execution.http.ExecutionArtifactResponse
 import com.papertrail.api.infrastructure.messaging.outbox.OutboxPublisher
 import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.document.service.SourceDocumentDeletionService
+import com.papertrail.api.analysis.recovery.domain.RecoveryBatch
+import com.papertrail.api.analysis.recovery.domain.RecoveryBatchStatus
 import com.papertrail.api.analysis.recovery.domain.RecoveryRightsDeclaration
 import com.papertrail.api.analysis.recovery.domain.RecoveryAssetSelectionMethod
 import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityConfirmation
@@ -60,6 +63,15 @@ import com.papertrail.api.analysis.recovery.service.RecoveryUploadIdentityServic
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingSettings
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadLimits
+import com.papertrail.api.analysis.successor.domain.SuccessorRunPlan
+import com.papertrail.api.analysis.successor.domain.SuccessorSelectedEntryPlan
+import com.papertrail.api.analysis.successor.domain.SuccessorStageDecision
+import com.papertrail.api.analysis.successor.domain.SuccessorWorkDisposition
+import com.papertrail.api.analysis.successor.http.SuccessorRunPreviewRequest
+import com.papertrail.api.analysis.successor.http.SuccessorRunSubmissionRequest
+import com.papertrail.api.analysis.successor.service.SuccessorSubmissionResult
+import com.papertrail.api.analysis.successor.service.SuccessorRunSubmissionService
+import com.papertrail.api.analysis.successor.service.SuccessorRunService
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataCandidate
 import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataExtractionMethod
@@ -128,6 +140,12 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var recoveryStagingService: RecoveryStagingService
+
+    @MockitoBean
+    private lateinit var successorRunService: SuccessorRunService
+
+    @MockitoBean
+    private lateinit var successorRunSubmissionService: SuccessorRunSubmissionService
 
     @MockitoBean
     private lateinit var recoveryUploadValidationService: RecoveryUploadValidationService
@@ -326,6 +344,195 @@ class OpenApiDocumentationTest {
     }
 
     @Test
+    fun `active recovery batch exposes its revision and selected asset collection without caching`() {
+        val runId = UUID.randomUUID()
+        val batchId = UUID.randomUUID()
+        val uploadId = UUID.randomUUID()
+        val entryId = UUID.randomUUID()
+        val validationAttemptId = UUID.randomUUID()
+        val contentSha256 = "d".repeat(64)
+        val now = Instant.parse("2026-10-13T00:00:00Z")
+        val selection = RecoveryUploadAssetSelection(
+            id = UUID.randomUUID(),
+            batchId = batchId,
+            analysisRunId = runId,
+            bibliographyEntryId = entryId,
+            uploadId = uploadId,
+            validationAttemptId = validationAttemptId,
+            contentSha256 = contentSha256,
+            selectionMethod = RecoveryAssetSelectionMethod.MACHINE_VALIDATED,
+            selectedAt = now,
+        )
+        val batch = RecoveryBatch(
+                id = batchId,
+                analysisRunId = runId,
+                status = RecoveryBatchStatus.OPEN,
+                rightsDeclaration = RecoveryRightsDeclaration.CURRENT,
+                rightsDeclaredAt = now,
+                createdAt = now,
+                lastActivityAt = now,
+                expiresAt = now.plusSeconds(60),
+                revision = 7,
+                uploads = emptyList(),
+                selectedAssets = listOf(selection),
+            )
+        val currentAttempt = RecoveryUploadValidationAttempt(
+            id = validationAttemptId,
+            batchId = batchId,
+            uploadId = uploadId,
+            analysisRunId = runId,
+            contentSha256 = contentSha256,
+            parserId = "docling",
+            parserVersion = "1.30.0",
+            metadataExtractionPolicyVersion = "metadata-v2",
+            identityPolicyVersion = "identity-v2",
+            parserOptions = emptyMap(),
+            languageDetectorId = "optimaize",
+            languageDetectorVersion = "0.6",
+            minimumLanguageConfidence = 0.65,
+            minimumExtractedCharacters = 100,
+            languagePolicyFingerprint = "e".repeat(64),
+            validationStatus = RecoveryValidationStatus.COMPLETED,
+            identityOutcome = RecoveryIdentityOutcome.VALIDATED,
+            identityReasonCode = "DOI_MATCH",
+            metadataCandidates = emptyList(),
+            languageEligibility = RecoveryLanguageEligibility.ELIGIBLE,
+            detectedLanguage = "en",
+            languageConfidence = 0.99,
+            languageReasonCode = "ENGLISH_DETECTED",
+            failureCode = null,
+            createdAt = now,
+        )
+        Mockito.`when`(recoveryStagingService.activeBatch(runId)).thenReturn(batch)
+        Mockito.`when`(recoveryUploadValidationService.latest(batchId, uploadId)).thenReturn(currentAttempt)
+
+        val response = mockMvc.perform(get("/api/v1/analysis-runs/$runId/recovery-batches"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$[0].revision").value(7))
+            .andExpect(jsonPath("$[0].selectedAssets[0].uploadId").value(uploadId.toString()))
+            .andExpect(jsonPath("$[0].selectedAssets[0].contentSha256").value(contentSha256))
+            .andReturn()
+            .response
+
+        assertEquals("no-store", response.getHeader("Cache-Control"))
+        assertTrue(objectMapper.readTree(response.contentAsString).path(0).path("selectedAssets").isArray)
+    }
+
+    @Test
+    fun `successor preview returns the supplied plan fingerprint without caching`() {
+        val batchId = UUID.randomUUID()
+        val request = """
+            {"expectedRevision":4,"configuration":{"claimExtractorProvider":"heuristic","embeddingProvider":"feature-hash","systemOneProvider":"mock","scholarlyMetadataProvider":"recorded-fixtures","openAccessProvider":"recorded-fixtures"}}
+        """.trimIndent()
+
+        val previewRequest = SuccessorRunPreviewRequest(
+            expectedRevision = 4,
+            configuration = RunConfigurationRequest(
+                claimExtractorProvider = "heuristic",
+                embeddingProvider = "feature-hash",
+                systemOneProvider = "mock",
+                scholarlyMetadataProvider = "recorded-fixtures",
+                openAccessProvider = "recorded-fixtures",
+            ),
+        )
+        Mockito.`when`(successorRunService.preview(batchId, previewRequest)).thenReturn(
+            SuccessorRunPlan(
+                batchId = batchId,
+                predecessorAnalysisRunId = UUID.randomUUID(),
+                revision = 4,
+                planFingerprint = "c".repeat(64),
+                eligible = true,
+                selectedEntries = listOf(
+                    SuccessorSelectedEntryPlan(
+                        predecessorBibliographyEntryId = UUID.randomUUID(),
+                        localReferenceKey = "ref1",
+                        uploadId = UUID.randomUUID(),
+                        contentSha256 = "a".repeat(64),
+                        stages = listOf(SuccessorStageDecision("cited-paper-parse", SuccessorWorkDisposition.REPROCESS, "SELECTED_ASSET_REPARSED_IN_SUCCESSOR")),
+                        blockers = emptyList(),
+                    ),
+                ),
+                retainedReferenceKeys = listOf("ref2"),
+                retainedDecision = SuccessorStageDecision("unselected-bibliography-coverage", SuccessorWorkDisposition.RETAIN, "UNSELECTED_COVERAGE_PRESERVED"),
+                invalidationReasons = emptyList(),
+                blockers = emptyList(),
+                expectedProviderWork = emptyList(),
+                requiredConsents = emptyList(),
+            ),
+        )
+
+        val response = mockMvc.perform(
+            post("/api/v1/recovery-batches/$batchId/successor/preview")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(request),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.batchId").value(batchId.toString()))
+            .andExpect(jsonPath("$.revision").value(4))
+            .andExpect(jsonPath("$.eligible").value(true))
+            .andExpect(jsonPath("$.planFingerprint").value("c".repeat(64)))
+            .andExpect(jsonPath("$.selectedEntries[0].localReferenceKey").value("ref1"))
+            .andExpect(jsonPath("$.selectedEntries[0].stages[0].disposition").value("REPROCESS"))
+            .andExpect(jsonPath("$.retainedReferenceKeys[0]").value("ref2"))
+            .andExpect(jsonPath("$.retainedDecision.disposition").value("RETAIN"))
+            .andReturn()
+            .response
+
+        assertEquals("no-store", response.getHeader("Cache-Control"))
+    }
+
+    @Test
+    fun `successor submission creates once and returns no-store replay on retry`() {
+        val batchId = UUID.randomUUID()
+        val submissionId = UUID.randomUUID()
+        val predecessorRunId = UUID.randomUUID()
+        val successorRunId = UUID.randomUUID()
+        val requestId = UUID.randomUUID()
+        val requestJson = """
+            {"idempotencyKey":"$requestId","expectedRevision":4,"configuration":{"claimExtractorProvider":"heuristic","embeddingProvider":"feature-hash","systemOneProvider":"mock","scholarlyMetadataProvider":"recorded-fixtures","openAccessProvider":"recorded-fixtures"}}
+        """.trimIndent()
+        val request = SuccessorRunSubmissionRequest(
+            idempotencyKey = requestId,
+            expectedRevision = 4,
+            configuration = RunConfigurationRequest(
+                claimExtractorProvider = "heuristic",
+                embeddingProvider = "feature-hash",
+                systemOneProvider = "mock",
+                scholarlyMetadataProvider = "recorded-fixtures",
+                openAccessProvider = "recorded-fixtures",
+            ),
+        )
+        Mockito.`when`(successorRunSubmissionService.submit(batchId, request)).thenReturn(
+            SuccessorSubmissionResult(submissionId, successorRunId, predecessorRunId, 4, "d".repeat(64), 1, 2, 1, false),
+            SuccessorSubmissionResult(submissionId, successorRunId, predecessorRunId, 4, "d".repeat(64), 1, 2, 1, true),
+        )
+
+        val created = mockMvc.perform(
+            post("/api/v1/recovery-batches/$batchId/successor")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJson),
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.submissionId").value(submissionId.toString()))
+            .andExpect(jsonPath("$.successorAnalysisRunId").value(successorRunId.toString()))
+            .andExpect(jsonPath("$.replayed").value(false))
+            .andReturn().response
+        assertEquals("no-store", created.getHeader("Cache-Control"))
+
+        val replay = mockMvc.perform(
+            post("/api/v1/recovery-batches/$batchId/successor")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJson),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.submissionId").value(submissionId.toString()))
+            .andExpect(jsonPath("$.replayed").value(true))
+            .andReturn().response
+        assertEquals("no-store", replay.getHeader("Cache-Control"))
+        Mockito.verify(successorRunSubmissionService, Mockito.times(2)).submit(batchId, request)
+    }
+
+    @Test
     fun `OpenAPI contract describes the existing analysis run endpoints and PDF upload`() {
         val response = mockMvc.perform(get("/v3/api-docs"))
             .andExpect(status().isOk)
@@ -388,7 +595,35 @@ class OpenApiDocumentationTest {
         val listRecoveryBatches = paths.path(recoveryBatchesPath).path("get")
         assertTrue(listRecoveryBatches.path("responses").has("200"))
         assertTrue(listRecoveryBatches.path("responses").has("404"))
-        assertTrue(listRecoveryBatches.path("responses").path("200").path("content").path("application/json").path("schema").path("items").has("${'$'}ref"))
+        val batchSchemaName = listRecoveryBatches.path("responses").path("200").path("content").path("application/json").path("schema").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val batchProperties = document.path("components").path("schemas").path(batchSchemaName).path("properties")
+        listOf("revision", "uploads", "selectedAssets").forEach { assertTrue(batchProperties.has(it)) }
+        val selectedAssetSchemaName = batchProperties.path("selectedAssets").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val selectedAssetProperties = document.path("components").path("schemas").path(selectedAssetSchemaName).path("properties")
+        listOf("bibliographyEntryId", "uploadId", "validationAttemptId", "contentSha256").forEach { assertTrue(selectedAssetProperties.has(it)) }
+        val successorPreviewPath = paths.path("/api/v1/recovery-batches/{batchId}/successor/preview").path("post")
+        assertTrue(successorPreviewPath.path("responses").has("200"))
+        assertTrue(successorPreviewPath.path("responses").has("400"))
+        assertTrue(successorPreviewPath.path("responses").has("404"))
+        assertTrue(successorPreviewPath.path("responses").has("409"))
+        assertTrue(successorPreviewPath.path("responses").has("410"))
+        val previewRequestName = successorPreviewPath.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val previewRequestProperties = document.path("components").path("schemas").path(previewRequestName).path("properties")
+        assertTrue(previewRequestProperties.has("expectedRevision"))
+        assertTrue(previewRequestProperties.has("configuration"))
+        val previewResponseName = successorPreviewPath.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val previewResponseProperties = document.path("components").path("schemas").path(previewResponseName).path("properties")
+        listOf("revision", "planFingerprint", "eligible", "selectedEntries", "retainedReferenceKeys", "retainedDecision", "invalidationReasons", "blockers", "expectedProviderWork", "requiredConsents").forEach { assertTrue(previewResponseProperties.has(it)) }
+        val successorSubmissionPath = paths.path("/api/v1/recovery-batches/{batchId}/successor").path("post")
+        assertEquals("Submit a Recovery Batch successor", successorSubmissionPath.path("summary").asText())
+        listOf("200", "201", "400", "404", "409", "410", "503").forEach { assertTrue(successorSubmissionPath.path("responses").has(it)) }
+        assertTrue(successorSubmissionPath.path("requestBody").path("required").asBoolean())
+        val submissionRequestName = successorSubmissionPath.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val submissionRequestProperties = document.path("components").path("schemas").path(submissionRequestName).path("properties")
+        listOf("idempotencyKey", "expectedRevision", "configuration").forEach { assertTrue(submissionRequestProperties.has(it)) }
+        val submissionResponseName = successorSubmissionPath.path("responses").path("201").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val submissionResponseProperties = document.path("components").path("schemas").path(submissionResponseName).path("properties")
+        listOf("submissionId", "successorAnalysisRunId", "predecessorAnalysisRunId", "revision", "planFingerprint", "selectedEntryCount", "retainedEntryCount", "queuedEntryCount", "replayed").forEach { assertTrue(submissionResponseProperties.has(it)) }
         val createRecoveryBatch = paths.path(recoveryBatchesPath).path("post")
         assertEquals("Create or retrieve a Recovery Batch", createRecoveryBatch.path("summary").asText())
         assertTrue(createRecoveryBatch.path("requestBody").path("required").asBoolean())
