@@ -7,6 +7,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.Socket
 import java.net.URI
 import java.security.cert.CertificateException
@@ -50,7 +51,7 @@ class PinnedPublicHttpsContentTransport(
         }
 
         val port = uri.port.takeIf { it >= 0 } ?: HTTPS_PORT
-        val socket = Socket()
+        val socket = Socket(Proxy.NO_PROXY)
         try {
             socket.connect(InetSocketAddress(validatedAddresses.first(), port), connectTimeoutMillis)
             val connectedPeer = socket.inetAddress
@@ -86,7 +87,7 @@ class PinnedPublicHttpsContentTransport(
     ): OpenAccessContentResponse {
         val output = socket.outputStream
         val host = requireNotNull(uri.rawAuthority)
-        val path = uri.rawPath.takeIf(String::isNotEmpty) ?: "/"
+        val path = URI(uri.toASCIIString()).rawPath.takeIf(String::isNotEmpty) ?: "/"
         output.write(
             (
                 "GET $path HTTP/1.1\r\n" +

@@ -10,6 +10,12 @@ import org.junit.jupiter.api.Test
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.ProxySelector
+import java.net.ServerSocket
+import java.net.SocketAddress
+import java.net.SocketException
+import java.net.URI
 import java.net.UnknownHostException
 import java.security.KeyStore
 import java.security.SecureRandom
@@ -137,6 +143,110 @@ class PinnedPublicHttpsContentTransportTest {
             assertEquals(body.toString(Charsets.UTF_8), response.bytes.toString(Charsets.UTF_8))
         } finally {
             server.stop(0)
+        }
+    }
+
+    @Test
+    fun `content transport percent encodes non ASCII paths as UTF-8`() {
+        val loopback = InetAddress.getByName("127.0.0.1")
+        val requestPath = AtomicReference<String?>()
+        val requestQuery = AtomicReference<String?>()
+        val server = HttpsServer.create(InetSocketAddress(loopback, 0), 0).apply {
+            httpsConfigurator = HttpsConfigurator(testServerSslContext())
+            createContext("/") { exchange ->
+                requestPath.set(exchange.requestURI.rawPath)
+                requestQuery.set(exchange.requestURI.rawQuery)
+                val body = "controlled text asset".toByteArray()
+                exchange.responseHeaders.add("Content-Type", "text/plain")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+        }
+        server.start()
+        try {
+            val transport = PinnedPublicHttpsContentTransport(
+                resolveAddresses = { listOf(loopback) },
+                isPublicAddress = { it == loopback },
+                socketFactory = clientTrustAllSocketFactory(),
+            )
+
+            val response = transport.fetch(
+                "https://rebind.test:${server.address.port}/paper-雪.pdf",
+                1_000,
+                setOf("text/plain"),
+            )
+
+            assertEquals(200, response.statusCode)
+            assertEquals("/paper-%E9%9B%AA.pdf", requestPath.get())
+            assertEquals(null, requestQuery.get())
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `content connections bypass the JVM SOCKS proxy selector`() {
+        val loopback = InetAddress.getByName("127.0.0.1")
+        val server = HttpsServer.create(InetSocketAddress(loopback, 0), 0).apply {
+            httpsConfigurator = HttpsConfigurator(testServerSslContext())
+            createContext("/paper.pdf") { exchange ->
+                val body = "%PDF-1.4 controlled test asset".toByteArray()
+                exchange.responseHeaders.add("Content-Type", "application/pdf")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+        }
+        server.start()
+        val socksProxyServer = ServerSocket(0, 1, loopback)
+        val proxyConnections = AtomicInteger()
+        val proxyThread = Thread {
+            try {
+                socksProxyServer.accept().use { connection ->
+                    proxyConnections.incrementAndGet()
+                    val input = connection.getInputStream()
+                    input.read()
+                    val methodCount = input.read()
+                    repeat(methodCount.coerceAtLeast(0)) { input.read() }
+                    connection.outputStream.apply {
+                        write(byteArrayOf(5, -1))
+                        flush()
+                    }
+                }
+            } catch (_: SocketException) {
+                Unit
+            }
+        }.apply {
+            isDaemon = true
+            start()
+        }
+        val previousProxySelector = ProxySelector.getDefault()
+        ProxySelector.setDefault(object : ProxySelector() {
+            override fun select(uri: URI): MutableList<Proxy> = mutableListOf(
+                Proxy(Proxy.Type.SOCKS, InetSocketAddress(loopback, socksProxyServer.localPort)),
+            )
+
+            override fun connectFailed(uri: URI, socketAddress: SocketAddress, exception: IOException) = Unit
+        })
+        try {
+            val transport = PinnedPublicHttpsContentTransport(
+                resolveAddresses = { listOf(loopback) },
+                isPublicAddress = { it == loopback },
+                socketFactory = clientTrustAllSocketFactory(),
+            )
+
+            val response = transport.fetch(
+                "https://rebind.test:${server.address.port}/paper.pdf",
+                1_000,
+                setOf("application/pdf"),
+            )
+
+            assertEquals(200, response.statusCode)
+            assertEquals(0, proxyConnections.get())
+        } finally {
+            ProxySelector.setDefault(previousProxySelector)
+            socksProxyServer.close()
+            server.stop(0)
+            proxyThread.join(5_000)
         }
     }
 
