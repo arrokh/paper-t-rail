@@ -86,9 +86,11 @@ class CitedPaperAccessService(
             )
         }
         val locations = discovery?.locations.orEmpty()
-        val checkedLocations = locations.map { location -> location to locationPolicy.rejectionReasons(location) }
-        val permittedLocations = checkedLocations.filter { (_, reasons) -> reasons.isEmpty() }.map { it.first }
-        val rejectedLocationCauses = checkedLocations.flatMap { it.second }.distinct()
+        val checkedLocations = locations.map { location ->
+            CheckedOpenAccessLocation(location, locationPolicy.rejectionReasons(location))
+        }
+        val permittedLocations = checkedLocations.filter { it.rejectionReasons.isEmpty() }.map { it.location }
+        val rejectedLocationCauses = checkedLocations.flatMap { it.rejectionReasons }.distinct()
         val acquisition = acquireExtractableFullText(
             analysisRunId = analysisRunId,
             documentId = context.documentId,
@@ -196,7 +198,7 @@ class CitedPaperAccessService(
         documentId: UUID,
         providerId: String,
         provider: OpenAccessProvider,
-        checkedLocations: List<Pair<OpenAccessLocation, Set<CitedPaperAccessCause>>>,
+        checkedLocations: List<CheckedOpenAccessLocation>,
         reference: ResolvedCitedReference,
         configuration: AnalysisConfigurationSnapshot,
     ): FullTextAcquisitionResult {
@@ -206,7 +208,8 @@ class CitedPaperAccessService(
         var identityFailureLocation: OpenAccessLocation? = null
         var fetchAttempts = 0
         for ((index, checkedLocation) in checkedLocations.withIndex()) {
-            val (location, rejectionReasons) = checkedLocation
+            val location = checkedLocation.location
+            val rejectionReasons = checkedLocation.rejectionReasons
             val ordinal = index + 1
             if (rejectionReasons.isNotEmpty()) {
                 failureCauses += rejectionReasons
@@ -294,10 +297,10 @@ class CitedPaperAccessService(
                 continue
             }
             candidateOutcomes.add(candidateOutcome(location, ordinal, "ACQUIRED", emptyList()))
-            checkedLocations.drop(index + 1).forEachIndexed { nextIndex, (nextLocation, nextReasons) ->
-                val reasonCodes = nextReasons.map { it.name }.ifEmpty { listOf(EARLIER_CANDIDATE_ACQUIRED) }
-                val outcome = if (nextReasons.isNotEmpty()) "REJECTED" else "NOT_ATTEMPTED"
-                candidateOutcomes.add(candidateOutcome(nextLocation, ordinal + nextIndex + 1, outcome, reasonCodes))
+            checkedLocations.drop(index + 1).forEachIndexed { nextIndex, nextLocation ->
+                val reasonCodes = nextLocation.rejectionReasons.map { it.name }.ifEmpty { listOf(EARLIER_CANDIDATE_ACQUIRED) }
+                val outcome = if (nextLocation.rejectionReasons.isNotEmpty()) "REJECTED" else "NOT_ATTEMPTED"
+                candidateOutcomes.add(candidateOutcome(nextLocation.location, ordinal + nextIndex + 1, outcome, reasonCodes))
             }
             return FullTextAcquisitionResult(
                 fullText = acquired,
@@ -385,6 +388,11 @@ class CitedPaperAccessService(
         CitedPaperAccessCause.FULL_TEXT_IDENTITY_MISMATCH -> "IDENTITY_MISMATCH"
         else -> "IDENTITY_VALIDATION_FAILED"
     }
+
+    private data class CheckedOpenAccessLocation(
+        val location: OpenAccessLocation,
+        val rejectionReasons: Set<CitedPaperAccessCause>,
+    )
 
     private data class FullTextAcquisitionResult(
         val fullText: AcquiredFullText?,
