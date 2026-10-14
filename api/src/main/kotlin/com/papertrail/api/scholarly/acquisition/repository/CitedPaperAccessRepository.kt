@@ -12,6 +12,7 @@ import com.papertrail.api.scholarly.acquisition.domain.UserSuppliedCitedPaperFul
 import com.papertrail.api.scholarly.acquisition.domain.UserSuppliedCitedPaperProvenance
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
+import com.papertrail.api.scholarly.acquisition.report.CitedPaperAcquisitionCandidateOutcome
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
 import java.sql.ResultSet
@@ -77,6 +78,8 @@ class CitedPaperAccessRepository(
         decision: CitedPaperAccessDecision,
         accessReason: CitedPaperAccessReason?,
         accessReasons: List<CitedPaperAccessCause>,
+        candidateOutcomes: List<CitedPaperAcquisitionCandidateOutcome>,
+        candidateOutcomesOmittedCount: Int,
         locationUrl: String?,
         license: String?,
         version: String?,
@@ -93,10 +96,11 @@ class CitedPaperAccessRepository(
             """
             INSERT INTO cited_paper_access (
                 analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status,
-                provider_id, access_reason, access_reasons, metadata_available, abstract_available, source_url, license_identifier,
+                provider_id, access_reason, access_reasons, candidate_outcomes, candidate_outcomes_omitted_count,
+                metadata_available, abstract_available, source_url, license_identifier,
                 location_version, location_host_type, discovered_at, object_key, content_sha256,
                 content_media_type, language, language_detector_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (analysis_run_id, bibliography_entry_id) DO NOTHING
             """.trimIndent(),
             analysisRunId,
@@ -106,6 +110,8 @@ class CitedPaperAccessRepository(
             providerId,
             accessReason?.name,
             JsonUtil.toJson(accessReasons.map { it.name }),
+            JsonUtil.toJson(candidateOutcomes),
+            candidateOutcomesOmittedCount,
             discovery?.metadataAvailable == true || discovery?.abstractAvailable == true || discovery?.locations?.isNotEmpty() == true || fullText != null,
             discovery?.abstractAvailable == true,
             locationUrl,
@@ -215,7 +221,8 @@ class CitedPaperAccessRepository(
     fun reportEntries(analysisRunId: UUID): List<CitedPaperAccessReportEntry> = jdbc.query(
         """
         SELECT b.id AS bibliography_entry_id, b.local_reference_key, a.access_status, a.access_reason,
-               a.access_reasons::text AS access_reasons, a.provider_id, a.source_url, a.license_identifier, a.location_version, a.location_host_type,
+               a.access_reasons::text AS access_reasons, a.candidate_outcomes::text AS candidate_outcomes,
+               a.candidate_outcomes_omitted_count, a.provider_id, a.source_url, a.license_identifier, a.location_version, a.location_host_type,
                a.discovered_at, a.content_sha256, a.language, a.language_detector_version, a.access_origin,
                a.content_media_type, a.rights_declaration_version, a.rights_declaration_text, a.rights_declared_at,
                a.originating_analysis_run_id, a.originating_recovery_batch_id, a.originating_recovery_upload_id
@@ -246,6 +253,11 @@ class CitedPaperAccessRepository(
                 getString("access_reasons"),
                 JsonUtil.collectionType(List::class.java, String::class.java),
             ),
+            candidateOutcomes = JsonUtil.fromJson(
+                getString("candidate_outcomes"),
+                JsonUtil.collectionType(List::class.java, CitedPaperAcquisitionCandidateOutcome::class.java),
+            ),
+            candidateOutcomesOmittedCount = getInt("candidate_outcomes_omitted_count"),
             providerId = getString("provider_id"),
             sourceUrl = getString("source_url"),
             license = getString("license_identifier"),

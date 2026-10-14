@@ -26,6 +26,14 @@ data class CitedPaperAccessReport(
         ),
     )
     val accessReasons: List<String> = emptyList(),
+    @field:ArraySchema(
+        maxItems = 5,
+        arraySchema = Schema(description = "At most five bounded, source-ordered per-location acquisition outcomes. Legacy and user-supplied access rows may have no records."),
+        schema = Schema(implementation = CitedPaperAcquisitionCandidateOutcome::class),
+    )
+    val candidateOutcomes: List<CitedPaperAcquisitionCandidateOutcome> = emptyList(),
+    @field:Schema(description = "Count of locations omitted from candidateOutcomes because the five-outcome record limit was reached.", minimum = "0")
+    val candidateOutcomesOmittedCount: Int = 0,
     @field:Schema(description = "Automatic provider; null for a user-supplied asset.", nullable = true)
     val providerId: String?,
     @field:Schema(description = "Automatic provider's source location; null for a user-supplied asset.", nullable = true)

@@ -819,6 +819,7 @@ class SuccessorRunSubmissionRepository(
         val rows = jdbc.query(
             """
             SELECT bibliography_entry_id, canonical_paper_id, access_status, access_reason, access_reasons::text,
+                   candidate_outcomes::text, candidate_outcomes_omitted_count,
                    provider_id, metadata_available, abstract_available, source_url, license_identifier,
                    location_version, location_host_type, discovered_at, object_key, content_sha256,
                    content_media_type, language, language_detector_version, access_origin,
@@ -829,6 +830,7 @@ class SuccessorRunSubmissionRepository(
             { rs, _ -> AccessRow(
                 entryId = rs.uuid("bibliography_entry_id"), canonicalPaperId = rs.uuid("canonical_paper_id"),
                 accessStatus = rs.getString("access_status"), accessReason = rs.getString("access_reason"), accessReasons = rs.getString("access_reasons"),
+                candidateOutcomes = rs.getString("candidate_outcomes"), candidateOutcomesOmittedCount = rs.getInt("candidate_outcomes_omitted_count"),
                 providerId = rs.getString("provider_id"), metadata = rs.getBoolean("metadata_available"), abstract = rs.getBoolean("abstract_available"),
                 sourceUrl = rs.getString("source_url"), license = rs.getString("license_identifier"), locationVersion = rs.getString("location_version"),
                 hostType = rs.getString("location_host_type"), discoveredAt = rs.getTimestamp("discovered_at").toInstant(), objectKey = rs.getString("object_key"),
@@ -848,15 +850,17 @@ class SuccessorRunSubmissionRepository(
                 """
                 INSERT INTO cited_paper_access (
                     analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status, access_reason,
-                    access_reasons, provider_id, metadata_available, abstract_available, source_url, license_identifier,
+                    access_reasons, candidate_outcomes, candidate_outcomes_omitted_count,
+                    provider_id, metadata_available, abstract_available, source_url, license_identifier,
                     location_version, location_host_type, discovered_at, object_key, content_sha256, content_media_type,
                     language, language_detector_version, asset_id, access_origin, rights_declaration_version,
                     rights_declaration_text, rights_declared_at, originating_analysis_run_id,
                     originating_recovery_batch_id, originating_recovery_upload_id
-                ) VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent(),
                 successorRunId, newEntryId, row.canonicalPaperId, row.accessStatus, row.accessReason,
-                row.accessReasons, row.providerId, row.metadata, row.abstract, row.sourceUrl, row.license,
+                row.accessReasons, row.candidateOutcomes, row.candidateOutcomesOmittedCount,
+                row.providerId, row.metadata, row.abstract, row.sourceUrl, row.license,
                 row.locationVersion, row.hostType, Timestamp.from(row.discoveredAt), row.objectKey, row.hash,
                 row.mediaType, row.language, row.detectorVersion, newAssetId, row.origin, row.rightsVersion,
                 row.rightsText, row.rightsAt?.let(Timestamp::from), row.originRun, row.originBatch, row.originUpload,
@@ -1521,7 +1525,7 @@ class SuccessorRunSubmissionRepository(
     private data class ClaimRow(val id: UUID, val contextId: UUID, val text: String, val start: Int, val end: Int)
     private data class ClaimTargetRow(val id: UUID, val contextId: UUID, val claimId: UUID, val targetId: UUID, val kind: String)
     private data class ResolutionRow(val entryId: UUID, val status: String, val reasonCode: String, val canonicalPaperId: UUID?, val matchedDoi: String?, val matchedTitle: String?, val matchedAuthors: String, val matchedYear: Int?, val confidence: Double?, val matchMethod: String?, val providerId: String, val candidateEvidence: String)
-    private data class AccessRow(val entryId: UUID, val canonicalPaperId: UUID, val accessStatus: String, val accessReason: String?, val accessReasons: String, val providerId: String?, val metadata: Boolean, val abstract: Boolean, val sourceUrl: String?, val license: String?, val locationVersion: String?, val hostType: String?, val discoveredAt: Instant, val objectKey: String?, val hash: String?, val mediaType: String?, val language: String?, val detectorVersion: String?, val origin: String, val rightsVersion: String?, val rightsText: String?, val rightsAt: Instant?, val originRun: UUID?, val originBatch: UUID?, val originUpload: UUID?, val assetId: UUID)
+    private data class AccessRow(val entryId: UUID, val canonicalPaperId: UUID, val accessStatus: String, val accessReason: String?, val accessReasons: String, val candidateOutcomes: String, val candidateOutcomesOmittedCount: Int, val providerId: String?, val metadata: Boolean, val abstract: Boolean, val sourceUrl: String?, val license: String?, val locationVersion: String?, val hostType: String?, val discoveredAt: Instant, val objectKey: String?, val hash: String?, val mediaType: String?, val language: String?, val detectorVersion: String?, val origin: String, val rightsVersion: String?, val rightsText: String?, val rightsAt: Instant?, val originRun: UUID?, val originBatch: UUID?, val originUpload: UUID?, val assetId: UUID)
     private data class VerificationRow(val id: UUID, val claimId: UUID, val entryId: UUID, val canonicalPaperId: UUID?, val status: String, val scope: String, val terminalReason: String?, val finalStatus: String?, val evidenceConflict: Boolean, val failureReason: String?, val aggregatorVersion: String?)
     private data class IndexingRow(val entryId: UUID, val status: String, val failureReason: String?, val parseId: UUID?, val profileId: String, val vectorLimit: Int, val lexicalLimit: Int, val finalLimit: Int, val fusionConstant: Int, val embeddingProvider: String, val embeddingModel: String, val embeddingVersion: String, val embeddingDimension: Int, val embeddingProfileHash: String, val candidateCount: Int)
     private data class CitedParseRow(val canonicalPaperId: UUID, val contentSha256: String, val parserId: String, val parserVersion: String, val language: String, val languageDetectorVersion: String, val normalizedText: String)

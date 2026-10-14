@@ -25,6 +25,8 @@ describe("Cited Paper access summary", () => {
           accessOrigin: "AUTOMATIC",
           accessReason: null,
           accessReasons: ["LANGUAGE_UNSUPPORTED"],
+          candidateOutcomes: [],
+          candidateOutcomesOmittedCount: 0,
           providerId: "recorded-fixtures",
           sourceUrl: null,
           license: "CC0-1.0",
@@ -61,6 +63,8 @@ describe("Cited Paper access summary", () => {
           accessOrigin: "USER_SUPPLIED",
           accessReason: null,
           accessReasons: [],
+          candidateOutcomes: [],
+          candidateOutcomesOmittedCount: 0,
           providerId: null,
           sourceUrl: null,
           license: null,
@@ -105,6 +109,8 @@ describe("Cited Paper access summary", () => {
           accessOrigin: "AUTOMATIC",
           accessReason: "FULL_TEXT_ACQUISITION_FAILED",
           accessReasons: [cause],
+          candidateOutcomes: [],
+          candidateOutcomesOmittedCount: 0,
           providerId: "recorded-fixtures",
           sourceUrl: null,
           license: "CC0-1.0",
@@ -140,6 +146,8 @@ describe("Cited Paper access summary", () => {
           accessOrigin: "AUTOMATIC",
           accessReason: "NO_LEGAL_FULL_TEXT_LOCATION",
           accessReasons: [],
+          candidateOutcomes: [],
+          candidateOutcomesOmittedCount: 0,
           providerId: "legacy-provider",
           sourceUrl: null,
           license: null,
@@ -177,6 +185,8 @@ describe("Cited Paper access summary", () => {
           accessOrigin: "AUTOMATIC",
           accessReason: null,
           accessReasons: [],
+          candidateOutcomes: [],
+          candidateOutcomesOmittedCount: 0,
           providerId: "legacy-provider",
           sourceUrl: null,
           license: null,
@@ -202,6 +212,68 @@ describe("Cited Paper access summary", () => {
     );
 
     expect(screen.getByText("Full-text availability alone does not show whether semantic assessment ran. Availability is not evidence of support.")).toBeTruthy();
+  });
+
+  it("shows bounded per-location reasons without exposing candidate URLs", () => {
+    render(
+      <CitedPaperAccessSummary
+        access={{
+          accessStatus: "FULL_TEXT_AVAILABLE",
+          accessOrigin: "AUTOMATIC",
+          accessReason: null,
+          accessReasons: ["FULL_TEXT_LOCATION_URL_REJECTED"],
+          candidateOutcomes: [
+            {
+              ordinal: 1,
+              host: "unsafe.example",
+              license: "CC0-1.0",
+              version: "publishedVersion",
+              hostType: "repository",
+              outcome: "REJECTED",
+              reasonCodes: ["FULL_TEXT_LOCATION_URL_REJECTED"],
+            },
+            {
+              ordinal: 2,
+              host: "archive.example",
+              license: "CC-BY-4.0",
+              version: "publishedVersion",
+              hostType: "repository",
+              outcome: "ACQUIRED",
+              reasonCodes: [],
+            },
+          ],
+          candidateOutcomesOmittedCount: 3,
+          providerId: "unpaywall",
+          sourceUrl: null,
+          license: "CC-BY-4.0",
+          version: "publishedVersion",
+          hostType: "repository",
+          discoveredAt: "2025-01-01T00:00:00Z",
+          contentSha256: "c".repeat(64),
+          mediaType: "application/pdf",
+          language: "en",
+          languageDetectorVersion: "0.6",
+          rightsDeclarationVersion: null,
+          rightsDeclarationText: null,
+          rightsDeclaredAt: null,
+          originatingAnalysisRunId: null,
+          originatingRecoveryBatchId: null,
+          originatingRecoveryUploadId: null,
+          verificationOutcomes: [],
+          evidenceIndexing: null,
+        }}
+        progressStatus="COMPLETED"
+        progressReason={null}
+      />,
+    );
+
+    expect(screen.getByText("Full-text location outcomes")).toBeTruthy();
+    expect(screen.getByText("Location 1: Rejected by the location policy")).toBeTruthy();
+    expect(screen.getAllByText("A full-text location URL did not pass the safe-location policy.").length).toBe(2);
+    expect(screen.getByText(/unsafe\.example/)).toBeTruthy();
+    expect(screen.getByText("Location 2: Acquired and identity-checked")).toBeTruthy();
+    expect(screen.getByText("3 additional location outcomes were omitted to keep this report bounded.")).toBeTruthy();
+    expect(screen.queryByText(/token|query/i)).toBeNull();
   });
 
   it("reports missing attribution without guessing a cause", () => {
