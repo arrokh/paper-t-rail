@@ -2,6 +2,7 @@ package com.papertrail.api.analysis.successor.http
 
 import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.successor.domain.SuccessorExpectedProviderWork
+import com.papertrail.api.analysis.successor.domain.SuccessorIdentifierAssistanceEntryPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorRunPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorSelectedEntryPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorStageDecision
@@ -21,8 +22,10 @@ data class SuccessorRunPreviewResponse(
     val planFingerprint: String,
     @field:Schema(description = "True only when this plan can be submitted by the currently supported successor slice.")
     val eligible: Boolean,
-    @field:Schema(description = "Selected exact assets and the stage decisions for their entries.")
+    @field:Schema(description = "Selected exact PDF assets and the stage decisions for their entries.")
     val selectedEntries: List<SuccessorEntryPlanResponse>,
+    @field:Schema(description = "Separate user-confirmed DOI-only identity assistance entries; these queue reference resolution without PDF parsing, indexing, or evidence assessment.")
+    val identifierAssistanceEntries: List<SuccessorIdentifierAssistanceEntryPlanResponse>,
     @field:Schema(description = "Unaffected predecessor reference keys whose coverage will be retained.")
     val retainedReferenceKeys: List<String>,
     @field:Schema(description = "Explicit disposition for all unselected bibliography coverage.")
@@ -55,12 +58,28 @@ data class SuccessorEntryPlanResponse(
     val blockers: List<String>,
 )
 
+@Schema(description = "One unresolved supported Bibliography Entry with a user-confirmed DOI but no selected PDF upload.")
+data class SuccessorIdentifierAssistanceEntryPlanResponse(
+    @field:Schema(description = "Predecessor Bibliography Entry identifier; the successor receives a fresh ID.", format = "uuid")
+    val predecessorBibliographyEntryId: UUID,
+    @field:Schema(description = "Run-scoped Bibliography Entry key.")
+    val localReferenceKey: String,
+    @field:Schema(description = "Confirmed identifier type.", allowableValues = ["DOI"])
+    val identifierType: String,
+    @field:Schema(description = "User-confirmed DOI. This is an identity assertion and does not identify a PDF version.")
+    val identifierValue: String,
+    @field:Schema(description = "Reference-resolution-only disposition; PDF stages are explicitly skipped.")
+    val stages: List<SuccessorStageDecisionResponse>,
+    @field:Schema(description = "Entry-specific blockers, if any.")
+    val blockers: List<String>,
+)
+
 @Schema(description = "Disposition of a successor processing stage.")
 data class SuccessorStageDecisionResponse(
     @field:Schema(description = "Stable pipeline stage identifier.")
     val stage: String,
     val disposition: SuccessorWorkDisposition,
-    @field:Schema(description = "Reason for the REUSE, REPROCESS, or RETAIN disposition; invalidation reasons are returned separately.")
+    @field:Schema(description = "Reason for the REUSE, REPROCESS, RETAIN, or SKIP disposition; invalidation reasons are returned separately.")
     val reasonCode: String,
 )
 
@@ -80,6 +99,7 @@ fun SuccessorRunPlan.toResponse(): SuccessorRunPreviewResponse = SuccessorRunPre
     planFingerprint = planFingerprint,
     eligible = eligible,
     selectedEntries = selectedEntries.map(SuccessorSelectedEntryPlan::toResponse),
+    identifierAssistanceEntries = identifierAssistanceEntries.map(SuccessorIdentifierAssistanceEntryPlan::toResponse),
     retainedReferenceKeys = retainedReferenceKeys,
     retainedDecision = retainedDecision.toResponse(),
     invalidationReasons = invalidationReasons,
@@ -94,6 +114,15 @@ private fun SuccessorSelectedEntryPlan.toResponse() = SuccessorEntryPlanResponse
     uploadId = uploadId,
     contentSha256 = contentSha256,
     assistedDoi = assistedDoi,
+    stages = stages.map(SuccessorStageDecision::toResponse),
+    blockers = blockers,
+)
+
+private fun SuccessorIdentifierAssistanceEntryPlan.toResponse() = SuccessorIdentifierAssistanceEntryPlanResponse(
+    predecessorBibliographyEntryId = predecessorBibliographyEntryId,
+    localReferenceKey = localReferenceKey,
+    identifierType = identifierType,
+    identifierValue = identifierValue,
     stages = stages.map(SuccessorStageDecision::toResponse),
     blockers = blockers,
 )

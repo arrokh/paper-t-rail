@@ -12,6 +12,7 @@ import java.util.UUID
 class RecoveryUploadCleanupRepository(
     private val jdbc: JdbcTemplate,
     private val settings: RecoveryStagingSettings,
+    private val history: RecoveryHistoryRepository? = null,
 ) {
     @Transactional
     fun scheduleSourceDocumentUploads(documentId: UUID, now: Instant) {
@@ -121,6 +122,82 @@ class RecoveryUploadCleanupRepository(
     }
 
     @Transactional
+    fun scheduleSubmittedUnselectedUploads(successorAnalysisRunId: UUID, now: Instant): Int {
+        val uploads = jdbc.query(
+            """
+            SELECT submission.batch_id, batch.analysis_run_id, upload.id, upload.bibliography_entry_id,
+                   upload.staging_object_key, upload.finalized_object_key, upload.presigned_url_expires_at
+              FROM recovery_batch_successor_submissions submission
+              JOIN recovery_batches batch ON batch.id = submission.batch_id
+              JOIN recovery_batch_uploads upload ON upload.batch_id = batch.id
+             WHERE submission.successor_analysis_run_id = ?
+               AND batch.status = 'SUBMITTED'
+               AND upload.status NOT IN ('REMOVED', 'EXPIRED')
+               AND NOT EXISTS (
+                   SELECT 1 FROM analysis_run_successor_work_manifest manifest
+                    WHERE manifest.successor_analysis_run_id = submission.successor_analysis_run_id
+                      AND manifest.selected_upload_id = upload.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM analysis_run_successor_asset_ownership ownership
+                    WHERE ownership.upload_id = upload.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM cited_paper_access access
+                    WHERE access.object_key = upload.finalized_object_key
+               )
+             ORDER BY upload.id
+             FOR UPDATE OF batch, upload
+            """.trimIndent(),
+            { rs, _ ->
+                SubmittedUnselectedUploadForCleanup(
+                    batchId = rs.getObject("batch_id", UUID::class.java),
+                    analysisRunId = rs.getObject("analysis_run_id", UUID::class.java),
+                    id = rs.getObject("id", UUID::class.java),
+                    bibliographyEntryId = rs.getObject("bibliography_entry_id", UUID::class.java),
+                    stagingObjectKey = rs.getString("staging_object_key"),
+                    finalizedObjectKey = rs.getString("finalized_object_key"),
+                    presignedUrlExpiresAt = rs.getTimestamp("presigned_url_expires_at").toInstant(),
+                )
+            },
+            successorAnalysisRunId,
+        )
+        uploads.forEach { upload ->
+            val stagingNotBefore = maxOf(upload.presignedUrlExpiresAt, now).plusSeconds(settings.inFlightGraceSeconds)
+            insertCleanup(
+                upload.stagingObjectKey,
+                stagingNotBefore,
+                stagingNotBefore.plusSeconds(settings.cleanupRetryWindowSeconds),
+                now,
+            )
+            insertCleanup(
+                upload.finalizedObjectKey,
+                now,
+                now.plusSeconds(settings.cleanupRetryWindowSeconds),
+                now,
+            )
+            val purgedAttempts = jdbc.update(
+                "DELETE FROM recovery_upload_validation_attempts WHERE upload_id = ?",
+                upload.id,
+            )
+            if (purgedAttempts > 0) {
+                history?.append(
+                    batchId = upload.batchId,
+                    analysisRunId = upload.analysisRunId,
+                    batchStatus = "SUBMITTED",
+                    eventType = "UPLOAD_DETAILS_PURGED",
+                    outcomeCode = "UNSELECTED_UPLOAD_VALIDATION_DETAILS_PURGED",
+                    stageCode = "pdf-validation",
+                    bibliographyEntryId = upload.bibliographyEntryId,
+                    uploadId = upload.id,
+                    createdAt = now,
+                )
+            }
+        }
+        return uploads.size
+    }
+
+    @Transactional
     fun claimDue(now: Instant, retryIntervalSeconds: Long, limit: Int): List<RecoveryCleanupObject> = jdbc.query(
         """
         WITH due AS (
@@ -211,6 +288,16 @@ class RecoveryUploadCleanupRepository(
 
 private data class SubmittedUploadForCleanup(
     val id: UUID,
+    val stagingObjectKey: String,
+    val finalizedObjectKey: String,
+    val presignedUrlExpiresAt: Instant,
+)
+
+private data class SubmittedUnselectedUploadForCleanup(
+    val batchId: UUID,
+    val analysisRunId: UUID,
+    val id: UUID,
+    val bibliographyEntryId: UUID,
     val stagingObjectKey: String,
     val finalizedObjectKey: String,
     val presignedUrlExpiresAt: Instant,

@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
 import com.papertrail.api.analysis.recovery.repository.RecoveryBatchRepository
+import com.papertrail.api.analysis.recovery.repository.RecoveryUploadCleanupRepository
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
 import com.papertrail.api.analysis.successor.http.SuccessorRunPreviewRequest
 import com.papertrail.api.analysis.successor.http.SuccessorRunSubmissionRequest
 import com.papertrail.api.analysis.successor.repository.PersistedSuccessorSubmission
 import com.papertrail.api.analysis.successor.repository.SuccessorRunSubmissionRepository
+import com.papertrail.api.analysis.successor.repository.SuccessorSelectedAccessAttemptFailed
 import com.papertrail.api.analysis.successor.repository.VerifiedSuccessorUpload
 import com.papertrail.api.document.domain.SourceDocumentDeletedException
 import com.papertrail.api.document.repository.SourceDocumentRepository
@@ -31,6 +33,7 @@ class SuccessorRunSubmissionService(
     private val objectStore: SourceDocumentObjectStore,
     private val transactionTemplate: TransactionTemplate,
     private val configurationFactory: RunConfigurationFactory,
+    private val recoveryUploadCleanupRepository: RecoveryUploadCleanupRepository,
 ) {
     fun submit(batchId: UUID, request: SuccessorRunSubmissionRequest): SuccessorSubmissionResult {
         val requestFingerprint = requestFingerprint(request)
@@ -64,8 +67,9 @@ class SuccessorRunSubmissionService(
 
         val context = submissionRepository.submissionContext(batchId)
             ?: throw RecoveryStagingException("RECOVERY_BATCH_NOT_FOUND", 404, "Recovery Batch not found.")
-        val persisted = transactionTemplate.execute {
-            lockActiveAnalysisRun(context.predecessorAnalysisRunId)
+        val persisted = try {
+            transactionTemplate.execute {
+                lockActiveAnalysisRun(context.predecessorAnalysisRunId)
             val predecessor = submissionRepository.lockPredecessor(context.predecessorAnalysisRunId)
                 ?: throw RecoveryStagingException("ANALYSIS_RUN_NOT_FOUND", 404, "Analysis Run not found.")
             if (predecessor.documentId != context.documentId) {
@@ -125,7 +129,8 @@ class SuccessorRunSubmissionService(
             val configurationJson = configurationFactory.toJson(configuration)
             val submissionId = UUID.randomUUID()
             val successorRunId = UUID.randomUUID()
-            submissionRepository.materialize(
+            val submittedAt = Instant.now()
+            val persisted = submissionRepository.materialize(
                 submissionId = submissionId,
                 successorRunId = successorRunId,
                 batch = lockedBatchView,
@@ -136,8 +141,18 @@ class SuccessorRunSubmissionService(
                 requestFingerprint = requestFingerprint,
                 idempotencyKey = request.idempotencyKey,
                 selectedUploads = finalSelectedAssets,
-                now = Instant.now(),
+                now = submittedAt,
             )
+            recoveryUploadCleanupRepository.scheduleSubmittedUnselectedUploads(successorRunId, submittedAt)
+            persisted
+            }
+        } catch (failure: SuccessorSelectedAccessAttemptFailed) {
+            try {
+                submissionRepository.recordFailedSelectedAccessAttempt(failure)
+            } catch (_: Exception) {
+                // Preserve the submission failure if source deletion prevents an audit write.
+            }
+            throw failure.cause ?: failure
         } ?: throw IllegalStateException("Successor submission transaction returned no result.")
 
         return persisted.toResult()
@@ -210,6 +225,8 @@ data class SuccessorSubmissionResult(
     val retainedEntryCount: Int,
     val queuedEntryCount: Int,
     val replayed: Boolean,
+    val identifierAssistanceEntryCount: Int = 0,
+    val resolutionQueuedEntryCount: Int = 0,
 )
 
 data class VerifiedSuccessorUpload(
@@ -228,5 +245,7 @@ private fun PersistedSuccessorSubmission.toResult() = SuccessorSubmissionResult(
     selectedEntryCount = selectedEntryCount,
     retainedEntryCount = retainedEntryCount,
     queuedEntryCount = queuedEntryCount,
+    identifierAssistanceEntryCount = identifierAssistanceEntryCount,
+    resolutionQueuedEntryCount = resolutionQueuedEntryCount,
     replayed = replayed,
 )

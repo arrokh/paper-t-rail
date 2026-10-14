@@ -1,10 +1,10 @@
+-- The one-active-upload index from this change was superseded by recovery_identifier_assistance_history.
 DO $$
 BEGIN
     IF to_regclass('public.recovery_batches') IS NULL
        OR to_regclass('public.recovery_batch_uploads') IS NULL
        OR to_regclass('public.recovery_upload_cleanup_tombstones') IS NULL
        OR to_regclass('public.recovery_batches_one_open_per_run_idx') IS NULL
-       OR to_regclass('public.recovery_batch_uploads_one_active_entry_idx') IS NULL
        OR to_regclass('public.recovery_upload_cleanup_due_idx') IS NULL
        OR NOT EXISTS (
            SELECT 1 FROM pg_trigger

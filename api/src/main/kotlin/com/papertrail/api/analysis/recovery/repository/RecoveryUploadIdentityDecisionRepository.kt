@@ -16,6 +16,7 @@ import java.util.UUID
 class RecoveryUploadIdentityDecisionRepository(
     private val jdbc: JdbcTemplate,
     private val settings: RecoveryStagingSettings,
+    private val history: RecoveryHistoryRepository? = null,
 ) {
     @Transactional
     fun recordConfirmation(
@@ -25,7 +26,7 @@ class RecoveryUploadIdentityDecisionRepository(
         if (!lockActiveUpload(confirmation.batchId, confirmation.uploadId, confirmation.confirmedAt)) {
             throw RecoveryStagingException("RECOVERY_UPLOAD_NOT_FOUND", 404, "An active finalized Recovery Upload was not found.")
         }
-        jdbc.update(
+        val insertedConfirmation = jdbc.update(
             """
             INSERT INTO recovery_upload_identity_confirmations (
                 id, batch_id, upload_id, analysis_run_id, validation_attempt_id,
@@ -45,6 +46,21 @@ class RecoveryUploadIdentityDecisionRepository(
         )
         val persisted = confirmation(confirmation.batchId, confirmation.uploadId, confirmation.validationAttemptId)
             ?: throw IllegalStateException("The Recovery Upload confirmation was not persisted.")
+        if (insertedConfirmation > 0) {
+            val runAndEntry = uploadRunAndEntry(confirmation.batchId, confirmation.uploadId)
+                ?: throw IllegalStateException("The confirmed Recovery Upload is missing its Bibliography Entry.")
+            history?.append(
+                batchId = confirmation.batchId,
+                analysisRunId = runAndEntry.first,
+                eventType = "EXACT_VERSION_CONFIRMED",
+                outcomeCode = "EXACT_PDF_VERSION_CONFIRMED",
+                stageCode = "pdf-identity",
+                attemptNumber = validationAttemptNumber(confirmation.uploadId, confirmation.validationAttemptId),
+                bibliographyEntryId = runAndEntry.second,
+                uploadId = confirmation.uploadId,
+                createdAt = confirmation.confirmedAt,
+            )
+        }
         identifierConfirmation?.let { requested ->
             require(requested.batchId == confirmation.batchId && requested.uploadId == confirmation.uploadId &&
                 requested.validationAttemptId == confirmation.validationAttemptId && requested.contentSha256 == confirmation.contentSha256) {
@@ -154,9 +170,28 @@ class RecoveryUploadIdentityDecisionRepository(
     ).firstOrNull()
 
     @Transactional
-    fun recordSelection(selection: RecoveryUploadAssetSelection) {
+    fun recordSelection(selection: RecoveryUploadAssetSelection): RecoveryUploadAssetSelection {
         if (!lockActiveUpload(selection.batchId, selection.uploadId, selection.selectedAt)) {
             throw RecoveryStagingException("RECOVERY_UPLOAD_NOT_FOUND", 404, "An active finalized Recovery Upload was not found.")
+        }
+        val current = jdbc.query(
+            "SELECT * FROM recovery_upload_asset_selections WHERE batch_id = ? AND bibliography_entry_id = ? FOR UPDATE",
+            { rs, _ -> rs.toSelection() },
+            selection.batchId,
+            selection.bibliographyEntryId,
+        ).firstOrNull()
+        if (current?.let {
+                it.uploadId == selection.uploadId && it.validationAttemptId == selection.validationAttemptId &&
+                    it.contentSha256 == selection.contentSha256 && it.selectionMethod == selection.selectionMethod
+            } == true
+        ) return current
+
+        if (current != null) {
+            jdbc.update(
+                "DELETE FROM recovery_upload_asset_selections WHERE batch_id = ? AND bibliography_entry_id = ?",
+                selection.batchId,
+                selection.bibliographyEntryId,
+            )
         }
         jdbc.update(
             """
@@ -164,7 +199,6 @@ class RecoveryUploadIdentityDecisionRepository(
                 id, batch_id, analysis_run_id, bibliography_entry_id, upload_id,
                 validation_attempt_id, content_sha256, selection_method, selected_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (batch_id, bibliography_entry_id) DO NOTHING
             """.trimIndent(),
             selection.id,
             selection.batchId,
@@ -177,6 +211,18 @@ class RecoveryUploadIdentityDecisionRepository(
             java.sql.Timestamp.from(selection.selectedAt),
         )
         touchBatch(selection.batchId, selection.selectedAt)
+        history?.append(
+            batchId = selection.batchId,
+            analysisRunId = selection.analysisRunId,
+            eventType = "UPLOAD_VERSION_SELECTED",
+            outcomeCode = if (current == null) "EXACT_VERSION_SELECTED" else "EXACT_VERSION_RESELECTED",
+            stageCode = "pdf-selection",
+            bibliographyEntryId = selection.bibliographyEntryId,
+            uploadId = selection.uploadId,
+            previousUploadId = current?.uploadId,
+            createdAt = selection.selectedAt,
+        )
+        return selection
     }
 
     private fun lockActiveUpload(batchId: UUID, uploadId: UUID, now: Instant): Boolean = jdbc.query(
@@ -221,6 +267,20 @@ class RecoveryUploadIdentityDecisionRepository(
             throw RecoveryStagingException("RECOVERY_BATCH_EXPIRED", 410, "This Recovery Batch has expired.")
         }
     }
+
+    private fun uploadRunAndEntry(batchId: UUID, uploadId: UUID): Pair<UUID, UUID>? = jdbc.query(
+        "SELECT analysis_run_id, bibliography_entry_id FROM recovery_batch_uploads WHERE batch_id = ? AND id = ?",
+        { rs, _ -> rs.getObject("analysis_run_id", UUID::class.java) to rs.getObject("bibliography_entry_id", UUID::class.java) },
+        batchId,
+        uploadId,
+    ).firstOrNull()
+
+    private fun validationAttemptNumber(uploadId: UUID, attemptId: UUID): Int = jdbc.queryForObject(
+        "SELECT count(*) FROM recovery_upload_validation_attempts WHERE upload_id = ? AND (created_at, id) <= (SELECT created_at, id FROM recovery_upload_validation_attempts WHERE id = ?)",
+        Int::class.java,
+        uploadId,
+        attemptId,
+    ) ?: 1
 
     fun selectionForEntry(batchId: UUID, bibliographyEntryId: UUID): RecoveryUploadAssetSelection? = jdbc.query(
         """

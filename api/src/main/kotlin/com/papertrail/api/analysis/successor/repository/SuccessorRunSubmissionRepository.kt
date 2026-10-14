@@ -4,6 +4,8 @@ import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.ProviderSelection
 import com.papertrail.api.analysis.recovery.domain.RecoveryBatch
 import com.papertrail.api.analysis.recovery.domain.RecoveryUpload
+import com.papertrail.api.analysis.recovery.repository.RecoveryHistoryRepository
+import com.papertrail.api.analysis.successor.domain.SuccessorIdentifierAssistanceEntryPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorRunPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorWorkDisposition
 import com.papertrail.api.analysis.repository.AnalysisRunPipelineProgressRepository
@@ -18,6 +20,7 @@ import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepos
 import com.papertrail.api.scholarly.acquisition.repository.ResolvedCitedReference
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Repository
+import org.springframework.transaction.annotation.Transactional
 import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.Instant
@@ -31,6 +34,7 @@ class SuccessorRunSubmissionRepository(
     private val analysisRunExecutionRepository: AnalysisRunExecutionRepository,
     private val citedPaperIndexingQueue: CitedPaperIndexingQueue,
     private val successorRunResolutionQueue: SuccessorRunResolutionQueue,
+    private val recoveryHistoryRepository: RecoveryHistoryRepository? = null,
 ) {
     fun submissionContext(batchId: UUID): SubmissionContext? = jdbc.query(
         """
@@ -52,7 +56,8 @@ class SuccessorRunSubmissionRepository(
         """
         SELECT id, batch_id, predecessor_analysis_run_id, successor_analysis_run_id,
                idempotency_key, request_fingerprint, plan_fingerprint, submitted_revision,
-               selected_entry_count, retained_entry_count, queued_entry_count
+               selected_entry_count, retained_entry_count, queued_entry_count,
+               identifier_assistance_entry_count, resolution_queued_entry_count
           FROM recovery_batch_successor_submissions
          WHERE batch_id = ?
         """.trimIndent(),
@@ -101,6 +106,42 @@ class SuccessorRunSubmissionRepository(
         batchId,
     ).firstOrNull()
 
+    @Transactional
+    fun recordFailedSelectedAccessAttempt(failure: SuccessorSelectedAccessAttemptFailed, now: Instant = Instant.now()) {
+        val history = recoveryHistoryRepository ?: return
+        val batchExists = jdbc.query(
+            "SELECT id FROM recovery_batches WHERE id = ? FOR UPDATE",
+            { rs, _ -> rs.getObject("id", UUID::class.java) },
+            failure.batchId,
+        ).isNotEmpty()
+        if (!batchExists) return
+        val attemptNumber = nextAttemptNumber(failure.batchId, failure.bibliographyEntryId, "selected-access")
+        listOf("ATTEMPT_STARTED", "ATTEMPT_FAILED").forEach { eventType ->
+            history.append(
+                batchId = failure.batchId,
+                analysisRunId = failure.predecessorAnalysisRunId,
+                batchStatus = "OPEN",
+                eventType = eventType,
+                outcomeCode = if (eventType == "ATTEMPT_STARTED") "SELECTED_ACCESS_HANDOFF_STARTED" else "SELECTED_ACCESS_HANDOFF_FAILED",
+                stageCode = "selected-access",
+                attemptNumber = attemptNumber,
+                bibliographyEntryId = failure.bibliographyEntryId,
+                uploadId = failure.uploadId,
+                createdAt = now,
+            )
+        }
+    }
+
+    private fun nextAttemptNumber(batchId: UUID, bibliographyEntryId: UUID, stageCode: String): Int =
+        jdbc.queryForObject(
+            "SELECT COALESCE(MAX(attempt_number), 0) + 1 FROM recovery_history_events WHERE batch_id = ? AND bibliography_entry_id = ? AND stage_code = ?",
+            Int::class.java,
+            batchId,
+            bibliographyEntryId,
+            stageCode,
+        ) ?: 1
+
+
     fun lockSelectedUploads(batchId: UUID) {
         jdbc.query(
             """
@@ -131,16 +172,21 @@ class SuccessorRunSubmissionRepository(
         now: Instant,
     ): PersistedSuccessorSubmission {
         check(plan.eligible) { "Only an eligible successor plan can be materialized." }
-        check(plan.selectedEntries.isNotEmpty()) { "At least one selected entry is required." }
+        check(plan.selectedEntries.isNotEmpty() || plan.identifierAssistanceEntries.isNotEmpty()) {
+            "At least one selected PDF asset or DOI-assisted identity entry is required."
+        }
         val selectedAssetsByEntry = selectedUploads.associateBy(VerifiedSuccessorUpload::predecessorBibliographyEntryId)
         val selectedPlansByEntry = plan.selectedEntries.associateBy { it.predecessorBibliographyEntryId }
+        val identifierPlansByEntry = plan.identifierAssistanceEntries.associateBy { it.predecessorBibliographyEntryId }
         require(selectedAssetsByEntry.keys == selectedPlansByEntry.keys)
+        require(selectedPlansByEntry.keys.intersect(identifierPlansByEntry.keys).isEmpty())
         plan.selectedEntries.forEach { selectedPlan ->
             val asset = selectedAssetsByEntry.getValue(selectedPlan.predecessorBibliographyEntryId)
             require(selectedPlan.uploadId == asset.upload.id)
             require(sha256Hex(asset.bytes) == selectedPlan.contentSha256)
         }
         val selectedPredecessorEntryIds = selectedPlansByEntry.keys
+        val reprocessedPredecessorEntryIds = selectedPredecessorEntryIds + identifierPlansByEntry.keys
 
         jdbc.update(
             """
@@ -174,6 +220,8 @@ class SuccessorRunSubmissionRepository(
             selectedCount = plan.selectedEntries.size,
             retainedCount = plan.retainedReferenceKeys.size,
             queuedCount = plan.selectedEntries.count { it.assistedDoi == null },
+            identifierAssistanceCount = plan.identifierAssistanceEntries.size,
+            resolutionQueuedCount = plan.identifierAssistanceEntries.size + plan.selectedEntries.count { it.assistedDoi != null },
         )
 
         val predecessorConfiguration = com.papertrail.api.utils.JsonUtil.fromJson(predecessor.configurationJson, AnalysisConfigurationSnapshot::class.java)
@@ -190,8 +238,9 @@ class SuccessorRunSubmissionRepository(
         val targetIds = cloneTargets(predecessor.analysisRunId, successorRunId, occurrenceIds, contextIds, bibliographyEntries, now)
         val claimIds = cloneClaims(predecessor.analysisRunId, successorRunId, contextIds, now)
         cloneClaimTargetLinks(predecessor.analysisRunId, successorRunId, contextIds, claimIds, targetIds, now)
-        val assistedPredecessorEntryIds = plan.selectedEntries.filter { it.assistedDoi != null }
+        val assistedPdfPredecessorEntryIds = plan.selectedEntries.filter { it.assistedDoi != null }
             .map { it.predecessorBibliographyEntryId }.toSet()
+        val assistedPredecessorEntryIds = assistedPdfPredecessorEntryIds + identifierPlansByEntry.keys
         cloneResolutions(
             predecessor.analysisRunId,
             successorRunId,
@@ -213,20 +262,55 @@ class SuccessorRunSubmissionRepository(
             }
             if (selectedReference != null) {
                 val verifiedAsset = selectedAssetsByEntry.getValue(predecessorEntryId)
-                saveSelectedAccess(
-                    successorRunId = successorRunId,
-                    batch = batch,
-                    upload = verifiedAsset.upload,
-                    reference = selectedReference,
-                    bytes = verifiedAsset.bytes,
-                    validationAttempt = verifiedAsset.validationAttempt,
-                    now = now,
+                val attemptNumber = nextAttemptNumber(batch.id, predecessorEntryId, "selected-access")
+                recoveryHistoryRepository?.append(
+                    batchId = batch.id,
+                    analysisRunId = predecessor.analysisRunId,
+                    batchStatus = "SUBMITTED",
+                    eventType = "ATTEMPT_STARTED",
+                    outcomeCode = "SELECTED_ACCESS_HANDOFF_STARTED",
+                    stageCode = "selected-access",
+                    attemptNumber = attemptNumber,
+                    bibliographyEntryId = predecessorEntryId,
+                    uploadId = verifiedAsset.upload.id,
+                    createdAt = now,
+                )
+                try {
+                    saveSelectedAccess(
+                        successorRunId = successorRunId,
+                        batch = batch,
+                        upload = verifiedAsset.upload,
+                        reference = selectedReference,
+                        bytes = verifiedAsset.bytes,
+                        validationAttempt = verifiedAsset.validationAttempt,
+                        now = now,
+                    )
+                } catch (exception: Exception) {
+                    throw SuccessorSelectedAccessAttemptFailed(
+                        batchId = batch.id,
+                        predecessorAnalysisRunId = predecessor.analysisRunId,
+                        bibliographyEntryId = predecessorEntryId,
+                        uploadId = verifiedAsset.upload.id,
+                        cause = exception,
+                    )
+                }
+                recoveryHistoryRepository?.append(
+                    batchId = batch.id,
+                    analysisRunId = predecessor.analysisRunId,
+                    batchStatus = "SUBMITTED",
+                    eventType = "ATTEMPT_COMPLETED",
+                    outcomeCode = "SELECTED_ACCESS_HANDOFF_COMPLETED",
+                    stageCode = "selected-access",
+                    attemptNumber = attemptNumber,
+                    bibliographyEntryId = predecessorEntryId,
+                    uploadId = verifiedAsset.upload.id,
+                    createdAt = now,
                 )
             }
             successorEntryId to selectedReference
         }
 
-        cloneUnselectedAccess(predecessor.analysisRunId, successorRunId, bibliographyEntries, selectedPredecessorEntryIds, predecessorConfiguration, now)
+        cloneUnselectedAccess(predecessor.analysisRunId, successorRunId, bibliographyEntries, reprocessedPredecessorEntryIds, predecessorConfiguration, now)
 
         val verificationIds = cloneVerifications(
             predecessor.analysisRunId,
@@ -244,7 +328,7 @@ class SuccessorRunSubmissionRepository(
             successorRunId,
             bibliographyEntries,
             verificationIds,
-            selectedPredecessorEntryIds,
+            reprocessedPredecessorEntryIds,
             predecessorConfiguration,
             now,
         )
@@ -269,24 +353,26 @@ class SuccessorRunSubmissionRepository(
             { rs, _ -> rs.getObject("id", UUID::class.java) to rs.getString("local_reference_key") },
             predecessor.analysisRunId,
         ).toMap()
-        val selectedOldToNew = plan.selectedEntries.map { it.predecessorBibliographyEntryId }.toSet()
         for ((oldEntryId, newEntryId) in bibliographyEntries) {
-            val selected = oldEntryId in selectedOldToNew
+            val selectedPdfPlan = selectedPlansByEntry[oldEntryId]
+            val identifierPlan = identifierPlansByEntry[oldEntryId]
             val upload = selectedUploadByPredecessorEntry[oldEntryId]
-            val stageDispositions = if (selected) {
-                selectedPlansByEntry.getValue(oldEntryId).stages.map { stage ->
-                    mapOf("stage" to stage.stage, "disposition" to stage.disposition.name, "reasonCode" to stage.reasonCode)
-                }
-            } else {
-                listOf(mapOf("stage" to "coverage", "disposition" to SuccessorWorkDisposition.RETAIN.name, "reasonCode" to "UNSELECTED_COVERAGE_PRESERVED"))
+            val workKind = when {
+                selectedPdfPlan != null -> "PDF_ASSET"
+                identifierPlan != null -> "IDENTITY_ONLY"
+                else -> "RETAINED"
+            }
+            val stagePlans = selectedPdfPlan?.stages ?: identifierPlan?.stages ?: plan.retainedStageDecisions
+            val stageDispositions = stagePlans.map { stage ->
+                mapOf("stage" to stage.stage, "disposition" to stage.disposition.name, "reasonCode" to stage.reasonCode)
             }
             jdbc.update(
                 """
                 INSERT INTO analysis_run_successor_work_manifest (
                     successor_analysis_run_id, predecessor_analysis_run_id, batch_id,
                     bibliography_entry_id, predecessor_bibliography_entry_id, local_reference_key,
-                    disposition, selected_upload_id, selected_content_sha256, stage_dispositions
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)
+                    disposition, selected_upload_id, selected_content_sha256, stage_dispositions, work_kind
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
                 """.trimIndent(),
                 successorRunId,
                 predecessor.analysisRunId,
@@ -294,10 +380,48 @@ class SuccessorRunSubmissionRepository(
                 newEntryId,
                 oldEntryId,
                 predecessorKeys[oldEntryId] ?: "",
-                if (selected) "REPROCESS" else "RETAIN",
+                if (workKind == "RETAINED") "RETAIN" else "REPROCESS",
                 upload?.id,
                 upload?.actualSha256,
                 com.papertrail.api.utils.JsonUtil.toJson(stageDispositions),
+                workKind,
+            )
+            stagePlans.forEach { stage ->
+                recoveryHistoryRepository?.append(
+                    batchId = batch.id,
+                    analysisRunId = predecessor.analysisRunId,
+                    batchStatus = "SUBMITTED",
+                    eventType = when (stage.disposition) {
+                        SuccessorWorkDisposition.REUSE -> "WORK_REUSED"
+                        SuccessorWorkDisposition.RETAIN -> "WORK_RETAINED"
+                        SuccessorWorkDisposition.REPROCESS -> "WORK_QUEUED"
+                        SuccessorWorkDisposition.SKIP -> "WORK_SKIPPED"
+                    },
+                    outcomeCode = stage.reasonCode,
+                    stageCode = stage.stage,
+                    bibliographyEntryId = oldEntryId,
+                    uploadId = upload?.id,
+                    createdAt = now,
+                )
+            }
+        }
+
+        plan.identifierAssistanceEntries.forEach { identifierPlan ->
+            val successorEntryId = bibliographyEntries.getValue(identifierPlan.predecessorBibliographyEntryId)
+            insertDoiOnlyResolutionAssistance(
+                successorRunId = successorRunId,
+                predecessorRunId = predecessor.analysisRunId,
+                successorEntryId = successorEntryId,
+                predecessorEntryId = identifierPlan.predecessorBibliographyEntryId,
+                batchId = batch.id,
+                identifierType = identifierPlan.identifierType,
+                identifierValue = identifierPlan.identifierValue,
+                createdAt = now,
+            )
+            jdbc.update(
+                "DELETE FROM recovery_batch_identifier_assistance WHERE batch_id = ? AND bibliography_entry_id = ?",
+                batch.id,
+                identifierPlan.predecessorBibliographyEntryId,
             )
         }
 
@@ -346,17 +470,20 @@ class SuccessorRunSubmissionRepository(
             Triple(predecessorId, entryId, key)
         }
         val selectedSuccessorEntryIdSet = selectedSuccessorEntryIds.values.map { it.first }.toSet()
+        val identifierOnlySuccessorEntryIds = plan.identifierAssistanceEntries
+            .map { bibliographyEntries.getValue(it.predecessorBibliographyEntryId) }.toSet()
         val assistedSuccessorEntryIds = plan.selectedEntries.filter { it.assistedDoi != null }
             .map { bibliographyEntries.getValue(it.predecessorBibliographyEntryId) }.toSet()
         initializeProgress(
             predecessor.analysisRunId,
             successorRunId,
             progressEntries,
-            selectedSuccessorEntryIdSet,
-            assistedSuccessorEntryIds,
+            selectedSuccessorEntryIdSet + identifierOnlySuccessorEntryIds,
+            assistedSuccessorEntryIds + identifierOnlySuccessorEntryIds,
+            identifierOnlySuccessorEntryIds,
         )
 
-        selectedSuccessorEntryIds.forEach { (predecessorEntryId, successorEntryAndReference) ->
+        selectedSuccessorEntryIds.forEach { (_, successorEntryAndReference) ->
             val selectedSuccessorEntryId = successorEntryAndReference.first
             if (selectedSuccessorEntryId in assistedSuccessorEntryIds) {
                 successorRunResolutionQueue.enqueue(
@@ -384,12 +511,37 @@ class SuccessorRunSubmissionRepository(
             }
         }
 
+        identifierOnlySuccessorEntryIds.forEach { successorEntryId ->
+            successorRunResolutionQueue.enqueue(
+                analysisRunId = successorRunId,
+                bibliographyEntryId = successorEntryId,
+                documentId = predecessor.documentId,
+                sourceContentSha256 = predecessor.sourceContentSha256,
+                correlationId = successorRunId,
+                causationId = submissionId,
+                traceparent = "00-${successorRunId.toString().replace("-", "")}-0000000000000001-01",
+            )
+        }
+
         val updated = jdbc.update(
             "UPDATE recovery_batches SET status = 'SUBMITTED', revision = revision + 1 WHERE id = ? AND status = 'OPEN' AND revision = ?",
             batch.id,
             batch.revision,
         )
         if (updated != 1) throw IllegalStateException("Recovery Batch changed while the successor was being committed.")
+        recoveryHistoryRepository?.append(
+            batchId = batch.id,
+            analysisRunId = predecessor.analysisRunId,
+            batchStatus = "SUBMITTED",
+            eventType = "SUCCESSOR_SUBMITTED",
+            outcomeCode = "SUCCESSOR_CREATED",
+            successorAnalysisRunId = successorRunId,
+            successorStatus = "PROCESSING",
+            selectedEntryCount = plan.selectedEntries.size,
+            identifierAssistanceEntryCount = plan.identifierAssistanceEntries.size,
+            resolutionQueuedEntryCount = plan.identifierAssistanceEntries.size + plan.selectedEntries.count { it.assistedDoi != null },
+            createdAt = now,
+        )
 
         return PersistedSuccessorSubmission(
             id = submissionId,
@@ -401,8 +553,10 @@ class SuccessorRunSubmissionRepository(
             planFingerprint = plan.planFingerprint,
             revision = batch.revision,
             selectedEntryCount = plan.selectedEntries.size,
-            retainedEntryCount = entryByReference.size - plan.selectedEntries.size,
+            retainedEntryCount = entryByReference.size - plan.selectedEntries.size - plan.identifierAssistanceEntries.size,
             queuedEntryCount = selectedSuccessorEntryIdSet.count { it !in assistedSuccessorEntryIds },
+            identifierAssistanceEntryCount = plan.identifierAssistanceEntries.size,
+            resolutionQueuedEntryCount = plan.identifierAssistanceEntries.size + plan.selectedEntries.count { it.assistedDoi != null },
         )
     }
 
@@ -419,14 +573,17 @@ class SuccessorRunSubmissionRepository(
         selectedCount: Int,
         retainedCount: Int,
         queuedCount: Int,
+        identifierAssistanceCount: Int,
+        resolutionQueuedCount: Int,
     ) {
         jdbc.update(
             """
             INSERT INTO recovery_batch_successor_submissions (
                 id, batch_id, predecessor_analysis_run_id, successor_analysis_run_id,
                 idempotency_key, request_fingerprint, plan_fingerprint, submitted_revision,
-                configuration_snapshot, selected_entry_count, retained_entry_count, queued_entry_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?)
+                configuration_snapshot, selected_entry_count, retained_entry_count, queued_entry_count,
+                identifier_assistance_entry_count, resolution_queued_entry_count, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?)
             """.trimIndent(),
             submissionId,
             batch.id,
@@ -440,6 +597,8 @@ class SuccessorRunSubmissionRepository(
             selectedCount,
             retainedCount,
             queuedCount,
+            identifierAssistanceCount,
+            resolutionQueuedCount,
             Timestamp.from(createdAt),
         )
     }
@@ -774,6 +933,44 @@ class SuccessorRunSubmissionRepository(
         )
     }
 
+    private fun insertDoiOnlyResolutionAssistance(
+        successorRunId: UUID,
+        predecessorRunId: UUID,
+        successorEntryId: UUID,
+        predecessorEntryId: UUID,
+        batchId: UUID,
+        identifierType: String,
+        identifierValue: String,
+        createdAt: Instant,
+    ) {
+        val stagedValue = jdbc.query(
+            "SELECT identifier_type, identifier_value FROM recovery_batch_identifier_assistance WHERE batch_id = ? AND bibliography_entry_id = ? FOR UPDATE",
+            { rs, _ -> rs.getString("identifier_type") to rs.getString("identifier_value") },
+            batchId,
+            predecessorEntryId,
+        ).singleOrNull() ?: error("DOI assistance changed before successor submission.")
+        check(stagedValue.first == identifierType && stagedValue.second == identifierValue) {
+            "DOI assistance changed before successor submission."
+        }
+        jdbc.update(
+            """
+            INSERT INTO analysis_run_successor_doi_assistance (
+                successor_analysis_run_id, predecessor_analysis_run_id, batch_id,
+                bibliography_entry_id, predecessor_bibliography_entry_id,
+                identifier_type, identifier_value, source_code, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'USER_CONFIRMED_DOI_NO_PDF', ?)
+            """.trimIndent(),
+            successorRunId,
+            predecessorRunId,
+            batchId,
+            successorEntryId,
+            predecessorEntryId,
+            identifierType,
+            identifierValue,
+            Timestamp.from(createdAt),
+        )
+    }
+
     private fun saveSelectedAccess(
         successorRunId: UUID,
         batch: RecoveryBatch,
@@ -788,9 +985,9 @@ class SuccessorRunSubmissionRepository(
             mediaType = "application/pdf",
             language = validationAttempt.detectedLanguage ?: "en",
             languageDetectorVersion = validationAttempt.languageDetectorVersion,
-            rightsDeclarationVersion = batch.rightsDeclaration.version,
-            rightsDeclarationText = batch.rightsDeclaration.text,
-            rightsDeclaredAt = batch.rightsDeclaredAt,
+            rightsDeclarationVersion = requireNotNull(batch.rightsDeclaration).version,
+            rightsDeclarationText = requireNotNull(batch.rightsDeclaration).text,
+            rightsDeclaredAt = requireNotNull(batch.rightsDeclaredAt),
             originatingAnalysisRunId = batch.analysisRunId,
             originatingRecoveryBatchId = batch.id,
             originatingRecoveryUploadId = upload.id,
@@ -1112,6 +1309,7 @@ class SuccessorRunSubmissionRepository(
         entries: List<Triple<UUID, UUID, String>>,
         selectedEntryIds: Set<UUID>,
         assistedResolutionEntryIds: Set<UUID>,
+        identityOnlyEntryIds: Set<UUID>,
     ) {
         pipelineProgressRepository.initializeRun(successorRunId)
         pipelineProgressRepository.mark(successorRunId, "source", "parse-document", "document", "Source Document", "COMPLETED", "SOURCE_PARSE_REUSED")
@@ -1126,7 +1324,10 @@ class SuccessorRunSubmissionRepository(
                 val selected = successorEntryId in selectedEntryIds
                 val predecessorItem = predecessorProgress[Triple(stage, step, predecessorEntryId.toString())]
                 val awaitingAssistedResolution = successorEntryId in assistedResolutionEntryIds
+                val identityOnly = successorEntryId in identityOnlyEntryIds
                 val (status, reason) = when {
+                    identityOnly && stage == "references" -> "WAITING" to null
+                    identityOnly -> "SKIPPED" to "DOI_ONLY_NO_PDF_ASSET"
                     selected && stage == "references" && awaitingAssistedResolution -> "WAITING" to null
                     selected && stage == "references" -> "COMPLETED" to "REFERENCE_OUTCOME_REUSED"
                     selected && stage == "access" && awaitingAssistedResolution -> "WAITING" to null
@@ -1309,6 +1510,7 @@ class SuccessorRunSubmissionRepository(
         successorAnalysisRunId = uuid("successor_analysis_run_id"), idempotencyKey = uuid("idempotency_key"),
         requestFingerprint = getString("request_fingerprint"), planFingerprint = getString("plan_fingerprint"), revision = getLong("submitted_revision"),
         selectedEntryCount = getInt("selected_entry_count"), retainedEntryCount = getInt("retained_entry_count"), queuedEntryCount = getInt("queued_entry_count"),
+        identifierAssistanceEntryCount = getInt("identifier_assistance_entry_count"), resolutionQueuedEntryCount = getInt("resolution_queued_entry_count"),
     )
 
     private data class SectionRow(val id: UUID, val order: Int, val heading: String?, val text: String, val start: Int, val end: Int, val sourceMetadata: String)
@@ -1353,6 +1555,14 @@ data class LockedPredecessor(
 
 data class LockedBatch(val id: UUID, val analysisRunId: UUID, val status: String, val expiresAt: Instant, val revision: Long)
 
+class SuccessorSelectedAccessAttemptFailed(
+    val batchId: UUID,
+    val predecessorAnalysisRunId: UUID,
+    val bibliographyEntryId: UUID,
+    val uploadId: UUID,
+    cause: Throwable,
+) : RuntimeException("Selected successor access could not be materialized.", cause)
+
 data class PersistedSuccessorSubmission(
     val id: UUID,
     val batchId: UUID,
@@ -1365,6 +1575,8 @@ data class PersistedSuccessorSubmission(
     val selectedEntryCount: Int,
     val retainedEntryCount: Int,
     val queuedEntryCount: Int,
+    val identifierAssistanceEntryCount: Int = 0,
+    val resolutionQueuedEntryCount: Int = 0,
     val replayed: Boolean = false,
 ) {
     fun replay() = copy(replayed = true)

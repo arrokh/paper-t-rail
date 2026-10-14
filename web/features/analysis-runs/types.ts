@@ -148,6 +148,7 @@ export type AnalysisRun = {
     }>;
   } | null;
   configuration: {
+    captureExecution?: boolean;
     claimExtractor: {
       provider: string;
       model?: string;

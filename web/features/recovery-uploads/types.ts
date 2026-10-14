@@ -31,17 +31,40 @@ export type RecoveryUpload = {
   finalizedAt: string | null;
 };
 
+export type RecoveryAssetSelection = {
+  id: string;
+  batchId: string;
+  analysisRunId: string;
+  bibliographyEntryId: string;
+  uploadId: string;
+  validationAttemptId: string;
+  contentSha256: string;
+  selectionMethod: "MACHINE_VALIDATED" | "HUMAN_CONFIRMED";
+  selectedAt: string;
+};
+
+export type RecoveryIdentifierAssistance = {
+  bibliographyEntryId: string;
+  localReferenceKey: string;
+  identifierType: "DOI";
+  identifierValue: string;
+  recordedAt: string;
+};
+
 export type RecoveryBatch = {
   id: string;
   analysisRunId: string;
-  status: "OPEN" | "EXPIRED";
-  rightsDeclarationVersion: string;
-  rightsDeclarationText: string;
-  rightsDeclaredAt: string;
+  status: "OPEN" | "SUBMITTED" | "EXPIRED";
+  rightsDeclarationVersion: string | null;
+  rightsDeclarationText: string | null;
+  rightsDeclaredAt: string | null;
   createdAt: string;
   lastActivityAt: string;
   expiresAt: string;
+  revision: number;
   uploads: RecoveryUpload[];
+  selectedAssets: RecoveryAssetSelection[];
+  identifierAssistance: RecoveryIdentifierAssistance[];
 };
 
 export type RecoveryIdentityOutcome = "VALIDATED" | "NEEDS_CONFIRMATION" | "MISMATCH";
@@ -101,17 +124,7 @@ export type RecoveryUploadValidation = {
       confirmedAt: string;
     } | null;
   } | null;
-  selection: {
-    id: string;
-    batchId: string;
-    analysisRunId: string;
-    bibliographyEntryId: string;
-    uploadId: string;
-    validationAttemptId: string;
-    contentSha256: string;
-    selectionMethod: "MACHINE_VALIDATED" | "HUMAN_CONFIRMED";
-    selectedAt: string;
-  } | null;
+  selection: RecoveryAssetSelection | null;
   metadataCandidates: RecoveryMetadataCandidate[];
   languageEligibility: RecoveryLanguageEligibility;
   detectedLanguage: string | null;
@@ -126,4 +139,108 @@ export type RecoveryUploadIntent = {
   uploadUrl: string | null;
   requiredHeaders: Record<string, string>;
   uploadUrlExpiresAt: string | null;
+};
+
+export type RecoveryHistorySubmission = {
+  successorAnalysisRunId: string;
+  status: string;
+  selectedEntryCount: number;
+  identifierAssistanceEntryCount: number;
+  resolutionQueuedEntryCount: number;
+};
+
+export type RecoveryHistoryEvent = {
+  id: string;
+  batchId: string;
+  batchStatus: string;
+  type: string;
+  outcomeCode: string;
+  stageCode: string | null;
+  attemptNumber: number | null;
+  bibliographyEntryId: string | null;
+  uploadId: string | null;
+  previousUploadId: string | null;
+  submission: RecoveryHistorySubmission | null;
+  createdAt: string;
+};
+
+export type RecoveryHistoryPage = {
+  analysisRunId: string;
+  events: RecoveryHistoryEvent[];
+  nextCursor: string | null;
+};
+
+export type RecoverySuccessorStageDecision = {
+  stage: string;
+  disposition: "REUSE" | "REPROCESS" | "RETAIN" | "SKIP";
+  reasonCode: string;
+};
+
+export type RecoverySuccessorPreview = {
+  batchId: string;
+  predecessorAnalysisRunId: string;
+  revision: number;
+  planFingerprint: string;
+  eligible: boolean;
+  selectedEntries: Array<{
+    predecessorBibliographyEntryId: string;
+    localReferenceKey: string;
+    uploadId: string;
+    contentSha256: string;
+    assistedDoi: string | null;
+    stages: RecoverySuccessorStageDecision[];
+    blockers: string[];
+  }>;
+  identifierAssistanceEntries: Array<{
+    predecessorBibliographyEntryId: string;
+    localReferenceKey: string;
+    identifierType: "DOI";
+    identifierValue: string;
+    stages: RecoverySuccessorStageDecision[];
+    blockers: string[];
+  }>;
+  retainedReferenceKeys: string[];
+  retainedDecision: RecoverySuccessorStageDecision;
+  invalidationReasons: string[];
+  blockers: string[];
+  expectedProviderWork: Array<{
+    stage: string;
+    providerId: string;
+    trustBoundary: string;
+    dataCategories: string[];
+    retentionDisclosure: string | null;
+  }>;
+  requiredConsents: Array<{
+    providerId: string;
+    dataCategories: string[];
+    retentionDisclosure: string | null;
+  }>;
+};
+
+export type RecoverySuccessorSubmission = {
+  submissionId: string;
+  successorAnalysisRunId: string;
+  predecessorAnalysisRunId: string;
+  revision: number;
+  planFingerprint: string;
+  selectedEntryCount: number;
+  identifierAssistanceEntryCount: number;
+  resolutionQueuedEntryCount: number;
+  retainedEntryCount: number;
+  queuedEntryCount: number;
+  replayed: boolean;
+};
+
+export type RecoverySuccessorRunConfiguration = {
+  captureExecution: boolean;
+  claimExtractorProvider: string;
+  embeddingProvider: string;
+  systemOneProvider: string;
+  scholarlyMetadataProvider: string;
+  openAccessProvider: string;
+  externalProviderConsents: Array<{
+    providerId: string;
+    dataCategories: string[];
+    retentionDisclosureFingerprint: string;
+  }>;
 };

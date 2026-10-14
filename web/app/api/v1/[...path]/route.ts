@@ -6,6 +6,14 @@ export const dynamic = "force-dynamic";
 const apiOrigin = process.env.PAPER_T_RAIL_API_ORIGIN ?? "http://127.0.0.1:8080";
 const requestIdPattern = /^[A-Za-z0-9._:-]{1,128}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const unsafeLocalReferenceKeyCharacters = /[/?#\\\u0000-\u001f\u007f]/u;
+
+function isSafeLocalReferenceKey(value: string): boolean {
+  return value.length > 0
+    && value !== "."
+    && value !== ".."
+    && !unsafeLocalReferenceKeyCharacters.test(value);
+}
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
@@ -71,6 +79,7 @@ async function proxy(request: NextRequest, context: RouteContext): Promise<Respo
 
 export const GET = proxy;
 export const POST = proxy;
+export const PUT = proxy;
 
 export async function DELETE(request: NextRequest, context: RouteContext): Promise<Response> {
   const { path } = await context.params;
@@ -86,7 +95,13 @@ export async function DELETE(request: NextRequest, context: RouteContext): Promi
     && uuidPattern.test(path[1])
     && path[2] === "uploads"
     && uuidPattern.test(path[3]);
-  if (!isDocumentDeletion && !isExecutionArtifactRemoval && !isRecoveryUploadRemoval) return new Response(null, { status: 404 });
+  const isIdentifierAssistanceRemoval = path.length === 5
+    && path[0] === "recovery-batches"
+    && uuidPattern.test(path[1])
+    && path[2] === "entries"
+    && isSafeLocalReferenceKey(path[3])
+    && path[4] === "identifier-assistance";
+  if (!isDocumentDeletion && !isExecutionArtifactRemoval && !isRecoveryUploadRemoval && !isIdentifierAssistanceRemoval) return new Response(null, { status: 404 });
   return proxy(request, context);
 }
 

@@ -147,13 +147,7 @@ class RecoveryUploadIdentityService(
             selectionMethod = selectionMethod,
             selectedAt = Instant.now(),
         )
-        decisionRepository.recordSelection(selection)
-        val existing = decisionRepository.selectionForEntry(batchId, context.upload.bibliographyEntryId)
-            ?: throw IllegalStateException("The Recovery Upload selection was not persisted.")
-        if (existing.uploadId != uploadId || existing.contentSha256 != actualSha) {
-            throw RecoveryStagingException("RECOVERY_ENTRY_VERSION_ALREADY_SELECTED", 409, "Another exact PDF version is already selected for this Bibliography Entry. Remove it before selecting a replacement.")
-        }
-        return existing
+        return decisionRepository.recordSelection(selection)
     }
 
     fun confirmation(batchId: UUID, uploadId: UUID, attempt: RecoveryUploadValidationAttempt) =

@@ -9,6 +9,8 @@ import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
 import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
 import com.papertrail.api.analysis.execution.domain.ExecutionOperationId
 import com.papertrail.api.document.repository.SourceDocumentRepository
+import com.papertrail.api.analysis.recovery.domain.RecoveryWorkEventType
+import com.papertrail.api.analysis.recovery.service.RecoveryHistoryService
 import com.papertrail.api.evidence.queue.CitedPaperIndexingQueue
 import com.papertrail.api.evidence.queue.EvidenceIndexingEnqueueResult
 import com.papertrail.api.evidence.verification.service.EvidenceVerificationService
@@ -36,6 +38,7 @@ class CitedPaperAcquisitionRequestedHandler(
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
     private val evidenceVerificationService: EvidenceVerificationService? = null,
     private val executionService: AnalysisRunExecutionService? = null,
+    private val recoveryHistoryService: RecoveryHistoryService? = null,
 ) {
     fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
 
@@ -46,7 +49,31 @@ class CitedPaperAcquisitionRequestedHandler(
             event.analysisRunId, event.eventId, event.attempt, "access", event.queueWaitStartedAt,
             event.retryScheduledAt, event.retryDueAt, event.causationId,
         )
-        val operation = { handleEvent(event) }
+        recoveryHistoryService?.recordSuccessorWorkEvent(
+            successorAnalysisRunId = event.analysisRunId,
+            bibliographyEntryId = event.payload.bibliographyEntryId,
+            eventType = RecoveryWorkEventType.ATTEMPT_STARTED,
+            outcomeCode = "CITED_PAPER_ACCESS_ATTEMPT_STARTED",
+            stageCode = "selected-access",
+            attemptNumber = event.attempt + 1,
+            sourceEventId = event.eventId,
+        )
+        val operation = {
+            try {
+                handleEvent(event)
+            } catch (exception: Exception) {
+                recoveryHistoryService?.recordSuccessorWorkEvent(
+                    successorAnalysisRunId = event.analysisRunId,
+                    bibliographyEntryId = event.payload.bibliographyEntryId,
+                    eventType = RecoveryWorkEventType.ATTEMPT_FAILED,
+                    outcomeCode = "CITED_PAPER_ACCESS_ATTEMPT_FAILED",
+                    stageCode = "selected-access",
+                    attemptNumber = event.attempt + 1,
+                    sourceEventId = event.eventId,
+                )
+                throw exception
+            }
+        }
         return executionService?.record(
             event.analysisRunId,
             ExecutionSpanSpec("access", "QUEUE", "Cited-paper access attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId, causationEventId = event.causationId),
@@ -108,6 +135,15 @@ class CitedPaperAcquisitionRequestedHandler(
             )
             if (!inserted) return@executeWithoutResult
             if (failureReason != null) {
+                recoveryHistoryService?.recordSuccessorWorkEvent(
+                    successorAnalysisRunId = event.analysisRunId,
+                    bibliographyEntryId = event.payload.bibliographyEntryId,
+                    eventType = RecoveryWorkEventType.ATTEMPT_FAILED,
+                    outcomeCode = CITED_PAPER_ACCESS_RETRIES_EXHAUSTED,
+                    stageCode = "selected-access",
+                    attemptNumber = event.attempt + 1,
+                    sourceEventId = event.eventId,
+                )
                 citedPaperAccessService.failAccess(
                     event.analysisRunId,
                     event.payload.bibliographyEntryId,
@@ -120,6 +156,15 @@ class CitedPaperAcquisitionRequestedHandler(
                 )
                 skipEvidence(event, CITED_PAPER_ACCESS_RETRIES_EXHAUSTED)
             } else {
+                recoveryHistoryService?.recordSuccessorWorkEvent(
+                    successorAnalysisRunId = event.analysisRunId,
+                    bibliographyEntryId = event.payload.bibliographyEntryId,
+                    eventType = RecoveryWorkEventType.ATTEMPT_COMPLETED,
+                    outcomeCode = "CITED_PAPER_ACCESS_COMPLETED",
+                    stageCode = "selected-access",
+                    attemptNumber = event.attempt + 1,
+                    sourceEventId = event.eventId,
+                )
                 pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId, "COMPLETED")
                 val enqueueResult = citedPaperIndexingQueue.enqueueIfEligible(
                     analysisRunId = event.analysisRunId,
@@ -156,6 +201,17 @@ class CitedPaperAcquisitionRequestedHandler(
     }
 
     private fun skipEvidence(event: PipelineEvent<CitedPaperAcquisitionRequestedPayload>, reason: String) {
+        listOf("evidence-retrieval", "claim-verification").forEach { stage ->
+            recoveryHistoryService?.recordSuccessorWorkEvent(
+                successorAnalysisRunId = event.analysisRunId,
+                bibliographyEntryId = event.payload.bibliographyEntryId,
+                eventType = RecoveryWorkEventType.WORK_SKIPPED,
+                outcomeCode = reason,
+                stageCode = stage,
+                attemptNumber = null,
+                sourceEventId = event.eventId,
+            )
+        }
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "evidence", "prepare-evidence", event.payload.bibliographyEntryId, "SKIPPED", reason)
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "verification", "assess-and-aggregate", event.payload.bibliographyEntryId, "SKIPPED", reason)
     }

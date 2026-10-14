@@ -9,6 +9,8 @@ import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
 import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
 import com.papertrail.api.analysis.execution.domain.ExecutionOperationId
 import com.papertrail.api.document.repository.SourceDocumentRepository
+import com.papertrail.api.analysis.recovery.domain.RecoveryWorkEventType
+import com.papertrail.api.analysis.recovery.service.RecoveryHistoryService
 import com.papertrail.api.evidence.events.CITED_PAPER_INDEXING_HANDLER
 import com.papertrail.api.evidence.events.CITED_PAPER_INDEXING_REQUESTED
 import com.papertrail.api.evidence.events.CitedPaperIndexingRequestedPayload
@@ -34,6 +36,7 @@ class CitedPaperIndexingRequestedHandler(
     private val analysisRunStageCompletionService: AnalysisRunStageCompletionService,
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
     private val executionService: AnalysisRunExecutionService? = null,
+    private val recoveryHistoryService: RecoveryHistoryService? = null,
 ) {
     fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
 
@@ -44,7 +47,15 @@ class CitedPaperIndexingRequestedHandler(
             event.analysisRunId, event.eventId, event.attempt, "evidence", event.queueWaitStartedAt,
             event.retryScheduledAt, event.retryDueAt, event.causationId,
         )
-        val operation = { handleEvent(event) }
+        var activeStage = "evidence-retrieval"
+        val operation = {
+            try {
+                handleEvent(event) { stage -> activeStage = stage }
+            } catch (exception: Exception) {
+                appendHistory(event, RecoveryWorkEventType.ATTEMPT_FAILED, "SUCCESSOR_STAGE_ATTEMPT_FAILED", activeStage)
+                throw exception
+            }
+        }
         return executionService?.record(
             event.analysisRunId,
             ExecutionSpanSpec("evidence", "QUEUE", "Evidence indexing attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId, causationEventId = event.causationId),
@@ -52,7 +63,10 @@ class CitedPaperIndexingRequestedHandler(
         ) ?: operation()
     }
 
-    private fun handleEvent(event: PipelineEvent<CitedPaperIndexingRequestedPayload>): UUID {
+    private fun handleEvent(
+        event: PipelineEvent<CitedPaperIndexingRequestedPayload>,
+        setActiveStage: (String) -> Unit,
+    ): UUID {
         if (sourceDocumentRepository.isDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
 
@@ -64,8 +78,12 @@ class CitedPaperIndexingRequestedHandler(
         if (run.status != "PROCESSING") throw IllegalStateException("Analysis Run is not accepting Cited Paper indexing work.")
 
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "evidence", "prepare-evidence", event.payload.bibliographyEntryId, "IN_PROGRESS")
+        setActiveStage("evidence-retrieval")
+        appendHistory(event, RecoveryWorkEventType.ATTEMPT_STARTED, "EVIDENCE_RETRIEVAL_ATTEMPT_STARTED", "evidence-retrieval")
         if (executionService == null) {
-            evidenceRetrievalService.retrieve(event.analysisRunId, event.payload.bibliographyEntryId)
+            evidenceRetrievalService.retrieve(
+                event.analysisRunId, event.payload.bibliographyEntryId, event.attempt + 1, event.eventId,
+            )
         } else {
             executionService.record(
                 event.analysisRunId,
@@ -74,15 +92,26 @@ class CitedPaperIndexingRequestedHandler(
                 executionService.captureCurrent(
                     ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1)),
                 )
-                evidenceRetrievalService.retrieve(event.analysisRunId, event.payload.bibliographyEntryId).also {
+                evidenceRetrievalService.retrieve(
+                    event.analysisRunId, event.payload.bibliographyEntryId, event.attempt + 1, event.eventId,
+                ).also {
                     executionService.captureCurrent(
                         ExecutionSpanArtifactSpec("RESULT", "run-stage-result-v1", mapOf("status" to "SUCCEEDED", "itemCount" to 1)),
                     )
                 }
             }
         }
+        val retrievalStatus = evidenceRetrievalRepository.status(event.analysisRunId, event.payload.bibliographyEntryId)
+        appendHistory(
+            event,
+            if (retrievalStatus == "COMPLETED") RecoveryWorkEventType.ATTEMPT_COMPLETED else RecoveryWorkEventType.ATTEMPT_FAILED,
+            if (retrievalStatus == "COMPLETED") "EVIDENCE_RETRIEVAL_COMPLETED" else "EVIDENCE_RETRIEVAL_INCOMPLETE",
+            "evidence-retrieval",
+        )
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "evidence", "prepare-evidence", event.payload.bibliographyEntryId, "COMPLETED")
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "verification", "assess-and-aggregate", event.payload.bibliographyEntryId, "IN_PROGRESS")
+        setActiveStage("claim-verification")
+        appendHistory(event, RecoveryWorkEventType.ATTEMPT_STARTED, "CLAIM_VERIFICATION_ATTEMPT_STARTED", "claim-verification")
         if (executionService == null) {
             evidenceVerificationService.verifyReference(event.analysisRunId, event.payload.bibliographyEntryId)
         } else {
@@ -134,6 +163,11 @@ class CitedPaperIndexingRequestedHandler(
             verificationStatus,
             verificationReason,
         )
+        when (verificationStatus) {
+            "COMPLETED" -> appendHistory(event, RecoveryWorkEventType.ATTEMPT_COMPLETED, "CLAIM_VERIFICATION_COMPLETED", "claim-verification")
+            "SKIPPED" -> appendHistory(event, RecoveryWorkEventType.WORK_SKIPPED, verificationReason ?: "NO_EVIDENCE_ASSESSMENT_WORK", "claim-verification", attemptNumber = null)
+            else -> appendHistory(event, RecoveryWorkEventType.ATTEMPT_FAILED, verificationReason ?: "CLAIM_VERIFICATION_FAILED", "claim-verification")
+        }
         recordProcessed(event)
         return event.eventId
     }
@@ -167,6 +201,20 @@ class CitedPaperIndexingRequestedHandler(
                     "COMPLETED" -> EVIDENCE_VERIFICATION_RETRIES_EXHAUSTED
                     else -> EVIDENCE_PROCESSING_INCOMPLETE
                 }
+                when (failureCode) {
+                    INDEXING_RETRIES_EXHAUSTED -> {
+                        appendHistory(event, RecoveryWorkEventType.ATTEMPT_FAILED, failureCode, "evidence-retrieval")
+                        appendHistory(event, RecoveryWorkEventType.WORK_SKIPPED, "EVIDENCE_PREPARATION_FAILED", "claim-verification", attemptNumber = null)
+                    }
+                    EVIDENCE_VERIFICATION_RETRIES_EXHAUSTED -> {
+                        appendHistory(event, RecoveryWorkEventType.ATTEMPT_COMPLETED, "EVIDENCE_RETRIEVAL_COMPLETED", "evidence-retrieval")
+                        appendHistory(event, RecoveryWorkEventType.ATTEMPT_FAILED, failureCode, "claim-verification")
+                    }
+                    else -> {
+                        appendHistory(event, RecoveryWorkEventType.ATTEMPT_FAILED, failureCode, "evidence-retrieval")
+                        appendHistory(event, RecoveryWorkEventType.ATTEMPT_FAILED, failureCode, "claim-verification")
+                    }
+                }
                 evidenceVerificationService.failFullText(
                     event.analysisRunId,
                     event.payload.bibliographyEntryId,
@@ -190,6 +238,24 @@ class CitedPaperIndexingRequestedHandler(
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
         }
+    }
+
+    private fun appendHistory(
+        event: PipelineEvent<CitedPaperIndexingRequestedPayload>,
+        type: RecoveryWorkEventType,
+        outcomeCode: String,
+        stageCode: String,
+        attemptNumber: Int? = event.attempt + 1,
+    ) {
+        recoveryHistoryService?.recordSuccessorWorkEvent(
+            successorAnalysisRunId = event.analysisRunId,
+            bibliographyEntryId = event.payload.bibliographyEntryId,
+            eventType = type,
+            outcomeCode = outcomeCode,
+            stageCode = stageCode,
+            attemptNumber = attemptNumber,
+            sourceEventId = event.eventId,
+        )
     }
 
     private fun verificationOutcome(analysisRunId: UUID, bibliographyEntryId: UUID): EvidenceRetrievalRepository.VerificationOutcome =

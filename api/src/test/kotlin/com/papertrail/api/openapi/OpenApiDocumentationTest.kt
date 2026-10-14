@@ -49,6 +49,8 @@ import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.document.service.SourceDocumentDeletionService
 import com.papertrail.api.analysis.recovery.domain.RecoveryBatch
 import com.papertrail.api.analysis.recovery.domain.RecoveryBatchStatus
+import com.papertrail.api.analysis.recovery.domain.RecoveryHistoryEvent
+import com.papertrail.api.analysis.recovery.domain.RecoveryIdentifierAssistance
 import com.papertrail.api.analysis.recovery.domain.RecoveryRightsDeclaration
 import com.papertrail.api.analysis.recovery.domain.RecoveryAssetSelectionMethod
 import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityConfirmation
@@ -61,6 +63,8 @@ import com.papertrail.api.analysis.recovery.http.RecoveryUploadValidationRespons
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingService
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadIdentityService
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
+import com.papertrail.api.analysis.recovery.repository.RecoveryHistoryPage
+import com.papertrail.api.analysis.recovery.repository.RecoveryHistoryRepository
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingSettings
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadLimits
 import com.papertrail.api.analysis.successor.domain.SuccessorRunPlan
@@ -100,6 +104,7 @@ import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -149,6 +154,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var recoveryUploadValidationService: RecoveryUploadValidationService
+
+    @MockitoBean
+    private lateinit var recoveryHistoryRepository: RecoveryHistoryRepository
 
     @MockitoBean
     private lateinit var recoveryUploadIdentityService: RecoveryUploadIdentityService
@@ -419,6 +427,72 @@ class OpenApiDocumentationTest {
     }
 
     @Test
+    fun `rights DOI assistance and history endpoints use versioned inputs and no-store responses`() {
+        val now = Instant.parse("2026-10-14T00:00:00Z")
+        val batchId = UUID.randomUUID()
+        val runId = UUID.randomUUID()
+        val entryId = UUID.randomUUID()
+        val batch = RecoveryBatch(
+            id = batchId,
+            analysisRunId = runId,
+            status = RecoveryBatchStatus.OPEN,
+            rightsDeclaration = RecoveryRightsDeclaration.CURRENT,
+            rightsDeclaredAt = now,
+            createdAt = now,
+            lastActivityAt = now,
+            expiresAt = now.plusSeconds(3600),
+            revision = 2,
+            uploads = emptyList(),
+            selectedAssets = emptyList(),
+        )
+        Mockito.`when`(recoveryStagingService.acceptCurrentRightsDeclaration(batchId, "recovery-rights-v1", true)).thenReturn(batch)
+        mockMvc.perform(
+            post("/api/v1/recovery-batches/$batchId/rights-declaration")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"rightsDeclarationVersion":"recovery-rights-v1","accepted":true}"""),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.rightsDeclarationVersion").value("recovery-rights-v1"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+
+        val assistance = RecoveryIdentifierAssistance(
+            id = UUID.randomUUID(), batchId = batchId, analysisRunId = runId, bibliographyEntryId = entryId,
+            localReferenceKey = "doi-ref", identifierType = "DOI", identifierValue = "10.1234/private.doi", recordedAt = now,
+        )
+        Mockito.`when`(recoveryStagingService.setIdentifierAssistance(batchId, "doi-ref", "DOI", "https://doi.org/10.1234/PRIVATE.DOI", true)).thenReturn(assistance)
+        mockMvc.perform(
+            put("/api/v1/recovery-batches/$batchId/entries/doi-ref/identifier-assistance")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"identifierType":"DOI","identifierValue":"https://doi.org/10.1234/PRIVATE.DOI","confirmsBibliographyIdentity":true}"""),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.identifierValue").value("10.1234/private.doi"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+        mockMvc.perform(delete("/api/v1/recovery-batches/$batchId/entries/doi-ref/identifier-assistance"))
+            .andExpect(status().isNoContent)
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+        Mockito.verify(recoveryStagingService).removeIdentifierAssistance(batchId, "doi-ref")
+
+        val historyEvent = RecoveryHistoryEvent(
+            id = UUID.randomUUID(), batchId = batchId, analysisRunId = runId, batchStatus = "OPEN",
+            eventType = "IDENTIFIER_ASSISTANCE_SET", outcomeCode = "DOI_IDENTITY_CONFIRMED",
+            stageCode = "reference-resolution", attemptNumber = null, bibliographyEntryId = entryId,
+            uploadId = null, previousUploadId = null, successorAnalysisRunId = null, successorStatus = null,
+            selectedEntryCount = null, identifierAssistanceEntryCount = null, resolutionQueuedEntryCount = null,
+            createdAt = now,
+        )
+        Mockito.`when`(recoveryHistoryRepository.page(runId, "opaque", 2)).thenReturn(RecoveryHistoryPage(runId, listOf(historyEvent), null))
+        val historyResponse = mockMvc.perform(get("/api/v1/analysis-runs/$runId/recovery-history?cursor=opaque&limit=2"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.events[0].outcomeCode").value("DOI_IDENTITY_CONFIRMED"))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+            .andReturn().response.contentAsString
+        assertFalse(historyResponse.contains("10.1234/private.doi"))
+        assertFalse(historyResponse.contains("identifierValue"))
+        Mockito.verify(recoveryHistoryRepository).page(runId, "opaque", 2)
+    }
+
+    @Test
     fun `successor preview returns the supplied plan fingerprint without caching`() {
         val batchId = UUID.randomUUID()
         val request = """
@@ -453,8 +527,10 @@ class OpenApiDocumentationTest {
                         blockers = emptyList(),
                     ),
                 ),
+                identifierAssistanceEntries = emptyList(),
                 retainedReferenceKeys = listOf("ref2"),
                 retainedDecision = SuccessorStageDecision("unselected-bibliography-coverage", SuccessorWorkDisposition.RETAIN, "UNSELECTED_COVERAGE_PRESERVED"),
+                retainedStageDecisions = emptyList(),
                 invalidationReasons = emptyList(),
                 blockers = emptyList(),
                 expectedProviderWork = emptyList(),
@@ -598,7 +674,22 @@ class OpenApiDocumentationTest {
         assertTrue(listRecoveryBatches.path("responses").has("404"))
         val batchSchemaName = listRecoveryBatches.path("responses").path("200").path("content").path("application/json").path("schema").path("items").path("${'$'}ref").asText().substringAfterLast('/')
         val batchProperties = document.path("components").path("schemas").path(batchSchemaName).path("properties")
-        listOf("revision", "uploads", "selectedAssets").forEach { assertTrue(batchProperties.has(it)) }
+        listOf(
+            "revision", "uploads", "selectedAssets", "identifierAssistance", "rightsDeclarationVersion",
+            "rightsDeclarationText", "rightsDeclaredAt",
+        ).forEach { assertTrue(batchProperties.has(it)) }
+        listOf("rightsDeclarationVersion", "rightsDeclarationText", "rightsDeclaredAt").forEach { field ->
+            val property = batchProperties.path(field)
+            val nullableType = property.path("type").isArray && property.path("type").any { it.asText() == "null" }
+            assertTrue(property.path("nullable").asBoolean() || nullableType, "$field must allow null: $property")
+        }
+        val identifierAssistanceSchemaName = batchProperties.path("identifierAssistance").path("items")
+            .path("${'$'}ref").asText().substringAfterLast('/')
+        val identifierAssistanceProperties = document.path("components").path("schemas")
+            .path(identifierAssistanceSchemaName).path("properties")
+        listOf("bibliographyEntryId", "localReferenceKey", "identifierType", "identifierValue", "recordedAt")
+            .forEach { assertTrue(identifierAssistanceProperties.has(it)) }
+        assertEquals(listOf("DOI"), identifierAssistanceProperties.path("identifierType").path("enum").map { it.asText() })
         val selectedAssetSchemaName = batchProperties.path("selectedAssets").path("items").path("${'$'}ref").asText().substringAfterLast('/')
         val selectedAssetProperties = document.path("components").path("schemas").path(selectedAssetSchemaName).path("properties")
         listOf("bibliographyEntryId", "uploadId", "validationAttemptId", "contentSha256").forEach { assertTrue(selectedAssetProperties.has(it)) }
@@ -614,7 +705,19 @@ class OpenApiDocumentationTest {
         assertTrue(previewRequestProperties.has("configuration"))
         val previewResponseName = successorPreviewPath.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val previewResponseProperties = document.path("components").path("schemas").path(previewResponseName).path("properties")
-        listOf("revision", "planFingerprint", "eligible", "selectedEntries", "retainedReferenceKeys", "retainedDecision", "invalidationReasons", "blockers", "expectedProviderWork", "requiredConsents").forEach { assertTrue(previewResponseProperties.has(it)) }
+        listOf(
+            "revision", "planFingerprint", "eligible", "selectedEntries", "identifierAssistanceEntries",
+            "retainedReferenceKeys", "retainedDecision", "invalidationReasons", "blockers", "expectedProviderWork",
+            "requiredConsents",
+        ).forEach { assertTrue(previewResponseProperties.has(it)) }
+        val identifierAssistanceEntrySchemaName = previewResponseProperties.path("identifierAssistanceEntries")
+            .path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val identifierAssistanceEntryProperties = document.path("components").path("schemas")
+            .path(identifierAssistanceEntrySchemaName).path("properties")
+        listOf("predecessorBibliographyEntryId", "localReferenceKey", "identifierType", "identifierValue", "stages", "blockers")
+            .forEach { assertTrue(identifierAssistanceEntryProperties.has(it)) }
+        assertEquals(listOf("DOI"), identifierAssistanceEntryProperties.path("identifierType").path("enum").map { it.asText() })
+        assertTrue(previewResponseProperties.path("identifierAssistanceEntries").path("description").asText().contains("DOI-only"))
         val selectedEntrySchemaName = previewResponseProperties.path("selectedEntries").path("items").path("${'$'}ref").asText().substringAfterLast('/')
         val selectedEntryProperties = document.path("components").path("schemas").path(selectedEntrySchemaName).path("properties")
         assertTrue(selectedEntryProperties.path("assistedDoi").path("description").asText().contains("human-confirmed unresolved-identity retry"))
@@ -627,19 +730,63 @@ class OpenApiDocumentationTest {
         listOf("idempotencyKey", "expectedRevision", "configuration").forEach { assertTrue(submissionRequestProperties.has(it)) }
         val submissionResponseName = successorSubmissionPath.path("responses").path("201").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val submissionResponseProperties = document.path("components").path("schemas").path(submissionResponseName).path("properties")
-        listOf("submissionId", "successorAnalysisRunId", "predecessorAnalysisRunId", "revision", "planFingerprint", "selectedEntryCount", "retainedEntryCount", "queuedEntryCount", "replayed").forEach { assertTrue(submissionResponseProperties.has(it)) }
+        listOf(
+            "submissionId", "successorAnalysisRunId", "predecessorAnalysisRunId", "revision", "planFingerprint",
+            "selectedEntryCount", "retainedEntryCount", "queuedEntryCount", "identifierAssistanceEntryCount",
+            "resolutionQueuedEntryCount", "replayed",
+        ).forEach { assertTrue(submissionResponseProperties.has(it)) }
+        listOf("selectedEntryCount", "identifierAssistanceEntryCount", "resolutionQueuedEntryCount").forEach { field ->
+            val minimum = submissionResponseProperties.path(field).path("minimum")
+            assertTrue(minimum.isIntegralNumber, "$field must document a minimum for DOI-only work")
+            assertEquals(0, minimum.asInt(), "$field must allow zero for DOI-only work")
+        }
         val createRecoveryBatch = paths.path(recoveryBatchesPath).path("post")
         assertEquals("Create or retrieve a Recovery Batch", createRecoveryBatch.path("summary").asText())
         assertTrue(createRecoveryBatch.path("requestBody").path("required").asBoolean())
         assertTrue(createRecoveryBatch.path("responses").has("400"))
+        assertTrue(createRecoveryBatch.path("responses").has("409"))
+        assertTrue(createRecoveryBatch.path("responses").path("409").path("description").asText().contains("idempotency key"))
         assertTrue(createRecoveryBatch.path("responses").has("410"))
         val createBatchSchemaName = createRecoveryBatch.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val createBatchProperties = document.path("components").path("schemas").path(createBatchSchemaName).path("properties")
         assertTrue(createBatchProperties.has("idempotencyKey"))
         assertTrue(createBatchProperties.has("rightsDeclarationAccepted"))
         assertTrue(createBatchProperties.has("rightsDeclarationVersion"))
+        assertTrue(createRecoveryBatch.path("description").asText().contains("DOI-only work"))
+        val acceptRights = paths.path("/api/v1/recovery-batches/{batchId}/rights-declaration").path("post")
+        listOf("200", "400", "404", "409", "410").forEach { assertTrue(acceptRights.path("responses").has(it)) }
+        val acceptRightsRequestName = acceptRights.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val acceptRightsRequestProperties = document.path("components").path("schemas").path(acceptRightsRequestName).path("properties")
+        listOf("rightsDeclarationVersion", "accepted").forEach { assertTrue(acceptRightsRequestProperties.has(it)) }
+        val recoveryHistory = paths.path("/api/v1/analysis-runs/{analysisRunId}/recovery-history").path("get")
+        listOf("200", "400", "404").forEach { assertTrue(recoveryHistory.path("responses").has(it)) }
+        assertTrue(recoveryHistory.path("parameters").any { it.path("name").asText() == "cursor" })
+        val historyLimit = recoveryHistory.path("parameters").first { it.path("name").asText() == "limit" }.path("schema")
+        assertEquals(1, historyLimit.path("minimum").asInt())
+        assertEquals(100, historyLimit.path("maximum").asInt())
+        assertEquals(50, historyLimit.path("default").asInt())
+        val historyResponseName = recoveryHistory.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val historyResponseProperties = document.path("components").path("schemas").path(historyResponseName).path("properties")
+        listOf("analysisRunId", "events", "nextCursor").forEach { assertTrue(historyResponseProperties.has(it)) }
+        val historyEventName = historyResponseProperties.path("events").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val historyEventProperties = document.path("components").path("schemas").path(historyEventName).path("properties")
+        listOf("type", "outcomeCode", "stageCode", "attemptNumber", "submission", "createdAt").forEach { assertTrue(historyEventProperties.has(it)) }
+        listOf("doi", "identifierValue", "filename", "contentSha256", "sourceText").forEach { assertFalse(historyEventProperties.has(it)) }
+        val identifierAssistance = paths.path("/api/v1/recovery-batches/{batchId}/entries/{localReferenceKey}/identifier-assistance")
+        val setIdentifierAssistance = identifierAssistance.path("put")
+        listOf("200", "400", "404", "409", "410").forEach { assertTrue(setIdentifierAssistance.path("responses").has(it)) }
+        val identifierRequestName = setIdentifierAssistance.path("requestBody").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val identifierRequestProperties = document.path("components").path("schemas").path(identifierRequestName).path("properties")
+        listOf("identifierType", "identifierValue", "confirmsBibliographyIdentity").forEach { assertTrue(identifierRequestProperties.has(it)) }
+        val identifierResponseName = setIdentifierAssistance.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val identifierResponseProperties = document.path("components").path("schemas").path(identifierResponseName).path("properties")
+        listOf("bibliographyEntryId", "localReferenceKey", "identifierType", "identifierValue", "recordedAt").forEach { assertTrue(identifierResponseProperties.has(it)) }
+        assertTrue(identifierAssistance.path("delete").path("responses").has("204"))
+        assertTrue(identifierAssistance.path("delete").path("responses").has("404"))
+        assertTrue(identifierAssistance.path("delete").path("responses").has("410"))
         val createUpload = paths.path("/api/v1/recovery-batches/{batchId}/entries/{localReferenceKey}/uploads").path("post")
         assertTrue(createUpload.path("responses").has("409"))
+        assertTrue(createUpload.path("responses").path("409").path("description").asText().contains("no longer current"))
         assertTrue(createUpload.path("responses").has("413"))
         assertTrue(createUpload.path("responses").has("503"))
         val uploadIntentSchemaName = createUpload.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
@@ -685,7 +832,7 @@ class OpenApiDocumentationTest {
         val selectVersion = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/select").path("post")
         assertTrue(selectVersion.path("responses").has("200"))
         assertTrue(selectVersion.path("responses").has("409"))
-        assertTrue(selectVersion.path("description").asText().contains("one exact asset version"))
+        assertTrue(selectVersion.path("description").asText().contains("atomically replaced by a different eligible version"))
         assertTrue(selectVersion.path("responses").path("409").path("description").asText().contains("parser, identity, or language policy is outdated"))
         val latestValidation = paths.path("/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validation").path("get")
         assertTrue(latestValidation.path("responses").has("200"))
