@@ -154,7 +154,7 @@ describe("Recovery Upload workspace", () => {
     const createRequest = requests.find(({ options }) => options?.method === "POST");
     expect(createRequest?.url).toBe("/api/v1/analysis-runs/run-1/recovery-batches");
     expect(JSON.parse(String(createRequest?.options?.body))).toEqual({ idempotencyKey: "batch-key-1" });
-    expect(screen.getByText(/DOI-only identity assistance does not require the PDF-rights declaration/)).toBeTruthy();
+    expect(screen.getByText(/DOI-only identity assistance does not require PDF rights/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Choose another PDF version/ })).toBeNull();
     expect(screen.getByText("No selected recovery work")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Preview successor plan" }).hasAttribute("disabled")).toBe(true);
@@ -176,7 +176,7 @@ describe("Recovery Upload workspace", () => {
     }));
 
     renderWorkspace();
-    expect(await screen.findByText(/Before any PDF upload/)).toBeTruthy();
+    expect(await screen.findByText(/Before any new PDF upload/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Choose another PDF version/ })).toBeNull();
     fireEvent.click(screen.getByRole("checkbox", { name: "I have read and accept the current PDF-rights declaration" }));
     fireEvent.click(screen.getByRole("button", { name: "Accept current declaration for PDF upload" }));
@@ -186,6 +186,86 @@ describe("Recovery Upload workspace", () => {
     const acceptance = requests.find(({ url, options }) => url.endsWith("/rights-declaration") && options?.method === "POST");
     expect(JSON.parse(String(acceptance?.options?.body))).toEqual({ rightsDeclarationVersion: rights.version, accepted: true });
     expect(requests.some(({ url }) => url.includes("/entries/b0/uploads"))).toBe(false);
+  });
+
+  it("requires fresh PDF-rights acceptance after the active Recovery Batch changes", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    let activeBatch = makeBatch([], { rightsDeclarationVersion: null, rightsDeclarationText: null, rightsDeclaredAt: null });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([activeBatch]);
+      if (url === "/api/v1/recovery-batches/batch-1/rights-declaration" && options?.method === "POST") {
+        activeBatch = makeBatch();
+        return Response.json(activeBatch);
+      }
+      if (url === "/api/v1/recovery-batches/batch-2/rights-declaration" && options?.method === "POST") {
+        activeBatch = makeBatch([], { id: "batch-2", rightsDeclarationVersion: rights.version, rightsDeclarationText: rights.text, rightsDeclaredAt: "2026-10-09T10:00:00Z" });
+        return Response.json(activeBatch);
+      }
+      if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [], nextCursor: null });
+      if (url === "/api/v1/providers") return Response.json(localProviderDirectory);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <RecoveryUploadWorkspace analysisRunId="run-1" predecessorConfiguration={predecessorConfiguration} predecessorRunStatus="QUEUED" entries={bibliographyEntries} entriesLoading={false} entriesError={null} enabled />
+      </QueryClientProvider>,
+    );
+    const firstAcceptance = await screen.findByRole("checkbox", { name: "I have read and accept the current PDF-rights declaration" });
+    fireEvent.click(firstAcceptance);
+    fireEvent.click(screen.getByRole("button", { name: "Accept current declaration for PDF upload" }));
+    expect(await screen.findByText(/Current PDF-rights declaration recovery-rights-v1 accepted/)).toBeTruthy();
+
+    activeBatch = makeBatch([], { id: "batch-2", rightsDeclarationVersion: null, rightsDeclarationText: null, rightsDeclaredAt: null });
+    await queryClient.invalidateQueries({ queryKey: ["recovery-uploads", "batch", "run-1"] });
+
+    const nextBatchAcceptance = await screen.findByRole("checkbox", { name: "I have read and accept the current PDF-rights declaration" });
+    const nextBatchAcceptButton = screen.getByRole("button", { name: "Accept current declaration for PDF upload" });
+    await waitFor(() => {
+      expect(nextBatchAcceptance.getAttribute("aria-checked")).toBe("false");
+      expect(nextBatchAcceptButton.hasAttribute("disabled")).toBe(true);
+    });
+    expect(requests.some(({ url, options }) => url.endsWith("/batch-2/rights-declaration") && options?.method === "POST")).toBe(false);
+
+    fireEvent.click(nextBatchAcceptance);
+    expect(nextBatchAcceptButton.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(nextBatchAcceptButton);
+    await waitFor(() => expect(requests.some(({ url, options }) => url.endsWith("/batch-2/rights-declaration") && options?.method === "POST")).toBe(true));
+    view.unmount();
+  });
+
+  it("explains how to recover when an accepted rights declaration is no longer current", async () => {
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    const activeBatch = makeBatch([], {
+      rightsDeclarationVersion: "recovery-rights-v0",
+      rightsDeclarationText: "An older PDF-rights declaration.",
+      rightsDeclaredAt: "2026-10-07T10:00:00Z",
+      identifierAssistance: [{ bibliographyEntryId: "entry-1", localReferenceKey: "b0", identifierType: "DOI", identifierValue: "10.5678/researcher-asserted", recordedAt: "2026-10-09T00:00:00Z" }],
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([activeBatch]);
+      if (url === "/api/v1/providers") return Response.json(localProviderDirectory);
+      if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [], nextCursor: null });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    const rightsAlertTitle = await screen.findByText("PDF-rights declaration changed");
+    const rightsAlertText = rightsAlertTitle.closest('[role="alert"]')?.textContent ?? "";
+    expect(rightsAlertText).toContain("This batch recorded PDF-rights declaration recovery-rights-v0, which cannot be changed to recovery-rights-v1.");
+    expect(rightsAlertText).toContain("let this batch expire or submit eligible existing work, then create a new batch");
+    expect(screen.getByText("10.5678/researcher-asserted")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Accept current declaration for PDF upload" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Choose another PDF version/ })).toBeNull();
+    expect(requests.some(({ url, options }) => url.endsWith("/rights-declaration") && options?.method === "POST")).toBe(false);
   });
 
   it("stages a DOI-only researcher identity assertion without PDF rights or provider consent", async () => {
@@ -213,8 +293,15 @@ describe("Recovery Upload workspace", () => {
 
     renderWorkspace();
     const doiInput = await screen.findByRole("textbox", { name: "DOI you assert identifies this Bibliography Entry" });
+    const confirmIdentity = screen.getByRole("checkbox", { name: "I confirm this DOI identifies this Bibliography Entry" });
+    fireEvent.change(doiInput, { target: { value: "10.5678/first-confirmed-value" } });
+    fireEvent.click(confirmIdentity);
+    expect(confirmIdentity.getAttribute("aria-checked")).toBe("true");
     fireEvent.change(doiInput, { target: { value: "10.5678/researcher-asserted" } });
-    fireEvent.click(screen.getByRole("checkbox", { name: "I confirm this DOI identifies this Bibliography Entry" }));
+    expect(confirmIdentity.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByRole("button", { name: "Stage DOI-only assistance" }).hasAttribute("disabled")).toBe(true);
+    expect(requests.some(({ url, options }) => url.endsWith("/identifier-assistance") && options?.method === "PUT")).toBe(false);
+    fireEvent.click(confirmIdentity);
     fireEvent.click(screen.getByRole("button", { name: "Stage DOI-only assistance" }));
 
     expect(await screen.findByText("10.5678/researcher-asserted")).toBeTruthy();
@@ -351,6 +438,116 @@ describe("Recovery Upload workspace", () => {
     expect(historyRequests[1]).toContain("cursor=older-history");
   });
 
+  it("keeps the submitted successor link and history visible when no batch remains active", async () => {
+    const submissionEvent: RecoveryHistoryEvent = {
+      id: "history-submit-after-active-batch",
+      batchId: "batch-submitted",
+      batchStatus: "SUBMITTED",
+      type: "SUCCESSOR_SUBMITTED",
+      outcomeCode: "SUCCESSOR_CREATED",
+      stageCode: null,
+      attemptNumber: null,
+      bibliographyEntryId: null,
+      uploadId: null,
+      previousUploadId: null,
+      submission: {
+        successorAnalysisRunId: "successor-after-submit",
+        status: "PROCESSING",
+        selectedEntryCount: 0,
+        identifierAssistanceEntryCount: 1,
+        resolutionQueuedEntryCount: 1,
+      },
+      createdAt: "2026-10-09T00:02:00Z",
+    };
+    const successorRun = {
+      id: "successor-after-submit",
+      documentId: "document-1",
+      filename: "source.pdf",
+      sourceContentSha256: "b".repeat(64),
+      status: "QUEUED",
+      progress: {},
+      pipeline: null,
+      configuration: predecessorConfiguration,
+      createdAt: "2026-10-09T00:02:00Z",
+      startedAt: null,
+      failureReason: null,
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([]);
+      if (url === "/api/v1/providers") return Response.json(localProviderDirectory);
+      if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [submissionEvent], nextCursor: null });
+      if (url === "/api/v1/analysis-runs/successor-after-submit") return Response.json(successorRun);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    const history = await screen.findByRole("region", { name: "Recovery and work history" });
+    expect(await within(history).findByText("successor submitted")).toBeTruthy();
+    expect(await within(history).findByRole("link", { name: /Open successor Analysis Run report · successor-after-submit/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create Recovery Batch" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open predecessor Analysis Run report run-1" }).getAttribute("href")).toBe("/analysis-runs/run-1?view=pipeline");
+    expect(screen.queryByText("Review successor plan and provider consent")).toBeNull();
+  });
+
+  it("keeps a new batch eligible after a different batch already submitted a successor", async () => {
+    const previousSubmissionEvent: RecoveryHistoryEvent = {
+      id: "history-previous-batch-submit",
+      batchId: "batch-previous",
+      batchStatus: "SUBMITTED",
+      type: "SUCCESSOR_SUBMITTED",
+      outcomeCode: "SUCCESSOR_CREATED",
+      stageCode: null,
+      attemptNumber: null,
+      bibliographyEntryId: null,
+      uploadId: null,
+      previousUploadId: null,
+      submission: {
+        successorAnalysisRunId: "successor-from-previous-batch",
+        status: "PROCESSING",
+        selectedEntryCount: 0,
+        identifierAssistanceEntryCount: 1,
+        resolutionQueuedEntryCount: 1,
+      },
+      createdAt: "2026-10-08T00:02:00Z",
+    };
+    const previousSuccessorRun = {
+      id: "successor-from-previous-batch",
+      documentId: "document-1",
+      filename: "source.pdf",
+      sourceContentSha256: "b".repeat(64),
+      status: "QUEUED",
+      progress: {},
+      pipeline: null,
+      configuration: { ...predecessorConfiguration, captureExecution: false },
+      createdAt: "2026-10-08T00:02:00Z",
+      startedAt: null,
+      failureReason: null,
+    };
+    const currentBatch = makeBatch([], {
+      id: "batch-current",
+      revision: 3,
+      identifierAssistance: [{ bibliographyEntryId: "entry-2", localReferenceKey: "b0", identifierType: "DOI", identifierValue: "10.5678/current-batch", recordedAt: "2026-10-09T00:00:00Z" }],
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json(rights);
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([currentBatch]);
+      if (url === "/api/v1/providers") return Response.json(localProviderDirectory);
+      if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [previousSubmissionEvent], nextCursor: null });
+      if (url === "/api/v1/analysis-runs/successor-from-previous-batch") return Response.json(previousSuccessorRun);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    const history = await screen.findByRole("region", { name: "Recovery and work history" });
+    expect(await within(history).findByRole("link", { name: /Open successor Analysis Run report · successor-from-previous-batch/ })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Preview successor plan" }).hasAttribute("disabled")).toBe(false));
+  });
+
   it("requires successor-specific provider consent, previews DOI-only work, and navigates by stable run IDs", async () => {
     const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
     const disclosureFingerprint = "d".repeat(64);
@@ -368,7 +565,7 @@ describe("Recovery Upload workspace", () => {
     } as AnalysisRun["configuration"];
     const activeAssistance = { bibliographyEntryId: "entry-1", localReferenceKey: "b0", identifierType: "DOI" as const, identifierValue: "10.1234/private-doi", recordedAt: "2026-10-09T00:00:00Z" };
     let activeBatch = makeBatch([], { revision: 5, identifierAssistance: [activeAssistance] });
-    let historyEvents: RecoveryHistoryEvent[] = [{
+    const historyEvents: RecoveryHistoryEvent[] = [{
       id: "history-attempt-1", batchId: "batch-1", batchStatus: "OPEN", type: "ATTEMPT_STARTED", outcomeCode: "STARTED",
       stageCode: "REFERENCE_RESOLUTION", attemptNumber: 1, bibliographyEntryId: "entry-1", uploadId: null, previousUploadId: null, submission: null, createdAt: "2026-10-09T00:01:00Z",
     }];
@@ -406,10 +603,6 @@ describe("Recovery Upload workspace", () => {
       if (url.endsWith("/successor") && options?.method === "POST") {
         submissionBody = JSON.parse(String(options.body));
         activeBatch = { ...activeBatch, status: "SUBMITTED" };
-        historyEvents = [
-          { id: "history-submit", batchId: "batch-1", batchStatus: "SUBMITTED", type: "SUCCESSOR_SUBMITTED", outcomeCode: "SUCCESS", stageCode: null, attemptNumber: null, bibliographyEntryId: null, uploadId: null, previousUploadId: null, createdAt: "2026-10-09T00:02:00Z", submission: { successorAnalysisRunId: "successor-1", status: "PROCESSING", selectedEntryCount: 0, identifierAssistanceEntryCount: 1, resolutionQueuedEntryCount: 1 } },
-          ...historyEvents,
-        ];
         return Response.json(submission);
       }
       if (url === "/api/v1/analysis-runs/successor-1") return Response.json(successorRun);
@@ -427,7 +620,7 @@ describe("Recovery Upload workspace", () => {
     const history = screen.getByRole("region", { name: "Recovery and work history" });
     expect(within(history).queryByText("10.1234/private-doi")).toBeNull();
     expect(screen.getByRole("button", { name: "Preview successor plan" }).hasAttribute("disabled")).toBe(true);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Claim text" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Claim text" }));
     fireEvent.click(screen.getByRole("button", { name: "Preview successor plan" }));
 
     expect(await screen.findByText("Successor plan preview")).toBeTruthy();
@@ -447,6 +640,8 @@ describe("Recovery Upload workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit one immutable successor Analysis Run" }));
 
     expect(await screen.findByText(/Successor status: queued/)).toBeTruthy();
+    expect(screen.getByText("Immutable successor · submitted")).toBeTruthy();
+    expect(screen.queryByText("Immutable successor · PROCESSING")).toBeNull();
     const previewConfiguration = (previewBody as Record<string, unknown> | null)?.configuration;
     expect(submissionBody).toEqual({
       idempotencyKey: expect.any(String),

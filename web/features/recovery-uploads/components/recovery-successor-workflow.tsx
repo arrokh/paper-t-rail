@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,7 +37,7 @@ type RecoverySuccessorWorkflowProps = {
   analysisRunId: string;
   predecessorConfiguration: AnalysisRun["configuration"];
   predecessorRunStatus: AnalysisRun["status"];
-  batch: RecoveryBatch;
+  batch: RecoveryBatch | null;
 };
 
 type ConsentDraft = {
@@ -90,7 +92,7 @@ function submissionFromEvent(event: RecoveryHistoryEvent) {
 }
 
 export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfiguration, predecessorRunStatus, batch }: RecoverySuccessorWorkflowProps) {
-  const providerQuery = useProviderDirectory();
+  const providerQuery = useProviderDirectory(batch !== null);
   const historyQuery = useRecoveryHistory(analysisRunId, true);
   const previewMutation = usePreviewRecoverySuccessor();
   const submitMutation = useSubmitRecoverySuccessor();
@@ -124,20 +126,28 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
   ])];
   const preview = previewMutation.data;
   const previewIsCurrent = Boolean(
-    preview
+    batch
+      && preview
+      && preview.batchId === batch.id
+      && preview.predecessorAnalysisRunId === analysisRunId
       && preview.revision === batch.revision
       && previewConfigurationKey === configurationKey,
   );
-  const hasWork = batch.selectedAssets.length > 0 || batch.identifierAssistance.length > 0;
-  const hasSubmitted = batch.status === "SUBMITTED" || submittedSuccessorIds.length > 0;
-  const canPreview = batch.status === "OPEN"
+  const hasWork = Boolean(batch && (batch.selectedAssets.length > 0 || batch.identifierAssistance.length > 0));
+  const hasSubmitted = Boolean(batch && (
+    batch.status === "SUBMITTED"
+      || events.some((event) => event.batchId === batch.id && submissionFromEvent(event) !== null)
+      || (submitMutation.data && submitMutation.variables?.batchId === batch.id)
+  ));
+  const canPreview = Boolean(batch
+    && batch.status === "OPEN"
     && hasWork
     && selectionAvailable
     && missingConsents.length === 0
     && configuration !== null
     && !previewMutation.isPending
     && !submitMutation.isPending
-    && !hasSubmitted;
+    && !hasSubmitted);
   const locallyBlocked = !hasWork
     ? "Select an eligible exact PDF version or stage DOI-only assistance before previewing a successor."
     : !selectionAvailable
@@ -145,6 +155,7 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
       : missingConsents.length > 0
         ? "Review and explicitly approve every current provider category before previewing or submitting."
         : null;
+  const shouldShowHistory = Boolean(batch || events.length > 0 || historyQuery.isPending || historyQuery.isError || submittedSuccessorIds.length > 0);
 
   function toggleCategory(provider: ProviderConsentRequirement, category: string, approved: boolean) {
     setConsentDraft((current) => {
@@ -166,7 +177,7 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
   }
 
   function previewPlan() {
-    if (!configuration || !canPreview) return;
+    if (!batch || !configuration || !canPreview) return;
     previewMutation.reset();
     setPreviewConfigurationKey(null);
     const requestConfiguration = configuration;
@@ -181,7 +192,7 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
   }
 
   function submitSuccessor() {
-    if (!configuration || !previewIsCurrent || !preview?.eligible || hasSubmitted || !submissionAllowed(preview)) return;
+    if (!batch || !configuration || !previewIsCurrent || !preview?.eligible || hasSubmitted || !submissionAllowed(preview)) return;
     const requestConfigurationKey = JSON.stringify(configuration);
     if (!submissionKey.current
       || submissionKey.current.batchId !== batch.id
@@ -208,13 +219,16 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
   const activeError = [previewMutation.error, submitMutation.error]
     .find((error): error is Error => error instanceof Error);
 
+  if (!batch && !shouldShowHistory) return null;
+
   return (
-    <section className="space-y-5" aria-labelledby="successor-workflow-heading">
+    <section className="space-y-5" aria-labelledby={batch ? "successor-workflow-heading" : undefined}>
+      {batch && (
       <Card className="shadow-sm">
         <CardHeader>
           <CardTitle id="successor-workflow-heading" className="font-serif text-lg">Review successor plan and provider consent</CardTitle>
           <CardDescription>
-            This creates at most one immutable successor of the visible predecessor Analysis Run. Exact selected PDFs and DOI-only identity assertions are separate inputs. Preview is read-only; provider work begins only after submission.
+            This creates at most one immutable successor for this Recovery Batch. Exact selected PDFs and DOI-only identity assertions are separate inputs. Preview is read-only; provider work begins only after submission.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -311,8 +325,13 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
           )}
           {submitMutation.isPending && <p className="m-0 text-sm text-muted-foreground" role="status">Submitting this selected subset once. Provider work is queued by the server after successful submission.</p>}
           {submitMutation.data && !historySuccessors.includes(submitMutation.data.successorAnalysisRunId) && (
-            <SubmissionDetails submission={{ ...submitMutation.data, status: "PROCESSING" }} />
+            <SubmissionDetails submission={submitMutation.data} />
           )}
+        </CardContent>
+      </Card>
+      )}
+      {shouldShowHistory && (
+        <>
           {historyQuery.isPending && <p className="m-0 flex items-center gap-2 text-sm text-muted-foreground" role="status"><Spinner /> Loading recovery and work history…</p>}
           {historyQuery.isError && (
             <Alert variant="destructive"><AlertTitle>Recovery history unavailable</AlertTitle><AlertDescription>{historyQuery.error instanceof Error ? historyQuery.error.message : "Content-minimized recovery history could not be loaded."}</AlertDescription></Alert>
@@ -326,12 +345,12 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
             hasError={historyQuery.isError}
             onLoadMore={() => void historyQuery.fetchNextPage()}
             submittedSuccessorIds={submittedSuccessorIds}
-            batchSubmitted={hasSubmitted}
+            batchSubmitted={batch ? hasSubmitted : submittedSuccessorIds.length > 0}
             predecessorCaptureRequested={predecessorConfiguration.captureExecution}
             predecessorRunStatus={predecessorRunStatus}
           />
-        </CardContent>
-      </Card>
+        </>
+      )}
     </section>
   );
 }
@@ -401,10 +420,15 @@ function SuccessorPlanPreview({ preview }: { preview: RecoverySuccessorPreview }
         <Alert className="border-warning/40 bg-warning/20 text-warning-foreground"><AlertTitle>Plan blockers</AlertTitle><AlertDescription><ul className="m-0 grid gap-1 pl-5">{preview.blockers.map((blocker) => <li key={blocker} className="break-words">{blocker}</li>)}</ul></AlertDescription></Alert>
       )}
       {preview.invalidationReasons.length > 0 && (
-        <details className="rounded border border-border px-3 py-2 text-sm">
-          <summary className="cursor-pointer font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">Why predecessor work cannot be reused unchanged</summary>
-          <ul className="mb-0 mt-2 grid gap-1 pl-5 text-muted-foreground">{preview.invalidationReasons.map((reason) => <li key={reason} className="break-words">{reason}</li>)}</ul>
-        </details>
+        <Collapsible className="group/invalidation-reasons rounded border border-border px-3 py-2 text-sm">
+          <CollapsibleTrigger className="flex min-h-8 w-full items-center justify-between gap-2 py-1 text-left font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+            Why predecessor work cannot be reused unchanged
+            <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[open]/invalidation-reasons:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="border-t border-border pt-2">
+            <ul className="mb-0 mt-2 grid gap-1 pl-5 text-muted-foreground">{preview.invalidationReasons.map((reason) => <li key={reason} className="break-words">{reason}</li>)}</ul>
+          </CollapsibleContent>
+        </Collapsible>
       )}
     </section>
   );
@@ -478,7 +502,9 @@ function RecoveryHistory({
 }
 
 function SubmissionDetails({ submission }: {
-  submission: RecoveryHistorySubmission & Partial<Pick<RecoverySuccessorSubmission, "queuedEntryCount" | "retainedEntryCount">>;
+  submission: Omit<RecoveryHistorySubmission, "status">
+    & Partial<Pick<RecoveryHistorySubmission, "status">>
+    & Partial<Pick<RecoverySuccessorSubmission, "queuedEntryCount" | "retainedEntryCount">>;
 }) {
   const counts = [
     `${submission.selectedEntryCount} exact PDF ${submission.selectedEntryCount === 1 ? "entry" : "entries"}`,
@@ -490,7 +516,7 @@ function SubmissionDetails({ submission }: {
 
   return (
     <div className="mt-3 rounded border border-border bg-muted/40 p-3">
-      <p className="m-0 text-sm font-medium">Immutable successor · {submission.status}</p>
+      <p className="m-0 text-sm font-medium">Immutable successor · {submission.status ?? "submitted"}</p>
       <p className="m-0 mt-1 break-words text-xs text-muted-foreground">Successor Analysis Run ID · <Link className="font-mono underline underline-offset-4 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50" href={`/analysis-runs/${encodeURIComponent(submission.successorAnalysisRunId)}`}>{submission.successorAnalysisRunId}</Link></p>
       <p className="mb-0 mt-2 text-xs leading-relaxed text-muted-foreground">{counts.join(" · ")}.</p>
     </div>

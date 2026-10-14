@@ -94,6 +94,9 @@ class SuccessorSelectedAssetService(
         return HandoffResult.QUEUED
     }
 
+    fun isIdentityOnly(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean =
+        repository.isIdentityOnly(analysisRunId, bibliographyEntryId)
+
     fun scheduleCleanupIfUnowned(analysisRunId: UUID, bibliographyEntryId: UUID, now: Instant = Instant.now()): Boolean =
         cleanupRepository.scheduleSubmittedUnownedUpload(analysisRunId, bibliographyEntryId, now)
 

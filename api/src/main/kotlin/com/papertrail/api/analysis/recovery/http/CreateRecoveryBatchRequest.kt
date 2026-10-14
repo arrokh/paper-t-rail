@@ -8,8 +8,8 @@ data class CreateRecoveryBatchRequest(
     @field:NotNull
     @field:Schema(description = "Client-generated key used to make batch creation idempotent.", format = "uuid")
     val idempotencyKey: UUID,
-    @field:Schema(description = "The exact rights declaration version shown before acceptance.")
-    val rightsDeclarationVersion: String,
-    @field:Schema(description = "Must be true after the user accepts the versioned rights declaration.")
-    val rightsDeclarationAccepted: Boolean,
+    @field:Schema(description = "Optional exact rights declaration version. Supply together with rightsDeclarationAccepted to accept PDF rights at creation; omit both for DOI-only assistance.", nullable = true)
+    val rightsDeclarationVersion: String? = null,
+    @field:Schema(description = "Must be true when accepting the versioned PDF-rights declaration at batch creation; omit with rightsDeclarationVersion for DOI-only work.", nullable = true)
+    val rightsDeclarationAccepted: Boolean? = null,
 )

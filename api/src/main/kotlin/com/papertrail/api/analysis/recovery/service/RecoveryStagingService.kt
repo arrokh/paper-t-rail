@@ -3,6 +3,7 @@ package com.papertrail.api.analysis.recovery.service
 import com.papertrail.api.analysis.recovery.domain.RecoveryBatch
 import com.papertrail.api.analysis.recovery.domain.RecoveryBatchStatus
 import com.papertrail.api.analysis.recovery.domain.RecoveryPdfValidationException
+import com.papertrail.api.analysis.recovery.domain.RecoveryIdentifierAssistance
 import com.papertrail.api.analysis.recovery.domain.RecoveryRightsDeclaration
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
 import com.papertrail.api.analysis.recovery.domain.RecoveryUpload
@@ -12,6 +13,7 @@ import com.papertrail.api.analysis.recovery.repository.RecoveryBatchRepository
 import com.papertrail.api.infrastructure.crypto.sha256Hex
 import com.papertrail.api.infrastructure.storage.PresignedObjectUpload
 import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
+import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import software.amazon.awssdk.services.s3.model.S3Exception
@@ -41,26 +43,69 @@ class RecoveryStagingService(
     fun createBatch(
         analysisRunId: UUID,
         idempotencyKey: UUID,
-        rightsDeclarationVersion: String,
-        rightsDeclarationAccepted: Boolean,
+        rightsDeclarationVersion: String?,
+        rightsDeclarationAccepted: Boolean?,
     ): RecoveryBatch {
-        if (rightsDeclarationVersion != RecoveryRightsDeclaration.CURRENT.version) {
-            throw RecoveryStagingException("RIGHTS_DECLARATION_CHANGED", 409, "The rights declaration changed. Review the current declaration before continuing.")
-        }
-        if (!rightsDeclarationAccepted) {
-            throw RecoveryStagingException("RIGHTS_DECLARATION_REQUIRED", 400, "Accept the rights declaration before creating a Recovery Batch.")
+        val declaration = when {
+            rightsDeclarationVersion == null && rightsDeclarationAccepted == null -> null
+            rightsDeclarationVersion == null || rightsDeclarationAccepted == null -> throw RecoveryStagingException(
+                "RIGHTS_DECLARATION_INCOMPLETE", 400, "Provide both the rights declaration version and acceptance, or omit both for DOI-only work.",
+            )
+            rightsDeclarationVersion != RecoveryRightsDeclaration.CURRENT.version -> throw RecoveryStagingException(
+                "RIGHTS_DECLARATION_CHANGED", 409, "The rights declaration changed. Review the current declaration before continuing.",
+            )
+            !rightsDeclarationAccepted -> throw RecoveryStagingException(
+                "RIGHTS_DECLARATION_REQUIRED", 400, "Accept the rights declaration before creating a PDF upload intent.",
+            )
+            else -> RecoveryRightsDeclaration.CURRENT
         }
         val batch = repository.createOrGetOpenBatch(
             analysisRunId = analysisRunId,
             idempotencyKey = idempotencyKey,
             newBatchId = UUID.randomUUID(),
-            declaration = RecoveryRightsDeclaration.CURRENT,
+            declaration = declaration,
             now = Instant.now(),
         ) ?: throw RecoveryStagingException("ANALYSIS_RUN_NOT_FOUND", 404, "Analysis Run not found.")
         if (batch.status != RecoveryBatchStatus.OPEN || batch.expiresAt <= Instant.now()) {
             throw RecoveryStagingException("RECOVERY_BATCH_EXPIRED", 410, "This Recovery Batch has expired.")
         }
         return batch
+    }
+
+    fun acceptCurrentRightsDeclaration(
+        batchId: UUID,
+        version: String,
+        accepted: Boolean,
+    ): RecoveryBatch {
+        if (!accepted) {
+            throw RecoveryStagingException("RIGHTS_DECLARATION_REQUIRED", 400, "Accept the current PDF-rights declaration before uploading a PDF.")
+        }
+        if (version != RecoveryRightsDeclaration.CURRENT.version) {
+            throw RecoveryStagingException("RIGHTS_DECLARATION_CHANGED", 409, "The rights declaration changed. Review the current declaration before continuing.")
+        }
+        return repository.acceptCurrentRightsDeclaration(batchId, RecoveryRightsDeclaration.CURRENT, Instant.now())
+    }
+
+    fun setIdentifierAssistance(
+        batchId: UUID,
+        localReferenceKey: String,
+        identifierType: String,
+        identifierValue: String,
+        confirmsBibliographyIdentity: Boolean,
+    ): RecoveryIdentifierAssistance {
+        if (identifierType != "DOI") {
+            throw RecoveryStagingException("IDENTIFIER_TYPE_UNSUPPORTED", 400, "Only DOI identifier assistance is supported.")
+        }
+        if (!confirmsBibliographyIdentity) {
+            throw RecoveryStagingException("BIBLIOGRAPHY_IDENTITY_CONFIRMATION_REQUIRED", 400, "Explicitly confirm that the DOI identifies this Bibliography Entry.")
+        }
+        val normalizedDoi = DoiNormalizer.normalize(identifierValue)
+            ?: throw RecoveryStagingException("DOI_INVALID", 400, "Provide a valid DOI or DOI URL.")
+        return repository.setIdentifierAssistance(batchId, localReferenceKey, normalizedDoi, Instant.now())
+    }
+
+    fun removeIdentifierAssistance(batchId: UUID, localReferenceKey: String) {
+        repository.removeIdentifierAssistance(batchId, localReferenceKey, Instant.now())
     }
 
     fun createUploadIntent(

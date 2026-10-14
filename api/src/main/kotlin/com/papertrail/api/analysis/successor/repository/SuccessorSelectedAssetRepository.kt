@@ -89,6 +89,24 @@ class SuccessorSelectedAssetRepository(
         bibliographyEntryId,
     ).firstOrNull()
 
+    fun isIdentityOnly(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
+        """
+        SELECT EXISTS (
+            SELECT 1
+              FROM analysis_run_successor_work_manifest manifest
+              JOIN analysis_run_successor_doi_assistance assistance
+                ON assistance.successor_analysis_run_id = manifest.successor_analysis_run_id
+               AND assistance.bibliography_entry_id = manifest.bibliography_entry_id
+             WHERE manifest.successor_analysis_run_id = ?
+               AND manifest.bibliography_entry_id = ?
+               AND manifest.work_kind = 'IDENTITY_ONLY'
+        )
+        """.trimIndent(),
+        Boolean::class.java,
+        analysisRunId,
+        bibliographyEntryId,
+    ) == true
+
     fun ensureSelectedVerifications(
         analysisRunId: UUID,
         bibliographyEntryId: UUID,

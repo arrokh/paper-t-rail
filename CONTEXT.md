@@ -80,11 +80,19 @@ One analysis of a Source Document under a defined analysis configuration. Result
 _Avoid_: analysis when referring to a specific execution.
 
 **Recovery Batch**:
-A temporary, rights-declared collection of user-supplied PDF uploads attached to one non-deleted predecessor Analysis Run. It does not change that run or establish reference identity, language eligibility, legal permission, or evidence support; abandoned staging expires under [ADR 0017](docs/adr/0017-bounded-user-supplied-recovery-pdfs.md).
+A temporary, bounded collection of user-supplied PDF upload candidates and/or DOI Assistance attached to one non-deleted predecessor Analysis Run. A PDF upload requires the batch's accepted Recovery Rights Declaration before its upload intent; DOI-only assistance does not. A batch never changes the predecessor or establishes language eligibility, legal access, or evidence support. Abandoned staging expires under [ADR 0017](docs/adr/0017-bounded-user-supplied-recovery-pdfs.md).
 _Avoid_: Analysis Run when referring to the temporary recovery workflow.
 
+**DOI Assistance**:
+A researcher-confirmed DOI assertion for an unresolved, supported Bibliography Entry, used to seed reference resolution in a successor Analysis Run. It preserves the original Bibliography Entry and does not establish provider-verified identity, exact PDF version, language eligibility, legal access, or evidence support. Correcting the source bibliography requires a revised Source Document.
+_Avoid_: DOI verification or corrected Bibliography Entry.
+
+**Recovery Rights Declaration**:
+A user's assertion that they may upload a PDF to the trusted workspace for local processing. It is accepted once per batch and pinned as an immutable versioned snapshot before any PDF upload intent; it is not a license grant or permission to send the PDF to an external provider.
+_Avoid_: provider consent or publication rights.
+
 **Recovery Upload**:
-One upload intent in a Recovery Batch, linked to a Bibliography Entry. Its finalized snapshot is a user-supplied candidate for later review, not a Cited Paper Asset until separately accepted; upload completion alone is not evidence assessment.
+One upload intent for one candidate PDF version, linked to a Bibliography Entry. A batch may contain multiple versions per entry; each is validated separately, and only one exact version is current for successor submission. Its finalized snapshot is a user-supplied candidate for later review, not a Cited Paper Asset until separately accepted; upload completion alone is not evidence assessment.
 _Avoid_: Cited Paper Asset when referring to an unaccepted recovery upload.
 
 **Execution Span**:

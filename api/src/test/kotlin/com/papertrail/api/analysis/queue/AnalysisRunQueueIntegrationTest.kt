@@ -114,6 +114,8 @@ import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequeste
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadStatus
 import com.papertrail.api.analysis.recovery.repository.RecoveryBatchRepository
+import com.papertrail.api.analysis.recovery.repository.RecoveryHistoryRepository
+import com.papertrail.api.analysis.recovery.service.RecoveryHistoryService
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadCleanupRepository
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadIdentityDecisionRepository
 import com.papertrail.api.analysis.recovery.repository.RecoveryUploadValidationRepository
@@ -125,6 +127,7 @@ import com.papertrail.api.analysis.successor.http.SuccessorRunPreviewRequest
 import com.papertrail.api.analysis.successor.http.SuccessorRunSubmissionRequest
 import com.papertrail.api.analysis.successor.repository.SuccessorRunPreviewRepository
 import com.papertrail.api.analysis.successor.repository.SuccessorRunSubmissionRepository
+import com.papertrail.api.analysis.successor.repository.SuccessorSelectedAccessAttemptFailed
 import com.papertrail.api.analysis.successor.repository.SuccessorSelectedAssetRepository
 import com.papertrail.api.analysis.successor.queue.SuccessorRunResolutionQueue
 import com.papertrail.api.analysis.successor.service.SuccessorSelectedAssetService
@@ -248,12 +251,14 @@ import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.utility.DockerImageName
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
+import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -314,10 +319,8 @@ class AnalysisRunQueueIntegrationTest {
         val firstIntent = service.createUploadIntent(batch.id, "b0", UUID.randomUUID(), "candidate.pdf", pdf.size.toLong(), pdfSha256)
         val repeatedIntent = service.createUploadIntent(batch.id, "b0", firstIntent.upload.idempotencyKey, "candidate.pdf", pdf.size.toLong(), pdfSha256)
         assertEquals(firstIntent.upload.id, repeatedIntent.upload.id)
-        val duplicateEntry = assertThrows(RecoveryStagingException::class.java) {
-            service.createUploadIntent(batch.id, "b0", UUID.randomUUID(), "other.pdf", pdf.size.toLong(), pdfSha256)
-        }
-        assertEquals(409, duplicateEntry.statusCode)
+        val replacementIntent = service.createUploadIntent(batch.id, "b0", UUID.randomUUID(), "other.pdf", pdf.size.toLong(), pdfSha256)
+        assertNotEquals(firstIntent.upload.id, replacementIntent.upload.id)
 
         objectStore.put(firstIntent.upload.stagingObjectKey, pdf, "application/pdf")
         val staged = service.finalizeUpload(batch.id, firstIntent.upload.id)
@@ -343,6 +346,381 @@ class AnalysisRunQueueIntegrationTest {
         assertFalse(objectStore.contains(staged.finalizedObjectKey))
         assertEquals(RecoveryUploadStatus.REMOVED, service.removeUpload(batch.id, staged.id).status)
         assertEquals(4, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_cleanup_tombstones", Int::class.java))
+    }
+
+    @Test
+    fun `upload intent rejects a previously accepted stale rights declaration before presigning`() {
+        val run = createQueuedRun()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'Stale rights declaration fixture')",
+            run.analysisRunId,
+            run.hash,
+        )
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", run.analysisRunId)
+        jdbc.update("UPDATE analysis_runs SET status = 'PARSED' WHERE id = ?", run.analysisRunId)
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, reference_type) VALUES (?, ?, 0, 'stale-rights', 'Stale rights declaration fixture', 'JOURNAL_ARTICLE')",
+            UUID.randomUUID(),
+            run.analysisRunId,
+        )
+        val settings = recoveryStagingSettings()
+        val repository = RecoveryBatchRepository(jdbc, settings)
+        val staleDeclaration = RecoveryRightsDeclaration("recovery-rights-v0", "Previously accepted PDF-rights declaration.")
+        val batch = repository.createOrGetOpenBatch(
+            analysisRunId = run.analysisRunId,
+            idempotencyKey = UUID.randomUUID(),
+            newBatchId = UUID.randomUUID(),
+            declaration = staleDeclaration,
+            now = Instant.now(),
+        )!!
+        val service = RecoveryStagingService(
+            repository = repository,
+            objectStore = objectStore,
+            settings = settings,
+            corsPolicy = RecoveryUploadCorsPolicy(objectStore, settings),
+            pdfValidator = RecoveryPdfValidator(500),
+        )
+
+        val staleRights = assertThrows(RecoveryStagingException::class.java) {
+            service.createUploadIntent(batch.id, "stale-rights", UUID.randomUUID(), "paper.pdf", 10, "a".repeat(64))
+        }
+
+        assertEquals(409, staleRights.statusCode)
+        assertEquals("PDF_RIGHTS_DECLARATION_STALE", staleRights.code)
+        assertEquals("recovery-rights-v0", jdbc.queryForObject("SELECT rights_declaration_version FROM recovery_batches WHERE id = ?", String::class.java, batch.id))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_batch_uploads WHERE batch_id = ?", Int::class.java, batch.id))
+        assertEquals(0, objectStore.presignPutPdfCalls())
+    }
+
+    @Test
+    fun `DOI-only batches allow rights opt-in, version replacement and private immutable paginated history`() {
+        val run = createQueuedRun()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'Parsed source fixture')",
+            run.analysisRunId,
+            run.hash,
+        )
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", run.analysisRunId)
+        jdbc.update("UPDATE analysis_runs SET status = 'PARSED' WHERE id = ?", run.analysisRunId)
+        val bibliographyEntryId = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, reference_type) VALUES (?, ?, 0, 'doi-ref', 'DOI-only identity fixture', 'JOURNAL_ARTICLE')",
+            bibliographyEntryId,
+            run.analysisRunId,
+        )
+        val settings = recoveryStagingSettings()
+        val history = RecoveryHistoryRepository(jdbc)
+        val service = RecoveryStagingService(
+            repository = RecoveryBatchRepository(jdbc, settings, history),
+            objectStore = objectStore,
+            settings = settings,
+            corsPolicy = RecoveryUploadCorsPolicy(objectStore, settings),
+            pdfValidator = RecoveryPdfValidator(500),
+        )
+        val batchKey = UUID.randomUUID()
+        val batch = service.createBatch(run.analysisRunId, batchKey, null, null)
+        assertNull(batch.rightsDeclaration)
+        assertNull(batch.rightsDeclaredAt)
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_batch_uploads WHERE batch_id = ?", Int::class.java, batch.id))
+
+        val uploadWithoutRights = assertThrows(RecoveryStagingException::class.java) {
+            service.createUploadIntent(batch.id, "doi-ref", UUID.randomUUID(), "paper.pdf", 10, "a".repeat(64))
+        }
+        assertEquals("PDF_RIGHTS_DECLARATION_REQUIRED", uploadWithoutRights.code)
+        val acceptedByCompatibleCreate = service.createBatch(run.analysisRunId, UUID.randomUUID(), "recovery-rights-v1", true)
+        assertEquals(batch.id, acceptedByCompatibleCreate.id)
+        assertEquals("recovery-rights-v1", acceptedByCompatibleCreate.rightsDeclaration?.version)
+        val replayedIdentifierOnlyCreate = service.createBatch(run.analysisRunId, batchKey, null, null)
+        assertEquals(batch.id, replayedIdentifierOnlyCreate.id)
+        assertEquals("recovery-rights-v1", replayedIdentifierOnlyCreate.rightsDeclaration?.version)
+        val changedCreationRequest = assertThrows(RecoveryStagingException::class.java) {
+            service.createBatch(run.analysisRunId, batchKey, "recovery-rights-v1", true)
+        }
+        assertEquals("RECOVERY_BATCH_IDEMPOTENCY_CONFLICT", changedCreationRequest.code)
+        val accepted = service.acceptCurrentRightsDeclaration(batch.id, "recovery-rights-v1", true)
+        assertEquals("recovery-rights-v1", accepted.rightsDeclaration?.version)
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'RIGHTS_ACCEPTED'", Int::class.java, batch.id))
+        val acceptedRevision = accepted.revision
+        assertEquals(acceptedRevision, service.acceptCurrentRightsDeclaration(batch.id, "recovery-rights-v1", true).revision)
+
+        val first = service.setIdentifierAssistance(batch.id, "doi-ref", "DOI", "https://doi.org/10.1234/ALPHA", true)
+        assertEquals("10.1234/alpha", first.identifierValue)
+        val setRevision = jdbc.queryForObject("SELECT revision FROM recovery_batches WHERE id = ?", Long::class.java, batch.id)!!
+        service.setIdentifierAssistance(batch.id, "doi-ref", "DOI", "10.1234/alpha", true)
+        assertEquals(setRevision, jdbc.queryForObject("SELECT revision FROM recovery_batches WHERE id = ?", Long::class.java, batch.id))
+        service.setIdentifierAssistance(batch.id, "doi-ref", "DOI", "10.1234/BETA", true)
+        assertTrue(jdbc.queryForObject("SELECT revision FROM recovery_batches WHERE id = ?", Long::class.java, batch.id)!! > setRevision)
+
+        val firstPage = history.page(run.analysisRunId, null, 2)
+        assertEquals(2, firstPage.events.size)
+        assertTrue(firstPage.nextCursor != null)
+        val secondPage = history.page(run.analysisRunId, firstPage.nextCursor, 2)
+        assertEquals(2, secondPage.events.size)
+        assertNull(secondPage.nextCursor)
+        assertTrue(firstPage.events.map { it.id }.intersect(secondPage.events.map { it.id }.toSet()).isEmpty())
+        assertFalse((firstPage.events + secondPage.events).joinToString { it.outcomeCode }.contains("10.1234"))
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("UPDATE recovery_history_events SET outcome_code = 'ALTERED' WHERE batch_id = ?", batch.id)
+        }
+
+        jdbc.update("UPDATE recovery_batches SET status = 'SUBMITTED' WHERE id = ?", batch.id)
+        val closedBatch = service.createBatch(run.analysisRunId, UUID.randomUUID(), null, null)
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("UPDATE recovery_batches SET rights_declaration_version = 'recovery-rights-v1' WHERE id = ?", closedBatch.id)
+        }
+        jdbc.update("UPDATE recovery_batches SET status = 'SUBMITTED' WHERE id = ?", closedBatch.id)
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update(
+                "UPDATE recovery_batches SET rights_declaration_version = ?, rights_declaration_text = ?, rights_declared_at = now() WHERE id = ?",
+                "recovery-rights-v1", RecoveryRightsDeclaration.CURRENT.text, closedBatch.id,
+            )
+        }
+    }
+
+    @Test
+    fun `recovery history paginates equal-time selected-access events in append order`() {
+        val run = createQueuedRun()
+        val settings = recoveryStagingSettings()
+        val history = RecoveryHistoryRepository(jdbc)
+        val batch = RecoveryBatchRepository(jdbc, settings, history).createOrGetOpenBatch(
+            analysisRunId = run.analysisRunId,
+            idempotencyKey = UUID.randomUUID(),
+            newBatchId = UUID.randomUUID(),
+            declaration = null,
+            now = Instant.now().minusSeconds(1),
+        )!!
+        jdbc.update("UPDATE recovery_batches SET status = 'SUBMITTED' WHERE id = ?", batch.id)
+        val startedEventId = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff")
+        val completedEventId = UUID.fromString("00000000-0000-0000-0000-000000000000")
+        val sameTimestamp = Timestamp.from(Instant.now().plusSeconds(1))
+
+        fun insertSelectedAccessEvent(eventId: UUID, eventType: String) {
+            jdbc.update(
+                """
+                INSERT INTO recovery_history_events (
+                    id, batch_id, analysis_run_id, batch_status, event_type, outcome_code,
+                    stage_code, attempt_number, created_at
+                ) VALUES (?, ?, ?, 'SUBMITTED', ?, 'ACCESS_WORK', 'selected-access', 1, ?)
+                """.trimIndent(),
+                eventId,
+                batch.id,
+                run.analysisRunId,
+                eventType,
+                sameTimestamp,
+            )
+        }
+        insertSelectedAccessEvent(startedEventId, "ATTEMPT_STARTED")
+        insertSelectedAccessEvent(completedEventId, "ATTEMPT_COMPLETED")
+
+        val newestPage = history.page(run.analysisRunId, null, 2)
+        assertEquals(listOf("ATTEMPT_COMPLETED", "ATTEMPT_STARTED"), newestPage.events.map { it.eventType })
+        assertEquals(listOf(completedEventId, startedEventId), newestPage.events.map { it.id })
+        val nextCursor = newestPage.nextCursor ?: error("Expected another recovery history page.")
+        assertEquals(
+            startedEventId.toString(),
+            String(Base64.getUrlDecoder().decode(nextCursor), StandardCharsets.UTF_8),
+        )
+
+        val olderPage = history.page(run.analysisRunId, nextCursor, 2)
+        assertEquals(listOf("BATCH_CREATED"), olderPage.events.map { it.eventType })
+        assertTrue(olderPage.events.none { it.id == startedEventId || it.id == completedEventId })
+        assertNull(olderPage.nextCursor)
+    }
+
+    @Test
+    fun `failed selected access attempts increment per entry and stage`() {
+        val run = createQueuedRun()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'Selected access attempt fixture')",
+            run.analysisRunId,
+            run.hash,
+        )
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", run.analysisRunId)
+        jdbc.update("UPDATE analysis_runs SET status = 'PARSED' WHERE id = ?", run.analysisRunId)
+        val entryId = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, reference_type) VALUES (?, ?, 0, 'selected-access', 'Selected access attempt fixture', 'JOURNAL_ARTICLE')",
+            entryId,
+            run.analysisRunId,
+        )
+        val settings = recoveryStagingSettings()
+        val history = RecoveryHistoryRepository(jdbc)
+        val batch = RecoveryBatchRepository(jdbc, settings, history).createOrGetOpenBatch(
+            analysisRunId = run.analysisRunId,
+            idempotencyKey = UUID.randomUUID(),
+            newBatchId = UUID.randomUUID(),
+            declaration = null,
+            now = Instant.parse("2026-10-13T00:00:00Z"),
+        )!!
+        val transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource))
+        val submissionRepository = SuccessorRunSubmissionRepository(
+            jdbc = jdbc,
+            citedPaperAccessRepository = CitedPaperAccessRepository(jdbc),
+            pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
+            analysisRunExecutionRepository = AnalysisRunExecutionRepository(jdbc, transactionTemplate),
+            citedPaperIndexingQueue = CitedPaperIndexingQueue(CitedPaperIndexingRepository(jdbc), OutboxRepository(jdbc)),
+            successorRunResolutionQueue = SuccessorRunResolutionQueue(OutboxRepository(jdbc)),
+            recoveryHistoryRepository = history,
+        )
+        val failure = SuccessorSelectedAccessAttemptFailed(
+            batchId = batch.id,
+            predecessorAnalysisRunId = run.analysisRunId,
+            bibliographyEntryId = entryId,
+            uploadId = UUID.randomUUID(),
+            cause = IllegalStateException("Selected access fixture failed."),
+        )
+
+        transactionTemplate.execute { submissionRepository.recordFailedSelectedAccessAttempt(failure, Instant.parse("2026-10-13T00:01:00Z")) }
+        transactionTemplate.execute { submissionRepository.recordFailedSelectedAccessAttempt(failure, Instant.parse("2026-10-13T00:02:00Z")) }
+
+        val attempts = jdbc.query(
+            "SELECT event_type, attempt_number FROM recovery_history_events WHERE batch_id = ? AND stage_code = 'selected-access'",
+            { rs, _ -> rs.getString("event_type") to rs.getInt("attempt_number") },
+            batch.id,
+        )
+        assertEquals(4, attempts.size)
+        assertEquals(listOf(1, 2), attempts.filter { it.first == "ATTEMPT_STARTED" }.map { it.second }.sorted())
+        assertEquals(listOf(1, 2), attempts.filter { it.first == "ATTEMPT_FAILED" }.map { it.second }.sorted())
+    }
+
+    @Test
+    fun `DOI-only successor records provenance and queues reference resolution without PDF or evidence work`() {
+        val configurationFactory = configurationFactory()
+        val configurationRequest = RunConfigurationRequest(captureExecution = false)
+        val predecessorConfiguration = configurationFactory.from(configurationRequest)
+        val run = createQueuedRun(configurationJson = configurationFactory.toJson(predecessorConfiguration))
+        val sourceText = "The study reports a result and cites a user-confirmed identity."
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', ?)",
+            run.analysisRunId, run.hash, sourceText,
+        )
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", run.analysisRunId)
+        jdbc.update("UPDATE analysis_runs SET status = 'PARSED' WHERE id = ?", run.analysisRunId)
+        val sectionId = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO parsed_document_sections (id, analysis_run_id, section_order, heading, text, start_offset, end_offset) VALUES (?, ?, 0, 'Results', ?, 0, ?)",
+            sectionId, run.analysisRunId, sourceText, sourceText.length,
+        )
+        val contextId = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO citation_contexts (id, analysis_run_id, section_id, context_text, boundary_kind, start_offset, end_offset) VALUES (?, ?, ?, ?, 'SENTENCE_FALLBACK', 0, ?)",
+            contextId, run.analysisRunId, sectionId, sourceText, sourceText.length,
+        )
+        val entryId = UUID.randomUUID()
+        val doi = "10.1234/doi.only.successor"
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, parsed_title, reference_type, identifiers) VALUES (?, ?, 0, 'doi-only', 'Bibliography identity without a PDF', 'DOI-only fixture', 'JOURNAL_ARTICLE', '[]'::jsonb)",
+            entryId, run.analysisRunId,
+        )
+        jdbc.update(
+            "INSERT INTO atomic_claims (id, analysis_run_id, citation_context_id, claim_text, source_start_offset, source_end_offset) VALUES (?, ?, ?, 'The study reports a result.', 0, 29)",
+            UUID.randomUUID(), run.analysisRunId, contextId,
+        )
+        jdbc.update("UPDATE analysis_runs SET status = 'COMPLETED' WHERE id = ?", run.analysisRunId)
+
+        val settings = recoveryStagingSettings()
+        val history = RecoveryHistoryRepository(jdbc)
+        val batchRepository = RecoveryBatchRepository(jdbc, settings, history)
+        val stagingService = RecoveryStagingService(
+            repository = batchRepository,
+            objectStore = objectStore,
+            settings = settings,
+            corsPolicy = RecoveryUploadCorsPolicy(objectStore, settings),
+            pdfValidator = RecoveryPdfValidator(500),
+        )
+        val batch = stagingService.createBatch(run.analysisRunId, UUID.randomUUID(), null, null)
+        stagingService.setIdentifierAssistance(batch.id, "doi-only", "DOI", "https://doi.org/$doi", true)
+        val currentBatch = batchRepository.activeBatchById(batch.id, Instant.now())
+        val validationService = RecoveryUploadValidationService(
+            RecoveryUploadValidationRepository(jdbc, settings), objectStore,
+            object : CitedPaperPdfParser {
+                override val parserId = "docling"
+                override fun parse(pdf: ByteArray): ParsedScientificDocument = error("DOI-only recovery must never parse a PDF")
+            },
+            object : DocumentLanguageDetector {
+                override fun detect(text: String) = LanguageDetection("en", 0.99)
+            },
+        )
+        val previewService = SuccessorRunService(
+            recoveryBatchRepository = batchRepository,
+            recoveryUploadValidationService = validationService,
+            previewRepository = SuccessorRunPreviewRepository(jdbc),
+            configurationFactory = configurationFactory,
+            identityDecisionRepository = RecoveryUploadIdentityDecisionRepository(jdbc, settings),
+        )
+        val previewRequest = SuccessorRunPreviewRequest(currentBatch.revision, configurationRequest)
+        val plan = previewService.preview(batch.id, previewRequest)
+        assertTrue(plan.eligible, plan.blockers.joinToString())
+        assertTrue(plan.selectedEntries.isEmpty())
+        assertEquals(doi, plan.identifierAssistanceEntries.single().identifierValue)
+        assertEquals(listOf("reference-resolution"), plan.expectedProviderWork.map { it.stage })
+        assertEquals(
+            listOf("source-parse", "claim-extraction", "reference-resolution", "selected-access", "cited-paper-parse", "evidence-retrieval", "claim-verification"),
+            plan.identifierAssistanceEntries.single().stages.map { it.stage },
+        )
+
+        val transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource))
+        val submissionRepository = SuccessorRunSubmissionRepository(
+            jdbc = jdbc,
+            citedPaperAccessRepository = CitedPaperAccessRepository(jdbc),
+            pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
+            analysisRunExecutionRepository = AnalysisRunExecutionRepository(jdbc, transactionTemplate),
+            citedPaperIndexingQueue = CitedPaperIndexingQueue(CitedPaperIndexingRepository(jdbc), OutboxRepository(jdbc)),
+            successorRunResolutionQueue = SuccessorRunResolutionQueue(OutboxRepository(jdbc)),
+            recoveryHistoryRepository = history,
+        )
+        val submissionService = SuccessorRunSubmissionService(
+            successorRunService = previewService,
+            recoveryBatchRepository = batchRepository,
+            recoveryUploadValidationService = validationService,
+            sourceDocumentRepository = SourceDocumentRepository(jdbc),
+            submissionRepository = submissionRepository,
+            objectStore = objectStore,
+            transactionTemplate = transactionTemplate,
+            configurationFactory = configurationFactory,
+            recoveryUploadCleanupRepository = RecoveryUploadCleanupRepository(jdbc, settings, history),
+        )
+        val request = SuccessorRunSubmissionRequest(UUID.randomUUID(), currentBatch.revision, configurationRequest)
+        val submitted = submissionService.submit(batch.id, request)
+        assertEquals(0, submitted.selectedEntryCount)
+        assertEquals(0, submitted.queuedEntryCount)
+        assertEquals(1, submitted.identifierAssistanceEntryCount)
+        assertEquals(1, submitted.resolutionQueuedEntryCount)
+        assertTrue(submissionService.submit(batch.id, request).replayed)
+        val successorRunId = submitted.successorAnalysisRunId
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM analysis_run_successor_work_manifest WHERE successor_analysis_run_id = ? AND work_kind = 'IDENTITY_ONLY' AND selected_upload_id IS NULL AND selected_content_sha256 IS NULL", Int::class.java, successorRunId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM analysis_run_successor_doi_assistance WHERE successor_analysis_run_id = ? AND identifier_value = ? AND source_code = 'USER_CONFIRMED_DOI_NO_PDF'", Int::class.java, successorRunId, doi))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_batch_uploads WHERE batch_id = ?", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?", Int::class.java, successorRunId, REFERENCE_RESOLUTION_REQUESTED))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE analysis_run_id = ? AND event_type IN (?, ?)", Int::class.java, successorRunId, CITED_PAPER_ACQUISITION_REQUESTED, CITED_PAPER_INDEXING_REQUESTED))
+        val resolutionEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java, successorRunId, REFERENCE_RESOLUTION_REQUESTED,
+        )!!
+        val lookupFactory = object : ScholarlyMetadataLookupFactory {
+            override val providerId = "recorded-fixtures"
+            override fun forRun(configuration: AnalysisConfigurationSnapshot) = object : ScholarlyMetadataLookup {
+                override fun byDoi(doiValue: String) = if (doiValue == doi) ScholarlyWork(doi, "DOI-only fixture", emptyList(), null) else null
+                override fun search(reference: BibliographyReference) = emptyList<ScholarlyWork>()
+            }
+        }
+        referenceResolutionEventHandler(referenceResolutionService(listOf(lookupFactory))).handle(resolutionEvent)
+        val successorEntryId = jdbc.queryForObject(
+            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? AND local_reference_key = 'doi-only'",
+            UUID::class.java, successorRunId,
+        )!!
+        assertNotEquals(entryId, successorEntryId)
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND status = 'RESOLVED'", Int::class.java, successorRunId, successorEntryId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cited_paper_access WHERE analysis_run_id = ? AND bibliography_entry_id = ?", Int::class.java, successorRunId, successorEntryId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cited_paper_parses WHERE analysis_run_id = ?", Int::class.java, successorRunId))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM outbox_events WHERE analysis_run_id = ? AND event_type IN (?, ?)", Int::class.java, successorRunId, CITED_PAPER_ACQUISITION_REQUESTED, CITED_PAPER_INDEXING_REQUESTED))
+        listOf("access", "evidence", "verification").forEach { stage ->
+            assertEquals("SKIPPED", jdbc.queryForObject("SELECT status FROM analysis_run_pipeline_items WHERE analysis_run_id = ? AND stage_id = ? AND item_id = ?", String::class.java, successorRunId, stage, successorEntryId.toString()))
+        }
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_STARTED' AND stage_code = 'reference-resolution'", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_COMPLETED' AND stage_code = 'reference-resolution'", Int::class.java, batch.id))
+        assertEquals(4, jdbc.queryForObject("SELECT count(DISTINCT stage_code) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'WORK_SKIPPED' AND outcome_code = 'DOI_ONLY_NO_PDF_ASSET'", Int::class.java, batch.id))
+        assertEquals("Bibliography identity without a PDF", jdbc.queryForObject("SELECT raw_text FROM bibliography_entries WHERE analysis_run_id = ? AND id = ?", String::class.java, run.analysisRunId, entryId))
     }
 
     @Test
@@ -534,7 +912,7 @@ class AnalysisRunQueueIntegrationTest {
         )
         val attempt = validationService.validate(batch.id, upload.id)
         assertEquals(RecoveryIdentityOutcome.NEEDS_CONFIRMATION, attempt.identityOutcome)
-        val identityDecisionRepository = RecoveryUploadIdentityDecisionRepository(jdbc, settings)
+        val identityDecisionRepository = RecoveryUploadIdentityDecisionRepository(jdbc, settings, RecoveryHistoryRepository(jdbc))
         val identityService = RecoveryUploadIdentityService(
             RecoveryUploadValidationRepository(jdbc, settings),
             identityDecisionRepository,
@@ -547,6 +925,21 @@ class AnalysisRunQueueIntegrationTest {
             confirmedDoi = doi,
             doiCandidateFingerprint = RecoveryUploadMetadataCandidateFingerprint.of(candidate),
         )
+        assertEquals(
+            1,
+            jdbc.queryForObject(
+                "SELECT attempt_number FROM recovery_history_events WHERE batch_id = ? AND event_type = 'EXACT_VERSION_CONFIRMED' AND upload_id = ?",
+                Int::class.java,
+                batch.id,
+                upload.id,
+            ),
+        )
+        val revertFailure = assertThrows(DataAccessException::class.java) {
+            jdbc.execute(Files.readString(Path.of("db/revert/recovery_identifier_assistance_history.sql")))
+        }
+        assertTrue(revertFailure.mostSpecificCause.message.orEmpty().contains("new provenance exists"))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'EXACT_VERSION_CONFIRMED'", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_batches WHERE id = ?", Int::class.java, batch.id))
         identityService.selectExactVersion(batch.id, upload.id)
         val currentBatch = batchRepository.activeBatchById(batch.id, Instant.now())
         val previewService = SuccessorRunService(
@@ -572,6 +965,7 @@ class AnalysisRunQueueIntegrationTest {
             analysisRunExecutionRepository = AnalysisRunExecutionRepository(jdbc, transactionTemplate),
             citedPaperIndexingQueue = CitedPaperIndexingQueue(CitedPaperIndexingRepository(jdbc), OutboxRepository(jdbc)),
             successorRunResolutionQueue = SuccessorRunResolutionQueue(OutboxRepository(jdbc)),
+            recoveryHistoryRepository = RecoveryHistoryRepository(jdbc),
         )
         val submissionService = SuccessorRunSubmissionService(
             successorRunService = previewService,
@@ -582,6 +976,7 @@ class AnalysisRunQueueIntegrationTest {
             objectStore = objectStore,
             transactionTemplate = transactionTemplate,
             configurationFactory = configurationFactory,
+            recoveryUploadCleanupRepository = RecoveryUploadCleanupRepository(jdbc, settings, RecoveryHistoryRepository(jdbc)),
         )
         val submitted = submissionService.submit(
             batch.id,
@@ -664,6 +1059,32 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, run.analysisRunId))
         assertPredecessorReviewUnchanged(run.analysisRunId, predecessorVerificationId, predecessorReviewId)
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM human_reviews WHERE analysis_run_id = ?", Int::class.java, successorRunId))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_STARTED' AND stage_code = 'reference-resolution'", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_COMPLETED' AND stage_code = 'reference-resolution'", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_STARTED' AND stage_code = 'selected-access'", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_COMPLETED' AND stage_code = 'selected-access'", Int::class.java, batch.id))
+
+        val indexingEventJson = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java, successorRunId, CITED_PAPER_INDEXING_REQUESTED,
+        )!!
+        val indexingEvent: PipelineEvent<CitedPaperIndexingRequestedPayload> = objectMapper.readValue(indexingEventJson)
+        val indexingHandler = citedPaperIndexingEventHandler(
+            parser = object : CitedPaperParser {
+                override fun parse(
+                    content: ByteArray,
+                    mediaType: String,
+                    parserSelection: ProviderSelection,
+                ): ParsedScientificDocument = throw IllegalStateException("Synthetic selected-PDF parser failure")
+            },
+        )
+        assertThrows(IllegalStateException::class.java) { indexingHandler.handle(indexingEventJson) }
+        indexingHandler.markFailed(indexingEvent, "SELECTED_PDF_PARSER_RETRIES_EXHAUSTED")
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_STARTED' AND stage_code = 'cited-paper-parse'", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_FAILED' AND stage_code = 'cited-paper-parse'", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_STARTED' AND stage_code = 'evidence-retrieval'", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'ATTEMPT_FAILED' AND stage_code = 'evidence-retrieval'", Int::class.java, batch.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE batch_id = ? AND event_type = 'WORK_SKIPPED' AND stage_code = 'claim-verification' AND outcome_code = 'EVIDENCE_PREPARATION_FAILED'", Int::class.java, batch.id))
     }
 
     @Test
@@ -733,7 +1154,7 @@ class AnalysisRunQueueIntegrationTest {
         )
         jdbc.update("UPDATE recovery_batches SET status = 'SUBMITTED', revision = revision + 1 WHERE id = ?", batch.id)
         jdbc.update(
-            "INSERT INTO analysis_run_successor_work_manifest (successor_analysis_run_id, predecessor_analysis_run_id, batch_id, bibliography_entry_id, predecessor_bibliography_entry_id, local_reference_key, disposition, selected_upload_id, selected_content_sha256, stage_dispositions) VALUES (?, ?, ?, ?, ?, 'b0', 'REPROCESS', ?, ?, '[]'::jsonb)",
+            "INSERT INTO analysis_run_successor_work_manifest (successor_analysis_run_id, predecessor_analysis_run_id, batch_id, bibliography_entry_id, predecessor_bibliography_entry_id, local_reference_key, disposition, selected_upload_id, selected_content_sha256, stage_dispositions, work_kind) VALUES (?, ?, ?, ?, ?, 'b0', 'REPROCESS', ?, ?, '[]'::jsonb, 'PDF_ASSET')",
             successorRun.analysisRunId,
             predecessorRun.analysisRunId,
             batch.id,
@@ -1224,12 +1645,22 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(RecoveryIdentityOutcome.VALIDATED, validationService.validate(batch.id, upload.id).identityOutcome)
         activeMetadataCandidate.set(secondMetadataCandidate)
         assertEquals(RecoveryIdentityOutcome.VALIDATED, validationService.validate(batch.id, secondUpload.id).identityOutcome)
+        val supersededPdf = englishPdf("An alternate version remains unselected after submission. ${ENGLISH.repeat(50)}")
+        val supersededIntent = stagingService.createUploadIntent(
+            batch.id, "b0", UUID.randomUUID(), "alternate-version.pdf", supersededPdf.size.toLong(), expectedSha256(supersededPdf),
+        )
+        objectStore.put(supersededIntent.upload.stagingObjectKey, supersededPdf, "application/pdf")
+        val supersededUpload = stagingService.finalizeUpload(batch.id, supersededIntent.upload.id)
+        activeMetadataCandidate.set(metadataCandidate)
+        assertEquals(RecoveryIdentityOutcome.VALIDATED, validationService.validate(batch.id, supersededUpload.id).identityOutcome)
         val identityService = RecoveryUploadIdentityService(
             RecoveryUploadValidationRepository(jdbc, settings),
             RecoveryUploadIdentityDecisionRepository(jdbc, settings),
         )
         identityService.selectExactVersion(batch.id, upload.id)
         identityService.selectExactVersion(batch.id, secondUpload.id)
+        identityService.selectExactVersion(batch.id, supersededUpload.id)
+        identityService.selectExactVersion(batch.id, upload.id)
 
         val transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource))
         val previewService = SuccessorRunService(
@@ -1249,6 +1680,7 @@ class AnalysisRunQueueIntegrationTest {
                 OutboxRepository(jdbc),
             ),
             successorRunResolutionQueue = SuccessorRunResolutionQueue(OutboxRepository(jdbc)),
+            recoveryHistoryRepository = RecoveryHistoryRepository(jdbc),
         )
         val submissionService = SuccessorRunSubmissionService(
             successorRunService = previewService,
@@ -1259,6 +1691,7 @@ class AnalysisRunQueueIntegrationTest {
             objectStore = objectStore,
             transactionTemplate = transactionTemplate,
             configurationFactory = lineageConfigurationFactory,
+            recoveryUploadCleanupRepository = RecoveryUploadCleanupRepository(jdbc, settings, RecoveryHistoryRepository(jdbc)),
         )
         var currentBatch = batchRepository.activeBatchById(batch.id, Instant.now())
         val submissionIdempotencyKey = UUID.randomUUID()
@@ -1355,6 +1788,7 @@ class AnalysisRunQueueIntegrationTest {
             objectStore = concurrentObjectStore,
             transactionTemplate = transactionTemplate,
             configurationFactory = lineageConfigurationFactory,
+            recoveryUploadCleanupRepository = RecoveryUploadCleanupRepository(jdbc, settings, RecoveryHistoryRepository(jdbc)),
         )
         val startSubmissions = CountDownLatch(1)
         val submissionsFinished = CountDownLatch(2)
@@ -1496,8 +1930,66 @@ class AnalysisRunQueueIntegrationTest {
         )
         assertEquals("SUBMITTED", jdbc.queryForObject("SELECT status FROM recovery_batches WHERE id = ?", String::class.java, batch.id))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_batch_successor_submissions WHERE batch_id = ?", Int::class.java, batch.id))
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM recovery_upload_validation_attempts WHERE upload_id = ?", Int::class.java, supersededUpload.id))
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM recovery_history_events WHERE upload_id = ? AND event_type = 'UPLOAD_DETAILS_PURGED' AND outcome_code = 'UNSELECTED_UPLOAD_VALIDATION_DETAILS_PURGED'", Int::class.java, supersededUpload.id))
+        val cleanupRows = jdbc.query(
+            "SELECT object_key, not_before FROM recovery_upload_cleanup_tombstones WHERE object_key IN (?, ?, ?, ?)",
+            { rs, _ -> rs.getString("object_key") to rs.getTimestamp("not_before").toInstant() },
+            supersededUpload.stagingObjectKey, supersededUpload.finalizedObjectKey, upload.finalizedObjectKey, secondUpload.finalizedObjectKey,
+        ).toMap()
+        val expectedStagingCleanupAt = supersededUpload.presignedUrlExpiresAt.plusSeconds(settings.inFlightGraceSeconds)
+        assertEquals(expectedStagingCleanupAt, cleanupRows[supersededUpload.stagingObjectKey])
+        assertTrue(cleanupRows[supersededUpload.finalizedObjectKey] != null)
+        assertFalse(cleanupRows.containsKey(upload.finalizedObjectKey))
+        assertFalse(cleanupRows.containsKey(secondUpload.finalizedObjectKey))
+        objectStore.put(supersededUpload.stagingObjectKey, supersededPdf, "application/pdf")
+        assertTrue(objectStore.contains(supersededUpload.finalizedObjectKey))
+        val recoveryCleanupRepository = RecoveryUploadCleanupRepository(jdbc, settings)
+        val cleanupAt = expectedStagingCleanupAt.plusSeconds(settings.cleanupRetryWindowSeconds)
+        val cleanups = recoveryCleanupRepository.claimDue(cleanupAt, settings.cleanupIntervalMs / 1_000, 100)
+        assertTrue(cleanups.any { it.objectKey == supersededUpload.stagingObjectKey })
+        assertTrue(cleanups.any { it.objectKey == supersededUpload.finalizedObjectKey })
+        cleanups.forEach { cleanup ->
+            objectStore.delete(cleanup.objectKey)
+            recoveryCleanupRepository.markDeleted(cleanup.id, cleanupAt, settings.cleanupIntervalMs / 1_000, cleanup.retryUntil)
+        }
+        assertFalse(objectStore.contains(supersededUpload.stagingObjectKey))
+        assertFalse(objectStore.contains(supersededUpload.finalizedObjectKey))
+        assertTrue(objectStore.contains(upload.finalizedObjectKey))
+        assertTrue(objectStore.contains(secondUpload.finalizedObjectKey))
         assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM analysis_run_successor_asset_ownership WHERE successor_analysis_run_id = ?", Int::class.java, successorRunId))
         assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM analysis_run_successor_work_manifest WHERE successor_analysis_run_id = ? AND disposition = 'REPROCESS'", Int::class.java, successorRunId))
+        val expectedRetainedStages = setOf(
+            "source-parse",
+            "claim-extraction",
+            "reference-resolution",
+            "selected-access",
+            "cited-paper-parse",
+            "evidence-retrieval",
+            "claim-verification",
+        )
+        val retainedManifestStages = objectMapper.readTree(
+            jdbc.queryForObject(
+                "SELECT stage_dispositions::text FROM analysis_run_successor_work_manifest WHERE successor_analysis_run_id = ? AND predecessor_bibliography_entry_id = ?",
+                String::class.java,
+                successorRunId,
+                retainedEntryId,
+            ),
+        ).map { stage ->
+            Triple(stage.path("stage").asText(), stage.path("disposition").asText(), stage.path("reasonCode").asText())
+        }
+        assertEquals(expectedRetainedStages, retainedManifestStages.map { it.first }.toSet())
+        assertEquals(expectedRetainedStages.size, retainedManifestStages.size)
+        assertEquals(setOf("RETAIN"), retainedManifestStages.map { it.second }.toSet())
+        assertEquals(setOf("UNSELECTED_COVERAGE_PRESERVED"), retainedManifestStages.map { it.third }.toSet())
+        val retainedHistoryStages = jdbc.query(
+            "SELECT stage_code FROM recovery_history_events WHERE batch_id = ? AND bibliography_entry_id = ? AND event_type = 'WORK_RETAINED' ORDER BY stage_code",
+            { rs, _ -> rs.getString("stage_code") },
+            batch.id,
+            retainedEntryId,
+        )
+        assertEquals(expectedRetainedStages, retainedHistoryStages.toSet())
+        assertEquals(expectedRetainedStages.size, retainedHistoryStages.size)
         assertNotEquals(retainedEntryId, retainedSuccessorEntryId)
         assertNotEquals(retainedVerificationId, retainedSuccessorVerificationId)
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM cited_paper_indexing indexing JOIN bibliography_entries entry ON entry.analysis_run_id = indexing.analysis_run_id AND entry.id = indexing.bibliography_entry_id WHERE indexing.analysis_run_id = ? AND entry.local_reference_key = 'b2' AND indexing.status = 'COMPLETED'", Int::class.java, successorRunId))
@@ -6963,6 +7455,7 @@ class AnalysisRunQueueIntegrationTest {
         analysisRunStageCompletionService = stageCompletionService(resolutionService),
         pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
         executionService = executionService(),
+        recoveryHistoryService = RecoveryHistoryService(RecoveryHistoryRepository(jdbc)),
     )
 
     private fun citedPaperIndexingEventHandler(
@@ -6985,6 +7478,7 @@ class AnalysisRunQueueIntegrationTest {
             embeddingProviders,
             repository,
             executionService(),
+            RecoveryHistoryService(RecoveryHistoryRepository(jdbc)),
         )
         return CitedPaperIndexingRequestedHandler(
             processingRepository = AnalysisRunProcessingRepository(jdbc),
@@ -7006,6 +7500,7 @@ class AnalysisRunQueueIntegrationTest {
             analysisRunStageCompletionService = stageCompletionService(resolutionService),
             pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
             executionService = executionService(),
+            recoveryHistoryService = RecoveryHistoryService(RecoveryHistoryRepository(jdbc)),
         )
     }
 
@@ -7024,6 +7519,7 @@ class AnalysisRunQueueIntegrationTest {
         pipelineProgressRepository = AnalysisRunPipelineProgressRepository(jdbc),
         successorSelectedAssetService = successorSelectedAssetService(),
         executionService = executionCapture,
+        recoveryHistoryService = RecoveryHistoryService(RecoveryHistoryRepository(jdbc)),
     )
 
     private fun successorSelectedAssetService() = SuccessorSelectedAssetService(
@@ -7249,6 +7745,7 @@ class AnalysisRunQueueIntegrationTest {
         private val contentTypes = mutableMapOf<String, String>()
         private val checksums = mutableMapOf<String, String>()
         private val reads = AtomicInteger()
+        private val presignedPuts = AtomicInteger()
         override fun put(objectKey: String, content: ByteArray, contentType: String) {
             this.content[objectKey] = content.copyOf()
             contentTypes[objectKey] = contentType
@@ -7267,14 +7764,17 @@ class AnalysisRunQueueIntegrationTest {
         }
         override fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int): String =
             "http://s3.test/source-documents/$objectKey?disposition=$responseContentDisposition&expires=$expirySeconds"
-        override fun presignPutPdf(objectKey: String, expectedSize: Long, expectedSha256: String, expirySeconds: Int) =
-            PresignedObjectUpload("http://s3.test/source-documents/$objectKey", "application/pdf", expectedSha256)
+        override fun presignPutPdf(objectKey: String, expectedSize: Long, expectedSha256: String, expirySeconds: Int): PresignedObjectUpload {
+            presignedPuts.incrementAndGet()
+            return PresignedObjectUpload("http://s3.test/source-documents/$objectKey", "application/pdf", expectedSha256)
+        }
+        fun presignPutPdfCalls(): Int = presignedPuts.get()
         override fun configureBrowserUploadCors(allowedOrigins: Collection<String>) = Unit
         override fun delete(objectKey: String) { content.remove(objectKey); contentTypes.remove(objectKey); checksums.remove(objectKey) }
         fun contentType(objectKey: String): String? = contentTypes[objectKey]
         fun contains(objectKey: String): Boolean = objectKey in content
         fun containsUnder(prefix: String): Boolean = content.keys.any { it.startsWith(prefix) }
-        fun clear() { content.clear(); contentTypes.clear(); checksums.clear(); reads.set(0) }
+        fun clear() { content.clear(); contentTypes.clear(); checksums.clear(); reads.set(0); presignedPuts.set(0) }
     }
 
     @BeforeEach
@@ -7512,6 +8012,14 @@ class AnalysisRunQueueIntegrationTest {
             val successorIdentityAssistanceMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("successor_identity_assistance.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(successorIdentityAssistanceMigrationVerification)) }
+            }
+            val recoveryIdentifierAssistanceHistoryMigration = migrationDirectory.resolve("recovery_identifier_assistance_history.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryIdentifierAssistanceHistoryMigration)) }
+            }
+            val recoveryIdentifierAssistanceHistoryVerification = migrationDirectory.resolveSibling("verify").resolve("recovery_identifier_assistance_history.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(recoveryIdentifierAssistanceHistoryVerification)) }
             }
 
             val redisConfiguration = RedisStandaloneConfiguration(redisService.host, redisService.getMappedPort(6379))

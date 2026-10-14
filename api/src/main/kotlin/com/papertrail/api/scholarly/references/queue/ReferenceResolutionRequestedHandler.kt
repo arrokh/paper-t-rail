@@ -21,6 +21,8 @@ import com.papertrail.api.scholarly.references.events.ReferenceResolutionRequest
 import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRepository
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
 import com.papertrail.api.analysis.successor.service.SuccessorSelectedAssetService
+import com.papertrail.api.analysis.recovery.domain.RecoveryWorkEventType
+import com.papertrail.api.analysis.recovery.service.RecoveryHistoryService
 import org.springframework.stereotype.Component
 import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
@@ -39,6 +41,7 @@ class ReferenceResolutionRequestedHandler(
     private val pipelineProgressRepository: AnalysisRunPipelineProgressRepository,
     private val successorSelectedAssetService: SuccessorSelectedAssetService,
     private val executionService: AnalysisRunExecutionService? = null,
+    private val recoveryHistoryService: RecoveryHistoryService? = null,
 ) {
     fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
 
@@ -49,7 +52,32 @@ class ReferenceResolutionRequestedHandler(
             event.analysisRunId, event.eventId, event.attempt, "references", event.queueWaitStartedAt,
             event.retryScheduledAt, event.retryDueAt, event.causationId,
         )
-        val operation = { handleEvent(event) }
+        recoveryHistoryService?.recordSuccessorWorkEvent(
+            successorAnalysisRunId = event.analysisRunId,
+            bibliographyEntryId = event.payload.bibliographyEntryId,
+            eventType = RecoveryWorkEventType.ATTEMPT_STARTED,
+            outcomeCode = "REFERENCE_RESOLUTION_ATTEMPT_STARTED",
+            stageCode = "reference-resolution",
+            attemptNumber = event.attempt + 1,
+            sourceEventId = event.eventId,
+        )
+        var activeStage = "reference-resolution"
+        val operation = {
+            try {
+                handleEvent(event) { stage -> activeStage = stage }
+            } catch (exception: Exception) {
+                recoveryHistoryService?.recordSuccessorWorkEvent(
+                    successorAnalysisRunId = event.analysisRunId,
+                    bibliographyEntryId = event.payload.bibliographyEntryId,
+                    eventType = RecoveryWorkEventType.ATTEMPT_FAILED,
+                    outcomeCode = if (activeStage == "selected-access") "SELECTED_ACCESS_HANDOFF_FAILED" else "REFERENCE_RESOLUTION_ATTEMPT_FAILED",
+                    stageCode = activeStage,
+                    attemptNumber = event.attempt + 1,
+                    sourceEventId = event.eventId,
+                )
+                throw exception
+            }
+        }
         return executionService?.record(
             event.analysisRunId,
             ExecutionSpanSpec("references", "QUEUE", "Reference resolution attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId, causationEventId = event.causationId),
@@ -57,7 +85,10 @@ class ReferenceResolutionRequestedHandler(
         ) ?: operation()
     }
 
-    private fun handleEvent(event: PipelineEvent<ReferenceResolutionRequestedPayload>): UUID {
+    private fun handleEvent(
+        event: PipelineEvent<ReferenceResolutionRequestedPayload>,
+        setActiveStage: (String) -> Unit,
+    ): UUID {
         if (sourceDocumentRepository.isDeleted(event.payload.documentId)) return event.eventId
         if (isProcessed(event.eventId)) return event.eventId
 
@@ -89,7 +120,7 @@ class ReferenceResolutionRequestedHandler(
                 }
             }
         }
-        recordProcessed(event)
+        recordProcessed(event, setActiveStage = setActiveStage)
         return event.eventId
     }
 
@@ -103,6 +134,7 @@ class ReferenceResolutionRequestedHandler(
     private fun recordProcessed(
         event: PipelineEvent<ReferenceResolutionRequestedPayload>,
         failureReason: String? = null,
+        setActiveStage: (String) -> Unit = {},
     ) {
         transactionTemplate.executeWithoutResult {
             val inserted = inboxRepository.insertIfAbsent(
@@ -113,6 +145,15 @@ class ReferenceResolutionRequestedHandler(
             )
             if (!inserted) return@executeWithoutResult
             if (failureReason != null) {
+                recoveryHistoryService?.recordSuccessorWorkEvent(
+                    successorAnalysisRunId = event.analysisRunId,
+                    bibliographyEntryId = event.payload.bibliographyEntryId,
+                    eventType = RecoveryWorkEventType.ATTEMPT_FAILED,
+                    outcomeCode = "REFERENCE_RESOLUTION_RETRIES_EXHAUSTED",
+                    stageCode = "reference-resolution",
+                    attemptNumber = event.attempt + 1,
+                    sourceEventId = event.eventId,
+                )
                 referenceResolutionService.failResolution(
                     event.analysisRunId,
                     event.payload.bibliographyEntryId,
@@ -129,9 +170,30 @@ class ReferenceResolutionRequestedHandler(
                 )
                 skipDownstream(event, REFERENCE_RESOLUTION_RETRIES_EXHAUSTED)
             } else {
+                recoveryHistoryService?.recordSuccessorWorkEvent(
+                    successorAnalysisRunId = event.analysisRunId,
+                    bibliographyEntryId = event.payload.bibliographyEntryId,
+                    eventType = RecoveryWorkEventType.ATTEMPT_COMPLETED,
+                    outcomeCode = "REFERENCE_RESOLUTION_COMPLETED",
+                    stageCode = "reference-resolution",
+                    attemptNumber = event.attempt + 1,
+                    sourceEventId = event.eventId,
+                )
                 pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "references", "resolve-entry", event.payload.bibliographyEntryId, "COMPLETED")
-                when (
-                    successorSelectedAssetService.handoffIfSelected(
+                if (successorSelectedAssetService.isIdentityOnly(event.analysisRunId, event.payload.bibliographyEntryId)) {
+                    skipDownstream(event, "DOI_ONLY_NO_PDF_ASSET")
+                } else {
+                    setActiveStage("selected-access")
+                    recoveryHistoryService?.recordSuccessorWorkEvent(
+                        successorAnalysisRunId = event.analysisRunId,
+                        bibliographyEntryId = event.payload.bibliographyEntryId,
+                        eventType = RecoveryWorkEventType.ATTEMPT_STARTED,
+                        outcomeCode = "SELECTED_ACCESS_HANDOFF_STARTED",
+                        stageCode = "selected-access",
+                        attemptNumber = event.attempt + 1,
+                        sourceEventId = event.eventId,
+                    )
+                    val handoff = successorSelectedAssetService.handoffIfSelected(
                         analysisRunId = event.analysisRunId,
                         bibliographyEntryId = event.payload.bibliographyEntryId,
                         identityResolved = referenceResolutionRepository.isResolved(event.analysisRunId, event.payload.bibliographyEntryId),
@@ -142,13 +204,33 @@ class ReferenceResolutionRequestedHandler(
                         traceparent = W3CTraceContext.child(event.traceparent),
                         tracestate = event.tracestate,
                     )
-                ) {
-                    SuccessorSelectedAssetService.HandoffResult.NOT_SELECTED -> {
-                        if (!enqueueAcquisitionIfResolved(event)) skipDownstream(event, accessSkipReason(event))
+                    when (handoff) {
+                        SuccessorSelectedAssetService.HandoffResult.NOT_SELECTED -> {
+                            if (!enqueueAcquisitionIfResolved(event)) skipDownstream(event, accessSkipReason(event))
+                        }
+                        SuccessorSelectedAssetService.HandoffResult.IDENTITY_UNRESOLVED -> {
+                            recoveryHistoryService?.recordSuccessorWorkEvent(
+                                successorAnalysisRunId = event.analysisRunId,
+                                bibliographyEntryId = event.payload.bibliographyEntryId,
+                                eventType = RecoveryWorkEventType.ATTEMPT_FAILED,
+                                outcomeCode = "ACCESS_SKIPPED_IDENTITY_UNRESOLVED",
+                                stageCode = "selected-access",
+                                attemptNumber = event.attempt + 1,
+                                sourceEventId = event.eventId,
+                            )
+                            skipDownstream(event, "ACCESS_SKIPPED_IDENTITY_UNRESOLVED")
+                        }
+                        SuccessorSelectedAssetService.HandoffResult.QUEUED ->
+                            recoveryHistoryService?.recordSuccessorWorkEvent(
+                                successorAnalysisRunId = event.analysisRunId,
+                                bibliographyEntryId = event.payload.bibliographyEntryId,
+                                eventType = RecoveryWorkEventType.ATTEMPT_COMPLETED,
+                                outcomeCode = "SELECTED_ACCESS_HANDOFF_COMPLETED",
+                                stageCode = "selected-access",
+                                attemptNumber = event.attempt + 1,
+                                sourceEventId = event.eventId,
+                            )
                     }
-                    SuccessorSelectedAssetService.HandoffResult.IDENTITY_UNRESOLVED ->
-                        skipDownstream(event, "ACCESS_SKIPPED_IDENTITY_UNRESOLVED")
-                    SuccessorSelectedAssetService.HandoffResult.QUEUED -> Unit
                 }
             }
             analysisRunStageCompletionService.completeParsedStageIfReady(event.analysisRunId)
@@ -198,6 +280,17 @@ class ReferenceResolutionRequestedHandler(
     }
 
     private fun skipDownstream(event: PipelineEvent<ReferenceResolutionRequestedPayload>, reason: String) {
+        listOf("selected-access", "evidence-retrieval", "claim-verification").forEach { stage ->
+            recoveryHistoryService?.recordSuccessorWorkEvent(
+                successorAnalysisRunId = event.analysisRunId,
+                bibliographyEntryId = event.payload.bibliographyEntryId,
+                eventType = RecoveryWorkEventType.WORK_SKIPPED,
+                outcomeCode = reason,
+                stageCode = stage,
+                attemptNumber = null,
+                sourceEventId = event.eventId,
+            )
+        }
         val markAccessSkipped = {
             pipelineProgressRepository.markBibliographyItem(
                 event.analysisRunId, "access", "acquire-source", event.payload.bibliographyEntryId, "SKIPPED", reason,

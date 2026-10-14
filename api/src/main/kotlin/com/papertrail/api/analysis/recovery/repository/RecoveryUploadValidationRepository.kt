@@ -24,6 +24,7 @@ import java.util.UUID
 class RecoveryUploadValidationRepository(
     private val jdbc: JdbcTemplate,
     private val settings: RecoveryStagingSettings,
+    private val history: RecoveryHistoryRepository? = null,
 ) {
     fun validationContext(batchId: UUID, uploadId: UUID, now: Instant): RecoveryUploadValidationContext? =
         jdbc.query(
@@ -134,6 +135,11 @@ class RecoveryUploadValidationRepository(
                 "The Recovery Upload or its batch became inactive during validation.",
             )
         }
+        val attemptNumber = (jdbc.queryForObject(
+            "SELECT count(*) FROM recovery_upload_validation_attempts WHERE upload_id = ?",
+            Int::class.java,
+            attempt.uploadId,
+        ) ?: 0) + 1
         jdbc.update(
             """
             INSERT INTO recovery_upload_validation_attempts (
@@ -176,6 +182,27 @@ class RecoveryUploadValidationRepository(
             java.sql.Timestamp.from(attempt.createdAt),
         )
         touchBatch(attempt.batchId, attempt.createdAt)
+        val bibliographyEntryId = jdbc.queryForObject(
+            "SELECT bibliography_entry_id FROM recovery_batch_uploads WHERE batch_id = ? AND id = ?",
+            UUID::class.java,
+            attempt.batchId,
+            attempt.uploadId,
+        ) ?: throw IllegalStateException("Validated Recovery Upload has no Bibliography Entry.")
+        history?.append(
+            batchId = attempt.batchId,
+            analysisRunId = attempt.analysisRunId,
+            eventType = "VALIDATION_ATTEMPT_COMPLETED",
+            outcomeCode = attempt.failureCode ?: listOf(
+                attempt.validationStatus.name,
+                attempt.identityOutcome?.name ?: "NO_IDENTITY_OUTCOME",
+                attempt.languageEligibility.name,
+            ).joinToString("_"),
+            stageCode = "pdf-validation",
+            attemptNumber = attemptNumber,
+            bibliographyEntryId = bibliographyEntryId,
+            uploadId = attempt.uploadId,
+            createdAt = attempt.createdAt,
+        )
     }
 
     private fun lockActiveUpload(batchId: UUID, uploadId: UUID, analysisRunId: UUID, now: Instant): Boolean = jdbc.query(

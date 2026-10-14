@@ -1,6 +1,8 @@
 package com.papertrail.api.evidence.service
 
 import com.papertrail.api.infrastructure.storage.SourceDocumentObjectStore
+import com.papertrail.api.analysis.recovery.domain.RecoveryWorkEventType
+import com.papertrail.api.analysis.recovery.service.RecoveryHistoryService
 import com.papertrail.api.analysis.execution.service.AnalysisRunExecutionService
 import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
 import com.papertrail.api.evidence.chunking.SectionAwareEvidenceChunker
@@ -23,8 +25,14 @@ class EvidenceRetrievalService(
     private val embeddingProviders: List<EmbeddingProvider>,
     private val repository: EvidenceRetrievalRepository,
     private val executionService: AnalysisRunExecutionService? = null,
+    private val recoveryHistoryService: RecoveryHistoryService? = null,
 ) {
-    fun retrieve(analysisRunId: UUID, bibliographyEntryId: UUID) {
+    fun retrieve(
+        analysisRunId: UUID,
+        bibliographyEntryId: UUID,
+        attemptNumber: Int? = null,
+        sourceEventId: UUID? = null,
+    ) {
         if (repository.isCompleted(analysisRunId, bibliographyEntryId)) return
         val context = repository.loadContext(analysisRunId, bibliographyEntryId)
             ?: throw IllegalStateException("Eligible Cited Paper evidence indexing context is unavailable.")
@@ -41,7 +49,47 @@ class EvidenceRetrievalService(
         require(sha256Hex(content) == context.contentSha256) { "Stored Cited Paper failed its SHA-256 integrity check." }
         repository.requireActiveRun(analysisRunId)
         val selectedParser = context.configuration.citedPaperParserSelection()
-        val parse = { citedPaperParser.parse(content, context.mediaType, selectedParser) }
+        val parse = {
+            if (attemptNumber != null) {
+                recoveryHistoryService?.recordSuccessorWorkEvent(
+                    successorAnalysisRunId = analysisRunId,
+                    bibliographyEntryId = bibliographyEntryId,
+                    eventType = RecoveryWorkEventType.ATTEMPT_STARTED,
+                    outcomeCode = "CITED_PAPER_PARSE_ATTEMPT_STARTED",
+                    stageCode = "cited-paper-parse",
+                    attemptNumber = attemptNumber,
+                    sourceEventId = sourceEventId,
+                )
+            }
+            try {
+                citedPaperParser.parse(content, context.mediaType, selectedParser).also {
+                    if (attemptNumber != null) {
+                        recoveryHistoryService?.recordSuccessorWorkEvent(
+                            successorAnalysisRunId = analysisRunId,
+                            bibliographyEntryId = bibliographyEntryId,
+                            eventType = RecoveryWorkEventType.ATTEMPT_COMPLETED,
+                            outcomeCode = "CITED_PAPER_PARSE_COMPLETED",
+                            stageCode = "cited-paper-parse",
+                            attemptNumber = attemptNumber,
+                            sourceEventId = sourceEventId,
+                        )
+                    }
+                }
+            } catch (exception: Exception) {
+                if (attemptNumber != null) {
+                    recoveryHistoryService?.recordSuccessorWorkEvent(
+                        successorAnalysisRunId = analysisRunId,
+                        bibliographyEntryId = bibliographyEntryId,
+                        eventType = RecoveryWorkEventType.ATTEMPT_FAILED,
+                        outcomeCode = "CITED_PAPER_PARSE_ATTEMPT_FAILED",
+                        stageCode = "cited-paper-parse",
+                        attemptNumber = attemptNumber,
+                        sourceEventId = sourceEventId,
+                    )
+                }
+                throw exception
+            }
+        }
         val parsed = executionService?.record(
             analysisRunId,
             ExecutionSpanSpec(

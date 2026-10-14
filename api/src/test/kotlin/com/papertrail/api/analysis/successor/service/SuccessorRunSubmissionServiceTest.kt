@@ -15,6 +15,7 @@ import com.papertrail.api.analysis.recovery.domain.RecoveryUploadStatus
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
 import com.papertrail.api.analysis.recovery.domain.RecoveryValidationStatus
 import com.papertrail.api.analysis.recovery.repository.RecoveryBatchRepository
+import com.papertrail.api.analysis.recovery.repository.RecoveryUploadCleanupRepository
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
 import com.papertrail.api.analysis.successor.domain.SuccessorRunPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorSelectedEntryPlan
@@ -96,8 +97,10 @@ class SuccessorRunSubmissionServiceTest {
         val plan = SuccessorRunPlan(
             batchId = batchId, predecessorAnalysisRunId = predecessorRunId, revision = batch.revision,
             planFingerprint = "c".repeat(64), eligible = true, selectedEntries = listOf(selectedPlan),
+            identifierAssistanceEntries = emptyList(),
             retainedReferenceKeys = emptyList(),
             retainedDecision = SuccessorStageDecision("unselected-bibliography-coverage", SuccessorWorkDisposition.RETAIN, "UNSELECTED_COVERAGE_PRESERVED"),
+            retainedStageDecisions = emptyList(),
             invalidationReasons = emptyList(), blockers = emptyList(), expectedProviderWork = emptyList(), requiredConsents = emptyList(),
         )
         val previewService = Mockito.mock(SuccessorRunService::class.java)
@@ -125,6 +128,7 @@ class SuccessorRunSubmissionServiceTest {
             objectStore = objectStore,
             transactionTemplate = TransactionTemplate(transactionManager),
             configurationFactory = Mockito.mock(RunConfigurationFactory::class.java),
+            recoveryUploadCleanupRepository = Mockito.mock(RecoveryUploadCleanupRepository::class.java),
         )
 
         val failure = assertThrows(RecoveryStagingException::class.java) {
@@ -172,6 +176,7 @@ class SuccessorRunSubmissionServiceTest {
             objectStore = Mockito.mock(SourceDocumentObjectStore::class.java),
             transactionTemplate = TransactionTemplate(transactionManager),
             configurationFactory = Mockito.mock(RunConfigurationFactory::class.java),
+            recoveryUploadCleanupRepository = Mockito.mock(RecoveryUploadCleanupRepository::class.java),
         )
 
         val failure = assertThrows(RecoveryStagingException::class.java) { service.submit(batchId, request) }

@@ -12,6 +12,7 @@ import com.papertrail.api.analysis.recovery.domain.RecoveryAssetSelectionMethod
 import com.papertrail.api.analysis.recovery.domain.RecoveryBatch
 import com.papertrail.api.analysis.recovery.domain.RecoveryBatchStatus
 import com.papertrail.api.analysis.recovery.domain.RecoveryIdentityOutcome
+import com.papertrail.api.analysis.recovery.domain.RecoveryIdentifierAssistance
 import com.papertrail.api.analysis.recovery.domain.RecoveryLanguageEligibility
 import com.papertrail.api.analysis.recovery.domain.RecoveryRightsDeclaration
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
@@ -60,6 +61,19 @@ class SuccessorRunServiceTest {
         assertEquals(fixture.batch.revision, first.revision)
         assertEquals(listOf("ref2"), first.retainedReferenceKeys)
         assertEquals(SuccessorWorkDisposition.RETAIN, first.retainedDecision.disposition)
+        val retainedStages = setOf(
+            "source-parse",
+            "claim-extraction",
+            "reference-resolution",
+            "selected-access",
+            "cited-paper-parse",
+            "evidence-retrieval",
+            "claim-verification",
+        )
+        assertEquals(retainedStages, first.retainedStageDecisions.map { it.stage }.toSet())
+        assertEquals(retainedStages.size, first.retainedStageDecisions.size)
+        assertEquals(setOf(SuccessorWorkDisposition.RETAIN), first.retainedStageDecisions.map { it.disposition }.toSet())
+        assertEquals(setOf("UNSELECTED_COVERAGE_PRESERVED"), first.retainedStageDecisions.map { it.reasonCode }.toSet())
         assertEquals("ref1", first.selectedEntries.single().localReferenceKey)
         assertEquals(fixture.upload.actualSha256, first.selectedEntries.single().contentSha256)
         assertEquals(
@@ -77,6 +91,34 @@ class SuccessorRunServiceTest {
         assertEquals(first.planFingerprint, repeated.planFingerprint)
         assertTrue(first.planFingerprint.matches(Regex("[0-9a-f]{64}")))
         assertEquals(listOf("cited-paper-parser", "evidence-embedding", "claim-verification"), first.expectedProviderWork.map { it.stage })
+    }
+
+    @Test
+    fun `preview blocks DOI assistance that overlaps a selected PDF until one input is removed`() {
+        val fixture = fixture()
+        val assistance = RecoveryIdentifierAssistance(
+            id = UUID.randomUUID(),
+            batchId = fixture.batch.id,
+            analysisRunId = fixture.batch.analysisRunId,
+            bibliographyEntryId = fixture.batch.selectedAssets.single().bibliographyEntryId,
+            localReferenceKey = "ref1",
+            identifierType = "DOI",
+            identifierValue = "10.1234/overlapping-input",
+            recordedAt = Instant.parse("2026-10-14T00:00:00Z"),
+        )
+        Mockito.`when`(fixture.batchRepository.activeBatchById(anyUuid(), anyInstant())).thenReturn(
+            fixture.batch.copy(identifierAssistance = listOf(assistance)),
+            fixture.batch,
+        )
+
+        val conflictPlan = fixture.service.preview(fixture.batch.id, fixture.request)
+
+        assertFalse(conflictPlan.eligible)
+        assertTrue(conflictPlan.blockers.contains("DOI_ASSISTANCE_CONFLICTS_WITH_SELECTED_PDF_REMOVE_ONE_INPUT"))
+        assertTrue(conflictPlan.identifierAssistanceEntries.isEmpty())
+        val afterRemovingAssistance = fixture.service.preview(fixture.batch.id, fixture.request)
+        assertTrue(afterRemovingAssistance.eligible, afterRemovingAssistance.blockers.joinToString())
+        assertTrue(afterRemovingAssistance.identifierAssistanceEntries.isEmpty())
     }
 
     @Test

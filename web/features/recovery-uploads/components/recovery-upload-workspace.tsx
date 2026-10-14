@@ -1,7 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,6 +50,15 @@ type RecoveryUploadWorkspaceProps = {
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(bytes / 1024)} KiB`;
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(bytes / (1024 * 1024))} MiB`;
+}
+
+function pdfUploadSelectionError(file: File, maxFileBytes: number | null): string | null {
+  if (!file.name.toLocaleLowerCase().endsWith(".pdf")) return "Choose a file with a .pdf filename.";
+  if (file.size === 0) return "Choose a non-empty PDF file.";
+  if (maxFileBytes !== null && file.size > maxFileBytes) {
+    return `This file exceeds the configured ${formatBytes(maxFileBytes)} per-file limit.`;
+  }
+  return null;
 }
 
 function statusLabel(status: RecoveryUploadStatus): string {
@@ -130,9 +141,12 @@ export function RecoveryUploadWorkspace({
   const selectVersion = useSelectRecoveryUpload();
   const stageIdentifier = useStageRecoveryIdentifierAssistance();
   const removeIdentifier = useRemoveRecoveryIdentifierAssistance();
-  const [rightsAcceptedVersion, setRightsAcceptedVersion] = useState<string | null>(null);
+  const [rightsAcceptance, setRightsAcceptance] = useState<{ batchId: string; version: string } | null>(null);
   const batch = batchQuery.data ?? null;
   const rights = rightsQuery.data;
+  const rightsAcceptanceIsCurrent = Boolean(
+    batch && rights && rightsAcceptance?.batchId === batch.id && rightsAcceptance?.version === rights.version,
+  );
   const isBusy = createBatch.isPending || acceptRights.isPending || uploadPdf.isPending || finalizeUpload.isPending || removeUpload.isPending || validateUpload.isPending || confirmIdentity.isPending || selectVersion.isPending || stageIdentifier.isPending || removeIdentifier.isPending;
   const activeError = [createBatch.error, acceptRights.error, uploadPdf.error, finalizeUpload.error, removeUpload.error, validateUpload.error, confirmIdentity.error, selectVersion.error, stageIdentifier.error, removeIdentifier.error]
     .find((error): error is Error => error instanceof Error);
@@ -257,8 +271,13 @@ export function RecoveryUploadWorkspace({
                 </div>
                 <Badge variant="outline">{batch.uploads.filter((upload) => ["PENDING_UPLOAD", "FINALIZING", "STAGED"].includes(upload.status)).length} active PDF versions</Badge>
               </div>
-              <p className="m-0 text-sm leading-relaxed text-muted-foreground">DOI-only identity assistance does not require the PDF-rights declaration. Before any PDF upload, accept the current declaration below. It is not a license grant or provider consent.</p>
-              {rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version ? (
+              <p className="m-0 text-sm leading-relaxed text-muted-foreground">DOI-only identity assistance does not require PDF rights. Before any new PDF upload, this batch must record the current declaration. It is not a license grant or provider consent.</p>
+              {rights && batch.status === "OPEN" && batch.rightsDeclaredAt && batch.rightsDeclarationVersion !== rights.version ? (
+                <Alert className="border-warning/40 bg-warning/20 text-warning-foreground">
+                  <AlertTitle>PDF-rights declaration changed</AlertTitle>
+                  <AlertDescription>This batch recorded PDF-rights declaration {batch.rightsDeclarationVersion ?? "an earlier version"}, which cannot be changed to {rights.version}. No new PDF version can be uploaded in this batch. Existing candidates may still be reviewed and submitted if the successor preview allows them, and DOI-only assistance remains available. To upload under the current declaration, let this batch expire or submit eligible existing work, then create a new batch and accept {rights.version}.</AlertDescription>
+                </Alert>
+              ) : rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version ? (
                 <p className="m-0 text-sm text-success-foreground" role="status">Current PDF-rights declaration {rights.version} accepted at <LocalDateTime value={batch.rightsDeclaredAt} />.</p>
               ) : rights && batch.status === "OPEN" ? (
                 <section className="space-y-3 rounded-md border border-border bg-background p-4" aria-labelledby="recovery-rights-heading">
@@ -267,13 +286,13 @@ export function RecoveryUploadWorkspace({
                     <p className="m-0 text-sm leading-relaxed">{rights.text}</p>
                   </div>
                   <Field orientation="horizontal" className="items-start gap-3">
-                    <Checkbox id="recovery-current-rights-accepted" checked={rightsAcceptedVersion === rights.version} disabled={isBusy} onCheckedChange={(checked) => setRightsAcceptedVersion(checked === true ? rights.version : null)} />
+                    <Checkbox id="recovery-current-rights-accepted" checked={rightsAcceptanceIsCurrent} disabled={isBusy} onCheckedChange={(checked) => setRightsAcceptance(checked === true ? { batchId: batch.id, version: rights.version } : null)} />
                     <div className="min-w-0 space-y-1">
                       <FieldLabel htmlFor="recovery-current-rights-accepted" className="text-sm font-medium">I have read and accept the current PDF-rights declaration</FieldLabel>
                       <FieldDescription>This records your assertion for PDF upload only. It does not authorize provider processing or state that a DOI identifies a PDF.</FieldDescription>
                     </div>
                   </Field>
-                  <Button type="button" variant="secondary" disabled={rightsAcceptedVersion !== rights.version || isBusy} onClick={() => {
+                  <Button type="button" variant="secondary" disabled={!rightsAcceptanceIsCurrent || isBusy} onClick={() => {
                     acceptRights.reset();
                     acceptRights.mutate({ analysisRunId, batchId: batch.id, rightsDeclarationVersion: rights.version });
                   }}>
@@ -286,10 +305,15 @@ export function RecoveryUploadWorkspace({
                 <Alert variant="destructive"><AlertTitle>Current PDF-rights declaration unavailable</AlertTitle><AlertDescription>Identifier-only assistance remains available. PDF uploads stay blocked until the current declaration can be displayed and explicitly accepted.</AlertDescription></Alert>
               )}
               {batch.rightsDeclarationText && (
-                <details className="rounded-md border border-border bg-background px-3 py-2 text-sm">
-                  <summary className="min-h-8 cursor-pointer py-1 font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">View recorded PDF-rights declaration</summary>
-                  <p className="mb-1 mt-2 leading-relaxed text-muted-foreground">{batch.rightsDeclarationText}</p>
-                </details>
+                <Collapsible className="group/recorded-rights rounded-md border border-border bg-background px-3 py-2 text-sm">
+                  <CollapsibleTrigger className="flex min-h-8 w-full items-center justify-between gap-2 py-1 text-left font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+                    View recorded PDF-rights declaration
+                    <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[open]/recorded-rights:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="border-t border-border pt-2">
+                    <p className="mb-1 mt-2 leading-relaxed text-muted-foreground">{batch.rightsDeclarationText}</p>
+                  </CollapsibleContent>
+                </Collapsible>
               )}
             </CardHeader>
             <CardContent className="space-y-3">
@@ -372,8 +396,10 @@ export function RecoveryUploadWorkspace({
               )}
             </CardContent>
           </Card>
-          <RecoverySuccessorWorkflow analysisRunId={analysisRunId} predecessorConfiguration={predecessorConfiguration} predecessorRunStatus={predecessorRunStatus} batch={batch} />
         </>
+      )}
+      {enabled && !batchQuery.isPending && (
+        <RecoverySuccessorWorkflow key={batch ? `batch-${batch.id}` : "recovery-history"} analysisRunId={analysisRunId} predecessorConfiguration={predecessorConfiguration} predecessorRunStatus={predecessorRunStatus} batch={batch} />
       )}
 
       {enabled && !entriesLoading && !entries && entriesError && (
@@ -466,14 +492,19 @@ function RecoveryUploadValidationPanel({
         )}
       </div>
 
-      <details className="rounded-md border border-border px-3 py-2">
-        <summary className="min-h-7 cursor-pointer py-1 font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">Parser provenance and options</summary>
-        <p className="mb-0 mt-2 break-all text-xs leading-relaxed text-muted-foreground">
-          {validation.parserId} {validation.parserVersion} · metadata policy {validation.metadataExtractionPolicyVersion} · identity policy {validation.identityPolicyVersion ?? "not reported"}
-          <br />Options: {options || "none recorded"}
-          <br />Asset SHA-256: {validation.contentSha256}
-        </p>
-      </details>
+      <Collapsible className="group/parser-provenance rounded-md border border-border px-3 py-2">
+        <CollapsibleTrigger className="flex min-h-7 w-full items-center justify-between gap-2 py-1 text-left font-medium focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
+          Parser provenance and options
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[open]/parser-provenance:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="border-t border-border pt-2">
+          <p className="mb-0 mt-2 break-all text-xs leading-relaxed text-muted-foreground">
+            {validation.parserId} {validation.parserVersion} · metadata policy {validation.metadataExtractionPolicyVersion} · identity policy {validation.identityPolicyVersion ?? "not reported"}
+            <br />Options: {options || "none recorded"}
+            <br />Asset SHA-256: {validation.contentSha256}
+          </p>
+        </CollapsibleContent>
+      </Collapsible>
       {validation.validationStatus === "COMPLETED" && !usesCurrentIdentityPolicy ? (
         <div className="rounded-md border border-border p-3 text-muted-foreground" role="status">
           Identity policy is not reported as current. Validate again before confirming or selecting this PDF version.
@@ -650,7 +681,7 @@ function RecoveryUploadReferenceCard({
 }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [identifierValue, setIdentifierValue] = useState(entry?.doi ?? "");
+  const [identifierValue, setIdentifierValue] = useState(identifierAssistance?.identifierValue ?? entry?.doi ?? "");
   const [confirmsBibliographyIdentity, setConfirmsBibliographyIdentity] = useState(false);
   const canStageDoi = Boolean(entry
     && entry.resolutionStatus === "UNRESOLVED"
@@ -672,16 +703,9 @@ function RecoveryUploadReferenceCard({
   function addVersion(file: File | undefined) {
     if (!file) return;
     setLocalError(null);
-    if (!file.name.toLocaleLowerCase().endsWith(".pdf")) {
-      setLocalError("Choose a file with a .pdf filename.");
-      return;
-    }
-    if (file.size === 0) {
-      setLocalError("Choose a non-empty PDF file.");
-      return;
-    }
-    if (maxFileBytes !== null && file.size > maxFileBytes) {
-      setLocalError(`This file exceeds the configured ${formatBytes(maxFileBytes)} per-file limit.`);
+    const validationError = pdfUploadSelectionError(file, maxFileBytes);
+    if (validationError) {
+      setLocalError(validationError);
       return;
     }
     onUpload(localReferenceKey, file, globalThis.crypto.randomUUID());
@@ -690,7 +714,7 @@ function RecoveryUploadReferenceCard({
   return (
     <li className="min-w-0 rounded-lg border border-border bg-card p-4">
       <div className="min-w-0 space-y-1">
-        <p className="m-0 font-mono text-xs text-muted-foreground">Bibliography Entry · {localReferenceKey}</p>
+        <p className="m-0 break-all font-mono text-xs text-muted-foreground">Bibliography Entry · {localReferenceKey}</p>
         <p className="m-0 break-words text-sm leading-relaxed">{label}</p>
       </div>
       {entry ? (
@@ -729,7 +753,10 @@ function RecoveryUploadReferenceCard({
                 disabled={disabled || identifierActionPending}
                 placeholder="10.1234/example"
                 autoComplete="off"
-                onChange={(event) => setIdentifierValue(event.currentTarget.value)}
+                onChange={(event) => {
+                  setIdentifierValue(event.currentTarget.value);
+                  setConfirmsBibliographyIdentity(false);
+                }}
               />
               <FieldDescription>The API normalizes the DOI before recording this assertion. It remains separate from any PDF identity validation.</FieldDescription>
             </Field>
@@ -849,16 +876,9 @@ function RecoveryUploadVersionCard({
   function onFileSelected(file: File | undefined) {
     if (!file) return;
     setLocalError(null);
-    if (!file.name.toLocaleLowerCase().endsWith(".pdf")) {
-      setLocalError("Choose a file with a .pdf filename.");
-      return;
-    }
-    if (file.size === 0) {
-      setLocalError("Choose a non-empty PDF file.");
-      return;
-    }
-    if (maxFileBytes !== null && file.size > maxFileBytes) {
-      setLocalError(`This file exceeds the configured ${formatBytes(maxFileBytes)} per-file limit.`);
+    const validationError = pdfUploadSelectionError(file, maxFileBytes);
+    if (validationError) {
+      setLocalError(validationError);
       return;
     }
     const idempotencyKey = isResumable && upload ? upload.idempotencyKey : globalThis.crypto.randomUUID();
@@ -869,7 +889,7 @@ function RecoveryUploadVersionCard({
     <div className="min-w-0 rounded-lg border border-border bg-background p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="m-0 font-mono text-xs text-muted-foreground">Bibliography Entry · {localReferenceKey}</p>
+          <p className="m-0 break-all font-mono text-xs text-muted-foreground">Bibliography Entry · {localReferenceKey}</p>
           <p className="m-0 line-clamp-4 break-words text-sm leading-relaxed">{label}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

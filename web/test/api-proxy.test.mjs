@@ -47,6 +47,8 @@ test("DOI identity assistance PUT and DELETE are proxied only for safe batch ent
 
   const batchId = "e25a0c19-f13b-4d81-9d55-9755b770ca6e";
   const validPath = ["recovery-batches", batchId, "entries", "b0", "identifier-assistance"];
+  const xmlIdBeyondLegacyProxyLimit = `ref-${"R".repeat(130)}-猫`;
+  const validLongXmlIdPath = ["recovery-batches", batchId, "entries", xmlIdBeyondLegacyProxyLimit, "identifier-assistance"];
   const invalidPath = ["recovery-batches", batchId, "entries", "b0/other", "identifier-assistance"];
   const request = (method, path) => ({
     method,
@@ -61,10 +63,16 @@ test("DOI identity assistance PUT and DELETE are proxied only for safe batch ent
 
   const putResponse = await PUT(request("PUT", validPath), { params: Promise.resolve({ path: validPath }) });
   const deleteResponse = await DELETE(request("DELETE", validPath), { params: Promise.resolve({ path: validPath }) });
+  const longKeyDeleteResponse = await DELETE(request("DELETE", validLongXmlIdPath), { params: Promise.resolve({ path: validLongXmlIdPath }) });
   assert.equal(putResponse.status, 200);
   assert.equal(deleteResponse.status, 204);
-  assert.deepEqual(upstreamRequests.map(({ options }) => options.method), ["PUT", "DELETE"]);
+  assert.equal(longKeyDeleteResponse.status, 204);
+  assert.deepEqual(upstreamRequests.map(({ options }) => options.method), ["PUT", "DELETE", "DELETE"]);
   assert.equal(new URL(upstreamRequests[0].url).pathname, `/api/v1/${validPath.join("/")}`);
+  assert.equal(
+    new URL(upstreamRequests[2].url).pathname,
+    `/api/v1/recovery-batches/${batchId}/entries/${encodeURIComponent(xmlIdBeyondLegacyProxyLimit)}/identifier-assistance`,
+  );
 });
 
 test("recovery upload DELETE is proxied only for a batch-scoped UUID path", async (context) => {

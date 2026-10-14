@@ -18,6 +18,7 @@ import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationServ
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import com.papertrail.api.scholarly.references.resolver.ConservativeReferenceResolver
 import com.papertrail.api.analysis.successor.domain.SuccessorExpectedProviderWork
+import com.papertrail.api.analysis.successor.domain.SuccessorIdentifierAssistanceEntryPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorRunPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorSelectedEntryPlan
 import com.papertrail.api.analysis.successor.domain.SuccessorStageDecision
@@ -96,37 +97,78 @@ class SuccessorRunService(
             .sortedBy { plan -> referenceOrder[plan.predecessorBibliographyEntryId] ?: Int.MAX_VALUE }
 
         val selectedIds = selectedEntryPlans.map(SuccessorSelectedEntryPlan::predecessorBibliographyEntryId).toSet()
+        val conflictingIdentifierAssistance = batch.identifierAssistance
+            .filter { assistance -> assistance.bibliographyEntryId in selectedIds }
+        val identifierAssistancePlans = batch.identifierAssistance
+            .filterNot { assistance -> assistance.bibliographyEntryId in selectedIds }
+            .map { assistance ->
+                val entry = previewRepository.selectedEntry(batch.analysisRunId, assistance.bibliographyEntryId)
+                val entryBlockers = buildList {
+                    if (entry == null) add("IDENTIFIER_ASSISTANCE_ENTRY_NOT_FOUND")
+                    else {
+                        if (entry.referenceType !in ConservativeReferenceResolver.SUPPORTED_REFERENCE_TYPES) add("IDENTIFIER_ASSISTANCE_REFERENCE_TYPE_UNSUPPORTED")
+                        if (entry.resolutionStatus != null && entry.resolutionStatus != "UNRESOLVED") add("IDENTIFIER_ASSISTANCE_ENTRY_ALREADY_RESOLVED")
+                    }
+                }
+                SuccessorIdentifierAssistanceEntryPlan(
+                    predecessorBibliographyEntryId = assistance.bibliographyEntryId,
+                    localReferenceKey = assistance.localReferenceKey,
+                    identifierType = assistance.identifierType,
+                    identifierValue = assistance.identifierValue,
+                    stages = identifierAssistanceStageDecisions(),
+                    blockers = entryBlockers,
+                )
+            }
+        val identifierAssistanceIds = identifierAssistancePlans.map(SuccessorIdentifierAssistanceEntryPlan::predecessorBibliographyEntryId).toSet()
+        val allReprocessedIds = selectedIds + identifierAssistanceIds
         val hasUnrepresentedRetainedAccessProvider = previewRepository.accessProviders(batch.analysisRunId)
-            .any { access -> access.bibliographyEntryId !in selectedIds && access.providerId != predecessor.configuration.openAccess.provider }
+            .any { access -> access.bibliographyEntryId !in allReprocessedIds && access.providerId != predecessor.configuration.openAccess.provider }
         val blockers = buildList {
             if (predecessor.status !in COMPLETED_RUN_STATUSES) add("PREDECESSOR_RUN_NOT_COMPLETED")
             if (!predecessor.hasSourceParse) add("PREDECESSOR_SOURCE_PARSE_UNAVAILABLE")
             if (predecessor.bibliographyEntryCount == 0L) add("PREDECESSOR_BIBLIOGRAPHY_UNAVAILABLE")
             if (predecessor.claimCount == 0L) add("PREDECESSOR_CLAIMS_UNAVAILABLE")
-            if (selectedEntryPlans.isEmpty()) add("NO_CURRENT_SELECTED_ASSETS")
+            if (selectedEntryPlans.isEmpty() && identifierAssistancePlans.isEmpty()) add("NO_SELECTED_ASSETS_OR_IDENTIFIER_ASSISTANCE")
+            if (conflictingIdentifierAssistance.isNotEmpty()) add("DOI_ASSISTANCE_CONFLICTS_WITH_SELECTED_PDF_REMOVE_ONE_INPUT")
             if (invalidationReasons.isNotEmpty()) add("CONFIGURATION_CHANGE_REQUIRES_UNSUPPORTED_GLOBAL_REPROCESSING")
             if (!hasMatchingExternalProviderConsents(predecessor.configuration)) add("PREDECESSOR_EXTERNAL_PROVIDER_CONSENT_MISSING_OR_MISMATCHED")
             if (hasUnrepresentedRetainedAccessProvider) add("PREDECESSOR_ACCESS_PROVIDER_PROVENANCE_UNVERIFIABLE")
-            if (selectedEntryPlans.any { it.assistedDoi != null } && configuration.referenceResolution.provider == null) {
+            if ((selectedEntryPlans.any { it.assistedDoi != null } || identifierAssistancePlans.isNotEmpty()) && configuration.referenceResolution.provider == null) {
                 add("REFERENCE_RESOLUTION_PROVIDER_NOT_CONFIGURED")
             }
             selectedEntryPlans.flatMap(SuccessorSelectedEntryPlan::blockers).distinct().forEach(::add)
+            identifierAssistancePlans.flatMap(SuccessorIdentifierAssistanceEntryPlan::blockers).distinct().forEach(::add)
         }
         val retainedReferenceKeys = referenceKeys
-            .filterNot { it.bibliographyEntryId in selectedIds }
+            .filterNot { it.bibliographyEntryId in allReprocessedIds }
             .map(SuccessorReferenceKey::localReferenceKey)
         val retainedDecision = SuccessorStageDecision(
             stage = "unselected-bibliography-coverage",
             disposition = SuccessorWorkDisposition.RETAIN,
             reasonCode = "UNSELECTED_COVERAGE_PRESERVED",
         )
+        val retainedStageDecisions = listOf(
+            "source-parse",
+            "claim-extraction",
+            "reference-resolution",
+            "selected-access",
+            "cited-paper-parse",
+            "evidence-retrieval",
+            "claim-verification",
+        ).map { stage ->
+            SuccessorStageDecision(
+                stage = stage,
+                disposition = SuccessorWorkDisposition.RETAIN,
+                reasonCode = "UNSELECTED_COVERAGE_PRESERVED",
+            )
+        }
         val expectedProviderWork = buildList {
             if (selectedEntryPlans.isNotEmpty()) {
                 add(configuration.citedPaperParserSelection().toExpectedWork("cited-paper-parser"))
                 add(configuration.embedding.toExpectedWork("evidence-embedding"))
                 add(configuration.systemOne.toExpectedWork("claim-verification"))
             }
-            if (selectedEntryPlans.any { it.assistedDoi != null }) {
+            if (selectedEntryPlans.any { it.assistedDoi != null } || identifierAssistancePlans.isNotEmpty()) {
                 configuration.referenceResolution.provider?.let { add(it.toExpectedWork("reference-resolution")) }
             }
         }
@@ -137,7 +179,9 @@ class SuccessorRunService(
             predecessorSourceSha256 = predecessor.sourceContentSha256,
             configuration = configuration,
             selectedEntries = selectedEntryPlans,
+            identifierAssistanceEntries = identifierAssistancePlans,
             retainedReferenceKeys = retainedReferenceKeys,
+            retainedStageDecisions = retainedStageDecisions,
             invalidationReasons = invalidationReasons,
             blockers = blockers,
         )
@@ -150,8 +194,10 @@ class SuccessorRunService(
             planFingerprint = fingerprint,
             eligible = blockers.isEmpty(),
             selectedEntries = selectedEntryPlans,
+            identifierAssistanceEntries = identifierAssistancePlans,
             retainedReferenceKeys = retainedReferenceKeys,
             retainedDecision = retainedDecision,
+            retainedStageDecisions = retainedStageDecisions,
             invalidationReasons = invalidationReasons,
             blockers = blockers,
             expectedProviderWork = expectedProviderWork,
@@ -235,6 +281,16 @@ class SuccessorRunService(
         }
         return confirmation.identifierValue.takeIf { matchingCandidates.size == 1 }
     }
+
+    private fun identifierAssistanceStageDecisions() = listOf(
+        SuccessorStageDecision("source-parse", SuccessorWorkDisposition.REUSE, "SOURCE_INPUTS_UNCHANGED"),
+        SuccessorStageDecision("claim-extraction", SuccessorWorkDisposition.REUSE, "CLAIM_OUTPUTS_REUSED"),
+        SuccessorStageDecision("reference-resolution", SuccessorWorkDisposition.REPROCESS, "USER_CONFIRMED_DOI_NO_PDF"),
+        SuccessorStageDecision("selected-access", SuccessorWorkDisposition.SKIP, "DOI_ONLY_NO_PDF_ASSET"),
+        SuccessorStageDecision("cited-paper-parse", SuccessorWorkDisposition.SKIP, "DOI_ONLY_NO_PDF_ASSET"),
+        SuccessorStageDecision("evidence-retrieval", SuccessorWorkDisposition.SKIP, "DOI_ONLY_NO_PDF_ASSET"),
+        SuccessorStageDecision("claim-verification", SuccessorWorkDisposition.SKIP, "DOI_ONLY_NO_PDF_ASSET"),
+    )
 
     private fun selectedStageDecisions(invalidationReasons: List<String>, assistedIdentity: Boolean): List<SuccessorStageDecision> {
         val sourceInvalidated = invalidationReasons.any { it in SOURCE_INVALIDATIONS }
@@ -348,7 +404,9 @@ class SuccessorRunService(
         val predecessorSourceSha256: String,
         val configuration: AnalysisConfigurationSnapshot,
         val selectedEntries: List<SuccessorSelectedEntryPlan>,
+        val identifierAssistanceEntries: List<SuccessorIdentifierAssistanceEntryPlan>,
         val retainedReferenceKeys: List<String>,
+        val retainedStageDecisions: List<SuccessorStageDecision>,
         val invalidationReasons: List<String>,
         val blockers: List<String>,
     )

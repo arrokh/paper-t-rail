@@ -57,13 +57,16 @@ class ReferenceResolutionRepository(
         """
         SELECT b.id, b.entry_order, b.local_reference_key, b.raw_text, b.parsed_title,
                b.parsed_authors::text AS parsed_authors, b.parsed_year,
-               COALESCE(assistance.identifier_value, b.parsed_doi) AS parsed_doi,
-               assistance.identifier_value AS assisted_doi,
+               COALESCE(assistance.identifier_value, doi_only.identifier_value, b.parsed_doi) AS parsed_doi,
+               COALESCE(assistance.identifier_value, doi_only.identifier_value) AS assisted_doi,
                b.reference_type, b.identifiers::text AS identifiers
           FROM bibliography_entries b
           LEFT JOIN analysis_run_successor_resolution_assistance assistance
             ON assistance.successor_analysis_run_id = b.analysis_run_id
            AND assistance.bibliography_entry_id = b.id
+          LEFT JOIN analysis_run_successor_doi_assistance doi_only
+            ON doi_only.successor_analysis_run_id = b.analysis_run_id
+           AND doi_only.bibliography_entry_id = b.id
           LEFT JOIN bibliography_entry_resolutions r
             ON r.analysis_run_id = b.analysis_run_id AND r.bibliography_entry_id = b.id
          WHERE b.analysis_run_id = ? AND b.id = ? AND r.bibliography_entry_id IS NULL
@@ -146,7 +149,7 @@ class ReferenceResolutionRepository(
         """
         SELECT b.entry_order, b.local_reference_key, b.raw_text, b.parsed_title,
                b.parsed_authors::text AS parsed_authors, b.parsed_year, b.parsed_doi,
-               assistance.identifier_value AS assisted_doi, b.reference_type,
+               COALESCE(assistance.identifier_value, doi_only.identifier_value) AS assisted_doi, b.reference_type,
                CASE
                    WHEN r.bibliography_entry_id IS NOT NULL THEN r.status
                    WHEN task.event_id IS NOT NULL AND task_inbox.event_id IS NOT NULL THEN 'RESOLUTION_FAILED'
@@ -172,6 +175,9 @@ class ReferenceResolutionRepository(
           LEFT JOIN analysis_run_successor_resolution_assistance assistance
             ON assistance.successor_analysis_run_id = b.analysis_run_id
            AND assistance.bibliography_entry_id = b.id
+          LEFT JOIN analysis_run_successor_doi_assistance doi_only
+            ON doi_only.successor_analysis_run_id = b.analysis_run_id
+           AND doi_only.bibliography_entry_id = b.id
           -- A terminal request without a persisted domain outcome is an exhausted processing task, not a domain rejection.
           LEFT JOIN LATERAL (
               SELECT event.event_id

@@ -49,6 +49,6 @@ export function providerDirectoryQueryOptions() {
   });
 }
 
-export function useProviderDirectory() {
-  return useQuery(providerDirectoryQueryOptions());
+export function useProviderDirectory(enabled = true) {
+  return useQuery({ ...providerDirectoryQueryOptions(), enabled });
 }

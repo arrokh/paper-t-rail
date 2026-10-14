@@ -5,14 +5,19 @@ import com.papertrail.api.analysis.recovery.domain.RecoveryUpload
 import com.papertrail.api.analysis.recovery.domain.RecoveryUploadValidationAttempt
 import com.papertrail.api.analysis.recovery.http.CreateRecoveryBatchRequest
 import com.papertrail.api.analysis.recovery.http.CreateRecoveryUploadRequest
+import com.papertrail.api.analysis.recovery.http.AcceptRecoveryRightsDeclarationRequest
 import com.papertrail.api.analysis.recovery.http.ConfirmRecoveryIdentityRequest
 import com.papertrail.api.analysis.recovery.http.RecoveryBatchResponse
+import com.papertrail.api.analysis.recovery.http.RecoveryHistoryResponse
+import com.papertrail.api.analysis.recovery.http.RecoveryIdentifierAssistanceRequest
+import com.papertrail.api.analysis.recovery.http.RecoveryIdentifierAssistanceResponse
 import com.papertrail.api.analysis.recovery.http.RecoveryIdentityConfirmationResponse
 import com.papertrail.api.analysis.recovery.http.RecoveryRightsDeclarationResponse
 import com.papertrail.api.analysis.recovery.http.RecoveryUploadIntentResponse
 import com.papertrail.api.analysis.recovery.http.RecoveryUploadResponse
 import com.papertrail.api.analysis.recovery.http.RecoveryUploadAssetSelectionResponse
 import com.papertrail.api.analysis.recovery.http.RecoveryUploadValidationResponse
+import com.papertrail.api.analysis.recovery.service.RecoveryHistoryService
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingService
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadIdentityService
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
@@ -34,7 +39,9 @@ import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody as SpringRequestBody
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import java.util.UUID
@@ -46,6 +53,7 @@ class RecoveryBatchController(
     private val recoveryStagingService: RecoveryStagingService,
     private val recoveryUploadValidationService: RecoveryUploadValidationService,
     private val recoveryUploadIdentityService: RecoveryUploadIdentityService,
+    private val recoveryHistoryService: RecoveryHistoryService,
 ) {
     @Operation(
         summary = "Read the current Recovery Upload rights declaration",
@@ -101,14 +109,14 @@ class RecoveryBatchController(
 
     @Operation(
         summary = "Create or retrieve a Recovery Batch",
-        description = "Records the user's versioned rights declaration and creates one active batch for the Analysis Run. Repeated or concurrent requests return the same active batch. This declaration is not a license grant or external-provider consent.",
+        description = "Creates or retrieves one active batch for the Analysis Run. Omit both rightsDeclarationVersion and rightsDeclarationAccepted for DOI-only work, or provide the current version and true acceptance for existing PDF clients. The declaration is not a license grant or external-provider consent.",
     )
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "200", description = "Created or existing active Recovery Batch", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryBatchResponse::class))]),
-            ApiResponse(responseCode = "400", description = "The rights declaration was not accepted", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "400", description = "Rights fields are incomplete or the declaration was not accepted", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "404", description = "Analysis Run not found or its Source Document was deleted", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "409", description = "The rights declaration changed and must be reviewed again", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "The rights declaration changed, the batch already records a different snapshot, or the idempotency key was used with a different PDF-rights acceptance", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "410", description = "Idempotency key refers to an expired Recovery Batch", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
@@ -116,7 +124,7 @@ class RecoveryBatchController(
     fun createBatch(
         @Parameter(description = "Predecessor Analysis Run identifier.", required = true)
         @PathVariable analysisRunId: UUID,
-        @RequestBody(description = "Idempotency key and explicit acceptance of the displayed rights declaration.", required = true, content = [Content(schema = Schema(implementation = CreateRecoveryBatchRequest::class))])
+        @RequestBody(description = "Idempotency key and optional paired rights acceptance; omit both rights fields for DOI-only work.", required = true, content = [Content(schema = Schema(implementation = CreateRecoveryBatchRequest::class))])
         @Valid @SpringRequestBody request: CreateRecoveryBatchRequest,
     ): ResponseEntity<RecoveryBatchResponse> = ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
@@ -130,15 +138,120 @@ class RecoveryBatchController(
         )
 
     @Operation(
+        summary = "Accept the current PDF-rights declaration for a Recovery Batch",
+        description = "Records the exact current PDF-rights declaration before any upload intent. This is a user assertion, not a license grant or external-provider consent; DOI-only work does not require it.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Rights declaration recorded", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryBatchResponse::class))]),
+            ApiResponse(responseCode = "400", description = "Acceptance was not true or the request is invalid", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "404", description = "Recovery Batch not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "The accepted declaration version is no longer current or the batch already records another snapshot", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "410", description = "Recovery Batch has expired", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @PostMapping("/recovery-batches/{batchId}/rights-declaration", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun acceptRightsDeclaration(
+        @Parameter(description = "Recovery Batch identifier.", required = true)
+        @PathVariable batchId: UUID,
+        @RequestBody(description = "Current declaration version and explicit acceptance.", required = true, content = [Content(schema = Schema(implementation = AcceptRecoveryRightsDeclarationRequest::class))])
+        @Valid @SpringRequestBody request: AcceptRecoveryRightsDeclarationRequest,
+    ): ResponseEntity<RecoveryBatchResponse> = ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(recoveryStagingService.acceptCurrentRightsDeclaration(batchId, request.rightsDeclarationVersion, request.accepted).toResponse())
+
+    @Operation(
+        summary = "Read paginated Recovery Batch history",
+        description = "Returns newest-first, keyset-paginated content-minimized lifecycle and work events for the immutable predecessor Analysis Run. The ledger excludes DOI values, filenames, hashes, signed URLs, PDF bytes, source text, and validation detail payloads.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Content-minimized event page", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryHistoryResponse::class))]),
+            ApiResponse(responseCode = "400", description = "Invalid cursor or page size", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "404", description = "Analysis Run not found or its Source Document was deleted", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @GetMapping("/analysis-runs/{analysisRunId}/recovery-history", produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun recoveryHistory(
+        @Parameter(description = "Immutable predecessor Analysis Run identifier.", required = true)
+        @PathVariable analysisRunId: UUID,
+        @Parameter(description = "Opaque cursor returned by the previous page; omit for the newest events.")
+        @RequestParam(required = false) cursor: String?,
+        @Parameter(
+            description = "Requested event count; defaults to 50 and must be between 1 and 100.",
+            required = false,
+            example = "50",
+            schema = Schema(minimum = "1", maximum = "100", defaultValue = "50"),
+        )
+        @RequestParam(defaultValue = "50") limit: Int,
+    ): ResponseEntity<RecoveryHistoryResponse> = ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(RecoveryHistoryResponse.from(recoveryHistoryService.page(analysisRunId, cursor, limit)))
+
+    @Operation(
+        summary = "Stage user-confirmed DOI assistance",
+        description = "Stores a normalized DOI for an unresolved supported Bibliography Entry. This is a user identity assertion, not provider verification; staging is local, never invokes a provider, and the DOI value is excluded from recovery history.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Normalized DOI assistance recorded", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryIdentifierAssistanceResponse::class))]),
+            ApiResponse(responseCode = "400", description = "Invalid DOI, unsupported identifier type, or missing identity confirmation", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "404", description = "Recovery Batch or Bibliography Entry not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "Entry is resolved, its type is unsupported, or the batch is no longer open", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "410", description = "Recovery Batch has expired", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @PutMapping("/recovery-batches/{batchId}/entries/{localReferenceKey}/identifier-assistance", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun setIdentifierAssistance(
+        @Parameter(description = "Recovery Batch identifier.", required = true)
+        @PathVariable batchId: UUID,
+        @Parameter(description = "Run-scoped local key of the unresolved Bibliography Entry.", required = true)
+        @PathVariable localReferenceKey: String,
+        @RequestBody(description = "DOI and explicit confirmation that it identifies this Bibliography Entry.", required = true, content = [Content(schema = Schema(implementation = RecoveryIdentifierAssistanceRequest::class))])
+        @Valid @SpringRequestBody request: RecoveryIdentifierAssistanceRequest,
+    ): ResponseEntity<RecoveryIdentifierAssistanceResponse> = ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(
+            RecoveryIdentifierAssistanceResponse.from(
+                recoveryStagingService.setIdentifierAssistance(
+                    batchId, localReferenceKey, request.identifierType, request.identifierValue,
+                    request.confirmsBibliographyIdentity,
+                ),
+            ),
+        )
+
+    @Operation(
+        summary = "Remove staged DOI assistance",
+        description = "Removes this entry's active DOI assistance and appends a content-free removal event. It does not alter the immutable Bibliography Entry.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "204", description = "DOI assistance removed or was already absent"),
+            ApiResponse(responseCode = "404", description = "Recovery Batch not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "410", description = "Recovery Batch has expired", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @DeleteMapping("/recovery-batches/{batchId}/entries/{localReferenceKey}/identifier-assistance")
+    fun removeIdentifierAssistance(
+        @Parameter(description = "Recovery Batch identifier.", required = true)
+        @PathVariable batchId: UUID,
+        @Parameter(description = "Run-scoped local key of the Bibliography Entry.", required = true)
+        @PathVariable localReferenceKey: String,
+    ): ResponseEntity<Void> {
+        recoveryStagingService.removeIdentifierAssistance(batchId, localReferenceKey)
+        return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build()
+    }
+
+    @Operation(
         summary = "Create or retrieve a PDF upload intent",
-        description = "Creates a run- and Bibliography-Entry-scoped upload intent, then returns a short-lived browser-reachable presigned PUT URL. The signature binds exact Content-Length, PDF content type, and SHA-256. Signed URLs are bearer credentials and are not persisted in batch history or logs.",
+        description = "Creates a run- and Bibliography-Entry-scoped upload intent after the current PDF-rights declaration is recorded and verified as still current, then returns a short-lived browser-reachable presigned PUT URL. Multiple independent versions may be staged for one entry. The signature binds exact Content-Length, PDF content type, and SHA-256; signed URLs are not persisted in batch history or logs.",
     )
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "200", description = "Upload intent and short-lived PUT capability", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryUploadIntentResponse::class))]),
             ApiResponse(responseCode = "400", description = "Invalid file metadata or PDF filename", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "404", description = "Recovery Batch or Bibliography Entry not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "409", description = "Conflicting idempotency key or duplicate active entry upload", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "PDF-rights declaration is absent or no longer current, or the idempotency key conflicts with a different upload", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "410", description = "Recovery Batch or upload has expired or was removed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "413", description = "File or batch quota exceeded", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "503", description = "Storage or bucket CORS configuration is unavailable", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
@@ -286,13 +399,13 @@ class RecoveryBatchController(
 
     @Operation(
         summary = "Select one exact Recovery Upload version",
-        description = "Selects the exact staged bytes for one Bibliography Entry after completed validation under the current parser, identity, and language policies, English-language eligibility, and any required human confirmation. MISMATCH results are rejected, and only one exact asset version can be selected per entry. Selection does not start evidence assessment.",
+        description = "Selects the exact staged bytes for one Bibliography Entry after completed validation under the current parser, identity, and language policies, English-language eligibility, and any required human confirmation. MISMATCH results are rejected. The current selection is atomically replaced by a different eligible version while prior uploads and validation outcomes remain; selecting the current version is idempotent. Selection does not start evidence assessment.",
     )
     @ApiResponses(
         value = [
             ApiResponse(responseCode = "200", description = "Selected exact asset version", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryUploadAssetSelectionResponse::class))]),
             ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "409", description = "Validation is missing or stale, a parser, identity, or language policy is outdated, confirmation or language eligibility is not satisfied, or another version is already selected", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "Validation is missing or stale, a parser, identity, or language policy is outdated, or confirmation or language eligibility is not satisfied", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/select", produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -341,8 +454,8 @@ class RecoveryBatchController(
         id = id,
         analysisRunId = analysisRunId,
         status = status.name,
-        rightsDeclarationVersion = rightsDeclaration.version,
-        rightsDeclarationText = rightsDeclaration.text,
+        rightsDeclarationVersion = rightsDeclaration?.version,
+        rightsDeclarationText = rightsDeclaration?.text,
         rightsDeclaredAt = rightsDeclaredAt,
         createdAt = createdAt,
         lastActivityAt = lastActivityAt,
@@ -350,6 +463,7 @@ class RecoveryBatchController(
         revision = revision,
         uploads = uploads.map { it.toResponse() },
         selectedAssets = selectedAssets.map(RecoveryUploadAssetSelectionResponse::from),
+        identifierAssistance = identifierAssistance.map(RecoveryIdentifierAssistanceResponse::from),
     )
 
     private fun RecoveryUpload.toResponse() = RecoveryUploadResponse(
