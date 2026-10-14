@@ -16,6 +16,7 @@ import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.ExtendedSSLSession
+import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
@@ -303,7 +304,7 @@ class PinnedPublicHttpsContentTransportTest {
         javaClass.getResourceAsStream("/tls/dns-rebinding-test.p12").use { stream ->
             keyStore.load(stream, TEST_KEYSTORE_PASSWORD)
         }
-        val keyManagerFactory = javax.net.ssl.KeyManagerFactory.getInstance(javax.net.ssl.KeyManagerFactory.getDefaultAlgorithm())
+        val keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
         keyManagerFactory.init(keyStore, TEST_KEYSTORE_PASSWORD)
         return SSLContext.getInstance("TLS").apply {
             init(keyManagerFactory.keyManagers, null, SecureRandom())
