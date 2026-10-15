@@ -570,6 +570,51 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
+    fun `disabling chain selection preserves execution of an already-pinned chain`() {
+        val enabledCatalog = providerChainCatalog()
+        val request = RunConfigurationRequest(
+            providerChainId = "crossref-datacite-exact-doi-v1",
+            externalProviderConsents = providerChainConsents(enabledCatalog),
+        )
+        val pinnedSnapshot = factoryFor(providerCatalog = enabledCatalog).from(request)
+        val disabledCatalog = providerChainCatalog(providerChainEnabled = false)
+
+        assertTrue(disabledCatalog.directory().providerChains.isEmpty())
+        assertThrows(IllegalArgumentException::class.java) {
+            factoryFor(providerCatalog = disabledCatalog).from(request)
+        }
+
+        var outboundCallStarted = false
+        val result = ProviderCallGate(disabledCatalog).callProviderChain(
+            "crossref-datacite-exact-doi-v1",
+            "crossref",
+            providerCallPayload(DataCategory.BIBLIOGRAPHIC_METADATA),
+            pinnedSnapshot,
+        ) {
+            outboundCallStarted = true
+            "crossref"
+        }
+
+        assertEquals("crossref", result)
+        assertTrue(outboundCallStarted)
+
+        val unavailableCatalog = providerChainCatalog(providerChainEnabled = false, crossrefEnabled = false)
+        outboundCallStarted = false
+        assertThrows(ProviderCallRejectedException::class.java) {
+            ProviderCallGate(unavailableCatalog).callProviderChain(
+                "crossref-datacite-exact-doi-v1",
+                "crossref",
+                providerCallPayload(DataCategory.BIBLIOGRAPHIC_METADATA),
+                pinnedSnapshot,
+            ) {
+                outboundCallStarted = true
+                "crossref"
+            }
+        }
+        assertFalse(outboundCallStarted)
+    }
+
+    @Test
     fun `exact DOI chain request pins ordered provider registrations and fixed limits with independent consents`() {
         val catalog = providerChainCatalog(crossrefContactEmail = "chain-contact@example.invalid")
         val request = RunConfigurationRequest(

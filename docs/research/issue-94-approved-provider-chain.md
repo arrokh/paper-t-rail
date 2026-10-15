@@ -21,6 +21,18 @@ Validate all enabled selections and fresh per-provider consent server-side befor
 
 Deploy compatible readers before new producers. Keep new-chain production disabled until reader/worker/contract verification; tests and a controlled local opt-in may enable it. Disabling the chain must not reinterpret or mutate already-pinned runs or prevent deletion/cleanup.
 
+## Feature-gated rollout and rollback
+
+`PAPER_REFERENCE_PROVIDER_CHAIN_ENABLED` defaults to `false` in Spring and `.env.example`. It controls whether the provider directory offers the chain and whether new run configurations may select it. Authorization of an already-pinned chain deliberately does not consult this selection switch: turning it off prevents new chain selections while existing snapshots continue under their pinned provider registrations, unchanged configuration/disclosures, and per-run consent. Crossref and DataCite registration flags are separate; both registrations must remain available for existing chains to drain. Enabling the chain flag alone neither selects a chain nor authorizes an external request.
+
+For a controlled rollout, deploy and verify the additive attempt-ledger schema first, then deploy compatible API and worker readers while keeping new-chain selection disabled. Verify the generated provider directory/OpenAPI contract, legacy scalar snapshots/events, queue disposition, reports, successor materialization, and UI consent before enabling the selection flag on the API that accepts run configuration. This is release guidance, not authorization for a production deployment; the current checkout has only been verified with local/synthetic data.
+
+For a planned rollback, turn off `PAPER_REFERENCE_PROVIDER_CHAIN_ENABLED` on the API to prevent new chain selections, keep chain-aware workers and both provider registrations available, and let already-pinned chain work drain to terminal outcomes. Verify no chain work remains pending before rolling back to code that cannot read chain snapshots/reports. Keep the additive schema and immutable run/attempt history; do not revert the attempt-ledger migration while its tables contain rows. Its revert script takes an exclusive lock and refuses to drop chain state, attempt, or lookup-result tables when any rows remain.
+
+This selection flag is **not an emergency egress kill switch**: pinned work can still make consented provider/cache calls while provider registrations are enabled. In an emergency, stop the relevant worker egress or disable both provider registrations; the latter fails closed before a new cache read or provider send, but may finalize affected queued chain items as `CONSENT_OR_CONFIG_REJECTED`. Neither configuration change cancels a request already dispatched. Do not rewrite pinned chains as scalar runs or mutate predecessor snapshots. After an emergency rejection, a retry requires a new run/successor, not mutation of the predecessor.
+
+**Rollout gap:** this provider-chain flag does not gate recovery routes. `RecoveryBatchController` and `SuccessorRunController` are registered unconditionally, and this checkout has no application-level recovery-route/submission flag. It therefore does not satisfy the overall #97 requirement to gate recovery routes or disable recovery submissions. A separately verified application or deployment admission gate is required before exposing those routes; no production ingress configuration has been inspected or assumed here.
+
 ## Bounded resource policy
 
 These are conservative **operational ceilings**, not measured accuracy targets or vendor guarantees. Persist them in each chain snapshot; tune later only from permitted operational evidence.

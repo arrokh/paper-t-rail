@@ -87,9 +87,9 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
             throw ProviderCallRejectedException("Provider chain '$chainId' does not contain the fixed provider order.")
         }
         val registrations = try {
-            catalog.requireProviderChain(chainId)
+            catalog.requirePinnedProviderChain(chainId)
         } catch (exception: ProviderNotSelectableException) {
-            throw ProviderCallRejectedException(exception.message ?: "Provider chain is not selectable.")
+            throw ProviderCallRejectedException(exception.message ?: "Provider chain configuration is unavailable.")
         }
         val registration = registrations.singleOrNull { it.providerId == providerId }
             ?: throw ProviderCallRejectedException("Provider '$providerId' is not part of provider chain '$chainId'.")

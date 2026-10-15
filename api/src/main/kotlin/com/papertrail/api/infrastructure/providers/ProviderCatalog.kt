@@ -108,16 +108,27 @@ class ProviderCatalog(
         } ?: emptyList(),
     )
 
-    fun requireProviderChain(chainId: String): List<ProviderRegistration> {
+    /** Resolves a chain for a new run only while the selection feature gate is enabled. */
+    fun requireProviderChain(chainId: String): List<ProviderRegistration> =
+        requireProviderChainRegistrations(chainId, requireSelectionEnabled = true)
+
+    /** Resolves a chain already pinned to a run without consulting the new-selection feature gate. */
+    fun requirePinnedProviderChain(chainId: String): List<ProviderRegistration> =
+        requireProviderChainRegistrations(chainId, requireSelectionEnabled = false)
+
+    private fun requireProviderChainRegistrations(
+        chainId: String,
+        requireSelectionEnabled: Boolean,
+    ): List<ProviderRegistration> {
         if (chainId != ProviderChainSnapshot.CHAIN_ID) {
             throw ProviderNotSelectableException("Provider chain '$chainId' is unknown.")
         }
-        return availableProviderChainRegistrations()
+        return availableProviderChainRegistrations(requireSelectionEnabled)
             ?: throw ProviderNotSelectableException("Provider chain '$chainId' is disabled or unavailable.")
     }
 
-    private fun availableProviderChainRegistrations(): List<ProviderRegistration>? {
-        if (!providerChainEnabled) return null
+    private fun availableProviderChainRegistrations(requireSelectionEnabled: Boolean = true): List<ProviderRegistration>? {
+        if (requireSelectionEnabled && !providerChainEnabled) return null
         val registrations = ProviderChainSnapshot.PROVIDER_IDS.map { providerId ->
             registrationsByRoleAndId[SCHOLARLY_METADATA_ROLE to providerId]
         }
