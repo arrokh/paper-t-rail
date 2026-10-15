@@ -3,11 +3,12 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RecoveryUploadWorkspace } from "@/features/recovery-uploads/components/recovery-upload-workspace";
 import type { AnalysisRun, ParsedDocument } from "@/features/analysis-runs/types";
-import type { RecoveryBatch, RecoveryHistoryEvent, RecoveryRightsDeclaration } from "@/features/recovery-uploads/types";
+import type { RecoveryBatch, RecoveryHistoryEvent, RecoveryRightsDeclaration, RecoveryUploadValidation } from "@/features/recovery-uploads/types";
 
 const rights: RecoveryRightsDeclaration = {
   version: "recovery-rights-v1",
   text: "I have the right to stage this PDF locally.",
+  submissionsEnabled: true,
   maxFileBytes: 52_428_800,
   maxFilesPerBatch: 10,
   maxBatchBytes: 262_144_000,
@@ -55,11 +56,11 @@ function makeBatch(uploads: RecoveryBatch["uploads"] = [], overrides: Partial<Re
   };
 }
 
-function stagedUpload(): RecoveryBatch["uploads"][number] {
+function stagedUpload(uploadId = "upload-1"): RecoveryBatch["uploads"][number] {
   return {
-    id: "upload-1",
+    id: uploadId,
     localReferenceKey: "b0",
-    idempotencyKey: "upload-key-1",
+    idempotencyKey: `upload-key-${uploadId}`,
     filename: "candidate.pdf",
     expectedSize: 1_024,
     expectedSha256: "a".repeat(64),
@@ -69,6 +70,40 @@ function stagedUpload(): RecoveryBatch["uploads"][number] {
     actualSha256: "b".repeat(64),
     createdAt: "2026-10-08T10:00:00Z",
     finalizedAt: "2026-10-08T10:01:00Z",
+  };
+}
+
+function pendingUpload(uploadId: string): RecoveryBatch["uploads"][number] {
+  return { ...stagedUpload(uploadId), status: "PENDING_UPLOAD", actualSize: null, actualSha256: null, finalizedAt: null };
+}
+
+function recoveryValidation(uploadId: string, identityOutcome: RecoveryUploadValidation["identityOutcome"], identityReasonCode: string | null): RecoveryUploadValidation {
+  return {
+    id: `validation-${uploadId}`,
+    batchId: "batch-1",
+    uploadId,
+    analysisRunId: "run-1",
+    contentSha256: "b".repeat(64),
+    parserId: "local",
+    parserVersion: "1",
+    metadataExtractionPolicyVersion: "metadata-v1",
+    identityPolicyVersion: "recovery-upload-identity-v2",
+    parserOptions: {},
+    languageDetectorId: "local",
+    languageDetectorVersion: "1",
+    minimumLanguageConfidence: 0.65,
+    validationStatus: "COMPLETED",
+    identityOutcome,
+    identityReasonCode,
+    humanConfirmation: null,
+    selection: null,
+    metadataCandidates: [],
+    languageEligibility: "ELIGIBLE",
+    detectedLanguage: "en",
+    languageConfidence: 0.99,
+    languageReasonCode: "ENGLISH",
+    failureCode: null,
+    createdAt: "2026-10-08T10:02:00Z",
   };
 }
 
@@ -158,6 +193,197 @@ describe("Recovery Upload workspace", () => {
     expect(screen.queryByRole("button", { name: /Choose another PDF version/ })).toBeNull();
     expect(screen.getByText("No selected recovery work")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Preview successor plan" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("fails closed when submissions are disabled and no Recovery Batch exists", async () => {
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json({ ...rights, submissionsEnabled: false });
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([]);
+      if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [], nextCursor: null });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText("New recovery submissions are disabled")).toBeTruthy();
+    const createButton = await screen.findByRole("button", { name: "Create Recovery Batch" });
+    expect(createButton.hasAttribute("disabled")).toBe(true);
+    const history = await screen.findByRole("region", { name: "Recovery and work history" });
+    expect(await within(history).findByText("No recovery workflow events are recorded for this predecessor run yet.")).toBeTruthy();
+    expect(within(history).getByRole("link", { name: "Open predecessor Analysis Run report run-1" })).toBeTruthy();
+    expect(requests.some(({ options }) => options?.method === "POST")).toBe(false);
+  });
+
+  it("fails closed when the recovery capability is missing from the declaration response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json({ ...rights, submissionsEnabled: undefined });
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([]);
+      if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [], nextCursor: null });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText("New recovery submissions are disabled")).toBeTruthy();
+    expect((await screen.findByRole("button", { name: "Create Recovery Batch" })).hasAttribute("disabled")).toBe(true);
+    expect(await screen.findByRole("region", { name: "Recovery and work history" })).toBeTruthy();
+  });
+
+  it("keeps an existing batch inspectable and removals and read-only preview available while submissions are disabled", async () => {
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    const activeBatch = makeBatch([stagedUpload(), stagedUpload("upload-2"), pendingUpload("upload-3")], {
+      rightsDeclarationVersion: null,
+      rightsDeclarationText: null,
+      rightsDeclaredAt: null,
+      identifierAssistance: [{
+        bibliographyEntryId: "entry-1",
+        localReferenceKey: "b0",
+        identifierType: "DOI",
+        identifierValue: "10.5678/researcher-asserted",
+        recordedAt: "2026-10-09T00:00:00Z",
+      }],
+    });
+    const previousSubmission: RecoveryHistoryEvent = {
+      id: "history-previous-submit",
+      batchId: "older-batch",
+      batchStatus: "SUBMITTED",
+      type: "SUCCESSOR_SUBMITTED",
+      outcomeCode: "SUCCESSOR_CREATED",
+      stageCode: null,
+      attemptNumber: null,
+      bibliographyEntryId: null,
+      uploadId: null,
+      previousUploadId: null,
+      submission: { successorAnalysisRunId: "previous-successor", status: "PROCESSING", selectedEntryCount: 1, identifierAssistanceEntryCount: 0, resolutionQueuedEntryCount: 1 },
+      createdAt: "2026-10-09T00:00:00Z",
+    };
+    const previousSuccessorRun = {
+      id: "previous-successor",
+      documentId: "document-1",
+      filename: "source.pdf",
+      sourceContentSha256: "b".repeat(64),
+      status: "QUEUED",
+      progress: {},
+      pipeline: null,
+      configuration: predecessorConfiguration,
+      createdAt: "2026-10-09T00:00:00Z",
+      startedAt: null,
+      failureReason: null,
+    };
+    const preview = {
+      batchId: "batch-1",
+      predecessorAnalysisRunId: "run-1",
+      revision: 0,
+      planFingerprint: "plan-fingerprint",
+      eligible: true,
+      selectedEntries: [],
+      identifierAssistanceEntries: [{
+        predecessorBibliographyEntryId: "entry-1",
+        localReferenceKey: "b0",
+        identifierType: "DOI",
+        identifierValue: "10.5678/researcher-asserted",
+        stages: [],
+        blockers: [],
+      }],
+      retainedReferenceKeys: [],
+      retainedDecision: { stage: "EVIDENCE_RETRIEVAL", disposition: "RETAIN", reasonCode: "UNCHANGED" },
+      invalidationReasons: [],
+      blockers: [],
+      expectedProviderWork: [],
+      requiredConsents: [],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") return Response.json({ ...rights, submissionsEnabled: false });
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([activeBatch]);
+      if (url === "/api/v1/providers") return Response.json(localProviderDirectory);
+      if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [previousSubmission], nextCursor: null });
+      if (url.endsWith("/uploads/upload-1/validation")) return Response.json(recoveryValidation("upload-1", "VALIDATED", "DOI_MATCH"));
+      if (url.endsWith("/uploads/upload-2/validation")) return Response.json(recoveryValidation("upload-2", "NEEDS_CONFIRMATION", "DOI_NOT_EXTRACTED"));
+      if (url === "/api/v1/analysis-runs/previous-successor") return Response.json(previousSuccessorRun);
+      if (url.endsWith("/successor/preview") && options?.method === "POST") return Response.json(preview);
+      if (url.endsWith("/uploads/upload-1") && options?.method === "DELETE") return Response.json({ ...stagedUpload(), status: "REMOVED" });
+      if (url.endsWith("/entries/b0/identifier-assistance") && options?.method === "DELETE") return new Response(null, { status: 204 });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+
+    expect(await screen.findByText("New recovery submissions are disabled")).toBeTruthy();
+    expect((await screen.findAllByText(/candidate\.pdf/)).length).toBe(2);
+    expect(screen.getByText("10.5678/researcher-asserted")).toBeTruthy();
+    const rightsCheckbox = await screen.findByRole("checkbox", { name: "I have read and accept the current PDF-rights declaration" });
+    expect(rightsCheckbox.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("button", { name: "Accept current declaration for PDF upload" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Replace DOI identity assertion" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByLabelText("DOI you assert identifies this Bibliography Entry").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "I confirm this exact PDF version" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Select this exact version" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getAllByRole("button", { name: "Validation saved" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
+    expect(screen.getByRole("button", { name: "Verify uploaded PDF" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Choose another PDF version" })).toBeNull();
+
+    const history = await screen.findByRole("region", { name: "Recovery and work history" });
+    expect(await within(history).findByText("successor submitted")).toBeTruthy();
+    expect(await within(history).findByRole("link", { name: /Open successor Analysis Run report · previous-successor/ })).toBeTruthy();
+    expect(within(history).getByRole("link", { name: "Open predecessor Analysis Run report run-1" })).toBeTruthy();
+
+    const previewButton = await screen.findByRole("button", { name: "Preview successor plan" });
+    await waitFor(() => expect(previewButton.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(previewButton);
+    expect(await screen.findByRole("heading", { name: "Successor plan preview" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Submit one immutable successor Analysis Run" }).hasAttribute("disabled")).toBe(true);
+
+    const uploadRemovalButtons = screen.getAllByRole("button", { name: "Remove upload" });
+    expect(uploadRemovalButtons[0].hasAttribute("disabled")).toBe(false);
+    const removeIdentifier = screen.getByRole("button", { name: "Remove DOI assistance" });
+    expect(removeIdentifier.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(uploadRemovalButtons[0]);
+    fireEvent.click(removeIdentifier);
+    await waitFor(() => {
+      expect(requests.some(({ url, options }) => url.endsWith("/uploads/upload-1") && options?.method === "DELETE")).toBe(true);
+      expect(requests.some(({ url, options }) => url.endsWith("/entries/b0/identifier-assistance") && options?.method === "DELETE")).toBe(true);
+    });
+    expect(requests.filter(({ options }) => options?.method === "POST").map(({ url }) => url)).toEqual([
+      "/api/v1/recovery-batches/batch-1/successor/preview",
+    ]);
+  });
+
+  it("fails closed and surfaces RECOVERY_SUBMISSIONS_DISABLED after a capability race", async () => {
+    const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
+    let rightsReads = 0;
+    vi.stubGlobal("crypto", { ...globalThis.crypto, randomUUID: () => "batch-key-race" });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, options });
+      if (url === "/api/v1/recovery-rights-declaration") {
+        rightsReads += 1;
+        return Response.json({ ...rights, submissionsEnabled: rightsReads === 1 });
+      }
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches" && options?.method === "POST") {
+        return Response.json({ code: "RECOVERY_SUBMISSIONS_DISABLED", message: "New recovery submissions are disabled." }, { status: 503 });
+      }
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([]);
+      if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [], nextCursor: null });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    renderWorkspace();
+    const createButton = await screen.findByRole("button", { name: "Create Recovery Batch" });
+    await waitFor(() => expect(createButton.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(createButton);
+
+    expect(await screen.findByText(/RECOVERY_SUBMISSIONS_DISABLED/)).toBeTruthy();
+    expect(await screen.findByText("New recovery submissions are disabled")).toBeTruthy();
+    await waitFor(() => expect(createButton.hasAttribute("disabled")).toBe(true));
+    expect(rightsReads).toBeGreaterThanOrEqual(2);
+    expect(requests.some(({ options }) => options?.method === "POST")).toBe(true);
+    expect(screen.queryByText("Current PDF-rights declaration · recovery-rights-v1")).toBeNull();
   });
 
   it("requires explicit acceptance of the current PDF-rights declaration before upload controls appear", async () => {
@@ -708,7 +934,7 @@ describe("Recovery Upload workspace", () => {
     expect(screen.getAllByText("Bibliography Entry · b0").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Remove upload" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Choose another PDF version/ })).toBeNull();
-    expect(screen.getByText(/Upload limits are unavailable; PDF upload is blocked/)).toBeTruthy();
+    expect(screen.getByText(/New recovery submissions are disabled; existing candidates remain available to inspect/)).toBeTruthy();
     fireEvent.click(screen.getByText("View recorded PDF-rights declaration"));
     expect(screen.getByText(rights.text)).toBeTruthy();
 

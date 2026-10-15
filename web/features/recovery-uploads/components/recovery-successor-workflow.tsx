@@ -38,6 +38,7 @@ type RecoverySuccessorWorkflowProps = {
   predecessorConfiguration: AnalysisRun["configuration"];
   predecessorRunStatus: AnalysisRun["status"];
   batch: RecoveryBatch | null;
+  submissionsEnabled: boolean;
 };
 
 type ConsentDraft = {
@@ -104,7 +105,7 @@ function submissionFromEvent(event: RecoveryHistoryEvent) {
   return event.submission?.successorAnalysisRunId ?? null;
 }
 
-export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfiguration, predecessorRunStatus, batch }: RecoverySuccessorWorkflowProps) {
+export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfiguration, predecessorRunStatus, batch, submissionsEnabled }: RecoverySuccessorWorkflowProps) {
   const providerQuery = useProviderDirectory(batch !== null);
   const historyQuery = useRecoveryHistory(analysisRunId, true);
   const previewMutation = usePreviewRecoverySuccessor();
@@ -172,7 +173,7 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
       : missingConsents.length > 0
         ? "Review and explicitly approve every current provider category before previewing or submitting."
         : null;
-  const shouldShowHistory = Boolean(batch || events.length > 0 || historyQuery.isPending || historyQuery.isError || submittedSuccessorIds.length > 0);
+  const shouldShowHistory = Boolean(batch || events.length > 0 || historyQuery.isPending || historyQuery.isError || submittedSuccessorIds.length > 0 || !submissionsEnabled);
 
   function toggleCategory(provider: ProviderConsentRequirement, category: string, approved: boolean) {
     setConsentDraft((current) => {
@@ -209,7 +210,7 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
   }
 
   function submitSuccessor() {
-    if (!batch || !configuration || !previewIsCurrent || !preview?.eligible || hasSubmitted || !submissionAllowed(preview)) return;
+    if (!submissionsEnabled || !batch || !configuration || !previewIsCurrent || !preview?.eligible || hasSubmitted || !submissionAllowed(preview)) return;
     const requestConfigurationKey = JSON.stringify(configuration);
     if (!submissionKey.current
       || submissionKey.current.batchId !== batch.id
@@ -334,7 +335,7 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
           {previewIsCurrent && preview && <SuccessorPlanPreview preview={preview} />}
           {previewIsCurrent && preview && (
             <div className="flex flex-wrap items-center gap-3">
-              <Button type="button" disabled={!preview.eligible || !submissionAllowed(preview) || hasSubmitted || submitMutation.isPending} onClick={submitSuccessor}>
+              <Button type="button" disabled={!submissionsEnabled || !preview.eligible || !submissionAllowed(preview) || hasSubmitted || submitMutation.isPending} onClick={submitSuccessor}>
                 {submitMutation.isPending ? <><Spinner /> Submitting successor…</> : "Submit one immutable successor Analysis Run"}
               </Button>
               {!preview.eligible && <span className="text-sm text-warning-foreground">Submission is blocked until the listed plan blockers are resolved.</span>}

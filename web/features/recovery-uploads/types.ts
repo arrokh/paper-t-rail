@@ -1,6 +1,7 @@
 export type RecoveryRightsDeclaration = {
   version: string;
   text: string;
+  submissionsEnabled: boolean;
   maxFileBytes: number;
   maxFilesPerBatch: number;
   maxBatchBytes: number;

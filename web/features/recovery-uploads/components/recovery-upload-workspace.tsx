@@ -144,6 +144,7 @@ export function RecoveryUploadWorkspace({
   const [rightsAcceptance, setRightsAcceptance] = useState<{ batchId: string; version: string } | null>(null);
   const batch = batchQuery.data ?? null;
   const rights = rightsQuery.data;
+  const submissionsEnabled = rights?.submissionsEnabled === true && !rightsQuery.isError;
   const rightsAcceptanceIsCurrent = Boolean(
     batch && rights && rightsAcceptance?.batchId === batch.id && rightsAcceptance?.version === rights.version,
   );
@@ -219,11 +220,17 @@ export function RecoveryUploadWorkspace({
 
       {enabled && rightsQuery.isError && !batch && (
         <Alert variant="destructive">
-          <AlertTitle>Current PDF-rights declaration unavailable</AlertTitle>
-          <AlertDescription>{rightsQuery.error instanceof Error ? rightsQuery.error.message : "PDF upload cannot begin until the current declaration is available."} You may still create an identifier-only batch.</AlertDescription>
+          <AlertTitle>Current recovery submission availability unavailable</AlertTitle>
+          <AlertDescription>{rightsQuery.error instanceof Error ? rightsQuery.error.message : "New recovery submissions stay disabled until the current capability is confirmed."} Existing recovery history and reports remain available to inspect.</AlertDescription>
         </Alert>
       )}
-      {enabled && rightsQuery.isPending && <p className="sr-only" role="status">Loading the current PDF-rights declaration</p>}
+      {enabled && rightsQuery.isPending && <p className="sr-only" role="status">Loading the current PDF-rights declaration and recovery submission availability</p>}
+      {enabled && !rightsQuery.isPending && !submissionsEnabled && (
+        <Alert>
+          <AlertTitle>New recovery submissions are disabled</AlertTitle>
+          <AlertDescription>Existing Recovery Batch data, history, and report links remain available to inspect. {batch?.status === "OPEN" ? "Explicit upload and DOI-assistance removal remains available." : batch ? "Submitted or expired batches remain immutable." : "Recovery history and reports remain inspectable without an active batch."}</AlertDescription>
+        </Alert>
+      )}
 
       {enabled && !entriesLoading && entries && entries.length > 0 && rights && batchQuery.isPending && (
         <Card className="shadow-sm"><CardContent className="flex items-center gap-3 py-6 text-sm text-muted-foreground"><Spinner /> Checking for an active Recovery Batch…</CardContent></Card>
@@ -246,11 +253,11 @@ export function RecoveryUploadWorkspace({
         <Card className="shadow-sm">
           <CardHeader>
             <CardTitle className="font-serif text-lg">Start a temporary Recovery Batch</CardTitle>
-            <CardDescription>A batch may be created for DOI-only work without accepting PDF rights. Explicit acceptance of the current declaration is required separately before any PDF upload.</CardDescription>
+            <CardDescription>A batch may be created for DOI-only work when recovery submissions are enabled, without accepting PDF rights. Explicit acceptance of the current declaration is required separately before any PDF upload.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {rights && <p className="m-0 text-sm leading-relaxed text-muted-foreground">Up to {rights.maxFilesPerBatch} PDF versions · {formatBytes(rights.maxBatchBytes)} total · {formatBytes(rights.maxFileBytes)} per file · expires after {Math.ceil(rights.inactivityTtlSeconds / 86_400)} inactive days.</p>}
-            <Button type="button" disabled={createBatch.isPending} onClick={() => {
+            <Button type="button" disabled={!submissionsEnabled || createBatch.isPending} onClick={() => {
               createBatch.reset();
               createBatch.mutate({ analysisRunId, idempotencyKey: globalThis.crypto.randomUUID() });
             }}>
@@ -275,7 +282,7 @@ export function RecoveryUploadWorkspace({
               {rights && batch.status === "OPEN" && batch.rightsDeclaredAt && batch.rightsDeclarationVersion !== rights.version ? (
                 <Alert className="border-warning/40 bg-warning/20 text-warning-foreground">
                   <AlertTitle>PDF-rights declaration changed</AlertTitle>
-                  <AlertDescription>This batch recorded PDF-rights declaration {batch.rightsDeclarationVersion ?? "an earlier version"}, which cannot be changed to {rights.version}. No new PDF version can be uploaded in this batch. Existing candidates may still be reviewed and submitted if the successor preview allows them, and DOI-only assistance remains available. To upload under the current declaration, let this batch expire or submit eligible existing work, then create a new batch and accept {rights.version}.</AlertDescription>
+                  <AlertDescription>This batch recorded PDF-rights declaration {batch.rightsDeclarationVersion ?? "an earlier version"}, which cannot be changed to {rights.version}. No new PDF version can be uploaded in this batch. {submissionsEnabled ? "Existing candidates may still be reviewed and submitted if the successor preview allows them, and DOI-only assistance remains available." : "Existing candidates remain inspectable and available for a read-only successor preview; new submissions and DOI-only changes are unavailable while submissions are disabled."} {submissionsEnabled ? `To upload under the current declaration, let this batch expire or submit eligible existing work, then create a new batch and accept ${rights.version}.` : `After new recovery submissions resume, let this batch expire or submit eligible existing work, then create a new batch and accept ${rights.version}.`}</AlertDescription>
                 </Alert>
               ) : rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version ? (
                 <p className="m-0 text-sm text-success-foreground" role="status">Current PDF-rights declaration {rights.version} accepted at <LocalDateTime value={batch.rightsDeclaredAt} />.</p>
@@ -286,13 +293,13 @@ export function RecoveryUploadWorkspace({
                     <p className="m-0 text-sm leading-relaxed">{rights.text}</p>
                   </div>
                   <Field orientation="horizontal" className="items-start gap-3">
-                    <Checkbox id="recovery-current-rights-accepted" checked={rightsAcceptanceIsCurrent} disabled={isBusy} onCheckedChange={(checked) => setRightsAcceptance(checked === true ? { batchId: batch.id, version: rights.version } : null)} />
+                    <Checkbox id="recovery-current-rights-accepted" checked={rightsAcceptanceIsCurrent} disabled={!submissionsEnabled || isBusy} onCheckedChange={(checked) => setRightsAcceptance(checked === true ? { batchId: batch.id, version: rights.version } : null)} />
                     <div className="min-w-0 space-y-1">
                       <FieldLabel htmlFor="recovery-current-rights-accepted" className="text-sm font-medium">I have read and accept the current PDF-rights declaration</FieldLabel>
                       <FieldDescription>This records your assertion for PDF upload only. It does not authorize provider processing or state that a DOI identifies a PDF.</FieldDescription>
                     </div>
                   </Field>
-                  <Button type="button" variant="secondary" disabled={!rightsAcceptanceIsCurrent || isBusy} onClick={() => {
+                  <Button type="button" variant="secondary" disabled={!submissionsEnabled || !rightsAcceptanceIsCurrent || isBusy} onClick={() => {
                     acceptRights.reset();
                     acceptRights.mutate({ analysisRunId, batchId: batch.id, rightsDeclarationVersion: rights.version });
                   }}>
@@ -302,7 +309,7 @@ export function RecoveryUploadWorkspace({
               ) : rights ? (
                 <p className="m-0 text-sm text-muted-foreground" role="status">This batch no longer accepts PDF-rights changes or uploads.</p>
               ) : (
-                <Alert variant="destructive"><AlertTitle>Current PDF-rights declaration unavailable</AlertTitle><AlertDescription>Identifier-only assistance remains available. PDF uploads stay blocked until the current declaration can be displayed and explicitly accepted.</AlertDescription></Alert>
+                <Alert variant="destructive"><AlertTitle>Current PDF-rights declaration unavailable</AlertTitle><AlertDescription>New recovery submissions remain blocked until the current submission capability and declaration can be confirmed.</AlertDescription></Alert>
               )}
               {batch.rightsDeclarationText && (
                 <Collapsible className="group/recorded-rights rounded-md border border-border bg-background px-3 py-2 text-sm">
@@ -342,8 +349,11 @@ export function RecoveryUploadWorkspace({
                       selectedUploadIds={selectedUploadIds}
                       identifierAssistance={assistance}
                       maxFileBytes={rights?.maxFileBytes ?? null}
-                      canUpload={Boolean(rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version && batch.status === "OPEN")}
-                      disabled={isBusy || batch.status !== "OPEN"}
+                      submissionsEnabled={submissionsEnabled}
+                      canUpload={Boolean(submissionsEnabled && rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version && batch.status === "OPEN")}
+                      disabled={!submissionsEnabled || isBusy || batch.status !== "OPEN"}
+                      removalDisabled={removeUpload.isPending || batch.status !== "OPEN"}
+                      identifierRemovalDisabled={removeIdentifier.isPending || batch.status !== "OPEN"}
                       onUpload={startUpload}
                       onFinalize={finalize}
                       onRemove={remove}
@@ -369,8 +379,11 @@ export function RecoveryUploadWorkspace({
                     selectedUploadIds={new Set(batch.selectedAssets.map((selection) => selection.uploadId))}
                     identifierAssistance={batch.identifierAssistance.find((identifier) => identifier.localReferenceKey === referenceKey)}
                     maxFileBytes={rights?.maxFileBytes ?? null}
-                    canUpload={Boolean(rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version && batch.status === "OPEN")}
-                    disabled={isBusy || batch.status !== "OPEN"}
+                    submissionsEnabled={submissionsEnabled}
+                    canUpload={Boolean(submissionsEnabled && rights && batch.rightsDeclaredAt && batch.rightsDeclarationVersion === rights.version && batch.status === "OPEN")}
+                    disabled={!submissionsEnabled || isBusy || batch.status !== "OPEN"}
+                    removalDisabled={removeUpload.isPending || batch.status !== "OPEN"}
+                    identifierRemovalDisabled={removeIdentifier.isPending || batch.status !== "OPEN"}
                     onUpload={startUpload}
                     onFinalize={finalize}
                     onRemove={remove}
@@ -399,7 +412,7 @@ export function RecoveryUploadWorkspace({
         </>
       )}
       {enabled && !batchQuery.isPending && (
-        <RecoverySuccessorWorkflow key={batch ? `batch-${batch.id}` : "recovery-history"} analysisRunId={analysisRunId} predecessorConfiguration={predecessorConfiguration} predecessorRunStatus={predecessorRunStatus} batch={batch} />
+        <RecoverySuccessorWorkflow key={batch ? `batch-${batch.id}` : "recovery-history"} analysisRunId={analysisRunId} predecessorConfiguration={predecessorConfiguration} predecessorRunStatus={predecessorRunStatus} batch={batch} submissionsEnabled={submissionsEnabled} />
       )}
 
       {enabled && !entriesLoading && !entries && entriesError && (
@@ -643,8 +656,11 @@ function RecoveryUploadReferenceCard({
   selectedUploadIds,
   identifierAssistance,
   maxFileBytes,
+  submissionsEnabled,
   canUpload,
   disabled,
+  removalDisabled,
+  identifierRemovalDisabled,
   onUpload,
   onFinalize,
   onRemove,
@@ -665,8 +681,11 @@ function RecoveryUploadReferenceCard({
   selectedUploadIds: Set<string>;
   identifierAssistance: RecoveryIdentifierAssistance | undefined;
   maxFileBytes: number | null;
+  submissionsEnabled: boolean;
   canUpload: boolean;
   disabled: boolean;
+  removalDisabled: boolean;
+  identifierRemovalDisabled: boolean;
   onUpload: (localReferenceKey: string, file: File, idempotencyKey: string) => void;
   onFinalize: (batchId: string, uploadId: string) => void;
   onRemove: (batchId: string, uploadId: string) => void;
@@ -736,14 +755,14 @@ function RecoveryUploadReferenceCard({
             </div>
             <p className="m-0 text-xs leading-relaxed text-muted-foreground">This assertion identifies the Bibliography Entry only. It is not provider verification, exact PDF identity, lawful access, language eligibility, or claim support.</p>
             <p className="m-0 text-xs text-muted-foreground">Confirmed <LocalDateTime value={identifierAssistance.recordedAt} /></p>
-            <Button type="button" variant="ghost" size="sm" disabled={disabled || identifierActionPending} onClick={() => onRemoveIdentifier(localReferenceKey)}>Remove DOI assistance</Button>
+            <Button type="button" variant="ghost" size="sm" disabled={identifierRemovalDisabled || identifierActionPending} onClick={() => onRemoveIdentifier(localReferenceKey)}>Remove DOI assistance</Button>
           </div>
         ) : null}
         {canStageDoi && (
           <section className="space-y-3 rounded-md border border-border bg-background p-3" aria-label={`DOI-only identity assistance for ${localReferenceKey}`}>
             <div className="space-y-1">
               <p className="m-0 text-sm font-medium">{identifierAssistance ? "Replace DOI-only identity assertion" : "DOI-only identity assistance"}</p>
-              <p className="m-0 text-xs leading-relaxed text-muted-foreground">You may assert that a normalized DOI identifies this unresolved Bibliography Entry without uploading a PDF. This does not identify any exact PDF version and does not make a provider-verified match.</p>
+              <p className="m-0 text-xs leading-relaxed text-muted-foreground">{submissionsEnabled ? "You may assert that a normalized DOI identifies this unresolved Bibliography Entry without uploading a PDF. This does not identify any exact PDF version and does not make a provider-verified match." : "New DOI-only identity assistance is disabled. Existing assertions remain inspectable and may be removed."}</p>
             </div>
             <Field>
               <FieldLabel htmlFor={`recovery-asserted-doi-${batchId}-${encodeURIComponent(localReferenceKey)}`}>DOI you assert identifies this Bibliography Entry</FieldLabel>
@@ -788,6 +807,7 @@ function RecoveryUploadReferenceCard({
                   maxFileBytes={maxFileBytes}
                   canUpload={canUpload && (upload.status === "PENDING_UPLOAD" || upload.status === "FINALIZING")}
                   disabled={disabled}
+                  removalDisabled={removalDisabled}
                   onUpload={onUpload}
                   onFinalize={onFinalize}
                   onRemove={onRemove}
@@ -822,7 +842,7 @@ function RecoveryUploadReferenceCard({
             <span id={fileDescriptionId} className="text-xs text-muted-foreground">Current PDF-rights acceptance is recorded before upload intent.</span>
           </div>
         ) : (
-          <p className="m-0 text-xs leading-relaxed text-muted-foreground">{maxFileBytes === null ? "Upload limits are unavailable; PDF upload is blocked." : "Accept the current PDF-rights declaration before uploading any PDF version."}</p>
+          <p className="m-0 text-xs leading-relaxed text-muted-foreground">{!submissionsEnabled ? "New recovery submissions are disabled; existing candidates remain available to inspect." : maxFileBytes === null ? "Upload limits are unavailable; PDF upload is blocked." : "Accept the current PDF-rights declaration before uploading any PDF version."}</p>
         )}
         {localError && <p className="m-0 text-sm text-destructive" role="alert">{localError}</p>}
       </div>
@@ -839,6 +859,7 @@ function RecoveryUploadVersionCard({
   maxFileBytes,
   canUpload,
   disabled,
+  removalDisabled,
   onUpload,
   onFinalize,
   onRemove,
@@ -856,6 +877,7 @@ function RecoveryUploadVersionCard({
   maxFileBytes: number | null;
   canUpload: boolean;
   disabled: boolean;
+  removalDisabled: boolean;
   onUpload: (localReferenceKey: string, file: File, idempotencyKey: string) => void;
   onFinalize: (batchId: string, uploadId: string) => void;
   onRemove: (batchId: string, uploadId: string) => void;
@@ -1002,7 +1024,7 @@ function RecoveryUploadVersionCard({
           </>
         )}
         {upload && upload.status !== "REMOVED" && upload.status !== "EXPIRED" && (
-          <Button type="button" variant="ghost" size="sm" className={cn("text-muted-foreground hover:text-destructive")} disabled={disabled} onClick={() => onRemove(batchId, upload.id)}>
+          <Button type="button" variant="ghost" size="sm" className={cn("text-muted-foreground hover:text-destructive")} disabled={removalDisabled} onClick={() => onRemove(batchId, upload.id)}>
             Remove upload
           </Button>
         )}
