@@ -1,6 +1,6 @@
 package com.papertrail.api.infrastructure.providers
 
-import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.configuration.ProviderChainSnapshot
 import com.papertrail.api.external.ollama.OllamaEmbeddingSettings
 import com.papertrail.api.external.jev.JevSystemOneSettings
 import com.papertrail.api.external.laya.LayaSystemOneSettings
@@ -9,6 +9,7 @@ import com.papertrail.api.citation.claims.provider.OpenAiCompatibleClaimAnalysis
 import com.papertrail.api.external.openai.OpenAiCompatibleEndpointSettings
 import java.security.MessageDigest
 import com.papertrail.api.infrastructure.providers.http.DataCategoryDisclosure
+import com.papertrail.api.infrastructure.providers.http.ProviderChainOption
 import com.papertrail.api.infrastructure.providers.http.ProviderDirectoryResponse
 import com.papertrail.api.infrastructure.providers.http.ProviderOption
 
@@ -60,7 +61,10 @@ data class ProviderRegistration(
     }
 }
 
-class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
+class ProviderCatalog(
+    registrations: Collection<ProviderRegistration>,
+    private val providerChainEnabled: Boolean = false,
+) {
     private val registrationsByRoleAndId: Map<Pair<String, String>, ProviderRegistration>
 
     init {
@@ -85,27 +89,68 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
     fun directory(): ProviderDirectoryResponse = ProviderDirectoryResponse(
         providers = registrationsByRoleAndId.values
             .filter(ProviderRegistration::enabled)
+            .filterNot { it.providerId == ProviderChainSnapshot.DATACITE_PROVIDER_ID }
             .groupBy(ProviderRegistration::role)
             .toSortedMap()
             .mapValues { (_, registrations) ->
-                registrations.sortedBy(ProviderRegistration::displayName).map { registration ->
-                    ProviderOption(
-                        role = registration.role,
-                        providerId = registration.providerId,
-                        displayName = registration.displayName,
-                        version = registration.version,
-                        model = registration.model,
-                        trustBoundary = registration.trustBoundary.id,
-                        dataCategories = registration.dataCategories.sortedBy { it.id }.map { it.id },
-                        retentionDisclosure = registration.consentDisclosure(),
-                        retentionDisclosureFingerprint = registration.consentDisclosureFingerprint(),
-                    )
-                }
+                registrations.sortedBy(ProviderRegistration::displayName).map { it.toProviderOption() }
             },
         dataCategories = DataCategory.entries.map { DataCategoryDisclosure(it.id, it.label, it.description) },
+        providerChains = availableProviderChainRegistrations()?.let { registrations ->
+            listOf(
+                ProviderChainOption(
+                    chainId = ProviderChainSnapshot.CHAIN_ID,
+                    displayName = "Crossref with exact-DOI DataCite fallback",
+                    description = "Uses Crossref first and performs at most one DataCite lookup for the same normalized DOI; DataCite is not a standalone scholarly metadata or search provider. Each external provider requires separate consent.",
+                    providers = registrations.map { it.toProviderOption() },
+                ),
+            )
+        } ?: emptyList(),
+    )
+
+    fun requireProviderChain(chainId: String): List<ProviderRegistration> {
+        if (chainId != ProviderChainSnapshot.CHAIN_ID) {
+            throw ProviderNotSelectableException("Provider chain '$chainId' is unknown.")
+        }
+        return availableProviderChainRegistrations()
+            ?: throw ProviderNotSelectableException("Provider chain '$chainId' is disabled or unavailable.")
+    }
+
+    private fun availableProviderChainRegistrations(): List<ProviderRegistration>? {
+        if (!providerChainEnabled) return null
+        val registrations = ProviderChainSnapshot.PROVIDER_IDS.map { providerId ->
+            registrationsByRoleAndId[SCHOLARLY_METADATA_ROLE to providerId]
+        }
+        if (registrations.any { it == null }) return null
+        val available = registrations.filterNotNull()
+        if (available.any { !it.enabled || it.trustBoundary != ProviderTrustBoundary.EXTERNAL }) return null
+        val crossrefCategories = available[0].dataCategories
+        val allowedCrossrefCategories = setOf(DataCategory.BIBLIOGRAPHIC_METADATA, DataCategory.PROVIDER_CONTACT_EMAIL)
+        if (DataCategory.BIBLIOGRAPHIC_METADATA !in crossrefCategories ||
+            crossrefCategories.any { it !in allowedCrossrefCategories } ||
+            available[1].dataCategories != setOf(DataCategory.BIBLIOGRAPHIC_METADATA)
+        ) {
+            return null
+        }
+        return available
+    }
+
+    private fun ProviderRegistration.toProviderOption(): ProviderOption = ProviderOption(
+        role = role,
+        providerId = providerId,
+        displayName = displayName,
+        version = version,
+        model = model,
+        trustBoundary = trustBoundary.id,
+        dataCategories = dataCategories.sortedBy { it.id }.map { it.id },
+        retentionDisclosure = consentDisclosure(),
+        retentionDisclosureFingerprint = consentDisclosureFingerprint(),
     )
 
     fun requireSelectable(role: String, providerId: String): ProviderRegistration {
+        if (providerId == ProviderChainSnapshot.DATACITE_PROVIDER_ID) {
+            throw ProviderNotSelectableException("DataCite is available only through a configured provider chain.")
+        }
         val registration = registrationsByRoleAndId[role to providerId]
             ?: throw ProviderNotSelectableException("Provider '$providerId' is unknown or unclassified for role '$role'.")
         if (registration.trustBoundary == ProviderTrustBoundary.UNREVIEWED) {
@@ -129,6 +174,9 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
             layaSystemOneSettings: LayaSystemOneSettings = LayaSystemOneSettings.disabled(),
             openAiCompatibleClaimAnalysisSettings: OpenAiCompatibleClaimAnalysisSettings = OpenAiCompatibleClaimAnalysisSettings.disabled(),
             jevSystemOneSettings: JevSystemOneSettings = JevSystemOneSettings.disabled(),
+            providerChainEnabled: Boolean = false,
+            dataCiteEnabled: Boolean = false,
+            dataCiteRetentionDisclosure: String? = null,
         ): ProviderCatalog {
             require(!unpaywallEnabled || !unpaywallContactEmail.isNullOrBlank()) {
                 "Unpaywall requires a configured provider contact email before it can be enabled."
@@ -189,6 +237,17 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     payloadConfigurationFingerprint = crossrefContactEmail
                         ?.takeIf(String::isNotBlank)
                         ?.let(::sha256Fingerprint),
+                ),
+                ProviderRegistration(
+                    role = SCHOLARLY_METADATA_ROLE,
+                    providerId = ProviderChainSnapshot.DATACITE_PROVIDER_ID,
+                    displayName = "DataCite REST API",
+                    version = "v1",
+                    model = null,
+                    trustBoundary = ProviderTrustBoundary.EXTERNAL,
+                    enabled = dataCiteEnabled,
+                    dataCategories = setOf(DataCategory.BIBLIOGRAPHIC_METADATA),
+                    retentionDisclosure = dataCiteRetentionDisclosure,
                 ),
                 ProviderRegistration(
                     role = CLAIM_EXTRACTOR_ROLE,
@@ -298,6 +357,7 @@ class ProviderCatalog(registrations: Collection<ProviderRegistration>) {
                     configurationFingerprint = jevSystemOneSettings.configurationFingerprint,
                 ),
                 ),
+                providerChainEnabled = providerChainEnabled,
             )
         }
     }

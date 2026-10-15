@@ -169,6 +169,26 @@ class ConservativeReferenceResolverTest {
     }
 
     @Test
+    fun `preflight returns terminal skip decisions before chain provider access`() {
+        val provider = RecordingMetadataProvider()
+        val resolver = ConservativeReferenceResolver(provider, ScholarlyMetadataMatcher(0.9, 0.02))
+
+        val unsupported = resolver.preflight(reference(type = "WEBSITE", doi = "10.1234/site"))
+        val invalid = resolver.preflight(reference(doi = "not-a-doi"))
+        val conflicting = resolver.preflight(
+            reference(doi = "10.1234/first").copy(doiIdentifiers = listOf("10.1234/first", "10.1234/second")),
+        )
+        val validDoi = resolver.preflight(reference(doi = "10.1234/valid"))
+
+        assertEquals("UNSUPPORTED_REFERENCE_TYPE", unsupported?.reasonCode)
+        assertEquals("INVALID_IDENTIFIER", invalid?.reasonCode)
+        assertEquals("CONFLICTING_DOI_IDENTIFIERS", conflicting?.reasonCode)
+        assertNull(validDoi)
+        assertFalse(provider.doiLookupAttempted)
+        assertFalse(provider.searchAttempted)
+    }
+
+    @Test
     fun `keeps conflicting DOI identifiers unresolved without provider lookup`() {
         val provider = RecordingMetadataProvider(
             doiResult = work("10.1234/first", "A paper", listOf("A Author"), 2020),

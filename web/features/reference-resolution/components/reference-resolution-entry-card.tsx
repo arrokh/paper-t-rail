@@ -31,6 +31,11 @@ export function ReferenceResolutionEntryCard({
   const sourcePreviewRef = useRef<HTMLParagraphElement>(null);
   const [hasLongSourceReference, setHasLongSourceReference] = useState(false);
   const displayKey = displayReferenceKey(entry, references);
+  const resolutionText = entry.resolutionOutcome === "NO_CANDIDATE_OR_DOI_UNCONFIRMED"
+    ? entry.doi
+      ? "No public metadata confirmation was found. This does not prove the DOI or work does not exist."
+      : "No public metadata confirmation was found. This does not prove the work does not exist."
+    : entry.reasonCode?.replaceAll("_", " ").toLowerCase();
 
   useEffect(() => {
     if (hasLongSourceReference) return;
@@ -76,10 +81,10 @@ export function ReferenceResolutionEntryCard({
 
       <div className="grid gap-4 border-t border-border p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <dl className="grid gap-3 sm:grid-cols-2">
-            {entry.reasonCode && (
+            {resolutionText && (
               <div className="min-w-0 space-y-1">
                 <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Resolution</dt>
-                <dd className="m-0 break-words text-sm text-foreground">{entry.reasonCode.replaceAll("_", " ").toLowerCase()}</dd>
+                <dd className="m-0 break-words text-sm text-foreground">{resolutionText}</dd>
               </div>
             )}
             {entry.confidenceScore !== null && entry.matchMethod !== "CONFIRMED_DOI" && (
@@ -150,6 +155,52 @@ export function ReferenceResolutionEntryCard({
             </ol>
           </section>
         )}
+
+        <details className="border-t border-border px-4 py-3">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground">Provider resolution history</summary>
+            <div className="mt-3 space-y-3 text-sm">
+              <dl className="grid gap-2 sm:grid-cols-2">
+                <div><dt className="text-xs text-muted-foreground">Provider-chain outcome</dt><dd className="m-0">{entry.resolutionOutcome != null ? entry.resolutionOutcome.replaceAll("_", " ").toLowerCase() : "UNKNOWN"}</dd></div>
+                {entry.metadataOriginProviderId != null && (
+                  <div><dt className="text-xs text-muted-foreground">Metadata selected by the matcher</dt><dd className="m-0">{entry.metadataOriginProviderId}</dd></div>
+                )}
+              </dl>
+              {(entry.providerLookups?.length ?? 0) > 0 && (
+                <div>
+                  <h5 className="m-0 text-xs font-medium text-muted-foreground">Logical lookups</h5>
+                  <ul className="mt-1 space-y-1">
+                    {entry.providerLookups?.map((lookup) => (
+                      <li key={`${lookup.providerId}-${lookup.lookupOrdinal}`}>
+                        {lookup.providerId} · lookup {lookup.lookupOrdinal} · {lookup.source.toLowerCase()} · {lookup.outcomeCode.replaceAll("_", " ").toLowerCase()}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(entry.providerAttempts?.length ?? 0) > 0 && (
+                <div>
+                  <h5 className="m-0 text-xs font-medium text-muted-foreground">Wire attempts</h5>
+                  <ul className="mt-1 space-y-1">
+                    {entry.providerAttempts?.map((attempt) => (
+                      <li key={`${attempt.providerId}-${attempt.attemptOrdinal}`} className="break-words">
+                        {attempt.providerId} · attempt {attempt.attemptOrdinal} · {attempt.state.toLowerCase()}
+                        {attempt.outcomeCode != null ? ` · ${attempt.outcomeCode.replaceAll("_", " ").toLowerCase()}` : ""}
+                        {attempt.httpStatus != null ? ` · HTTP ${attempt.httpStatus}` : ""}
+                        {attempt.durationMillis != null ? ` · ${attempt.durationMillis} ms` : ""}
+                        {attempt.responseBytes != null ? ` · ${attempt.responseBytes} response bytes` : ""}
+                        {` · reserved ${attempt.reservedAt}`}
+                        {attempt.startedAt != null ? ` · started ${attempt.startedAt}` : ""}
+                        {attempt.completedAt != null ? ` · completed ${attempt.completedAt}` : ""}
+                        {attempt.unknownAt != null ? ` · unknown since ${attempt.unknownAt}` : ""}
+                        {attempt.nextAttemptNotBefore != null ? ` · retry not before ${attempt.nextAttemptNotBefore}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <p className="m-0 text-xs text-muted-foreground">This history contains provider identifiers and bounded result codes only; cached lookups are not wire attempts.</p>
+            </div>
+        </details>
 
         <section className="space-y-2 border-t border-border p-4" aria-label={`Original bibliography entry ${displayKey}`}>
           <h5 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Original bibliography entry</h5>

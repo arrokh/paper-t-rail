@@ -27,8 +27,10 @@ data class RunConfigurationRequest(
         requiredMode = Schema.RequiredMode.NOT_REQUIRED,
     )
     val systemOneProvider: String? = null,
-    @field:Schema(description = "Scholarly metadata provider used for conservative bibliography resolution.", defaultValue = "recorded-fixtures", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
-    val scholarlyMetadataProvider: String = "recorded-fixtures",
+    @field:Schema(description = "Scholarly metadata provider used for conservative bibliography resolution. DataCite is available only through a provider chain.", defaultValue = "recorded-fixtures", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+    val scholarlyMetadataProvider: String? = null,
+    @field:Schema(description = "Select a fixed server-defined scholarly metadata provider chain advertised by the provider directory. The only current option is crossref-datacite-exact-doi-v1; do not also select a scalar scholarlyMetadataProvider.", allowableValues = ["crossref-datacite-exact-doi-v1"], requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+    val providerChainId: String? = null,
     @field:Schema(description = "Provider used to discover and acquire legal cited full text.", defaultValue = "recorded-fixtures", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     val openAccessProvider: String = "recorded-fixtures",
     @field:Schema(description = "Client confirmations of the server-issued disclosure fingerprints and exact provider data categories approved for this run. Disclosure text is resolved and snapshotted by the server.", requiredMode = Schema.RequiredMode.NOT_REQUIRED)

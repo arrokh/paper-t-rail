@@ -11,11 +11,14 @@ import com.papertrail.api.scholarly.acquisition.events.CitedPaperAcquisitionRequ
 import com.papertrail.api.scholarly.acquisition.queue.CitedPaperAcquisitionRequestedHandler
 import com.papertrail.api.analysis.events.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_HANDLER
-import com.papertrail.api.scholarly.references.queue.ReferenceResolutionRequestedHandler
+import com.papertrail.api.scholarly.references.queue.ReferenceResolutionQueueHandler
 import com.papertrail.api.analysis.events.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.events.DocumentAnalysisRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
 import com.papertrail.api.infrastructure.messaging.NonRetryablePipelineException
+import com.papertrail.api.infrastructure.messaging.PipelineHandlerDisposition
+import com.papertrail.api.infrastructure.messaging.PipelineHandlerFailureDisposition
+import com.papertrail.api.infrastructure.messaging.PipelineHandlerAttemptPolicy
 import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.events.ReferenceResolutionRequestedPayload
 import jakarta.annotation.PostConstruct
@@ -46,7 +49,7 @@ import java.util.concurrent.TimeUnit
 class RedisStreamWorker(
     private val redis: StringRedisTemplate,
     private val handler: DocumentAnalysisRequestedHandler,
-    private val referenceResolutionHandler: ReferenceResolutionRequestedHandler,
+    private val referenceResolutionHandler: ReferenceResolutionQueueHandler,
     private val citedPaperAcquisitionHandler: CitedPaperAcquisitionRequestedHandler,
     private val citedPaperIndexingHandler: CitedPaperIndexingRequestedHandler,
     @Value("\${paper-trail.queue.stream}") private val stream: String,
@@ -102,7 +105,7 @@ class RedisStreamWorker(
                 .take(batchSize.toInt())
             val pending = if (retryReady.isNotEmpty()) {
                 retryReady
-                    .groupBy { retryDelayMillis(it.totalDeliveryCount) }
+                    .groupBy { retryClaimDelayMillis(it.idAsString, it.totalDeliveryCount) }
                     .flatMap { (backoffMs, messagesForBackoff) ->
                         operations.claim(
                             stream,
@@ -154,7 +157,12 @@ class RedisStreamWorker(
             return
         }
         val redisDeliveryCount = deliveryCount(record.id.value)
-        val eventAttempt = incrementEventAttempt(event.eventId)
+        val attemptPolicy = attemptPolicyFor(event.eventType)
+        val eventAttempt = if (attemptPolicy == PipelineHandlerAttemptPolicy.HANDLER_DISPOSITION) {
+            currentEventAttempt(event.eventId) + 1
+        } else {
+            incrementEventAttempt(event.eventId)
+        }
         val retrySchedule = retryBackoffSchedule(record.id.value)
         if (retrySchedule != null) redis.opsForHash<String, String>().delete(retryBackoffKey, record.id.value)
         val deliveryEvent = event.copy(
@@ -175,16 +183,22 @@ class RedisStreamWorker(
         MDC.put("documentId", event.payload.path("documentId").asText())
         MDC.put("eventType", event.eventType)
         try {
-            processEvent(record, deliveryEnvelope, deliveryEvent)
+            processEvent(record, deliveryEnvelope, deliveryEvent, attemptPolicy)
         } finally {
             if (previousContext == null) MDC.clear() else MDC.setContextMap(previousContext)
         }
+    }
+
+    private fun attemptPolicyFor(eventType: String): PipelineHandlerAttemptPolicy = when (eventType) {
+        REFERENCE_RESOLUTION_REQUESTED -> referenceResolutionHandler.attemptPolicy
+        else -> PipelineHandlerAttemptPolicy.REDIS_DELIVERY
     }
 
     private fun processEvent(
         record: MapRecord<String, String, String>,
         serialized: String,
         event: PipelineEvent<JsonNode>,
+        attemptPolicy: PipelineHandlerAttemptPolicy,
     ) {
         when (event.eventType) {
             DOCUMENT_ANALYSIS_REQUESTED -> {
@@ -197,8 +211,11 @@ class RedisStreamWorker(
                 processTypedEvent(
                     record = record,
                     workDescription = "document analysis",
-                    handle = { handler.handle(serialized) },
-                    markFailed = { reason -> handler.markFailed(typedEvent, reason) },
+                    handle = { handler.handle(serialized); PipelineHandlerDisposition.Done },
+                    markFailed = { reason ->
+                        handler.markFailed(typedEvent, reason)
+                        PipelineHandlerFailureDisposition.FailureRecorded
+                    },
                     eventId = event.eventId,
                 )
             }
@@ -212,9 +229,10 @@ class RedisStreamWorker(
                 processTypedEvent(
                     record = record,
                     workDescription = "bibliography reference resolution",
-                    handle = { referenceResolutionHandler.handle(serialized) },
+                    handle = { referenceResolutionHandler.handleWithDisposition(serialized) },
                     markFailed = { reason -> referenceResolutionHandler.markFailed(typedEvent, reason) },
                     eventId = event.eventId,
+                    attemptPolicy = attemptPolicy,
                 )
             }
             CITED_PAPER_INDEXING_REQUESTED -> {
@@ -227,8 +245,11 @@ class RedisStreamWorker(
                 processTypedEvent(
                     record = record,
                     workDescription = "Cited Paper Evidence Passage indexing",
-                    handle = { citedPaperIndexingHandler.handle(serialized) },
-                    markFailed = { reason -> citedPaperIndexingHandler.markFailed(typedEvent, reason) },
+                    handle = { citedPaperIndexingHandler.handle(serialized); PipelineHandlerDisposition.Done },
+                    markFailed = { reason ->
+                        citedPaperIndexingHandler.markFailed(typedEvent, reason)
+                        PipelineHandlerFailureDisposition.FailureRecorded
+                    },
                     eventId = event.eventId,
                 )
             }
@@ -242,8 +263,11 @@ class RedisStreamWorker(
                 processTypedEvent(
                     record = record,
                     workDescription = "cited-paper access",
-                    handle = { citedPaperAcquisitionHandler.handle(serialized) },
-                    markFailed = { reason -> citedPaperAcquisitionHandler.markFailed(typedEvent, reason) },
+                    handle = { citedPaperAcquisitionHandler.handle(serialized); PipelineHandlerDisposition.Done },
+                    markFailed = { reason ->
+                        citedPaperAcquisitionHandler.markFailed(typedEvent, reason)
+                        PipelineHandlerFailureDisposition.FailureRecorded
+                    },
                     eventId = event.eventId,
                 )
             }
@@ -254,56 +278,138 @@ class RedisStreamWorker(
     private fun processTypedEvent(
         record: MapRecord<String, String, String>,
         workDescription: String,
-        handle: () -> Unit,
-        markFailed: (String) -> Unit,
+        handle: () -> PipelineHandlerDisposition,
+        markFailed: (String) -> PipelineHandlerFailureDisposition,
         eventId: UUID,
+        attemptPolicy: PipelineHandlerAttemptPolicy = PipelineHandlerAttemptPolicy.REDIS_DELIVERY,
     ) {
-        try {
+        val disposition = try {
             val processingLease = startProcessingLease(record.id.value, eventId)
             try {
                 handle()
             } finally {
                 processingLease?.close()
             }
-            acknowledge(record)
-            logger.info("Pipeline event processed")
         } catch (exception: Exception) {
-            val attempts = deliveryCount(record.id.value)
-            val nonRetryable = exception as? NonRetryablePipelineException
-            if (nonRetryable != null || attempts >= maxAttempts) {
-                logger.atWarn()
-                    .addKeyValue("attempt", attempts)
-                    .addKeyValue("errorType", exception.javaClass.simpleName)
-                    .log(if (nonRetryable == null) "Pipeline event failed on its final attempt" else "Pipeline event failed without retry")
-                val reason = nonRetryable?.message?.takeIf(String::isNotBlank)
-                    ?: "The worker could not complete $workDescription after $maxAttempts attempts. The event was moved to the dead-letter queue."
-                val failureCode = if (nonRetryable == null) "HANDLER_RETRIES_EXHAUSTED" else "HANDLER_NON_RETRYABLE"
+            handleProcessingFailure(record, workDescription, markFailed, eventId, attemptPolicy, exception)
+            return
+        }
+
+        when (disposition) {
+            PipelineHandlerDisposition.Done -> {
                 try {
-                    markFailed(reason)
-                    deadLetter(record, failureCode, reason, attempts)
+                    if (attemptPolicy == PipelineHandlerAttemptPolicy.HANDLER_DISPOSITION) incrementEventAttempt(eventId)
+                    acknowledge(record)
+                    logger.info("Pipeline event processed")
+                } catch (exception: Exception) {
+                    logger.atWarn()
+                        .addKeyValue("streamMessageId", record.id.value)
+                        .addKeyValue("errorType", exception.javaClass.simpleName)
+                        .log("Completed pipeline event remains pending for acknowledgement recovery")
+                }
+            }
+            is PipelineHandlerDisposition.Defer -> {
+                try {
+                    scheduleDeferredRetry(record.id.value, eventId, disposition.until)
+                    logger.info("Pipeline event deferred until its owner lease expires")
+                } catch (exception: Exception) {
+                    logger.atWarn()
+                        .addKeyValue("streamMessageId", record.id.value)
+                        .addKeyValue("errorType", exception.javaClass.simpleName)
+                        .log("Deferred pipeline event remains pending for recovery")
+                }
+            }
+            is PipelineHandlerDisposition.TerminalFailure -> {
+                val reason = TERMINAL_HANDLER_FAILURE_REASON
+                try {
+                    processTerminalFailure(
+                        record,
+                        eventId,
+                        disposition.code,
+                        reason,
+                        markFailed,
+                        attemptPolicy,
+                    )
                 } catch (failureException: Exception) {
                     logger.atError()
                         .addKeyValue("streamMessageId", record.id.value)
-                        .addKeyValue("attempt", attempts)
+                        .addKeyValue("attempt", currentEventAttempt(eventId) + 1)
                         .addKeyValue("errorType", failureException.javaClass.simpleName)
-                        .log("Stream message could not be failed durably and remains pending")
+                        .log("Terminal pipeline failure could not be persisted and remains pending")
                 }
-            } else {
-                try {
-                    scheduleRetry(record.id.value, attempts, eventId)
-                    logger.atWarn()
-                        .addKeyValue("streamMessageId", record.id.value)
-                        .addKeyValue("attempt", attempts)
-                        .addKeyValue("errorType", exception.javaClass.simpleName)
-                        .log("Stream message failed; retry scheduled")
-                } catch (scheduleException: Exception) {
-                    logger.atWarn()
-                        .addKeyValue("streamMessageId", record.id.value)
-                        .addKeyValue("attempt", attempts)
-                        .addKeyValue("errorType", scheduleException.javaClass.simpleName)
-                        .addKeyValue("handlerErrorType", exception.javaClass.simpleName)
-                        .log("Stream message failed; it remains pending for recovery")
-                }
+            }
+        }
+    }
+
+    private fun handleProcessingFailure(
+        record: MapRecord<String, String, String>,
+        workDescription: String,
+        markFailed: (String) -> PipelineHandlerFailureDisposition,
+        eventId: UUID,
+        attemptPolicy: PipelineHandlerAttemptPolicy,
+        exception: Exception,
+    ) {
+        val countAfterDisposition = attemptPolicy == PipelineHandlerAttemptPolicy.HANDLER_DISPOSITION
+        val attempts = if (countAfterDisposition) currentEventAttempt(eventId) + 1 else deliveryCount(record.id.value)
+        val nonRetryable = exception as? NonRetryablePipelineException
+        if (nonRetryable != null || attempts >= maxAttempts) {
+            logger.atWarn()
+                .addKeyValue("attempt", attempts)
+                .addKeyValue("errorType", exception.javaClass.simpleName)
+                .log(if (nonRetryable == null) "Pipeline event failed on its final attempt" else "Pipeline event failed without retry")
+            val reason = nonRetryable?.message?.takeIf(String::isNotBlank)
+                ?: "The worker could not complete $workDescription after $maxAttempts attempts. The event was moved to the dead-letter queue."
+            val failureCode = if (nonRetryable == null) "HANDLER_RETRIES_EXHAUSTED" else "HANDLER_NON_RETRYABLE"
+            try {
+                processTerminalFailure(record, eventId, failureCode, reason, markFailed, attemptPolicy)
+            } catch (failureException: Exception) {
+                logger.atError()
+                    .addKeyValue("streamMessageId", record.id.value)
+                    .addKeyValue("attempt", attempts)
+                    .addKeyValue("errorType", failureException.javaClass.simpleName)
+                    .log("Stream message could not be failed durably and remains pending")
+            }
+        } else {
+            try {
+                if (countAfterDisposition) incrementEventAttempt(eventId)
+                scheduleRetry(record.id.value, attempts, eventId)
+                logger.atWarn()
+                    .addKeyValue("streamMessageId", record.id.value)
+                    .addKeyValue("attempt", attempts)
+                    .addKeyValue("errorType", exception.javaClass.simpleName)
+                    .log("Stream message failed; retry scheduled")
+            } catch (scheduleException: Exception) {
+                logger.atWarn()
+                    .addKeyValue("streamMessageId", record.id.value)
+                    .addKeyValue("attempt", attempts)
+                    .addKeyValue("errorType", scheduleException.javaClass.simpleName)
+                    .addKeyValue("handlerErrorType", exception.javaClass.simpleName)
+                    .log("Stream message failed; it remains pending for recovery")
+            }
+        }
+    }
+
+    private fun processTerminalFailure(
+        record: MapRecord<String, String, String>,
+        eventId: UUID,
+        failureCode: String,
+        reason: String,
+        markFailed: (String) -> PipelineHandlerFailureDisposition,
+        attemptPolicy: PipelineHandlerAttemptPolicy,
+    ) {
+        val countAfterDisposition = attemptPolicy == PipelineHandlerAttemptPolicy.HANDLER_DISPOSITION
+        when (val result = markFailed(reason)) {
+            PipelineHandlerFailureDisposition.FailureRecorded -> {
+                val attempts = if (countAfterDisposition) incrementEventAttempt(eventId) else deliveryCount(record.id.value)
+                deadLetter(record, failureCode, reason, attempts)
+            }
+            PipelineHandlerFailureDisposition.AlreadyCompleted -> {
+                if (countAfterDisposition) incrementEventAttempt(eventId)
+                acknowledge(record)
+            }
+            is PipelineHandlerFailureDisposition.Defer -> {
+                scheduleDeferredRetry(record.id.value, eventId, result.until)
+                logger.info("Terminal queue failure deferred because fenced work is still active")
             }
         }
     }
@@ -354,6 +460,9 @@ class RedisStreamWorker(
     private fun retryAfter(messageId: String): Long? = redis.opsForHash<String, String>()
         .get(retryScheduleKey, messageId)
         ?.toLongOrNull()
+
+    private fun retryClaimDelayMillis(messageId: String, deliveryCount: Long): Long =
+        if (retryBackoffSchedule(messageId)?.kind == RetryScheduleKind.DEFER) 0L else retryDelayMillis(deliveryCount)
 
     private fun retryBackoffSchedule(messageId: String): RetryBackoffSchedule? = redis.opsForHash<String, String>()
         .get(retryBackoffKey, messageId)
@@ -428,6 +537,18 @@ class RedisStreamWorker(
         refreshEventAttemptExpiry(eventId, eventAttemptRetentionMs + (dueAt - scheduledAt))
     }
 
+    private fun scheduleDeferredRetry(messageId: String, eventId: UUID, until: Instant) {
+        val scheduledAt = System.currentTimeMillis()
+        val dueAt = maxOf(scheduledAt + MIN_DEFER_DELAY_MILLIS, until.toEpochMilli())
+        redis.opsForHash<String, String>().put(retryScheduleKey, messageId, dueAt.toString())
+        redis.opsForHash<String, String>().put(
+            retryBackoffKey,
+            messageId,
+            JsonUtil.toJson(RetryBackoffSchedule(scheduledAt, dueAt, RetryScheduleKind.DEFER)),
+        )
+        refreshEventAttemptExpiry(eventId, eventAttemptRetentionMs + (dueAt - scheduledAt))
+    }
+
     private fun ensureConsumerGroup(): Boolean {
         if (groupReady) return true
         synchronized(this) {
@@ -458,7 +579,19 @@ class RedisStreamWorker(
 
     private fun eventAttemptKey(eventId: UUID): String = "$stream:event-attempt:$eventId"
 
-    private data class RetryBackoffSchedule(val scheduledAtMillis: Long, val dueAtMillis: Long)
+    private data class RetryBackoffSchedule(
+        val scheduledAtMillis: Long,
+        val dueAtMillis: Long,
+        val kind: RetryScheduleKind = RetryScheduleKind.RETRY,
+    )
+
+    private enum class RetryScheduleKind { RETRY, DEFER }
+
+    private fun currentEventAttempt(eventId: UUID): Long {
+        val stored = redis.opsForValue().get(eventAttemptKey(eventId)) ?: return 0L
+        return stored.toLongOrNull()
+            ?: throw IllegalStateException("Pipeline event attempt counter is invalid.")
+    }
 
     private fun incrementEventAttempt(eventId: UUID): Long = redis.execute(
         INCREMENT_EVENT_ATTEMPT_SCRIPT,
@@ -476,6 +609,8 @@ class RedisStreamWorker(
 
     companion object {
         private const val DEFAULT_EVENT_ATTEMPT_RETENTION_MS = 2_592_000_000L
+        private const val MIN_DEFER_DELAY_MILLIS = 100L
+        private const val TERMINAL_HANDLER_FAILURE_REASON = "The handler reported a terminal failure."
         private val INCREMENT_EVENT_ATTEMPT_SCRIPT = DefaultRedisScript(
             "local attempt = redis.call('INCR', KEYS[1]); redis.call('PEXPIRE', KEYS[1], ARGV[1]); return attempt",
             Long::class.java,

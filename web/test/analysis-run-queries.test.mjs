@@ -61,6 +61,7 @@ test("provider-directory query exposes loading, successful data, and the safe AP
   const expectedDirectory = {
     providers: Object.fromEntries(roles.map((role) => [role, [optionFor(role)]])),
     dataCategories: [],
+    providerChains: [],
   };
   releaseResponse(jsonResponse(directory));
   assert.deepEqual(await pending, expectedDirectory);

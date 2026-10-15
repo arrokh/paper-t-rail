@@ -17,6 +17,7 @@ import { PIPELINE_STAGE_SELECTED_CLASSES, PIPELINE_STAGE_STATE_CLASSES } from "@
 import { PipelineResultMetricFilters, type PipelineResultFilterOption } from "@/features/analysis-runs/components/pipeline-result-metric-filters";
 import { usePipelineResultFilter, usePipelineStageFilterReset } from "@/features/analysis-runs/hooks/use-pipeline-result-filter";
 import type { AnalysisRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
+import { referenceResolutionProviderLabel } from "@/features/analysis-runs/reference-resolution-provider-label";
 import { displayReferenceKey } from "@/lib/display-reference-key";
 import { cn } from "@/lib/utils";
 
@@ -188,7 +189,9 @@ function PipelineConfiguration({
       ]
     : stageId === "references"
       ? [
-          ["Resolver", providerLabel(configuration.referenceResolution?.provider)],
+          ["Resolver", configuration.referenceResolution?.providerChain
+            ? referenceResolutionProviderLabel(configuration.referenceResolution)
+            : providerLabel(configuration.referenceResolution?.provider)],
           ["Execution status", persistedExecutionStatus(report?.referenceResolution.executionStatus, reportLoading, reportError)],
           ["Score policy", configuration.referenceResolution?.scorePolicyVersion ?? "Not configured"],
           ["Match threshold", configuration.referenceResolution?.confidenceThreshold?.toFixed(3) ?? "Not configured"],

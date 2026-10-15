@@ -17,6 +17,9 @@ import com.papertrail.api.analysis.report.service.AnalysisRunReportService
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionProviderLookupReport
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionProviderAttemptReport
+import com.papertrail.api.scholarly.references.attempts.domain.ReferenceResolutionChainOutcome
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
 import com.papertrail.api.scholarly.references.resolver.ScholarlyCandidateEvidence
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
@@ -633,6 +636,12 @@ class OpenApiDocumentationTest {
         val providerOptionProperties = document.path("components").path("schemas").path(providerOptionsSchema).path("properties")
         assertTrue(providerOptionProperties.has("retentionDisclosure"))
         assertTrue(providerOptionProperties.has("retentionDisclosureFingerprint"))
+        assertTrue(directoryProperties.has("providerChains"))
+        val providerChainSchema = directoryProperties.path("providerChains").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val providerChainProperties = document.path("components").path("schemas").path(providerChainSchema).path("properties")
+        assertTrue(providerChainProperties.has("chainId"))
+        assertTrue(providerChainProperties.has("providers"))
+        assertTrue(providerListing.path("description").asText().contains("exact DOI"))
         assertTrue(paths.has("/api/v1/analysis-runs"))
         val analysisRuns = paths.path("/api/v1/analysis-runs")
         val listRuns = analysisRuns.path("get")
@@ -856,6 +865,18 @@ class OpenApiDocumentationTest {
         assertTrue(snapshotProperties.has("claimExtractor"))
         assertTrue(snapshotProperties.has("openAccess"))
         assertTrue(snapshotProperties.has("externalProviderConsents"))
+        assertTrue(snapshotProperties.has("referenceResolution"))
+        val referenceResolutionSchema = snapshotProperties.path("referenceResolution").path("${'$'}ref").asText().substringAfterLast('/')
+        val referenceResolutionProperties = document.path("components").path("schemas").path(referenceResolutionSchema).path("properties")
+        assertTrue(referenceResolutionProperties.has("providerChain"))
+        val providerChainFieldSchema = referenceResolutionProperties.path("providerChain")
+        val providerChainSnapshotSchema = providerChainFieldSchema.path("oneOf").first { it.has("${'$'}ref") }
+            .path("${'$'}ref").asText().substringAfterLast('/')
+        val providerChainSnapshotProperties = document.path("components").path("schemas").path(providerChainSnapshotSchema).path("properties")
+        listOf("chainId", "providers", "mappingVersion", "policyVersion", "limits").forEach { assertTrue(providerChainSnapshotProperties.has(it), "Missing provider-chain snapshot property '$it': field=$providerChainFieldSchema properties=$providerChainSnapshotProperties") }
+        val chainLimitsSchema = providerChainSnapshotProperties.path("limits").path("${'$'}ref").asText().substringAfterLast('/')
+        val chainLimitProperties = document.path("components").path("schemas").path(chainLimitsSchema).path("properties")
+        listOf("maxLogicalLookupsPerReference", "maxWireAttemptsPerReference", "maxRetriesPerReference", "deadlineMillis", "crossrefCandidateLimit", "dataCiteRecordLimit", "maxDecodedJsonBytes").forEach { assertTrue(chainLimitProperties.has(it)) }
         val consentSnapshotSchema = snapshotProperties.path("externalProviderConsents").path("items").path("${'$'}ref").asText().substringAfterLast('/')
         val consentSnapshotProperties = document.path("components").path("schemas").path(consentSnapshotSchema).path("properties")
         assertTrue(consentSnapshotProperties.has("providerId"))
@@ -970,6 +991,30 @@ class OpenApiDocumentationTest {
         assertTrue(citedPaperAccessProperties.path("rightsDeclarationText").path("description").asText().contains("does not grant publication or external-transfer rights"))
         assertTrue(citedPaperAccessProperties.path("discoveredAt").path("description").asText().contains("user-supplied access record was created"))
         assertTrue(citedPaperAccessProperties.has("originatingRecoveryUploadId"))
+        assertTrue(reportEntryProperties.path("resolutionOutcome").path("description").asText().contains("never inferred"))
+        assertTrue(reportEntryProperties.has("metadataOriginProviderId"))
+        val providerLookups = reportEntryProperties.path("providerLookups")
+        assertTrue(providerLookups.path("description").asText().contains("content-free"))
+        val providerLookupSchemaName = providerLookups.path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val providerLookupProperties = document.path("components").path("schemas").path(providerLookupSchemaName).path("properties")
+        assertTrue(providerLookupProperties.has("providerId"))
+        assertTrue(providerLookupProperties.has("source"))
+        assertTrue(providerLookupProperties.has("outcomeCode"))
+        val providerAttempts = reportEntryProperties.path("providerAttempts")
+        assertTrue(providerAttempts.path("description").asText().contains("Bounded wire-attempt history"))
+        val providerAttemptSchemaName = providerAttempts.path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val providerAttemptSchema = document.path("components").path("schemas").path(providerAttemptSchemaName)
+        assertTrue(providerAttemptSchema.path("description").asText().contains("internal owner tokens"))
+        val providerAttemptProperties = providerAttemptSchema.path("properties")
+        assertTrue(providerAttemptProperties.has("attemptOrdinal"))
+        assertTrue(providerAttemptProperties.has("reservedAt"))
+        assertTrue(providerAttemptProperties.has("startedAt"))
+        assertTrue(providerAttemptProperties.has("completedAt"))
+        assertTrue(providerAttemptProperties.has("unknownAt"))
+        assertTrue(providerAttemptProperties.has("httpStatus"))
+        assertTrue(providerAttemptProperties.has("responseBytes"))
+        assertFalse(providerAttemptProperties.has("ownerToken"))
+        assertFalse(providerAttemptProperties.has("lookupOrdinal"))
         val candidateEvidence = reportEntryProperties.path("candidateEvidence")
         assertTrue(candidateEvidence.path("description").asText().contains("Up to three"))
         val candidateSchemaName = candidateEvidence.path("items").path("${'$'}ref").asText().substringAfterLast('/')
@@ -1044,6 +1089,12 @@ class OpenApiDocumentationTest {
         assertTrue(systemOneDescription.contains("Jev by default"))
         assertTrue(systemOneDescription.contains("per-Analysis-Run consent"))
         assertTrue(configProperties.has("scholarlyMetadataProvider"))
+        assertEquals("recorded-fixtures", configProperties.path("scholarlyMetadataProvider").path("default").asText())
+        assertTrue(configProperties.path("scholarlyMetadataProvider").path("description").asText().contains("DataCite is available only through a provider chain"))
+        assertTrue(configProperties.has("providerChainId"))
+        assertTrue(configProperties.path("providerChainId").path("description").asText().contains("crossref-datacite-exact-doi-v1"))
+        assertTrue(configProperties.path("providerChainId").path("description").asText().contains("directory"))
+        assertEquals(listOf("crossref-datacite-exact-doi-v1"), configProperties.path("providerChainId").path("enum").map { it.asText() })
         assertTrue(configProperties.has("openAccessProvider"))
         assertTrue(configProperties.has("externalProviderConsents"))
         assertTrue(configProperties.has("captureExecution"))
@@ -1563,6 +1614,28 @@ class OpenApiDocumentationTest {
                             ),
                             confidenceScore = 1.0,
                             matchMethod = "DOI",
+                            resolutionOutcome = ReferenceResolutionChainOutcome.RESOLVED,
+                            metadataOriginProviderId = "datacite",
+                            providerLookups = listOf(
+                                ReferenceResolutionProviderLookupReport("crossref", 1, "WIRE", "NOT_FOUND"),
+                                ReferenceResolutionProviderLookupReport("datacite", 2, "WIRE", "FOUND"),
+                            ),
+                            providerAttempts = listOf(
+                                ReferenceResolutionProviderAttemptReport(
+                                    providerId = "datacite",
+                                    attemptOrdinal = 1,
+                                    state = "COMPLETED",
+                                    outcomeCode = "FOUND",
+                                    reservedAt = Instant.parse("2025-01-01T00:00:00Z"),
+                                    startedAt = Instant.parse("2025-01-01T00:00:00.010Z"),
+                                    completedAt = Instant.parse("2025-01-01T00:00:00.250Z"),
+                                    unknownAt = null,
+                                    httpStatus = 200,
+                                    durationMillis = 240,
+                                    responseBytes = 512,
+                                    nextAttemptNotBefore = null,
+                                ),
+                            ),
                             candidateEvidence = listOf(
                                 ScholarlyCandidateEvidence(
                                     doi = "10.1234/example",
@@ -1628,6 +1701,14 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.referenceResolution.summary.failed").value(0))
             .andExpect(jsonPath("$.referenceResolution.summary.provisionalArtifactSignalEntries").value(1))
             .andExpect(jsonPath("$.referenceResolution.bibliographyNormalizationPolicy.version").value("3"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].resolutionOutcome").value("RESOLVED"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].metadataOriginProviderId").value("datacite"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].providerLookups[0].providerId").value("crossref"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].providerLookups[1].source").value("WIRE"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].providerAttempts[0].attemptOrdinal").value(1))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].providerAttempts[0].reservedAt").value("2025-01-01T00:00:00Z"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].providerAttempts[0].completedAt").value("2025-01-01T00:00:00.250Z"))
+            .andExpect(jsonPath("$.referenceResolution.entries[0].providerAttempts[0].httpStatus").value(200))
             .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].title").value("Example paper"))
             .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].rankingScore").value(1.0))
             .andExpect(jsonPath("$.referenceResolution.entries[0].candidateEvidence[0].reasonCodes[0]").value("TITLE_EXACT"))

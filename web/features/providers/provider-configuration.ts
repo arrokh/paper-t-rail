@@ -39,6 +39,13 @@ export type ProviderOption = {
   retentionDisclosureFingerprint: string | null;
 };
 
+export type ProviderChainOption = {
+  chainId: "crossref-datacite-exact-doi-v1";
+  displayName: string;
+  description: string;
+  providers: ProviderOption[];
+};
+
 export type DataCategoryDisclosure = {
   id: string;
   label: string;
@@ -48,6 +55,7 @@ export type DataCategoryDisclosure = {
 export type ProviderDirectory = {
   providers: Partial<Record<ProviderRole, ProviderOption[]>>;
   dataCategories: DataCategoryDisclosure[];
+  providerChains?: ProviderChainOption[];
 };
 
 export type ProviderConsentRequirement = {
@@ -101,6 +109,31 @@ export function selectableProviderOptions(directory: ProviderDirectory, role: Pr
   const options: unknown = directory?.providers?.[role];
   if (!Array.isArray(options)) return [];
   return options.filter((option) => isSelectableProviderOption(option, role));
+}
+
+export function selectableProviderChains(directory: ProviderDirectory): ProviderChainOption[] {
+  const options: unknown = directory?.providerChains;
+  if (!Array.isArray(options)) return [];
+  return options.filter((option): option is ProviderChainOption => {
+    if (typeof option !== "object" || option === null) return false;
+    const candidate = option as Partial<ProviderChainOption>;
+    if (candidate.chainId !== "crossref-datacite-exact-doi-v1"
+      || typeof candidate.displayName !== "string"
+      || !candidate.displayName.trim()
+      || typeof candidate.description !== "string"
+      || !candidate.description.trim()
+      || !Array.isArray(candidate.providers)
+      || candidate.providers.length !== 2) return false;
+    const [crossref, dataCite] = candidate.providers;
+    return isSelectableProviderOption(crossref, "scholarlyMetadata")
+      && crossref.providerId === "crossref"
+      && crossref.dataCategories.includes("bibliographic_metadata")
+      && crossref.dataCategories.every((category) => ["bibliographic_metadata", "provider_contact_email"].includes(category))
+      && isSelectableProviderOption(dataCite, "scholarlyMetadata")
+      && dataCite.providerId === "datacite"
+      && dataCite.dataCategories.length === 1
+      && dataCite.dataCategories[0] === "bibliographic_metadata";
+  });
 }
 
 export function availableProviderSelections(
@@ -157,31 +190,41 @@ function hasSelectableProviderForRole(
 export function providerSelectionsAreAvailable(
   directory: ProviderDirectory,
   selections: ProviderSelections,
+  providerChainId: string | null = null,
 ): boolean {
-  return PROVIDER_ROLES.every((role) => hasSelectableProviderForRole(directory, role, selections));
+  const selectedRoles = PROVIDER_ROLES.filter((role) => !(providerChainId && role === "scholarlyMetadata"));
+  if (!selectedRoles.every((role) => hasSelectableProviderForRole(directory, role, selections))) return false;
+  return providerChainId === null
+    || selectableProviderChains(directory).some((chain) => chain.chainId === providerChainId);
 }
 
 export function consentRequirements(
   directory: ProviderDirectory,
   selections: ProviderSelections,
+  providerChainId: string | null = null,
 ): ProviderConsentRequirement[] {
   const grouped = new Map<string, ProviderConsentRequirement>();
-
-  for (const role of PROVIDER_ROLES) {
+  const selectedProviders: ProviderOption[] = PROVIDER_ROLES.flatMap((role) => {
+    if (providerChainId && role === "scholarlyMetadata") return [];
     const selectedId = selections[SELECTION_FIELD_BY_ROLE[role]];
     const selectedProvider = selectableProviderOptions(directory, role)
       .find((provider) => provider.providerId === selectedId);
-    if (selectedProvider?.trustBoundary !== "EXTERNAL") continue;
+    return selectedProvider ? [selectedProvider] : [];
+  });
+  if (providerChainId) {
+    const selectedChain = selectableProviderChains(directory).find((chain) => chain.chainId === providerChainId);
+    if (selectedChain) selectedProviders.push(...selectedChain.providers);
+  }
 
+  for (const selectedProvider of selectedProviders) {
+    if (selectedProvider.trustBoundary !== "EXTERNAL") continue;
     const existing = grouped.get(selectedProvider.providerId);
     if (existing) {
       existing.dataCategories = [...new Set([...existing.dataCategories, ...selectedProvider.dataCategories])].sort();
       continue;
     }
-
     const retentionDisclosureFingerprint = selectedProvider.retentionDisclosureFingerprint;
     if (!retentionDisclosureFingerprint) continue;
-
     grouped.set(selectedProvider.providerId, {
       providerId: selectedProvider.providerId,
       displayName: selectedProvider.displayName,
@@ -190,7 +233,6 @@ export function consentRequirements(
       retentionDisclosureFingerprint,
     });
   }
-
   return [...grouped.values()].sort((left, right) => left.providerId.localeCompare(right.providerId));
 }
 
@@ -224,9 +266,14 @@ export function isRunConfigurationReady(
   selections: ProviderSelections,
   approvedCategories: Record<string, string[]>,
   approvedDisclosureFingerprints: Record<string, string> = {},
+  providerChainId: string | null = null,
 ): boolean {
-  if (!directory || !providerSelectionsAreAvailable(directory, selections)) return false;
-  return missingConsents(consentRequirements(directory, selections), approvedCategories, approvedDisclosureFingerprints).length === 0;
+  if (!directory || !providerSelectionsAreAvailable(directory, selections, providerChainId)) return false;
+  return missingConsents(
+    consentRequirements(directory, selections, providerChainId),
+    approvedCategories,
+    approvedDisclosureFingerprints,
+  ).length === 0;
 }
 
 export function createRunConfiguration(
@@ -234,18 +281,21 @@ export function createRunConfiguration(
   selections: ProviderSelections,
   approvedCategories: Record<string, string[]>,
   approvedDisclosureFingerprints: Record<string, string> = {},
+  providerChainId: string | null = null,
 ): AnalysisRunConfiguration {
-  if (!providerSelectionsAreAvailable(directory, selections)) {
-    throw new Error("Choose an enabled, classified provider for every Analysis Run stage.");
+  if (!providerSelectionsAreAvailable(directory, selections, providerChainId)) {
+    throw new Error("Choose an enabled, classified provider or available fixed provider chain for every Analysis Run stage.");
   }
 
-  const requirements = consentRequirements(directory, selections);
+  const requirements = consentRequirements(directory, selections, providerChainId);
   if (missingConsents(requirements, approvedCategories, approvedDisclosureFingerprints).length > 0) {
     throw new Error("Approve every disclosed data category for each selected external provider, or choose a local provider.");
   }
 
   return {
     ...selections,
+    scholarlyMetadataProvider: providerChainId === null ? selections.scholarlyMetadataProvider : null,
+    ...(providerChainId === null ? {} : { providerChainId }),
     externalProviderConsents: requirements.map((provider) => ({
       providerId: provider.providerId,
       dataCategories: [...provider.dataCategories],

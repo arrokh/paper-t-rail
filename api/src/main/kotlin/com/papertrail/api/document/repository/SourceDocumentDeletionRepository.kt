@@ -9,6 +9,11 @@ class SourceDocumentDeletionRepository(
     private val jdbc: JdbcTemplate,
 ) {
     fun markDeleted(documentId: UUID): TombstoneResult {
+        jdbc.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended(?::text, 0))",
+            { _, _ -> Unit },
+            documentId.toString(),
+        )
         val sourceDocumentExists = jdbc.query(
             "SELECT id FROM source_documents WHERE id = ? FOR UPDATE",
             { rs, _ -> rs.getObject("id", UUID::class.java) },

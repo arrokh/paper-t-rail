@@ -143,10 +143,11 @@ function renderStage(
   selectedStage: "source" | "references" | "verification",
   selectedParsedDocument = parsedDocument,
   selectedReport = referenceReport,
+  selectedRun = run,
 ) {
   return render(
     <AnalysisRunStageResults
-      run={run}
+      run={selectedRun}
       selectedStage={selectedStage}
       backHref="/analysis-runs"
       parsedDocument={selectedParsedDocument}
@@ -160,9 +161,9 @@ function renderStage(
   );
 }
 
-function configureWorkspaceQueries(selectedParsedDocument = parsedDocument) {
+function configureWorkspaceQueries(selectedParsedDocument = parsedDocument, selectedRun = run) {
   queryMocks.useRecentAnalysisRuns.mockReturnValue({
-    data: { items: [run], nextCursor: null, previousCursor: null },
+    data: { items: [selectedRun], nextCursor: null, previousCursor: null },
     isPending: false,
     error: null,
   });
@@ -253,6 +254,51 @@ describe("Analysis Run stage results loading", () => {
 });
 
 describe("Analysis Run bibliography display keys", () => {
+  it("shows provider-chain order and identity across result and workspace views, preserving scalar labels", () => {
+    const chainId = "crossref-datacite-exact-doi-v1";
+    const chainRun: AnalysisRun = {
+      ...run,
+      configuration: {
+        ...run.configuration,
+        referenceResolution: {
+          executionStatus: run.configuration.referenceResolution?.executionStatus ?? "PENDING",
+          provider: null,
+          scorePolicyVersion: run.configuration.referenceResolution?.scorePolicyVersion ?? null,
+          confidenceThreshold: run.configuration.referenceResolution?.confidenceThreshold ?? null,
+          providerChain: { chainId, providers: [{ provider: "crossref" }, { provider: "datacite" }] },
+        },
+      },
+    };
+    const stage = renderStage("references", parsedDocument, referenceReport, chainRun);
+    const resolver = screen.getByText("Resolver").nextElementSibling;
+    expect(resolver?.textContent).toBe(`crossref → datacite (chain: ${chainId})`);
+    stage.unmount();
+
+    configureWorkspaceQueries(parsedDocument, chainRun);
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <AnalysisRunsWorkspace initialSelectedRunId={chainRun.id} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("Configuration").nextElementSibling?.textContent).toContain(`Bibliography crossref → datacite (chain: ${chainId})`);
+
+    const legacyRun: AnalysisRun = {
+      ...run,
+      configuration: {
+        ...run.configuration,
+        referenceResolution: {
+          executionStatus: run.configuration.referenceResolution?.executionStatus ?? "PENDING",
+          provider: { provider: "crossref", version: "v1" },
+          scorePolicyVersion: run.configuration.referenceResolution?.scorePolicyVersion ?? null,
+          confidenceThreshold: run.configuration.referenceResolution?.confidenceThreshold ?? null,
+          providerChain: null,
+        },
+      },
+    };
+    stage.unmount();
+    renderStage("references", parsedDocument, referenceReport, legacyRun);
+    expect(screen.getByText("Resolver").nextElementSibling?.textContent).toBe("crossref · v1");
+  });
   it("explains unresolved matches by their recorded cause and labels ranking scores as uncalibrated", () => {
     const sourceEntry = referenceReport.referenceResolution.entries[0];
     const unresolvedReport = {

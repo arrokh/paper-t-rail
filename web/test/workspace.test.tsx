@@ -79,6 +79,23 @@ const preferredProviderDirectory = {
   },
 };
 
+const chainProviderDirectory = {
+  ...providerDirectory,
+  providers: {
+    ...providerDirectory.providers,
+    systemOne: providerDirectory.providers.systemOne.filter(({ providerId }) => providerId !== "jev"),
+  },
+  providerChains: [{
+    chainId: "crossref-datacite-exact-doi-v1",
+    displayName: "Crossref, then DataCite (exact DOI only)",
+    description: "Crossref first; DataCite lookup only for an exact DOI. DataCite title search is not used.",
+    providers: [
+      preferredProviderDirectory.providers.scholarlyMetadata.find(({ providerId }) => providerId === "crossref"),
+      { role: "scholarlyMetadata", providerId: "datacite", displayName: "DataCite REST API", version: "v1", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: "DataCite request and retention disclosure.", retentionDisclosureFingerprint: "c".repeat(64) },
+    ],
+  }],
+};
+
 function analysisRun(id: string, message: string, status: "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" = "QUEUED") {
   return {
     id,
@@ -266,6 +283,66 @@ describe("interactive workspace remote state", () => {
         { providerId: "crossref", dataCategories: ["bibliographic_metadata"], retentionDisclosureFingerprint: "a".repeat(64) },
         { providerId: "jev", dataCategories: ["atomic_claims", "evidence_passages"], retentionDisclosureFingerprint: "b".repeat(64) },
         { providerId: "unpaywall", dataCategories: ["bibliographic_metadata", "cited_paper_location", "provider_contact_email"], retentionDisclosureFingerprint: "a".repeat(64) },
+      ],
+    });
+  });
+
+  it("submits the fixed bibliography chain only after independent Crossref and DataCite consent", async () => {
+    let submittedConfiguration: Record<string, unknown> | null = null;
+    const runs: ReturnType<typeof analysisRun>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, options: RequestInit = {}) => {
+      const path = String(url);
+      const method = options.method ?? "GET";
+      if (path === "/api/v1/providers") return jsonResponse(chainProviderDirectory);
+      if (path.startsWith("/api/v1/analysis-runs?") && method === "GET") return jsonResponse({ items: runs, nextCursor: null });
+      if (path === "/api/v1/analysis-runs" && method === "POST") {
+        const form = options.body as FormData;
+        submittedConfiguration = JSON.parse(String(form.get("configuration"))) as Record<string, unknown>;
+        runs.push(analysisRun("run-provider-chain", "The provider-chain Analysis Run is selected."));
+        return jsonResponse({
+          documentId: "document-1",
+          analysisRunId: "run-provider-chain",
+          filename: "source.pdf",
+          sourceContentSha256: "a".repeat(64),
+          status: "QUEUED",
+          createdAt: "2025-01-01T00:00:00Z",
+        });
+      }
+      throw new Error(`Unexpected browser request: ${method} ${path}`);
+    }));
+
+    renderWorkspace();
+    await screen.findByRole("heading", { name: "Choose your services" });
+    await waitForProviderDirectory();
+    fireEvent.change(screen.getByLabelText("Bibliography lookup strategy"), {
+      target: { value: "crossref-datacite-exact-doi-v1" },
+    });
+    expect((screen.getByLabelText("Bibliography resolution") as HTMLSelectElement).disabled).toBe(true);
+    await continueToConsentStep();
+    await screen.findByText("Crossref REST API data access");
+    await screen.findByText("DataCite REST API data access");
+
+    const metadataApprovals = screen.getAllByRole("checkbox");
+    expect(metadataApprovals).toHaveLength(2);
+    fireEvent.click(metadataApprovals[0]);
+    expect(screen.getByRole("button", { name: "Continue" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(metadataApprovals[1]);
+    expect(screen.getByText("2 of 2 categories approved")).toBeTruthy();
+    await clickContinue();
+
+    const fileInput = document.querySelector<HTMLInputElement>('input[name="file"]');
+    fireEvent.change(fileInput!, {
+      target: { files: [new File(["pdf"], "source.pdf", { type: "application/pdf" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Upload & start Analysis Run" }));
+
+    expect(await screen.findByRole("link", { name: "Open Analysis Run for source.pdf" })).toBeTruthy();
+    expect(submittedConfiguration).toMatchObject({
+      scholarlyMetadataProvider: null,
+      providerChainId: "crossref-datacite-exact-doi-v1",
+      externalProviderConsents: [
+        { providerId: "crossref", dataCategories: ["bibliographic_metadata"], retentionDisclosureFingerprint: "a".repeat(64) },
+        { providerId: "datacite", dataCategories: ["bibliographic_metadata"], retentionDisclosureFingerprint: "c".repeat(64) },
       ],
     });
   });

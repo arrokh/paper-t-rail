@@ -68,7 +68,7 @@ class RunConfigurationFactory(
     fun parseRequest(node: JsonNode?): RunConfigurationRequest {
         if (node == null || node.isNull) return RunConfigurationRequest()
         require(node.isObject) { "Analysis configuration must be a JSON object." }
-        val allowed = setOf("captureExecution", "claimExtractorProvider", "embeddingProvider", "systemOneProvider", "scholarlyMetadataProvider", "openAccessProvider", "externalProviderConsents")
+        val allowed = setOf("captureExecution", "claimExtractorProvider", "embeddingProvider", "systemOneProvider", "scholarlyMetadataProvider", "providerChainId", "openAccessProvider", "externalProviderConsents")
         val supplied = node.fieldNames().asSequence().toSet()
         require(supplied.all { it in allowed }) { "Analysis configuration contains unsupported fields." }
         fun provider(name: String, default: String): String {
@@ -78,6 +78,7 @@ class RunConfigurationFactory(
         }
         fun optionalProvider(name: String): String? {
             val value = node.get(name) ?: return null
+            if (value.isNull) return null
             require(value.isTextual && value.asText().isNotBlank()) {
                 "Analysis configuration field '$name' must be a non-empty string."
             }
@@ -115,7 +116,8 @@ class RunConfigurationFactory(
             claimExtractorProvider = optionalProvider("claimExtractorProvider"),
             embeddingProvider = optionalProvider("embeddingProvider"),
             systemOneProvider = optionalProvider("systemOneProvider"),
-            scholarlyMetadataProvider = provider("scholarlyMetadataProvider", "recorded-fixtures"),
+            scholarlyMetadataProvider = optionalProvider("scholarlyMetadataProvider"),
+            providerChainId = optionalProvider("providerChainId"),
             openAccessProvider = provider("openAccessProvider", "recorded-fixtures"),
             externalProviderConsents = providerConsents,
         )
@@ -149,6 +151,12 @@ class RunConfigurationFactory(
     }
 
     fun from(request: RunConfigurationRequest): AnalysisConfigurationSnapshot {
+        require(request.providerChainId == null || request.scholarlyMetadataProvider == null) {
+            "A provider chain cannot be combined with an explicit scholarly metadata provider."
+        }
+        val chainRegistrations = request.providerChainId?.let(providerCatalog::requireProviderChain)
+        val metadataRegistration = chainRegistrations?.first()
+            ?: providerCatalog.requireSelectable(SCHOLARLY_METADATA_ROLE, request.scholarlyMetadataProvider ?: "recorded-fixtures")
         val selected = listOf(
             providerCatalog.requireSelectable(
                 CLAIM_EXTRACTOR_ROLE,
@@ -156,10 +164,11 @@ class RunConfigurationFactory(
             ),
             defaultEmbeddingRegistration(request.embeddingProvider),
             defaultSystemOneRegistration(request.systemOneProvider),
-            providerCatalog.requireSelectable(SCHOLARLY_METADATA_ROLE, request.scholarlyMetadataProvider),
+            metadataRegistration,
             providerCatalog.requireSelectable(OPEN_ACCESS_ROLE, request.openAccessProvider),
         )
-        val externalRegistrations = selected
+        val externalRegistrations = (selected + chainRegistrations.orEmpty())
+            .distinctBy { it.role to it.providerId }
             .filter { it.trustBoundary == ProviderTrustBoundary.EXTERNAL }
             .groupBy(ProviderRegistration::providerId)
         val requiredConsents = externalRegistrations
@@ -197,6 +206,35 @@ class RunConfigurationFactory(
             }
             ExternalProviderConsentSnapshot(providerId, requiredCategories.map(DataCategory::id).sorted(), disclosure)
         }.sortedBy(ExternalProviderConsentSnapshot::providerId)
+        val referenceResolution = if (chainRegistrations == null) {
+            ReferenceResolutionSnapshot(
+                executionStatus = "PENDING",
+                provider = selected[3].toSelection(),
+                providerConfigurationFingerprint = selected[3].payloadConfigurationFingerprint,
+                scorePolicyVersion = referenceResolutionPolicyVersion,
+                confidenceThreshold = referenceResolutionConfidenceThreshold,
+            )
+        } else {
+            ReferenceResolutionSnapshot(
+                executionStatus = "PENDING",
+                provider = null,
+                scorePolicyVersion = referenceResolutionPolicyVersion,
+                confidenceThreshold = referenceResolutionConfidenceThreshold,
+                providerChain = ProviderChainSnapshot(
+                    chainId = requireNotNull(request.providerChainId),
+                    providers = chainRegistrations.map { registration ->
+                        registration.toSelection().copy(
+                            configurationFingerprint = registration.payloadConfigurationFingerprint,
+                            retentionDisclosure = registration.consentDisclosure(),
+                            retentionDisclosureFingerprint = registration.consentDisclosureFingerprint(),
+                        )
+                    },
+                    mappingVersion = ProviderChainSnapshot.MAPPING_VERSION,
+                    policyVersion = referenceResolutionPolicyVersion,
+                    limits = ProviderChainLimitsSnapshot.EXACT_DOI_V1,
+                ),
+            )
+        }
         return AnalysisConfigurationSnapshot(
             captureExecution = request.captureExecution,
             claimExtractor = selected[0].toSelection(),
@@ -218,13 +256,7 @@ class RunConfigurationFactory(
             openAccessRetentionDisclosure = consentSnapshots
                 .singleOrNull { it.providerId == selected[4].providerId }
                 ?.retentionDisclosure,
-            referenceResolution = ReferenceResolutionSnapshot(
-                executionStatus = "PENDING",
-                provider = selected[3].toSelection(),
-                providerConfigurationFingerprint = selected[3].payloadConfigurationFingerprint,
-                scorePolicyVersion = referenceResolutionPolicyVersion,
-                confidenceThreshold = referenceResolutionConfidenceThreshold,
-            ),
+            referenceResolution = referenceResolution,
             aggregation = AggregationPolicySnapshot(
                 executionStatus = if (aggregationThresholds == null) "NOT_RUN" else "PENDING",
                 verificationPolicyVersion = aggregationThresholds?.let { EvidenceJudgement.STRENGTH_RUBRIC_VERSION },
