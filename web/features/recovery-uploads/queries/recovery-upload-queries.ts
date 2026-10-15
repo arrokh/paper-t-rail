@@ -21,6 +21,7 @@ import type {
 } from "../types.ts";
 
 const recoveryRightsDeclarationQueryKey = ["recovery-uploads", "rights-declaration"] as const;
+const recoverySubmissionsDisabledQueryKey = ["recovery-uploads", "submissions-disabled"] as const;
 const recoverySubmissionsDisabledCode = "RECOVERY_SUBMISSIONS_DISABLED";
 
 class RecoverySubmissionsDisabledError extends Error {
@@ -47,25 +48,51 @@ async function recoveryApiError(response: Response): Promise<Error> {
   return new Error(await readApiError(response));
 }
 
+function latchRecoverySubmissionsDisabled(queryClient: QueryClient) {
+  queryClient.setQueryData(recoverySubmissionsDisabledQueryKey, true);
+}
+
 function failClosedRecoverySubmissionCapability(queryClient: QueryClient, error: unknown) {
   if (!(error instanceof RecoverySubmissionsDisabledError)) return;
 
+  latchRecoverySubmissionsDisabled(queryClient);
   queryClient.setQueryData<RecoveryRightsDeclaration>(recoveryRightsDeclarationQueryKey, (current) =>
     current ? { ...current, submissionsEnabled: false } : current,
   );
   void queryClient.invalidateQueries({ queryKey: recoveryRightsDeclarationQueryKey, refetchType: "active" });
 }
 
+function recoverySubmissionsDisabledQueryOptions() {
+  return queryOptions({
+    queryKey: recoverySubmissionsDisabledQueryKey,
+    queryFn: () => false,
+    initialData: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+}
+
 export function recoveryRightsDeclarationQueryOptions() {
   return queryOptions({
     queryKey: recoveryRightsDeclarationQueryKey,
-    queryFn: async ({ signal }): Promise<RecoveryRightsDeclaration> => {
-      const response = await fetch("/api/v1/recovery-rights-declaration", {
-        cache: "no-store",
-        signal,
-      });
-      if (!response.ok) throw new Error(await readApiError(response));
-      return (await response.json()) as RecoveryRightsDeclaration;
+    queryFn: async ({ signal, client }): Promise<RecoveryRightsDeclaration> => {
+      try {
+        const response = await fetch("/api/v1/recovery-rights-declaration", {
+          cache: "no-store",
+          signal,
+        });
+        if (!response.ok) throw new Error(await readApiError(response));
+
+        const declaration = (await response.json()) as RecoveryRightsDeclaration;
+        const capabilityWasDisabled = client.getQueryData<boolean>(recoverySubmissionsDisabledQueryKey) === true;
+        if (declaration.submissionsEnabled !== true) latchRecoverySubmissionsDisabled(client);
+        return capabilityWasDisabled || declaration.submissionsEnabled !== true
+          ? { ...declaration, submissionsEnabled: false }
+          : declaration;
+      } catch (error) {
+        if (!signal.aborted) latchRecoverySubmissionsDisabled(client);
+        throw error;
+      }
     },
     retry: false,
     refetchOnWindowFocus: true,
@@ -94,7 +121,15 @@ export function recoveryBatchQueryOptions(analysisRunId: string) {
 }
 
 export function useRecoveryRightsDeclaration() {
-  return useQuery(recoveryRightsDeclarationQueryOptions());
+  const declarationQuery = useQuery(recoveryRightsDeclarationQueryOptions());
+  const submissionsDisabledQuery = useQuery(recoverySubmissionsDisabledQueryOptions());
+
+  return {
+    ...declarationQuery,
+    data: submissionsDisabledQuery.data && declarationQuery.data
+      ? { ...declarationQuery.data, submissionsEnabled: false }
+      : declarationQuery.data,
+  };
 }
 
 export function useRecoveryBatch(analysisRunId: string, enabled: boolean) {

@@ -228,7 +228,7 @@ export function RecoveryUploadWorkspace({
       {enabled && !rightsQuery.isPending && !submissionsEnabled && (
         <Alert>
           <AlertTitle>New recovery submissions are disabled</AlertTitle>
-          <AlertDescription>Existing Recovery Batch data, history, and report links remain available to inspect. {batch?.status === "OPEN" ? "Explicit upload and DOI-assistance removal remains available." : batch ? "Submitted or expired batches remain immutable." : "Recovery history and reports remain inspectable without an active batch."}</AlertDescription>
+          <AlertDescription>Existing Recovery Batch data, history, and report links remain available to inspect. {batch?.status === "OPEN" ? "Explicit removal of uploads and DOI assistance remains available." : batch ? "Submitted or expired batches remain immutable." : "Recovery history and reports remain inspectable without an active batch."}</AlertDescription>
         </Alert>
       )}
 

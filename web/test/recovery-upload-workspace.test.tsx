@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RecoveryUploadWorkspace } from "@/features/recovery-uploads/components/recovery-upload-workspace";
 import type { AnalysisRun, ParsedDocument } from "@/features/analysis-runs/types";
@@ -144,9 +144,10 @@ function renderWorkspace(
   entriesError: string | null = null,
   predecessorRunStatus: AnalysisRun["status"] = "QUEUED",
   captureExecution: boolean | undefined = true,
+  queryClient: QueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
 ) {
   return render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={queryClient}>
       <RecoveryUploadWorkspace
         analysisRunId="run-1"
         predecessorConfiguration={{ ...predecessorConfiguration, captureExecution }}
@@ -217,19 +218,44 @@ describe("Recovery Upload workspace", () => {
     expect(requests.some(({ options }) => options?.method === "POST")).toBe(false);
   });
 
-  it("fails closed when the recovery capability is missing from the declaration response", async () => {
+  it("keeps a missing capability disabled after a later true declaration refetch", async () => {
+    let rightsReads = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === "/api/v1/recovery-rights-declaration") return Response.json({ ...rights, submissionsEnabled: undefined });
+      if (url === "/api/v1/recovery-rights-declaration") {
+        rightsReads += 1;
+        return Response.json({ ...rights, submissionsEnabled: rightsReads === 1 ? undefined : true });
+      }
       if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([]);
       if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [], nextCursor: null });
       throw new Error(`Unexpected request: ${url}`);
     }));
 
-    renderWorkspace();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RecoveryUploadWorkspace
+          analysisRunId="run-1"
+          predecessorConfiguration={predecessorConfiguration}
+          predecessorRunStatus="QUEUED"
+          entries={bibliographyEntries}
+          entriesLoading={false}
+          entriesError={null}
+          enabled
+        />
+      </QueryClientProvider>,
+    );
 
     expect(await screen.findByText("New recovery submissions are disabled")).toBeTruthy();
-    expect((await screen.findByRole("button", { name: "Create Recovery Batch" })).hasAttribute("disabled")).toBe(true);
+    const createButton = await screen.findByRole("button", { name: "Create Recovery Batch" });
+    expect(createButton.hasAttribute("disabled")).toBe(true);
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["recovery-uploads", "rights-declaration"] });
+    });
+
+    await waitFor(() => expect(rightsReads).toBe(2));
+    await waitFor(() => expect(createButton.hasAttribute("disabled")).toBe(true));
+    expect(await screen.findByText("New recovery submissions are disabled")).toBeTruthy();
     expect(await screen.findByRole("region", { name: "Recovery and work history" })).toBeTruthy();
   });
 
@@ -363,7 +389,7 @@ describe("Recovery Upload workspace", () => {
       requests.push({ url, options });
       if (url === "/api/v1/recovery-rights-declaration") {
         rightsReads += 1;
-        return Response.json({ ...rights, submissionsEnabled: rightsReads === 1 });
+        return Response.json({ ...rights, submissionsEnabled: true });
       }
       if (url === "/api/v1/analysis-runs/run-1/recovery-batches" && options?.method === "POST") {
         return Response.json({ code: "RECOVERY_SUBMISSIONS_DISABLED", message: "New recovery submissions are disabled." }, { status: 503 });
@@ -373,15 +399,17 @@ describe("Recovery Upload workspace", () => {
       throw new Error(`Unexpected request: ${url}`);
     }));
 
-    renderWorkspace();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderWorkspace(bibliographyEntries, null, "QUEUED", true, queryClient);
     const createButton = await screen.findByRole("button", { name: "Create Recovery Batch" });
     await waitFor(() => expect(createButton.hasAttribute("disabled")).toBe(false));
     fireEvent.click(createButton);
 
     expect(await screen.findByText(/RECOVERY_SUBMISSIONS_DISABLED/)).toBeTruthy();
     expect(await screen.findByText("New recovery submissions are disabled")).toBeTruthy();
+    await waitFor(() => expect(rightsReads).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(queryClient.isFetching({ queryKey: ["recovery-uploads", "rights-declaration"] })).toBe(0));
     await waitFor(() => expect(createButton.hasAttribute("disabled")).toBe(true));
-    expect(rightsReads).toBeGreaterThanOrEqual(2);
     expect(requests.some(({ options }) => options?.method === "POST")).toBe(true);
     expect(screen.queryByText("Current PDF-rights declaration · recovery-rights-v1")).toBeNull();
   });
