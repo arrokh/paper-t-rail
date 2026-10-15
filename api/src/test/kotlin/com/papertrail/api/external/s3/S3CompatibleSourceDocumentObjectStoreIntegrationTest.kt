@@ -33,7 +33,7 @@ import java.time.Duration
 /** Set PAPER_TRAIL_STORAGE_TEST_ENDPOINT to run against an already-started isolated service. */
 class S3CompatibleSourceDocumentObjectStoreIntegrationTest {
     @Test
-    fun `presigned PDF upload binds the exact byte count and SHA-256 on configured storage`() {
+    fun `presigned PDF upload binds size and SHA-256 across URL replays on configured storage`() {
         val endpoint = System.getenv(STORAGE_TEST_ENDPOINT_ENV)
             ?: objectStorage?.let { "http://${it.host}:${it.getMappedPort(S3_PORT)}" }
             ?: error("The external object-storage test endpoint is missing.")
@@ -82,37 +82,54 @@ class S3CompatibleSourceDocumentObjectStoreIntegrationTest {
             )
             assertFalse(untrustedPreflight.headers().firstValue("Access-Control-Allow-Origin").orElse(null) == "http://untrusted.test")
 
-            val response = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create(upload.url))
-                    .header("Content-Type", "application/pdf")
-                    .header("x-amz-checksum-sha256", upload.checksumSha256)
-                    .PUT(HttpRequest.BodyPublishers.ofByteArray(content))
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray(),
-            )
+            try {
+                val response = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create(upload.url))
+                        .header("Content-Type", "application/pdf")
+                        .header("x-amz-checksum-sha256", upload.checksumSha256)
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(content))
+                        .build(),
+                    HttpResponse.BodyHandlers.ofByteArray(),
+                )
 
-            assertEquals(200, response.statusCode())
-            assertArrayEquals(content, store.get(objectKey))
-            val wrongSize = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create(upload.url))
-                    .header("Content-Type", "application/pdf")
-                    .header("x-amz-checksum-sha256", upload.checksumSha256)
-                    .PUT(HttpRequest.BodyPublishers.ofByteArray(content + byteArrayOf(0)))
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray(),
-            )
-            assertTrue(wrongSize.statusCode() in setOf(400, 403, 411))
+                assertEquals(200, response.statusCode())
+                assertArrayEquals(content, store.get(objectKey))
 
-            val wrongChecksum = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create(upload.url))
-                    .header("Content-Type", "application/pdf")
-                    .header("x-amz-checksum-sha256", upload.checksumSha256)
-                    .PUT(HttpRequest.BodyPublishers.ofByteArray(ByteArray(content.size) { 0x61 }))
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray(),
-            )
-            assertTrue(wrongChecksum.statusCode() >= 400)
-            store.delete(objectKey)
+                val exactReplay = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create(upload.url))
+                        .header("Content-Type", "application/pdf")
+                        .header("x-amz-checksum-sha256", upload.checksumSha256)
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(content))
+                        .build(),
+                    HttpResponse.BodyHandlers.ofByteArray(),
+                )
+                assertEquals(200, exactReplay.statusCode())
+                assertArrayEquals(content, store.get(objectKey))
+
+                val wrongSize = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create(upload.url))
+                        .header("Content-Type", "application/pdf")
+                        .header("x-amz-checksum-sha256", upload.checksumSha256)
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(content + byteArrayOf(0)))
+                        .build(),
+                    HttpResponse.BodyHandlers.ofByteArray(),
+                )
+                assertTrue(wrongSize.statusCode() in setOf(400, 403, 411))
+                assertArrayEquals(content, store.get(objectKey))
+
+                val wrongChecksum = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create(upload.url))
+                        .header("Content-Type", "application/pdf")
+                        .header("x-amz-checksum-sha256", upload.checksumSha256)
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(ByteArray(content.size) { 0x61 }))
+                        .build(),
+                    HttpResponse.BodyHandlers.ofByteArray(),
+                )
+                assertTrue(wrongChecksum.statusCode() >= 400)
+                assertArrayEquals(content, store.get(objectKey))
+            } finally {
+                store.delete(objectKey)
+            }
         }
     }
 
