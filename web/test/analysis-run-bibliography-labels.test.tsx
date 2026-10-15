@@ -299,6 +299,48 @@ describe("Analysis Run bibliography display keys", () => {
     renderStage("references", parsedDocument, referenceReport, legacyRun);
     expect(screen.getByText("Resolver").nextElementSibling?.textContent).toBe("crossref · v1");
   });
+  it("shows saved provider-chain history in the active reference-results card", () => {
+    const sourceEntry = referenceReport.referenceResolution.entries[0];
+    const chainReport = {
+      ...referenceReport,
+      referenceResolution: {
+        ...referenceReport.referenceResolution,
+        entries: [{
+          ...sourceEntry,
+          resolutionOutcome: "RESOLVED",
+          metadataOriginProviderId: "crossref",
+          providerLookups: [{ providerId: "crossref", lookupOrdinal: 1, source: "WIRE", outcomeCode: "FOUND" }],
+          providerAttempts: [{
+            providerId: "crossref",
+            attemptOrdinal: 1,
+            state: "COMPLETED",
+            outcomeCode: "FOUND",
+            reservedAt: "2026-10-15T12:00:00Z",
+            startedAt: "2026-10-15T12:00:00.010Z",
+            completedAt: "2026-10-15T12:00:00.110Z",
+            unknownAt: null,
+            httpStatus: 200,
+            durationMillis: 100,
+            responseBytes: 512,
+            nextAttemptNotBefore: null,
+          }],
+        }],
+      },
+    } as unknown as ReferenceResolutionReportResponse;
+
+    renderStage("references", parsedDocument, chainReport);
+
+    const historyTrigger = screen.getByRole("button", { name: "Provider resolution history" });
+    expect(historyTrigger.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(historyTrigger);
+    expect(historyTrigger.getAttribute("aria-expanded")).toBe("true");
+    const historyText = historyTrigger.parentElement?.textContent ?? "";
+    expect(historyText).toContain("Provider-chain outcomeresolved");
+    expect(historyText).toContain("Metadata selected by the matchercrossref");
+    expect(historyText).toContain("crossref · lookup 1 · wire · found");
+    expect(historyText).toContain("crossref · attempt 1 · completed · found · HTTP 200 · 100 ms · 512 response bytes");
+  });
+
   it("explains unresolved matches by their recorded cause and labels ranking scores as uncalibrated", () => {
     const sourceEntry = referenceReport.referenceResolution.entries[0];
     const unresolvedReport = {

@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
+import { ProviderResolutionHistory } from "@/features/reference-resolution/components/provider-resolution-history";
 import { BackLink } from "@/features/workspace/components/back-link";
 import { PIPELINE_STAGES, PIPELINE_STAGE_STATE_LABELS, pipelineStage, pipelineStageState, type PipelineStageId } from "@/features/analysis-runs/pipeline";
 import { PIPELINE_STAGE_SELECTED_CLASSES, PIPELINE_STAGE_STATE_CLASSES } from "@/features/analysis-runs/components/analysis-pipeline-chart";
@@ -119,7 +120,7 @@ function PipelineStageQuickNavigation({
   onSelectStage: (stage: PipelineStageId) => void;
 }) {
   return (
-    <nav className="mx-auto w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden px-1 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Analysis pipeline stages">
+    <nav className="mx-auto w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden px-1 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Pipeline results stage navigation">
       <ol className="mx-auto flex w-fit min-w-max items-center justify-center gap-1">
         {PIPELINE_STAGES.map((pipelineStage) => {
           const selected = pipelineStage.id === selectedStage;
@@ -464,6 +465,7 @@ function ReferenceMatchCard({ entry, references, view }: { entry: ReportEntry; r
           <p className="mt-2 break-words text-sm leading-relaxed text-muted-foreground">{entry.rawText}</p>
         </details>
       )}
+      <ProviderResolutionHistory entry={entry} className="mt-3 border-t border-border pt-3" />
     </li>
   );
 }
