@@ -76,23 +76,18 @@ export function recoveryRightsDeclarationQueryOptions() {
   return queryOptions({
     queryKey: recoveryRightsDeclarationQueryKey,
     queryFn: async ({ signal, client }): Promise<RecoveryRightsDeclaration> => {
-      try {
-        const response = await fetch("/api/v1/recovery-rights-declaration", {
-          cache: "no-store",
-          signal,
-        });
-        if (!response.ok) throw new Error(await readApiError(response));
+      const response = await fetch("/api/v1/recovery-rights-declaration", {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
 
-        const declaration = (await response.json()) as RecoveryRightsDeclaration;
-        const capabilityWasDisabled = client.getQueryData<boolean>(recoverySubmissionsDisabledQueryKey) === true;
-        if (declaration.submissionsEnabled !== true) latchRecoverySubmissionsDisabled(client);
-        return capabilityWasDisabled || declaration.submissionsEnabled !== true
-          ? { ...declaration, submissionsEnabled: false }
-          : declaration;
-      } catch (error) {
-        if (!signal.aborted) latchRecoverySubmissionsDisabled(client);
-        throw error;
-      }
+      const declaration = (await response.json()) as RecoveryRightsDeclaration;
+      const capabilityWasDisabled = client.getQueryData<boolean>(recoverySubmissionsDisabledQueryKey) === true;
+      if (declaration.submissionsEnabled !== true) latchRecoverySubmissionsDisabled(client);
+      return capabilityWasDisabled || declaration.submissionsEnabled !== true
+        ? { ...declaration, submissionsEnabled: false }
+        : declaration;
     },
     retry: false,
     refetchOnWindowFocus: true,

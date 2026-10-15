@@ -218,6 +218,36 @@ describe("Recovery Upload workspace", () => {
     expect(requests.some(({ options }) => options?.method === "POST")).toBe(false);
   });
 
+  it("recovers submission controls after a transient capability query error", async () => {
+    let rightsReads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/v1/recovery-rights-declaration") {
+        rightsReads += 1;
+        if (rightsReads === 1) throw new Error("Temporary network error");
+        return Response.json(rights);
+      }
+      if (url === "/api/v1/analysis-runs/run-1/recovery-batches") return Response.json([]);
+      if (url.includes("/recovery-history")) return Response.json({ analysisRunId: "run-1", events: [], nextCursor: null });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderWorkspace(bibliographyEntries, null, "QUEUED", true, queryClient);
+
+    const createButton = await screen.findByRole("button", { name: "Create Recovery Batch" });
+    expect(createButton.hasAttribute("disabled")).toBe(true);
+    expect(await screen.findByText("Current recovery submission availability unavailable")).toBeTruthy();
+
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["recovery-uploads", "rights-declaration"] });
+    });
+
+    await waitFor(() => expect(rightsReads).toBe(2));
+    await waitFor(() => expect(createButton.hasAttribute("disabled")).toBe(false));
+    expect(screen.queryByText("Current recovery submission availability unavailable")).toBeNull();
+  });
+
   it("keeps a missing capability disabled after a later true declaration refetch", async () => {
     let rightsReads = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
