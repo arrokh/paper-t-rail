@@ -19,6 +19,7 @@ import com.papertrail.api.analysis.recovery.http.RecoveryUploadAssetSelectionRes
 import com.papertrail.api.analysis.recovery.http.RecoveryUploadValidationResponse
 import com.papertrail.api.analysis.recovery.service.RecoveryHistoryService
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingService
+import com.papertrail.api.analysis.recovery.service.RecoverySubmissionGate
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadIdentityService
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadValidationService
 import com.papertrail.api.http.ApiError
@@ -51,13 +52,14 @@ import java.util.UUID
 @Tag(name = "Recovery Uploads", description = "Temporarily stage rights-declared user PDFs for Bibliography Entries without changing immutable Analysis Runs or starting provider assessment.")
 class RecoveryBatchController(
     private val recoveryStagingService: RecoveryStagingService,
+    private val recoverySubmissionGate: RecoverySubmissionGate,
     private val recoveryUploadValidationService: RecoveryUploadValidationService,
     private val recoveryUploadIdentityService: RecoveryUploadIdentityService,
     private val recoveryHistoryService: RecoveryHistoryService,
 ) {
     @Operation(
         summary = "Read the current Recovery Upload rights declaration",
-        description = "Returns the exact versioned user declaration that the UI must show before creating a Recovery Batch.",
+        description = "Returns the exact versioned user declaration, current policy limits, and authoritative submissionsEnabled UI capability. This response is not cacheable.",
     )
     @ApiResponse(responseCode = "200", description = "Current declaration", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryRightsDeclarationResponse::class))])
     @GetMapping("/recovery-rights-declaration", produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -70,6 +72,7 @@ class RecoveryBatchController(
                 RecoveryRightsDeclarationResponse(
                     version = declaration.version,
                     text = declaration.text,
+                    submissionsEnabled = recoverySubmissionGate.isEnabled,
                     maxFileBytes = limits.maxFileBytes,
                     maxFilesPerBatch = limits.maxFilesPerBatch,
                     maxBatchBytes = limits.maxBatchBytes,
@@ -118,6 +121,7 @@ class RecoveryBatchController(
             ApiResponse(responseCode = "404", description = "Analysis Run not found or its Source Document was deleted", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "409", description = "The rights declaration changed, the batch already records a different snapshot, or the idempotency key was used with a different PDF-rights acceptance", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "410", description = "Idempotency key refers to an expired Recovery Batch", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Recovery submissions are disabled (RECOVERY_SUBMISSIONS_DISABLED).", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/analysis-runs/{analysisRunId}/recovery-batches", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -126,16 +130,19 @@ class RecoveryBatchController(
         @PathVariable analysisRunId: UUID,
         @RequestBody(description = "Idempotency key and optional paired rights acceptance; omit both rights fields for DOI-only work.", required = true, content = [Content(schema = Schema(implementation = CreateRecoveryBatchRequest::class))])
         @Valid @SpringRequestBody request: CreateRecoveryBatchRequest,
-    ): ResponseEntity<RecoveryBatchResponse> = ResponseEntity.ok()
-        .cacheControl(CacheControl.noStore())
-        .body(
-            recoveryStagingService.createBatch(
-                analysisRunId,
-                request.idempotencyKey,
-                request.rightsDeclarationVersion,
-                request.rightsDeclarationAccepted,
-            ).toResponse(),
-        )
+    ): ResponseEntity<RecoveryBatchResponse> {
+        recoverySubmissionGate.requireEnabled()
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(
+                recoveryStagingService.createBatch(
+                    analysisRunId,
+                    request.idempotencyKey,
+                    request.rightsDeclarationVersion,
+                    request.rightsDeclarationAccepted,
+                ).toResponse(),
+            )
+    }
 
     @Operation(
         summary = "Accept the current PDF-rights declaration for a Recovery Batch",
@@ -148,6 +155,7 @@ class RecoveryBatchController(
             ApiResponse(responseCode = "404", description = "Recovery Batch not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "409", description = "The accepted declaration version is no longer current or the batch already records another snapshot", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "410", description = "Recovery Batch has expired", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Recovery submissions are disabled (RECOVERY_SUBMISSIONS_DISABLED).", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/rights-declaration", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -156,9 +164,12 @@ class RecoveryBatchController(
         @PathVariable batchId: UUID,
         @RequestBody(description = "Current declaration version and explicit acceptance.", required = true, content = [Content(schema = Schema(implementation = AcceptRecoveryRightsDeclarationRequest::class))])
         @Valid @SpringRequestBody request: AcceptRecoveryRightsDeclarationRequest,
-    ): ResponseEntity<RecoveryBatchResponse> = ResponseEntity.ok()
-        .cacheControl(CacheControl.noStore())
-        .body(recoveryStagingService.acceptCurrentRightsDeclaration(batchId, request.rightsDeclarationVersion, request.accepted).toResponse())
+    ): ResponseEntity<RecoveryBatchResponse> {
+        recoverySubmissionGate.requireEnabled()
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(recoveryStagingService.acceptCurrentRightsDeclaration(batchId, request.rightsDeclarationVersion, request.accepted).toResponse())
+    }
 
     @Operation(
         summary = "Read paginated Recovery Batch history",
@@ -199,6 +210,7 @@ class RecoveryBatchController(
             ApiResponse(responseCode = "404", description = "Recovery Batch or Bibliography Entry not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "409", description = "Entry is resolved, its type is unsupported, or the batch is no longer open", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "410", description = "Recovery Batch has expired", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Recovery submissions are disabled (RECOVERY_SUBMISSIONS_DISABLED).", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PutMapping("/recovery-batches/{batchId}/entries/{localReferenceKey}/identifier-assistance", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -209,16 +221,19 @@ class RecoveryBatchController(
         @PathVariable localReferenceKey: String,
         @RequestBody(description = "DOI and explicit confirmation that it identifies this Bibliography Entry.", required = true, content = [Content(schema = Schema(implementation = RecoveryIdentifierAssistanceRequest::class))])
         @Valid @SpringRequestBody request: RecoveryIdentifierAssistanceRequest,
-    ): ResponseEntity<RecoveryIdentifierAssistanceResponse> = ResponseEntity.ok()
-        .cacheControl(CacheControl.noStore())
-        .body(
-            RecoveryIdentifierAssistanceResponse.from(
-                recoveryStagingService.setIdentifierAssistance(
-                    batchId, localReferenceKey, request.identifierType, request.identifierValue,
-                    request.confirmsBibliographyIdentity,
+    ): ResponseEntity<RecoveryIdentifierAssistanceResponse> {
+        recoverySubmissionGate.requireEnabled()
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(
+                RecoveryIdentifierAssistanceResponse.from(
+                    recoveryStagingService.setIdentifierAssistance(
+                        batchId, localReferenceKey, request.identifierType, request.identifierValue,
+                        request.confirmsBibliographyIdentity,
+                    ),
                 ),
-            ),
-        )
+            )
+    }
 
     @Operation(
         summary = "Remove staged DOI assistance",
@@ -254,7 +269,7 @@ class RecoveryBatchController(
             ApiResponse(responseCode = "409", description = "PDF-rights declaration is absent or no longer current, or the idempotency key conflicts with a different upload", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "410", description = "Recovery Batch or upload has expired or was removed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "413", description = "File or batch quota exceeded", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "503", description = "Storage or bucket CORS configuration is unavailable", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Recovery submissions are disabled (RECOVERY_SUBMISSIONS_DISABLED), or storage or bucket CORS configuration is unavailable", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/entries/{localReferenceKey}/uploads", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -266,6 +281,7 @@ class RecoveryBatchController(
         @RequestBody(description = "File metadata used to bind the signed request; server verifies actual bytes at finalization.", required = true, content = [Content(schema = Schema(implementation = CreateRecoveryUploadRequest::class))])
         @Valid @SpringRequestBody request: CreateRecoveryUploadRequest,
     ): ResponseEntity<RecoveryUploadIntentResponse> {
+        recoverySubmissionGate.requireEnabled()
         val intent = recoveryStagingService.createUploadIntent(
             batchId = batchId,
             localReferenceKey = localReferenceKey,
@@ -301,7 +317,7 @@ class RecoveryBatchController(
             ApiResponse(responseCode = "409", description = "Staging bytes are missing or another finalization completed first", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "410", description = "Recovery Batch or upload has expired or was removed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "422", description = "Actual byte size or SHA-256 differs from the intent, the PDF is invalid, encrypted, incomplete or unreadable, over the page limit, or has no selectable text (scanned PDFs are unsupported)", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "503", description = "Storage or stable-snapshot verification failed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Recovery submissions are disabled (RECOVERY_SUBMISSIONS_DISABLED), or storage or stable-snapshot verification failed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/finalize", produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -310,9 +326,12 @@ class RecoveryBatchController(
         @PathVariable batchId: UUID,
         @Parameter(description = "Recovery Upload identifier.", required = true)
         @PathVariable uploadId: UUID,
-    ): ResponseEntity<RecoveryUploadResponse> = ResponseEntity.ok()
-        .cacheControl(CacheControl.noStore())
-        .body(recoveryStagingService.finalizeUpload(batchId, uploadId).toResponse())
+    ): ResponseEntity<RecoveryUploadResponse> {
+        recoverySubmissionGate.requireEnabled()
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(recoveryStagingService.finalizeUpload(batchId, uploadId).toResponse())
+    }
 
     @Operation(
         summary = "Validate a finalized Recovery Upload",
@@ -323,6 +342,7 @@ class RecoveryBatchController(
             ApiResponse(responseCode = "200", description = "Persisted validation attempt; FAILED parsing is represented separately from identity and upload validity", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryUploadValidationResponse::class))]),
             ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "409", description = "The upload or Recovery Batch became inactive during validation", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Recovery submissions are disabled (RECOVERY_SUBMISSIONS_DISABLED).", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/validate", produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -331,9 +351,12 @@ class RecoveryBatchController(
         @PathVariable batchId: UUID,
         @Parameter(description = "Finalized Recovery Upload identifier.", required = true)
         @PathVariable uploadId: UUID,
-    ): ResponseEntity<RecoveryUploadValidationResponse> = ResponseEntity.ok()
-        .cacheControl(CacheControl.noStore())
-        .body(recoveryUploadValidationService.validate(batchId, uploadId).toResponse(batchId, uploadId))
+    ): ResponseEntity<RecoveryUploadValidationResponse> {
+        recoverySubmissionGate.requireEnabled()
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(recoveryUploadValidationService.validate(batchId, uploadId).toResponse(batchId, uploadId))
+    }
 
     @Operation(
         summary = "Read the latest Recovery Upload validation attempt",
@@ -370,6 +393,7 @@ class RecoveryBatchController(
             ApiResponse(responseCode = "400", description = "Exact-PDF confirmation was not provided or DOI and candidate fingerprint were incomplete or invalid", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "409", description = "The attempt is stale, uses an old parser, identity, or language policy, is not inconclusive, the DOI candidate does not belong to the attempt, or a different candidate is already confirmed", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Recovery submissions are disabled (RECOVERY_SUBMISSIONS_DISABLED).", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/validation/{attemptId}/confirm-identity", consumes = [MediaType.APPLICATION_JSON_VALUE], produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -382,20 +406,23 @@ class RecoveryBatchController(
         @PathVariable attemptId: UUID,
         @RequestBody(description = "Explicit exact-PDF confirmation, optionally paired with the normalized DOI and candidate fingerprint selected from this validation response.", required = true, content = [Content(schema = Schema(implementation = ConfirmRecoveryIdentityRequest::class))])
         @Valid @SpringRequestBody request: ConfirmRecoveryIdentityRequest,
-    ): ResponseEntity<RecoveryIdentityConfirmationResponse> = ResponseEntity.ok()
-        .cacheControl(CacheControl.noStore())
-        .body(
-            RecoveryIdentityConfirmationResponse.from(
-                recoveryUploadIdentityService.confirmExactVersion(
-                    batchId,
-                    uploadId,
-                    attemptId,
-                    request.confirmExactVersion,
-                    request.confirmedDoi,
-                    request.doiCandidateFingerprint,
+    ): ResponseEntity<RecoveryIdentityConfirmationResponse> {
+        recoverySubmissionGate.requireEnabled()
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(
+                RecoveryIdentityConfirmationResponse.from(
+                    recoveryUploadIdentityService.confirmExactVersion(
+                        batchId,
+                        uploadId,
+                        attemptId,
+                        request.confirmExactVersion,
+                        request.confirmedDoi,
+                        request.doiCandidateFingerprint,
+                    ),
                 ),
-            ),
-        )
+            )
+    }
 
     @Operation(
         summary = "Select one exact Recovery Upload version",
@@ -406,6 +433,7 @@ class RecoveryBatchController(
             ApiResponse(responseCode = "200", description = "Selected exact asset version", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = RecoveryUploadAssetSelectionResponse::class))]),
             ApiResponse(responseCode = "404", description = "Active finalized Recovery Upload not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "409", description = "Validation is missing or stale, a parser, identity, or language policy is outdated, or confirmation or language eligibility is not satisfied", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Recovery submissions are disabled (RECOVERY_SUBMISSIONS_DISABLED).", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping("/recovery-batches/{batchId}/uploads/{uploadId}/select", produces = [MediaType.APPLICATION_JSON_VALUE])
@@ -414,9 +442,12 @@ class RecoveryBatchController(
         @PathVariable batchId: UUID,
         @Parameter(description = "Finalized Recovery Upload identifier.", required = true)
         @PathVariable uploadId: UUID,
-    ): ResponseEntity<RecoveryUploadAssetSelectionResponse> = ResponseEntity.ok()
-        .cacheControl(CacheControl.noStore())
-        .body(RecoveryUploadAssetSelectionResponse.from(recoveryUploadIdentityService.selectExactVersion(batchId, uploadId)))
+    ): ResponseEntity<RecoveryUploadAssetSelectionResponse> {
+        recoverySubmissionGate.requireEnabled()
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.noStore())
+            .body(RecoveryUploadAssetSelectionResponse.from(recoveryUploadIdentityService.selectExactVersion(batchId, uploadId)))
+    }
 
     @Operation(
         summary = "Remove a Recovery Upload",

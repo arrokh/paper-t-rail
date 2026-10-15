@@ -45,6 +45,7 @@ paper-trail:
     bucket: ${S3_BUCKET:source-documents}
     browser-upload-origins: "${S3_BROWSER_UPLOAD_ALLOWED_ORIGINS:http://127.0.0.1:3000,http://localhost:3000}"
   recovery:
+    submissions-enabled: ${PAPER_RECOVERY_SUBMISSIONS_ENABLED:false}
     staging:
       max-file-bytes: ${paper-trail.upload.max-bytes}
       max-files-per-batch: ${PAPER_RECOVERY_MAX_FILES_PER_BATCH:10}
