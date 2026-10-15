@@ -170,15 +170,17 @@ describe("Reference Resolution Entry Card", () => {
       </ol>,
     );
 
-    const summary = screen.getByText("Provider resolution history");
-    fireEvent.click(summary);
-    const history = summary.closest("details");
-    expect(history?.textContent).toContain("Provider-chain outcomeresolved");
-    expect(history?.textContent).toContain("Metadata selected by the matcherdatacite");
-    expect(history?.textContent).toContain("crossref · lookup 1 · wire · not found");
-    expect(history?.textContent).toContain("datacite · attempt 2 · completed · found · HTTP 200 · 240 ms · 512 response bytes · reserved 2025-01-01T00:00:01Z · started 2025-01-01T00:00:01.010Z · completed 2025-01-01T00:00:01.250Z");
-    expect(history?.textContent).toContain("cached lookups are not wire attempts");
-    expect(history?.textContent).not.toContain(entry.rawText);
+    const historyTrigger = screen.getByRole("button", { name: "Provider resolution history" });
+    expect(historyTrigger.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(historyTrigger);
+    expect(historyTrigger.getAttribute("aria-expanded")).toBe("true");
+    const historyText = historyTrigger.parentElement?.textContent ?? "";
+    expect(historyText).toContain("Provider-chain outcomeresolved");
+    expect(historyText).toContain("Metadata selected by the matcherdatacite");
+    expect(historyText).toContain("crossref · lookup 1 · wire · not found");
+    expect(historyText).toContain("datacite · attempt 2 · completed · found · HTTP 200 · 240 ms · 512 response bytes · reserved 2025-01-01T00:00:01Z · started 2025-01-01T00:00:01.010Z · completed 2025-01-01T00:00:01.250Z");
+    expect(historyText).toContain("cached lookups are not wire attempts");
+    expect(historyText).not.toContain(entry.rawText);
   });
 
   it("explains an unconfirmed DOI without implying that the DOI or work does not exist", () => {
@@ -224,9 +226,10 @@ describe("Reference Resolution Entry Card", () => {
       </ol>,
     );
 
-    const summary = screen.getByText("Provider resolution history");
-    fireEvent.click(summary);
-    expect(summary.closest("details")?.textContent).toContain("Provider-chain outcomeUNKNOWN");
+    const historyTrigger = screen.getByRole("button", { name: "Provider resolution history" });
+    fireEvent.click(historyTrigger);
+    expect(historyTrigger.getAttribute("aria-expanded")).toBe("true");
+    expect(historyTrigger.parentElement?.textContent ?? "").toContain("Provider-chain outcomeUNKNOWN");
   });
 
   it("displays generated bibliography keys one-based without changing parsed-entry callbacks", () => {

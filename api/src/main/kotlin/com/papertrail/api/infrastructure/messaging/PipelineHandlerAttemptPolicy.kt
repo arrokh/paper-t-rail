@@ -8,7 +8,3 @@ enum class PipelineHandlerAttemptPolicy {
     /** Only a completed handler disposition consumes an attempt; deferred ownership checks do not. */
     HANDLER_DISPOSITION,
 }
-
-interface PipelineHandlerAttemptPolicyProvider {
-    val attemptPolicy: PipelineHandlerAttemptPolicy
-}
