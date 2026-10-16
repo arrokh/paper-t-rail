@@ -395,6 +395,28 @@ export type ReferenceResolutionReportResponse = {
           | "FULL_TEXT_IDENTITY_VALIDATION_FAILED"
           | "LANGUAGE_UNSUPPORTED"
         >;
+        candidateOutcomes: Array<{
+          ordinal: number;
+          host: string | null;
+          license: string | null;
+          version: string | null;
+          hostType: string | null;
+          outcome: "REJECTED" | "DOWNLOAD_FAILED" | "FORMAT_UNSUPPORTED" | "PARSE_FAILED" | "IDENTITY_UNVERIFIED" | "IDENTITY_MISMATCH" | "IDENTITY_VALIDATION_FAILED" | "ACQUIRED" | "NOT_ATTEMPTED";
+          reasonCodes: Array<
+            | "FULL_TEXT_LOCATION_LICENSE_MISSING"
+            | "FULL_TEXT_LOCATION_LICENSE_REJECTED"
+            | "FULL_TEXT_LOCATION_URL_REJECTED"
+            | "FULL_TEXT_DOWNLOAD_FAILED"
+            | "FULL_TEXT_FORMAT_UNSUPPORTED"
+            | "FULL_TEXT_PARSE_FAILED"
+            | "FULL_TEXT_IDENTITY_UNVERIFIED"
+            | "FULL_TEXT_IDENTITY_MISMATCH"
+            | "FULL_TEXT_IDENTITY_VALIDATION_FAILED"
+            | "MAX_FETCH_ATTEMPTS_REACHED"
+            | "EARLIER_CANDIDATE_ACQUIRED"
+          >;
+        }>;
+        candidateOutcomesOmittedCount: number;
         providerId: string | null;
         sourceUrl: string | null;
         license: string | null;

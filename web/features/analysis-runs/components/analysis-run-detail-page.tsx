@@ -386,7 +386,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
       >
         <TabsList
           aria-label="Analysis Run views"
-          className="mx-auto flex h-12 w-fit max-w-full flex-nowrap overflow-x-auto rounded-lg border border-border bg-muted/70 p-1 shadow-sm"
+          className="mx-auto flex h-12 w-fit max-w-full flex-nowrap justify-start overflow-x-auto rounded-lg border border-border bg-muted/70 p-1 shadow-sm"
         >
           <TabsTrigger value="pipeline" className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}>
             Analysis Pipeline
@@ -395,7 +395,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             value="review"
             onPointerEnter={() => setHasOpenedPaperReview(true)}
             onFocus={() => setHasOpenedPaperReview(true)}
-            className={ANALYSIS_RUN_VIEW_TAB_CLASS_NAME}
+            className={cn(ANALYSIS_RUN_VIEW_TAB_CLASS_NAME, "hidden md:inline-flex")}
           >
             Paper Review
           </TabsTrigger>

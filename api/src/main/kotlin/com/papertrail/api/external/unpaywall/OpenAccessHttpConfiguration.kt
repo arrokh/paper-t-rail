@@ -15,10 +15,8 @@ class OpenAccessHttpConfiguration {
         .requestFactory(requestFactory())
         .build()
 
-    @Bean("openAccessContentRestClient")
-    fun openAccessContentRestClient(): RestClient = RestClient.builder()
-        .requestFactory(requestFactory())
-        .build()
+    @Bean
+    fun openAccessContentTransport(): OpenAccessContentTransport = PinnedPublicHttpsContentTransport()
 
     private fun requestFactory(): JdkClientHttpRequestFactory = JdkClientHttpRequestFactory(
         HttpClient.newBuilder()

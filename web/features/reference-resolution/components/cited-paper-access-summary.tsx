@@ -4,6 +4,7 @@ import { LocalDateTime } from "@/components/local-date-time";
 import { cn } from "@/lib/utils";
 
 type CitedPaperAccess = NonNullable<ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["citedPaperAccess"]>;
+type CandidateOutcome = CitedPaperAccess["candidateOutcomes"][number];
 
 function isHttpsUrl(value: string): boolean {
   try {
@@ -33,6 +34,32 @@ const ACCESS_CAUSE_LABELS: Record<CitedPaperAccess["accessReasons"][number], str
   FULL_TEXT_IDENTITY_MISMATCH: "The file failed the identity check because of a mismatch or unsupported reference type; it was not sent for evidence assessment.",
   FULL_TEXT_IDENTITY_VALIDATION_FAILED: "The system could not complete the file identity check; it was not sent for evidence assessment.",
   LANGUAGE_UNSUPPORTED: "Full text was acquired, but its language was not confirmed as supported English; semantic assessment was not run."
+};
+
+const CANDIDATE_OUTCOME_LABELS: Record<CandidateOutcome["outcome"], string> = {
+  REJECTED: "Rejected by the location policy",
+  DOWNLOAD_FAILED: "Download failed",
+  FORMAT_UNSUPPORTED: "Unsupported format",
+  PARSE_FAILED: "Could not parse",
+  IDENTITY_UNVERIFIED: "Identity unverified",
+  IDENTITY_MISMATCH: "Identity mismatch",
+  IDENTITY_VALIDATION_FAILED: "Identity validation failed",
+  ACQUIRED: "Acquired and identity-checked",
+  NOT_ATTEMPTED: "Not attempted",
+};
+
+const CANDIDATE_REASON_LABELS: Record<CandidateOutcome["reasonCodes"][number], string> = {
+  FULL_TEXT_LOCATION_LICENSE_MISSING: ACCESS_CAUSE_LABELS.FULL_TEXT_LOCATION_LICENSE_MISSING,
+  FULL_TEXT_LOCATION_LICENSE_REJECTED: ACCESS_CAUSE_LABELS.FULL_TEXT_LOCATION_LICENSE_REJECTED,
+  FULL_TEXT_LOCATION_URL_REJECTED: ACCESS_CAUSE_LABELS.FULL_TEXT_LOCATION_URL_REJECTED,
+  FULL_TEXT_DOWNLOAD_FAILED: ACCESS_CAUSE_LABELS.FULL_TEXT_DOWNLOAD_FAILED,
+  FULL_TEXT_FORMAT_UNSUPPORTED: ACCESS_CAUSE_LABELS.FULL_TEXT_FORMAT_UNSUPPORTED,
+  FULL_TEXT_PARSE_FAILED: ACCESS_CAUSE_LABELS.FULL_TEXT_PARSE_FAILED,
+  FULL_TEXT_IDENTITY_UNVERIFIED: ACCESS_CAUSE_LABELS.FULL_TEXT_IDENTITY_UNVERIFIED,
+  FULL_TEXT_IDENTITY_MISMATCH: ACCESS_CAUSE_LABELS.FULL_TEXT_IDENTITY_MISMATCH,
+  FULL_TEXT_IDENTITY_VALIDATION_FAILED: ACCESS_CAUSE_LABELS.FULL_TEXT_IDENTITY_VALIDATION_FAILED,
+  MAX_FETCH_ATTEMPTS_REACHED: "The bounded maximum of five full-text fetch attempts was reached.",
+  EARLIER_CANDIDATE_ACQUIRED: "An earlier location was acquired successfully; this location was not attempted.",
 };
 
 const ACCESS_PROGRESS_REASON_LABELS: Record<string, string> = {
@@ -163,6 +190,34 @@ export function CitedPaperAccessSummary({
           </div>
         )}
       </dl>
+
+      {(access.candidateOutcomes.length > 0 || access.candidateOutcomesOmittedCount > 0) && (
+        <div className="space-y-2 border-t border-border/70 pt-3">
+          <h6 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Full-text location outcomes</h6>
+          <ol className="m-0 list-decimal space-y-2 pl-5 text-sm">
+            {access.candidateOutcomes.map((candidate) => {
+              const metadata = [candidate.license, candidate.version, candidate.hostType].filter(Boolean).join(" · ");
+              return (
+                <li key={candidate.ordinal} className="break-words">
+                  <span className="font-medium">Location {candidate.ordinal}: {CANDIDATE_OUTCOME_LABELS[candidate.outcome]}</span>
+                  {candidate.host && <span className="text-muted-foreground"> · {candidate.host}</span>}
+                  {metadata && <p className="m-0 text-xs text-muted-foreground">{metadata}</p>}
+                  {candidate.reasonCodes.length > 0 && (
+                    <ul className="m-0 list-disc pl-5 text-xs text-muted-foreground">
+                      {candidate.reasonCodes.map((reason) => <li key={reason}>{CANDIDATE_REASON_LABELS[reason]}</li>)}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+          {access.candidateOutcomesOmittedCount > 0 && (
+            <p className="m-0 text-xs text-muted-foreground">
+              {access.candidateOutcomesOmittedCount} additional location outcome{access.candidateOutcomesOmittedCount === 1 ? " was" : "s were"} omitted to keep this report bounded.
+            </p>
+          )}
+        </div>
+      )}
 
       {access.accessStatus === "FULL_TEXT_AVAILABLE" && (
         <p className="m-0 text-sm text-muted-foreground">

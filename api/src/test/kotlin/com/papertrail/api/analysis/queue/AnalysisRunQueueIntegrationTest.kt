@@ -104,6 +104,8 @@ import com.papertrail.api.scholarly.acquisition.client.OpenAccessProvider
 import com.papertrail.api.scholarly.acquisition.client.OpenAccessProviderFactory
 import com.papertrail.api.external.unpaywall.RedisUnpaywallDiscoveryCache
 import com.papertrail.api.external.unpaywall.UnpaywallOpenAccessProviderFactory
+import com.papertrail.api.external.unpaywall.OpenAccessContentResponse
+import com.papertrail.api.external.unpaywall.OpenAccessContentTransport
 import com.papertrail.api.scholarly.acquisition.client.RecordedFixtureOpenAccessProviderFactory
 import com.papertrail.api.scholarly.acquisition.domain.AcquiredFullText
 import com.papertrail.api.scholarly.acquisition.domain.UserSuppliedCitedPaperFullText
@@ -278,6 +280,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
+import java.net.UnknownHostException
 import java.sql.Timestamp
 import java.time.Duration
 import java.time.Instant
@@ -1636,9 +1639,10 @@ class AnalysisRunQueueIntegrationTest {
             UUID.randomUUID(), run.analysisRunId, contextId, predecessorClaimId, retainedTargetId,
         )
         val retainedHash = "b".repeat(64)
+        val retainedCandidateOutcomes = """[{"ordinal":1,"host":"repository.example","license":"CC0-1.0","version":"publishedVersion","hostType":"repository","outcome":"ACQUIRED","reasonCodes":[]}]"""
         jdbc.update(
-            "INSERT INTO cited_paper_access (analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status, access_reason, access_reasons, provider_id, metadata_available, abstract_available, source_url, license_identifier, location_version, location_host_type, discovered_at, object_key, content_sha256, content_media_type, language, language_detector_version) VALUES (?, ?, ?, 'FULL_TEXT_AVAILABLE', NULL, '[]'::jsonb, 'recorded-fixtures', TRUE, FALSE, 'https://fixture.invalid/paper.pdf', 'CC-BY-4.0', 'v1', 'FIXTURE', now(), 'papers/retained.pdf', ?, 'application/pdf', 'en', 'optimaize-0.6')",
-            run.analysisRunId, retainedEntryId, retainedCanonicalPaperId, retainedHash,
+            "INSERT INTO cited_paper_access (analysis_run_id, bibliography_entry_id, canonical_paper_id, access_status, access_reason, access_reasons, candidate_outcomes, candidate_outcomes_omitted_count, provider_id, metadata_available, abstract_available, source_url, license_identifier, location_version, location_host_type, discovered_at, object_key, content_sha256, content_media_type, language, language_detector_version) VALUES (?, ?, ?, 'FULL_TEXT_AVAILABLE', NULL, '[]'::jsonb, ?::jsonb, 2, 'recorded-fixtures', TRUE, FALSE, 'https://fixture.invalid/paper.pdf', 'CC-BY-4.0', 'v1', 'FIXTURE', now(), 'papers/retained.pdf', ?, 'application/pdf', 'en', 'optimaize-0.6')",
+            run.analysisRunId, retainedEntryId, retainedCanonicalPaperId, retainedCandidateOutcomes, retainedHash,
         )
         val retainedVerificationId = UUID.randomUUID()
         jdbc.update(
@@ -2086,6 +2090,28 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(expectedRetainedStages.size, retainedHistoryStages.size)
         assertNotEquals(retainedEntryId, retainedSuccessorEntryId)
         assertNotEquals(retainedVerificationId, retainedSuccessorVerificationId)
+        val retainedCandidateOutcomesJson = jdbc.queryForObject(
+            "SELECT candidate_outcomes::text FROM cited_paper_access WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+            String::class.java,
+            run.analysisRunId,
+            retainedEntryId,
+        )
+        val successorCandidateOutcomesJson = jdbc.queryForObject(
+            "SELECT candidate_outcomes::text FROM cited_paper_access WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+            String::class.java,
+            successorRunId,
+            retainedSuccessorEntryId,
+        )
+        assertEquals(objectMapper.readTree(retainedCandidateOutcomesJson), objectMapper.readTree(successorCandidateOutcomesJson))
+        assertEquals(
+            2,
+            jdbc.queryForObject(
+                "SELECT candidate_outcomes_omitted_count FROM cited_paper_access WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+                Int::class.java,
+                successorRunId,
+                retainedSuccessorEntryId,
+            ),
+        )
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM cited_paper_indexing indexing JOIN bibliography_entries entry ON entry.analysis_run_id = indexing.analysis_run_id AND entry.id = indexing.bibliography_entry_id WHERE indexing.analysis_run_id = ? AND entry.local_reference_key = 'b2' AND indexing.status = 'COMPLETED'", Int::class.java, successorRunId))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM cited_paper_parses WHERE analysis_run_id = ? AND bibliography_entry_id = ?", Int::class.java, successorRunId, retainedSuccessorEntryId))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM paper_chunks WHERE analysis_run_id = ? AND bibliography_entry_id = ?", Int::class.java, successorRunId, retainedSuccessorEntryId))
@@ -4887,9 +4913,11 @@ class AnalysisRunQueueIntegrationTest {
         )!!
         eventHandler().handle(documentEvent)
         val locations = listOf(
-            OpenAccessLocation("fixture://recorded/missing", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures"),
-            OpenAccessLocation("fixture://recorded/available", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures"),
-        )
+            OpenAccessLocation("fixture://private-host/paper?token=do-not-persist", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures"),
+            OpenAccessLocation("fixture://public-host/available", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures"),
+        ) + (3..52).map { ordinal ->
+            OpenAccessLocation("fixture://ignored-$ordinal/paper", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures")
+        }
         val fetchCalls = AtomicInteger()
         val factory = object : OpenAccessProviderFactory {
             override val providerId = "recorded-fixtures"
@@ -4900,7 +4928,10 @@ class AnalysisRunQueueIntegrationTest {
 
                 override fun fetch(location: OpenAccessLocation): AcquiredFullText {
                     fetchCalls.incrementAndGet()
-                    check(location.url.endsWith("available")) { "The first recorded location is unavailable." }
+                    if (location.url.contains("private-host")) {
+                        throw UnknownHostException("A DNS answer changed to 10.0.0.8 for a private test location.")
+                    }
+                    check(location.url.endsWith("available"))
                     return AcquiredFullText("English full-text evidence from the repository.".toByteArray(), "text/plain", location)
                 }
             }
@@ -4913,7 +4944,60 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(2, fetchCalls.get())
         assertEquals("FULL_TEXT_AVAILABLE", access.accessStatus)
         assertNull(access.accessReason)
-        assertEquals("fixture://recorded/available", access.sourceUrl)
+        assertEquals("fixture://public-host/available", access.sourceUrl)
+        assertEquals(listOf("FULL_TEXT_LOCATION_URL_REJECTED"), access.accessReasons)
+        assertEquals(5, access.candidateOutcomes.size)
+        assertEquals(47, access.candidateOutcomesOmittedCount)
+        assertEquals((1..5).toList(), access.candidateOutcomes.map { it.ordinal })
+        assertEquals("private-host", access.candidateOutcomes[0].host)
+        assertEquals("REJECTED", access.candidateOutcomes[0].outcome)
+        assertEquals(listOf("FULL_TEXT_LOCATION_URL_REJECTED"), access.candidateOutcomes[0].reasonCodes)
+        assertEquals("ACQUIRED", access.candidateOutcomes[1].outcome)
+        assertEquals("public-host", access.candidateOutcomes[1].host)
+        assertTrue(access.candidateOutcomes.drop(2).all {
+            it.outcome == "NOT_ATTEMPTED" && it.reasonCodes == listOf("EARLIER_CANDIDATE_ACQUIRED")
+        })
+        val persistedCandidateOutcomes = objectMapper.writeValueAsString(access.candidateOutcomes)
+        assertFalse(persistedCandidateOutcomes.contains("do-not-persist"))
+        assertFalse(persistedCandidateOutcomes.contains("/paper"))
+    }
+
+    @Test
+    fun `candidate outcomes preserve the five fetch attempt ceiling`() {
+        val created = createQueuedRun()
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val locations = (1..6).map { ordinal ->
+            OpenAccessLocation("fixture://repository-$ordinal/paper", "CC0-1.0", "publishedVersion", "repository", "recorded-fixtures")
+        }
+        val fetchCalls = AtomicInteger()
+        val factory = object : OpenAccessProviderFactory {
+            override val providerId = "recorded-fixtures"
+
+            override fun forRun(configuration: AnalysisConfigurationSnapshot): OpenAccessProvider = object : OpenAccessProvider {
+                override fun discover(reference: BibliographyReference) =
+                    OpenAccessDiscovery(true, false, locations, providerId, Instant.now())
+
+                override fun fetch(location: OpenAccessLocation): AcquiredFullText {
+                    fetchCalls.incrementAndGet()
+                    throw IllegalStateException("Synthetic bounded download failure.")
+                }
+            }
+        }
+
+        processReferenceResolutionEvents(created.analysisRunId, listOf(factory))
+
+        val access = analysisRunReportService().report(created.analysisRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "ref1" }.citedPaperAccess!!
+        assertEquals(5, fetchCalls.get())
+        assertEquals(listOf("DOWNLOAD_FAILED", "DOWNLOAD_FAILED", "DOWNLOAD_FAILED", "DOWNLOAD_FAILED", "DOWNLOAD_FAILED"), access.candidateOutcomes.map { it.outcome })
+        assertEquals(1, access.candidateOutcomesOmittedCount)
+        assertEquals((1..5).toList(), access.candidateOutcomes.map { it.ordinal })
     }
 
     @Test
@@ -4939,9 +5023,8 @@ class AnalysisRunQueueIntegrationTest {
             ),
         )
         val discoveryBuilder = RestClient.builder().baseUrl("https://api.unpaywall.org")
-        val contentBuilder = RestClient.builder()
         val discoveryServer = MockRestServiceServer.bindTo(discoveryBuilder).build()
-        val contentServer = MockRestServiceServer.bindTo(contentBuilder).build()
+        val contentTransport = Mockito.mock(OpenAccessContentTransport::class.java)
         val factory = UnpaywallOpenAccessProviderFactory(
             providerCallGate = ProviderCallGate(catalog),
             discoveryCache = RedisUnpaywallDiscoveryCache(
@@ -4950,7 +5033,7 @@ class AnalysisRunQueueIntegrationTest {
                 Duration.ofHours(1),
             ),
             unpaywallClient = discoveryBuilder.build(),
-            contentClient = contentBuilder.build(),
+            contentTransport = contentTransport,
             contactEmail = contactEmail,
             maximumBytes = 1_000_000,
         )
@@ -4964,9 +5047,9 @@ class AnalysisRunQueueIntegrationTest {
                 """{"doi":"10.5555/papertrail.fixture.reference-resolution.2024","abstract":"Available summary","oa_locations":[{"url_for_pdf":"https://8.8.8.8/restricted.pdf","license":"all-rights-reserved","version":"publishedVersion","host_type":"repository"},{"url_for_pdf":"https://8.8.4.4/legal.txt","license":"cc-by","version":"publishedVersion","host_type":"repository"}]}""",
                 MediaType.APPLICATION_JSON,
             ))
-        contentServer.expect(ExpectedCount.twice(), requestTo("https://8.8.4.4/legal.txt"))
-            .andRespond(withSuccess(ENGLISH.repeat(10), MediaType.TEXT_PLAIN))
-        contentServer.expect(ExpectedCount.never(), requestTo("https://8.8.8.8/restricted.pdf"))
+        Mockito.`when`(
+            contentTransport.fetch("https://8.8.4.4/legal.txt", 1_000_000, setOf("application/pdf", "text/plain")),
+        ).thenReturn(OpenAccessContentResponse(200, "text/plain", ENGLISH.repeat(10).toByteArray()))
 
         runs.forEach { run ->
             val documentEvent = jdbc.queryForObject(
@@ -4980,7 +5063,10 @@ class AnalysisRunQueueIntegrationTest {
         }
 
         discoveryServer.verify()
-        contentServer.verify()
+        Mockito.verify(contentTransport, Mockito.times(2)).fetch(
+            "https://8.8.4.4/legal.txt", 1_000_000, setOf("application/pdf", "text/plain"),
+        )
+        Mockito.verifyNoMoreInteractions(contentTransport)
         val outcomes = jdbc.query(
             "SELECT analysis_run_id, provider_id, access_status, source_url, object_key, discovered_at FROM cited_paper_access ORDER BY analysis_run_id",
         ) { rs, _ ->
@@ -5265,6 +5351,19 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(
             listOf("FULL_TEXT_LOCATION_URL_REJECTED", "FULL_TEXT_DOWNLOAD_FAILED", "FULL_TEXT_FORMAT_UNSUPPORTED", "FULL_TEXT_PARSE_FAILED"),
             access.accessReasons,
+        )
+        assertEquals(
+            listOf("DOWNLOAD_FAILED", "FORMAT_UNSUPPORTED", "PARSE_FAILED", "REJECTED"),
+            access.candidateOutcomes.map { it.outcome },
+        )
+        assertEquals(
+            listOf(
+                listOf("FULL_TEXT_DOWNLOAD_FAILED"),
+                listOf("FULL_TEXT_FORMAT_UNSUPPORTED"),
+                listOf("FULL_TEXT_PARSE_FAILED"),
+                listOf("FULL_TEXT_LOCATION_URL_REJECTED"),
+            ),
+            access.candidateOutcomes.map { it.reasonCodes },
         )
         assertEquals(
             access.accessReasons.toSet(),
@@ -8685,6 +8784,24 @@ class AnalysisRunQueueIntegrationTest {
             val detailedAccessCausesMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("detailed_cited_paper_access_causes.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(detailedAccessCausesMigrationVerification)) }
+            }
+            val acquisitionCandidateMigration = migrationDirectory.resolve("cited_paper_acquisition_candidate_outcomes.sql")
+            val acquisitionCandidateVerification = migrationDirectory.resolveSibling("verify").resolve("cited_paper_acquisition_candidate_outcomes.sql")
+            val acquisitionCandidateRevert = migrationDirectory.resolveSibling("revert").resolve("cited_paper_acquisition_candidate_outcomes.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(acquisitionCandidateMigration)) }
+            }
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(acquisitionCandidateVerification)) }
+            }
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(acquisitionCandidateRevert)) }
+            }
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(acquisitionCandidateMigration)) }
+            }
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(acquisitionCandidateVerification)) }
             }
             val automaticIdentityGateMigration = migrationDirectory.resolve("automatic_cited_paper_identity_gate.sql")
             dataSource.connection.use { connection ->

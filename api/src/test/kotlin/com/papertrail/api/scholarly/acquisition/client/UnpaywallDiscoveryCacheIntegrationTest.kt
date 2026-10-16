@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory
 import org.springframework.data.redis.core.StringRedisTemplate
@@ -52,6 +53,7 @@ import com.papertrail.api.external.unpaywall.RedisUnpaywallDiscoveryCache
 import com.papertrail.api.external.unpaywall.UnpaywallDiscoveryCache
 import com.papertrail.api.external.unpaywall.UnpaywallDiscoveryCacheEntry
 import com.papertrail.api.external.unpaywall.UnpaywallOpenAccessProviderFactory
+import com.papertrail.api.external.unpaywall.OpenAccessContentTransport
 
 @Testcontainers
 class UnpaywallDiscoveryCacheIntegrationTest {
@@ -231,13 +233,12 @@ class UnpaywallDiscoveryCacheIntegrationTest {
         )
         val fixture = provider(cache)
         fixture.discoveryServer.expect(ExpectedCount.never(), requestTo(containsString("https://api.unpaywall.org")))
-        fixture.contentServer.expect(ExpectedCount.never(), requestTo("https://8.8.8.8/paper.pdf"))
 
         val cachedLocation = fixture.provider.discover(reference("10.1234/restricted"))!!.locations.single()
         assertThrows(IllegalArgumentException::class.java) { fixture.provider.fetch(cachedLocation) }
 
         fixture.discoveryServer.verify()
-        fixture.contentServer.verify()
+        Mockito.verifyNoInteractions(fixture.contentTransport)
     }
 
     @Test
@@ -275,18 +276,17 @@ class UnpaywallDiscoveryCacheIntegrationTest {
         configuration: AnalysisConfigurationSnapshot = configuredRun(),
     ): ProviderFixture {
         val discoveryBuilder = RestClient.builder().baseUrl("https://api.unpaywall.org")
-        val contentBuilder = RestClient.builder()
         val discoveryServer = MockRestServiceServer.bindTo(discoveryBuilder).build()
-        val contentServer = MockRestServiceServer.bindTo(contentBuilder).build()
+        val contentTransport = Mockito.mock(OpenAccessContentTransport::class.java)
         val provider = UnpaywallOpenAccessProviderFactory(
             providerCallGate = ProviderCallGate(providerCatalog),
             discoveryCache = cache,
             unpaywallClient = discoveryBuilder.build(),
-            contentClient = contentBuilder.build(),
+            contentTransport = contentTransport,
             contactEmail = contactEmail,
             maximumBytes = 1_000_000,
         ).forRun(configuration)
-        return ProviderFixture(provider, discoveryServer, contentServer)
+        return ProviderFixture(provider, discoveryServer, contentTransport)
     }
 
     private fun cache(
@@ -297,7 +297,7 @@ class UnpaywallDiscoveryCacheIntegrationTest {
     private data class ProviderFixture(
         val provider: OpenAccessProvider,
         val discoveryServer: MockRestServiceServer,
-        val contentServer: MockRestServiceServer,
+        val contentTransport: OpenAccessContentTransport,
     )
 
     companion object {

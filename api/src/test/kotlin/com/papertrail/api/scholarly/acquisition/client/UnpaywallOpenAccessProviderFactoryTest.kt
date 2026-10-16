@@ -18,6 +18,8 @@ import com.papertrail.api.infrastructure.providers.ProviderCallRejectedException
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
+import com.papertrail.api.external.unpaywall.OpenAccessContentResponse
+import com.papertrail.api.external.unpaywall.OpenAccessContentTransport
 import com.papertrail.api.scholarly.references.client.BibliographyReference
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -80,7 +82,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
             ProviderCallGate(changedCatalog),
             NoOpUnpaywallDiscoveryCache(),
             discoveryBuilder.build(),
-            RestClient.builder().build(),
+            Mockito.mock(OpenAccessContentTransport::class.java),
             "changed@example.invalid",
             1_000_000,
         ).forRun(configuredRun())
@@ -101,7 +103,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
             ProviderCallGate(catalog),
             NoOpUnpaywallDiscoveryCache(),
             discoveryBuilder.build(),
-            RestClient.builder().build(),
+            Mockito.mock(OpenAccessContentTransport::class.java),
             contactEmail,
             1_000_000,
         ).forRun(configuration)
@@ -115,9 +117,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
 
     @Test
     fun `missing per-run consent sends no content-host acquisition request`() {
-        val contentBuilder = RestClient.builder()
-        val server = MockRestServiceServer.bindTo(contentBuilder).build()
-        server.expect(ExpectedCount.never(), requestTo(containsString("8.8.8.8")))
+        val contentTransport = Mockito.mock(OpenAccessContentTransport::class.java)
         val originalConsent = configuredRun().externalProviderConsents.single()
         val configuration = configuredRun().copy(
             externalProviderConsents = listOf(
@@ -128,7 +128,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
             ProviderCallGate(catalog),
             NoOpUnpaywallDiscoveryCache(),
             RestClient.builder().build(),
-            contentBuilder.build(),
+            contentTransport,
             contactEmail,
             1_000_000,
         ).forRun(configuration)
@@ -137,23 +137,23 @@ class UnpaywallOpenAccessProviderFactoryTest {
             provider.fetch(OpenAccessLocation("https://8.8.8.8/paper.txt", "CC-BY", "publishedVersion", "repository", "unpaywall"))
         }
 
-        server.verify()
+        Mockito.verifyNoInteractions(contentTransport)
     }
 
     @Test
     fun `consented discovery derives request data from DOI and configured contact email and fetches only approved full text`() {
         val discoveryBuilder = RestClient.builder().baseUrl("https://api.unpaywall.org")
-        val contentBuilder = RestClient.builder()
         val discoveryServer = MockRestServiceServer.bindTo(discoveryBuilder).build()
-        val contentServer = MockRestServiceServer.bindTo(contentBuilder).build()
+        val contentTransport = Mockito.mock(OpenAccessContentTransport::class.java)
         discoveryServer.expect(requestTo(containsString("api.unpaywall.org/v2/")))
             .andExpect(queryParam("email", contactEmail))
             .andRespond(withSuccess(
                 """{"doi":"10.1234/open","abstract":"Public summary","emailAddress":"private@example.org","apiKey":"sk-private-value","oa_locations":[{"url_for_pdf":"https://8.8.8.8/paper.txt","license":"cc-by","version":"publishedVersion","host_type":"repository"}]}""",
                 MediaType.APPLICATION_JSON,
             ))
-        contentServer.expect(requestTo("https://8.8.8.8/paper.txt"))
-            .andRespond(withSuccess("English full text fixture", MediaType.TEXT_PLAIN))
+        Mockito.`when`(
+            contentTransport.fetch("https://8.8.8.8/paper.txt", 1_000_000, setOf("application/pdf", "text/plain")),
+        ).thenReturn(OpenAccessContentResponse(200, "text/plain", "English full text fixture".toByteArray()))
         val repository = Mockito.mock(AnalysisRunExecutionRepository::class.java)
         val runId = UUID.randomUUID()
         val eventId = UUID.randomUUID()
@@ -184,7 +184,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
             ProviderCallGate(catalog),
             NoOpUnpaywallDiscoveryCache(),
             discoveryBuilder.build(),
-            contentBuilder.build(),
+            contentTransport,
             contactEmail,
             1_000_000,
             executionService,
@@ -231,7 +231,7 @@ class UnpaywallOpenAccessProviderFactoryTest {
         assertTrue(contentMetadata.contains("200"))
         assertFalse(contentMetadata.contains("English full text fixture"))
         discoveryServer.verify()
-        contentServer.verify()
+        Mockito.verify(contentTransport).fetch("https://8.8.8.8/paper.txt", 1_000_000, setOf("application/pdf", "text/plain"))
     }
 
     private fun configuredRun() = factory.from(

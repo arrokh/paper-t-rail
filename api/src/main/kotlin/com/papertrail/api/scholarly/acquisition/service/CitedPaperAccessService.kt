@@ -17,6 +17,8 @@ import com.papertrail.api.scholarly.acquisition.domain.CitedPaperAccessStatus
 import com.papertrail.api.scholarly.acquisition.domain.LegalOpenAccessLocationPolicy
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
 import com.papertrail.api.scholarly.acquisition.domain.UnsupportedCitedPaperFormatException
+import com.papertrail.api.scholarly.acquisition.domain.UnsafeOpenAccessLocationException
+import com.papertrail.api.scholarly.acquisition.report.CitedPaperAcquisitionCandidateOutcome
 import com.papertrail.api.evidence.verification.repository.ClaimReferenceVerificationRepository
 import com.papertrail.api.scholarly.acquisition.repository.CitedPaperAccessRepository
 import com.papertrail.api.scholarly.acquisition.repository.ResolvedCitedReference
@@ -25,7 +27,10 @@ import com.papertrail.api.document.validation.DocumentLanguageDetector
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
+import java.net.URI
+import java.net.UnknownHostException
 import java.time.Instant
+import java.util.Locale
 import java.util.UUID
 
 @Service
@@ -81,15 +86,17 @@ class CitedPaperAccessService(
             )
         }
         val locations = discovery?.locations.orEmpty()
-        val checkedLocations = locations.map { location -> location to locationPolicy.rejectionReasons(location) }
-        val permittedLocations = checkedLocations.filter { (_, reasons) -> reasons.isEmpty() }.map { it.first }
-        val rejectedLocationCauses = checkedLocations.flatMap { it.second }.distinct()
+        val checkedLocations = locations.map { location ->
+            CheckedOpenAccessLocation(location, locationPolicy.rejectionReasons(location))
+        }
+        val permittedLocations = checkedLocations.filter { it.rejectionReasons.isEmpty() }.map { it.location }
+        val rejectedLocationCauses = checkedLocations.flatMap { it.rejectionReasons }.distinct()
         val acquisition = acquireExtractableFullText(
             analysisRunId = analysisRunId,
             documentId = context.documentId,
             providerId = providerSelection.provider,
             provider = provider,
-            locations = permittedLocations,
+            checkedLocations = checkedLocations,
             reference = reference,
             configuration = context.configuration,
         )
@@ -127,8 +134,8 @@ class CitedPaperAccessService(
             else -> null
         }
         val accessCauses = when {
-            acquired != null && supportedLanguage != "en" -> listOf(CitedPaperAccessCause.LANGUAGE_UNSUPPORTED)
-            acquired != null -> emptyList()
+            acquired != null -> (rejectedLocationCauses + acquisition.failureCauses +
+                listOfNotNull(CitedPaperAccessCause.LANGUAGE_UNSUPPORTED.takeIf { supportedLanguage != "en" })).distinct()
             discovery == null || !metadataAvailable -> listOf(CitedPaperAccessCause.NO_ACCESSIBLE_METADATA)
             locations.isEmpty() -> listOf(CitedPaperAccessCause.NO_FULL_TEXT_LOCATION_RETURNED)
             permittedLocations.isEmpty() -> rejectedLocationCauses
@@ -153,6 +160,8 @@ class CitedPaperAccessService(
                     decision = decision,
                     accessReason = accessReason,
                     accessReasons = accessCauses,
+                    candidateOutcomes = acquisition.candidateOutcomes,
+                    candidateOutcomesOmittedCount = acquisition.candidateOutcomesOmittedCount,
                     locationUrl = provenanceLocation?.url,
                     license = provenanceLocation?.license,
                     version = provenanceLocation?.version,
@@ -189,14 +198,29 @@ class CitedPaperAccessService(
         documentId: UUID,
         providerId: String,
         provider: OpenAccessProvider,
-        locations: List<OpenAccessLocation>,
+        checkedLocations: List<CheckedOpenAccessLocation>,
         reference: ResolvedCitedReference,
         configuration: AnalysisConfigurationSnapshot,
     ): FullTextAcquisitionResult {
         val failureCauses = linkedSetOf<CitedPaperAccessCause>()
+        val candidateOutcomes = CandidateOutcomeCollector(MAX_CANDIDATE_OUTCOMES)
         var identityFailureReason: String? = null
         var identityFailureLocation: OpenAccessLocation? = null
-        for ((index, location) in locations.take(MAX_LOCATIONS_TO_TRY).withIndex()) {
+        var fetchAttempts = 0
+        for ((index, checkedLocation) in checkedLocations.withIndex()) {
+            val location = checkedLocation.location
+            val rejectionReasons = checkedLocation.rejectionReasons
+            val ordinal = index + 1
+            if (rejectionReasons.isNotEmpty()) {
+                failureCauses += rejectionReasons
+                candidateOutcomes.add(candidateOutcome(location, ordinal, "REJECTED", rejectionReasons.map { it.name }))
+                continue
+            }
+            if (fetchAttempts >= MAX_LOCATIONS_TO_TRY) {
+                candidateOutcomes.add(candidateOutcome(location, ordinal, "NOT_ATTEMPTED", listOf(MAX_FETCH_ATTEMPTS_REACHED)))
+                continue
+            }
+            fetchAttempts++
             sourceDocumentRepository.requireActiveSourceDocument(documentId)
             val fetch = { provider.fetch(location) }
             val acquired = try {
@@ -211,11 +235,25 @@ class CitedPaperAccessService(
                 ) ?: fetch()
             } catch (exception: ProviderCallRejectedException) {
                 throw exception
+            } catch (_: UnsafeOpenAccessLocationException) {
+                val cause = CitedPaperAccessCause.FULL_TEXT_LOCATION_URL_REJECTED
+                failureCauses += cause
+                candidateOutcomes.add(candidateOutcome(location, ordinal, "REJECTED", listOf(cause.name)))
+                continue
+            } catch (_: UnknownHostException) {
+                val cause = CitedPaperAccessCause.FULL_TEXT_LOCATION_URL_REJECTED
+                failureCauses += cause
+                candidateOutcomes.add(candidateOutcome(location, ordinal, "REJECTED", listOf(cause.name)))
+                continue
             } catch (_: UnsupportedCitedPaperFormatException) {
-                failureCauses += CitedPaperAccessCause.FULL_TEXT_FORMAT_UNSUPPORTED
+                val cause = CitedPaperAccessCause.FULL_TEXT_FORMAT_UNSUPPORTED
+                failureCauses += cause
+                candidateOutcomes.add(candidateOutcome(location, ordinal, "FORMAT_UNSUPPORTED", listOf(cause.name)))
                 continue
             } catch (_: Exception) {
-                failureCauses += CitedPaperAccessCause.FULL_TEXT_DOWNLOAD_FAILED
+                val cause = CitedPaperAccessCause.FULL_TEXT_DOWNLOAD_FAILED
+                failureCauses += cause
+                candidateOutcomes.add(candidateOutcome(location, ordinal, "DOWNLOAD_FAILED", listOf(cause.name)))
                 continue
             }
             val text = try {
@@ -226,10 +264,14 @@ class CitedPaperAccessService(
                     extract,
                 ) ?: extract()
             } catch (_: UnsupportedCitedPaperFormatException) {
-                failureCauses += CitedPaperAccessCause.FULL_TEXT_FORMAT_UNSUPPORTED
+                val cause = CitedPaperAccessCause.FULL_TEXT_FORMAT_UNSUPPORTED
+                failureCauses += cause
+                candidateOutcomes.add(candidateOutcome(location, ordinal, "FORMAT_UNSUPPORTED", listOf(cause.name)))
                 continue
             } catch (_: Exception) {
-                failureCauses += CitedPaperAccessCause.FULL_TEXT_PARSE_FAILED
+                val cause = CitedPaperAccessCause.FULL_TEXT_PARSE_FAILED
+                failureCauses += cause
+                candidateOutcomes.add(candidateOutcome(location, ordinal, "PARSE_FAILED", listOf(cause.name)))
                 continue
             }
             val identity = try {
@@ -251,9 +293,24 @@ class CitedPaperAccessService(
                 failureCauses += identityCause
                 identityFailureReason = identity.reasonCode
                 identityFailureLocation = location
+                candidateOutcomes.add(candidateOutcome(location, ordinal, identityOutcome(identityCause), listOf(identityCause.name)))
                 continue
             }
-            return FullTextAcquisitionResult(acquired, text, emptyList(), null, null)
+            candidateOutcomes.add(candidateOutcome(location, ordinal, "ACQUIRED", emptyList()))
+            checkedLocations.drop(index + 1).forEachIndexed { nextIndex, nextLocation ->
+                val reasonCodes = nextLocation.rejectionReasons.map { it.name }.ifEmpty { listOf(EARLIER_CANDIDATE_ACQUIRED) }
+                val outcome = if (nextLocation.rejectionReasons.isNotEmpty()) "REJECTED" else "NOT_ATTEMPTED"
+                candidateOutcomes.add(candidateOutcome(nextLocation.location, ordinal + nextIndex + 1, outcome, reasonCodes))
+            }
+            return FullTextAcquisitionResult(
+                fullText = acquired,
+                extractedText = text,
+                failureCauses = failureCauses.toList(),
+                identityFailureReason = null,
+                identityFailureLocation = null,
+                candidateOutcomes = candidateOutcomes.outcomes,
+                candidateOutcomesOmittedCount = candidateOutcomes.omittedCount,
+            )
         }
         return FullTextAcquisitionResult(
             fullText = null,
@@ -261,6 +318,8 @@ class CitedPaperAccessService(
             failureCauses = failureCauses.toList(),
             identityFailureReason = identityFailureReason,
             identityFailureLocation = identityFailureLocation,
+            candidateOutcomes = candidateOutcomes.outcomes,
+            candidateOutcomesOmittedCount = candidateOutcomes.omittedCount,
         )
     }
 
@@ -299,16 +358,84 @@ class CitedPaperAccessService(
             }
     }
 
+    private fun candidateOutcome(
+        location: OpenAccessLocation,
+        ordinal: Int,
+        outcome: String,
+        reasonCodes: List<String>,
+    ): CitedPaperAcquisitionCandidateOutcome = CitedPaperAcquisitionCandidateOutcome(
+        ordinal = ordinal,
+        host = safeCandidateHost(location.url),
+        license = safeCandidateLabel(location.license),
+        version = safeCandidateLabel(location.version),
+        hostType = safeCandidateLabel(location.hostType),
+        outcome = outcome,
+        reasonCodes = reasonCodes,
+    )
+
+    private fun safeCandidateHost(url: String): String? {
+        val host = runCatching { URI(url).host }.getOrNull()?.removeSurrounding("[", "]") ?: return null
+        return host.takeIf { it.length <= MAX_CANDIDATE_HOST_LENGTH && SAFE_HOST.matches(it) }
+            ?.lowercase(Locale.ROOT)
+    }
+
+    private fun safeCandidateLabel(value: String?): String? = value
+        ?.trim()
+        ?.takeIf { it.length <= MAX_CANDIDATE_LABEL_LENGTH && SAFE_CANDIDATE_LABEL.matches(it) }
+
+    private fun identityOutcome(cause: CitedPaperAccessCause): String = when (cause) {
+        CitedPaperAccessCause.FULL_TEXT_IDENTITY_UNVERIFIED -> "IDENTITY_UNVERIFIED"
+        CitedPaperAccessCause.FULL_TEXT_IDENTITY_MISMATCH -> "IDENTITY_MISMATCH"
+        else -> "IDENTITY_VALIDATION_FAILED"
+    }
+
+    private data class CheckedOpenAccessLocation(
+        val location: OpenAccessLocation,
+        val rejectionReasons: Set<CitedPaperAccessCause>,
+    )
+
     private data class FullTextAcquisitionResult(
         val fullText: AcquiredFullText?,
         val extractedText: String?,
         val failureCauses: List<CitedPaperAccessCause>,
         val identityFailureReason: String?,
         val identityFailureLocation: OpenAccessLocation?,
+        val candidateOutcomes: List<CitedPaperAcquisitionCandidateOutcome>,
+        val candidateOutcomesOmittedCount: Int,
     )
+
+    private class CandidateOutcomeCollector(private val maximumRecords: Int) {
+        private val storedOutcomes = mutableListOf<CitedPaperAcquisitionCandidateOutcome>()
+        var omittedCount: Int = 0
+            private set
+
+        val outcomes: List<CitedPaperAcquisitionCandidateOutcome>
+            get() = storedOutcomes.toList()
+
+        fun add(outcome: CitedPaperAcquisitionCandidateOutcome) {
+            if (storedOutcomes.size < maximumRecords) {
+                storedOutcomes += outcome
+                return
+            }
+            if (outcome.outcome == "ACQUIRED") {
+                storedOutcomes.removeAt(storedOutcomes.lastIndex)
+                omittedCount++
+                storedOutcomes += outcome
+                return
+            }
+            omittedCount++
+        }
+    }
 
     companion object {
         private const val MAX_LOCATIONS_TO_TRY = 5
+        private const val MAX_CANDIDATE_OUTCOMES = 5
+        private const val MAX_CANDIDATE_HOST_LENGTH = 253
+        private const val MAX_CANDIDATE_LABEL_LENGTH = 80
+        private const val MAX_FETCH_ATTEMPTS_REACHED = "MAX_FETCH_ATTEMPTS_REACHED"
+        private const val EARLIER_CANDIDATE_ACQUIRED = "EARLIER_CANDIDATE_ACQUIRED"
+        private val SAFE_HOST = Regex("^[A-Za-z0-9.:_-]{1,253}$")
+        private val SAFE_CANDIDATE_LABEL = Regex("^[A-Za-z0-9._-]{1,80}$")
         private val logger = LoggerFactory.getLogger(CitedPaperAccessService::class.java)
     }
 }

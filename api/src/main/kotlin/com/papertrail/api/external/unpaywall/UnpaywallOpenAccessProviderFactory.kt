@@ -14,7 +14,6 @@ import com.papertrail.api.scholarly.acquisition.domain.UnsupportedCitedPaperForm
 import com.papertrail.api.scholarly.acquisition.domain.LegalOpenAccessLocationPolicy
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessDiscovery
 import com.papertrail.api.scholarly.acquisition.domain.OpenAccessLocation
-import com.papertrail.api.scholarly.acquisition.domain.PublicInternetAddressPolicy
 import com.papertrail.api.scholarly.references.client.BibliographyReference
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import org.springframework.beans.factory.annotation.Qualifier
@@ -22,7 +21,6 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
-import java.net.InetAddress
 import java.net.URI
 import java.time.Instant
 
@@ -34,7 +32,7 @@ class UnpaywallOpenAccessProviderFactory(
     private val providerCallGate: ProviderCallGate,
     private val discoveryCache: UnpaywallDiscoveryCache,
     @Qualifier("unpaywallRestClient") private val unpaywallClient: RestClient,
-    @Qualifier("openAccessContentRestClient") private val contentClient: RestClient,
+    private val contentTransport: OpenAccessContentTransport,
     @Value("\${paper-trail.providers.unpaywall.contact-email:}") private val contactEmail: String,
     @Value("\${paper-trail.analysis.cited-paper-max-bytes:52428800}") private val maximumBytes: Int,
     private val executionService: AnalysisRunExecutionService? = null,
@@ -144,57 +142,51 @@ class UnpaywallOpenAccessProviderFactory(
                 val authorizedUrl = authorizedPayload.contentByCategory[DataCategory.CITED_PAPER_LOCATION]
                     ?.path("url")?.takeIf(JsonNode::isTextual)?.asText()
                     ?: throw IllegalStateException("Authorized content-host request omitted its URL.")
-                requirePublicContentHost(authorizedUrl)
                 val networkRequest = {
                     executionService?.captureCurrentOpenAccessRequest(URI(authorizedUrl))
-                    contentClient.get()
-                        .uri(authorizedUrl)
-                        .accept(MediaType.APPLICATION_PDF, MediaType.TEXT_PLAIN)
-                        .exchange { _, response ->
-                            val responseSchema = "open-access-content-metadata-v1"
-                            val httpStatus = response.statusCode.value()
-                            if (!response.statusCode.is2xxSuccessful) {
-                                executionService?.omitCurrentBody("RESPONSE", responseSchema, "UNSUPPORTED_OR_UNSAFE_FIELDS")
-                                executionService?.captureCurrent(
-                                    ExecutionSpanArtifactSpec("RESULT", responseSchema, mapOf("httpStatus" to httpStatus)),
-                                )
-                                throw IllegalStateException("Open-access content host returned HTTP $httpStatus.")
-                            }
-                            val mediaType = response.headers.contentType
-                                ?.let { "${it.type}/${it.subtype}" }
-                            if (mediaType == null || mediaType !in ALLOWED_MEDIA_TYPES) {
-                                executionService?.omitCurrentBody("RESPONSE", responseSchema, "UNSUPPORTED_OR_UNSAFE_FIELDS")
-                                executionService?.captureCurrent(
-                                    ExecutionSpanArtifactSpec("RESULT", responseSchema, mapOf("httpStatus" to httpStatus)),
-                                )
-                                throw UnsupportedCitedPaperFormatException()
-                            }
-                            val bytes = response.body.readNBytes(maximumBytes + 1)
-                            if (bytes.isEmpty() || bytes.size > maximumBytes) {
-                                executionService?.omitCurrentBody(
-                                    "RESPONSE",
-                                    responseSchema,
-                                    if (bytes.isEmpty()) "UNSUPPORTED_OR_UNSAFE_FIELDS" else "ARTIFACT_TOO_LARGE",
-                                )
-                                executionService?.captureCurrent(
-                                    ExecutionSpanArtifactSpec(
-                                        "RESULT",
-                                        responseSchema,
-                                        mapOf("httpStatus" to httpStatus, "mediaType" to mediaType),
-                                    ),
-                                )
-                                throw IllegalStateException("Open-access content is empty or exceeds the configured download limit.")
-                            }
-                            executionService?.omitCurrentBody("RESPONSE", responseSchema, "BINARY_ASSET_REFERENCE")
-                            executionService?.captureCurrent(
-                                ExecutionSpanArtifactSpec(
-                                    "RESULT",
-                                    responseSchema,
-                                    mapOf("httpStatus" to httpStatus, "mediaType" to mediaType, "byteCount" to bytes.size),
-                                ),
-                            )
-                            AcquiredFullText(bytes, mediaType, location)
-                        }
+                    val responseSchema = "open-access-content-metadata-v1"
+                    val response = contentTransport.fetch(authorizedUrl, maximumBytes, ALLOWED_MEDIA_TYPES)
+                    val httpStatus = response.statusCode
+                    if (httpStatus !in 200..299) {
+                        executionService?.omitCurrentBody("RESPONSE", responseSchema, "UNSUPPORTED_OR_UNSAFE_FIELDS")
+                        executionService?.captureCurrent(
+                            ExecutionSpanArtifactSpec("RESULT", responseSchema, mapOf("httpStatus" to httpStatus)),
+                        )
+                        throw IllegalStateException("Open-access content host returned HTTP $httpStatus.")
+                    }
+                    val mediaType = response.mediaType
+                    if (mediaType == null || mediaType !in ALLOWED_MEDIA_TYPES) {
+                        executionService?.omitCurrentBody("RESPONSE", responseSchema, "UNSUPPORTED_OR_UNSAFE_FIELDS")
+                        executionService?.captureCurrent(
+                            ExecutionSpanArtifactSpec("RESULT", responseSchema, mapOf("httpStatus" to httpStatus, "mediaType" to mediaType)),
+                        )
+                        throw UnsupportedCitedPaperFormatException()
+                    }
+                    val bytes = response.bytes
+                    if (bytes.isEmpty() || bytes.size > maximumBytes) {
+                        executionService?.omitCurrentBody(
+                            "RESPONSE",
+                            responseSchema,
+                            if (bytes.isEmpty()) "UNSUPPORTED_OR_UNSAFE_FIELDS" else "ARTIFACT_TOO_LARGE",
+                        )
+                        executionService?.captureCurrent(
+                            ExecutionSpanArtifactSpec(
+                                "RESULT",
+                                responseSchema,
+                                mapOf("httpStatus" to httpStatus, "mediaType" to mediaType),
+                            ),
+                        )
+                        throw IllegalStateException("Open-access content is empty or exceeds the configured download limit.")
+                    }
+                    executionService?.omitCurrentBody("RESPONSE", responseSchema, "BINARY_ASSET_REFERENCE")
+                    executionService?.captureCurrent(
+                        ExecutionSpanArtifactSpec(
+                            "RESULT",
+                            responseSchema,
+                            mapOf("httpStatus" to httpStatus, "mediaType" to mediaType, "byteCount" to bytes.size),
+                        ),
+                    )
+                    AcquiredFullText(bytes, mediaType, location)
                 }
                 val acquired = if (executionService == null) {
                     networkRequest()
@@ -209,18 +201,6 @@ class UnpaywallOpenAccessProviderFactory(
                     )
                 }
                 acquired ?: throw IllegalStateException("Open-access content host returned no response.")
-            }
-        }
-
-        private fun requirePublicContentHost(url: String) {
-            val uri = runCatching { URI(url) }.getOrElse {
-                throw IllegalArgumentException("Open-access content URL is invalid.")
-            }
-            val host = uri.host?.removeSurrounding("[", "]")
-                ?: throw IllegalArgumentException("Open-access content URL has no host.")
-            val addresses = InetAddress.getAllByName(host)
-            require(addresses.isNotEmpty() && addresses.all(PublicInternetAddressPolicy::isPublic)) {
-                "Open-access content host must resolve only to public addresses."
             }
         }
 
