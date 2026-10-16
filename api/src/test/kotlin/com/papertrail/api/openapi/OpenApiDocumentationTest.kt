@@ -115,7 +115,7 @@ import org.mockito.Mockito
 import java.time.Instant
 import java.util.UUID
 
-@SpringBootTest(properties = ["paper-trail.role=api", "paper-trail.operator.credential=operator-test-credential"])
+@SpringBootTest(properties = ["paper-trail.role=api", "paper-trail.operator.credential=operator-test-credential", "paper-trail.recovery.submissions-enabled=true"])
 @AutoConfigureMockMvc
 @ExtendWith(OutputCaptureExtension::class)
 class OpenApiDocumentationTest {
@@ -124,6 +124,9 @@ class OpenApiDocumentationTest {
 
     @Value("\${paper-trail.upload.max-bytes}")
     private var analysisRunMaxUploadBytes: Long = 0
+
+    @Value("\${paper-trail.recovery.submissions-enabled}")
+    private var recoverySubmissionsEnabled: Boolean = false
 
     @Autowired
     private lateinit var mockMvc: MockMvc
@@ -329,6 +332,7 @@ class OpenApiDocumentationTest {
 
     @Test
     fun `recovery per-file limit inherits the Analysis Run PDF upload limit`() {
+        assertTrue(recoverySubmissionsEnabled)
         assertEquals(analysisRunMaxUploadBytes, recoveryStagingSettings.maxFileBytes)
         assertEquals(10, recoveryStagingSettings.maxFilesPerBatch)
         assertEquals(262_144_000, recoveryStagingSettings.maxBatchBytes)
@@ -346,6 +350,7 @@ class OpenApiDocumentationTest {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.version").value("recovery-rights-v1"))
             .andExpect(jsonPath("$.text").value(RecoveryRightsDeclaration.CURRENT.text))
+            .andExpect(jsonPath("$.submissionsEnabled").value(true))
             .andExpect(jsonPath("$.maxFileBytes").value(50_000_000))
             .andExpect(jsonPath("$.maxFilesPerBatch").value(10))
             .andExpect(jsonPath("$.maxBatchBytes").value(250_000_000))
@@ -675,7 +680,28 @@ class OpenApiDocumentationTest {
         assertTrue(rightsDeclaration.path("responses").has("200"))
         val rightsSchemaName = rightsDeclaration.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val rightsProperties = document.path("components").path("schemas").path(rightsSchemaName).path("properties")
-        listOf("version", "text", "maxFileBytes", "maxFilesPerBatch", "maxBatchBytes", "uploadUrlTtlSeconds", "inactivityTtlSeconds").forEach { assertTrue(rightsProperties.has(it)) }
+        listOf("version", "text", "submissionsEnabled", "maxFileBytes", "maxFilesPerBatch", "maxBatchBytes", "uploadUrlTtlSeconds", "inactivityTtlSeconds").forEach { assertTrue(rightsProperties.has(it)) }
+        assertEquals("boolean", rightsProperties.path("submissionsEnabled").path("type").asText())
+
+        val gatedWriteOperations = listOf(
+            "/api/v1/analysis-runs/{analysisRunId}/recovery-batches" to "post",
+            "/api/v1/recovery-batches/{batchId}/rights-declaration" to "post",
+            "/api/v1/recovery-batches/{batchId}/entries/{localReferenceKey}/identifier-assistance" to "put",
+            "/api/v1/recovery-batches/{batchId}/entries/{localReferenceKey}/uploads" to "post",
+            "/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/finalize" to "post",
+            "/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validate" to "post",
+            "/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/validation/{attemptId}/confirm-identity" to "post",
+            "/api/v1/recovery-batches/{batchId}/uploads/{uploadId}/select" to "post",
+            "/api/v1/recovery-batches/{batchId}/successor" to "post",
+        )
+        gatedWriteOperations.forEach { (path, method) ->
+            val operation = paths.path(path).path(method)
+            assertTrue(operation.path("responses").has("503"), "$method $path must document the disabled-gate response")
+            assertTrue(
+                operation.path("responses").path("503").path("description").asText().contains("RECOVERY_SUBMISSIONS_DISABLED"),
+                "$method $path must document RECOVERY_SUBMISSIONS_DISABLED",
+            )
+        }
 
         val recoveryBatchesPath = "/api/v1/analysis-runs/{analysisRunId}/recovery-batches"
         val listRecoveryBatches = paths.path(recoveryBatchesPath).path("get")

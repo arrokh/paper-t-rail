@@ -7,6 +7,7 @@ import com.papertrail.api.analysis.successor.http.SuccessorRunSubmissionResponse
 import com.papertrail.api.analysis.successor.http.toResponse
 import com.papertrail.api.analysis.successor.service.SuccessorRunService
 import com.papertrail.api.analysis.successor.service.SuccessorRunSubmissionService
+import com.papertrail.api.analysis.recovery.service.RecoverySubmissionGate
 import com.papertrail.api.http.ApiError
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.Parameter
@@ -34,6 +35,7 @@ import java.util.UUID
 class SuccessorRunController(
     private val successorRunService: SuccessorRunService,
     private val successorRunSubmissionService: SuccessorRunSubmissionService,
+    private val recoverySubmissionGate: RecoverySubmissionGate,
 ) {
     @Operation(
         summary = "Preview a Recovery Batch successor",
@@ -78,7 +80,7 @@ class SuccessorRunController(
             ApiResponse(responseCode = "404", description = "Recovery Batch, predecessor, or active Source Document not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "409", description = "Stale revision, blocked plan, conflicting idempotency key, changed selection, or asset hash mismatch", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
             ApiResponse(responseCode = "410", description = "Recovery Batch expired or is not open for submission", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
-            ApiResponse(responseCode = "503", description = "Selected finalized asset could not be verified", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Recovery submissions are disabled (RECOVERY_SUBMISSIONS_DISABLED), or the selected finalized asset could not be verified", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
         ],
     )
     @PostMapping(
@@ -96,6 +98,7 @@ class SuccessorRunController(
         )
         @Valid @SpringRequestBody request: SuccessorRunSubmissionRequest,
     ): ResponseEntity<SuccessorRunSubmissionResponse> {
+        recoverySubmissionGate.requireEnabled()
         val result = successorRunSubmissionService.submit(batchId, request)
         return ResponseEntity.status(if (result.replayed) HttpStatus.OK else HttpStatus.CREATED)
             .cacheControl(CacheControl.noStore())

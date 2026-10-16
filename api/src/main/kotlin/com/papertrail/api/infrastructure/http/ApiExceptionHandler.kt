@@ -1,6 +1,7 @@
 package com.papertrail.api.infrastructure.http
 
 import com.papertrail.api.analysis.recovery.domain.RecoveryStagingException
+import com.papertrail.api.analysis.recovery.domain.RecoverySubmissionsDisabledException
 import com.papertrail.api.http.ApiError
 import com.papertrail.api.document.validation.DocumentValidationException
 import org.springframework.http.HttpStatus
@@ -23,6 +24,11 @@ class ApiExceptionHandler {
     fun recoveryStaging(exception: RecoveryStagingException): ResponseEntity<ApiError> = ResponseEntity
         .status(exception.statusCode)
         .body(ApiError(exception.code, exception.message ?: "The Recovery Upload request could not be completed."))
+
+    @ExceptionHandler(RecoverySubmissionsDisabledException::class)
+    fun recoverySubmissionsDisabled(): ResponseEntity<ApiError> = ResponseEntity
+        .status(HttpStatus.SERVICE_UNAVAILABLE)
+        .body(ApiError("RECOVERY_SUBMISSIONS_DISABLED", "Recovery submissions are disabled."))
 
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun invalidRequest(): ResponseEntity<ApiError> = ResponseEntity

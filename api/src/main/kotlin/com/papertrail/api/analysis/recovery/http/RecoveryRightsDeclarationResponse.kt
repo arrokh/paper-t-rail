@@ -8,6 +8,8 @@ data class RecoveryRightsDeclarationResponse(
     val version: String,
     @field:Schema(description = "Exact declaration text shown for user acceptance.")
     val text: String,
+    @field:Schema(description = "Authoritative capability indicating whether Recovery Batch submissions are currently enabled.")
+    val submissionsEnabled: Boolean,
     @field:Schema(description = "Configured per-file byte cap; defaults to the Analysis Run PDF upload limit.", minimum = "1")
     val maxFileBytes: Long,
     @field:Schema(description = "Maximum number of upload intents reserved in one batch.", minimum = "1")

@@ -20,16 +20,74 @@ import type {
   RecoverySuccessorSubmission,
 } from "../types.ts";
 
+const recoveryRightsDeclarationQueryKey = ["recovery-uploads", "rights-declaration"] as const;
+const recoverySubmissionsDisabledQueryKey = ["recovery-uploads", "submissions-disabled"] as const;
+const recoverySubmissionsDisabledCode = "RECOVERY_SUBMISSIONS_DISABLED";
+
+class RecoverySubmissionsDisabledError extends Error {
+  readonly code = recoverySubmissionsDisabledCode;
+
+  constructor(message: string) {
+    super(`${message} (${recoverySubmissionsDisabledCode})`);
+    this.name = "RecoverySubmissionsDisabledError";
+  }
+}
+
+async function recoveryApiError(response: Response): Promise<Error> {
+  try {
+    const error = (await response.clone().json()) as { code?: unknown; message?: unknown };
+    if (response.status === 503 && error.code === recoverySubmissionsDisabledCode) {
+      const message = typeof error.message === "string" && error.message.length > 0
+        ? error.message
+        : "New recovery submissions are disabled.";
+      return new RecoverySubmissionsDisabledError(message);
+    }
+  } catch {
+    // Fall back to the shared API error message for other or non-JSON responses.
+  }
+  return new Error(await readApiError(response));
+}
+
+function latchRecoverySubmissionsDisabled(queryClient: QueryClient) {
+  queryClient.setQueryData(recoverySubmissionsDisabledQueryKey, true);
+}
+
+function failClosedRecoverySubmissionCapability(queryClient: QueryClient, error: unknown) {
+  if (!(error instanceof RecoverySubmissionsDisabledError)) return;
+
+  latchRecoverySubmissionsDisabled(queryClient);
+  queryClient.setQueryData<RecoveryRightsDeclaration>(recoveryRightsDeclarationQueryKey, (current) =>
+    current ? { ...current, submissionsEnabled: false } : current,
+  );
+  void queryClient.invalidateQueries({ queryKey: recoveryRightsDeclarationQueryKey, refetchType: "active" });
+}
+
+function recoverySubmissionsDisabledQueryOptions() {
+  return queryOptions({
+    queryKey: recoverySubmissionsDisabledQueryKey,
+    queryFn: () => false,
+    initialData: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+}
+
 export function recoveryRightsDeclarationQueryOptions() {
   return queryOptions({
-    queryKey: ["recovery-uploads", "rights-declaration"] as const,
-    queryFn: async ({ signal }): Promise<RecoveryRightsDeclaration> => {
+    queryKey: recoveryRightsDeclarationQueryKey,
+    queryFn: async ({ signal, client }): Promise<RecoveryRightsDeclaration> => {
       const response = await fetch("/api/v1/recovery-rights-declaration", {
         cache: "no-store",
         signal,
       });
       if (!response.ok) throw new Error(await readApiError(response));
-      return (await response.json()) as RecoveryRightsDeclaration;
+
+      const declaration = (await response.json()) as RecoveryRightsDeclaration;
+      const capabilityWasDisabled = client.getQueryData<boolean>(recoverySubmissionsDisabledQueryKey) === true;
+      if (declaration.submissionsEnabled !== true) latchRecoverySubmissionsDisabled(client);
+      return capabilityWasDisabled || declaration.submissionsEnabled !== true
+        ? { ...declaration, submissionsEnabled: false }
+        : declaration;
     },
     retry: false,
     refetchOnWindowFocus: true,
@@ -58,7 +116,15 @@ export function recoveryBatchQueryOptions(analysisRunId: string) {
 }
 
 export function useRecoveryRightsDeclaration() {
-  return useQuery(recoveryRightsDeclarationQueryOptions());
+  const declarationQuery = useQuery(recoveryRightsDeclarationQueryOptions());
+  const submissionsDisabledQuery = useQuery(recoverySubmissionsDisabledQueryOptions());
+
+  return {
+    ...declarationQuery,
+    data: submissionsDisabledQuery.data && declarationQuery.data
+      ? { ...declarationQuery.data, submissionsEnabled: false }
+      : declarationQuery.data,
+  };
 }
 
 export function useRecoveryBatch(analysisRunId: string, enabled: boolean) {
@@ -157,10 +223,13 @@ export function createRecoveryBatchMutationOptions(queryClient: QueryClient) {
             : {}),
         }),
       });
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw await recoveryApiError(response);
       return (await response.json()) as RecoveryBatch;
     },
-    onSettled: (_batch, _error, input) => invalidateRecoveryBatch(queryClient, input.analysisRunId),
+    onSettled: (_batch, error, input) => {
+      failClosedRecoverySubmissionCapability(queryClient, error);
+      return invalidateRecoveryBatch(queryClient, input.analysisRunId);
+    },
   });
 }
 
@@ -194,7 +263,7 @@ async function createUploadIntent(input: UploadRecoveryPdf, expectedSha256: stri
       }),
     },
   );
-  if (!response.ok) throw new Error(await readApiError(response));
+  if (!response.ok) throw await recoveryApiError(response);
   return (await response.json()) as RecoveryUploadIntent;
 }
 
@@ -230,7 +299,7 @@ async function uploadRecoveryPdf(input: UploadRecoveryPdf): Promise<RecoveryUplo
     `/api/v1/recovery-batches/${encodeURIComponent(input.batchId)}/uploads/${encodeURIComponent(intent.upload.id)}/finalize`,
     { method: "POST" },
   );
-  if (!response.ok) throw new Error(await readApiError(response));
+  if (!response.ok) throw await recoveryApiError(response);
   return (await response.json()) as RecoveryUpload;
 }
 
@@ -238,7 +307,10 @@ export function uploadRecoveryPdfMutationOptions(queryClient: QueryClient) {
   return mutationOptions({
     mutationKey: ["recovery-uploads", "upload-pdf"] as const,
     mutationFn: uploadRecoveryPdf,
-    onSettled: (_upload, _error, input) => invalidateRecoveryBatch(queryClient, input.analysisRunId),
+    onSettled: (_upload, error, input) => {
+      failClosedRecoverySubmissionCapability(queryClient, error);
+      return invalidateRecoveryBatch(queryClient, input.analysisRunId);
+    },
   });
 }
 
@@ -256,10 +328,13 @@ export function finalizeRecoveryUploadMutationOptions(queryClient: QueryClient) 
         `/api/v1/recovery-batches/${encodeURIComponent(batchId)}/uploads/${encodeURIComponent(uploadId)}/finalize`,
         { method: "POST" },
       );
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw await recoveryApiError(response);
       return (await response.json()) as RecoveryUpload;
     },
-    onSettled: (_upload, _error, input) => invalidateRecoveryBatch(queryClient, input.analysisRunId),
+    onSettled: (_upload, error, input) => {
+      failClosedRecoverySubmissionCapability(queryClient, error);
+      return invalidateRecoveryBatch(queryClient, input.analysisRunId);
+    },
   });
 }
 
@@ -277,16 +352,19 @@ export function validateRecoveryUploadMutationOptions(queryClient: QueryClient) 
         `/api/v1/recovery-batches/${encodeURIComponent(batchId)}/uploads/${encodeURIComponent(uploadId)}/validate`,
         { method: "POST" },
       );
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw await recoveryApiError(response);
       return (await response.json()) as RecoveryUploadValidation;
     },
-    onSettled: (_attempt, _error, input) => Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: recoveryUploadValidationQueryKey(input.batchId, input.uploadId),
-        refetchType: "active",
-      }),
-      queryClient.invalidateQueries({ queryKey: recoveryHistoryQueryKey(input.analysisRunId), refetchType: "active" }),
-    ]),
+    onSettled: (_attempt, error, input) => {
+      failClosedRecoverySubmissionCapability(queryClient, error);
+      return Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: recoveryUploadValidationQueryKey(input.batchId, input.uploadId),
+          refetchType: "active",
+        }),
+        queryClient.invalidateQueries({ queryKey: recoveryHistoryQueryKey(input.analysisRunId), refetchType: "active" }),
+      ]);
+    },
   });
 }
 
@@ -314,16 +392,19 @@ export function confirmRecoveryIdentityMutationOptions(queryClient: QueryClient)
           }),
         },
       );
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw await recoveryApiError(response);
       return response.json();
     },
-    onSettled: (_confirmation, _error, input) => Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: recoveryUploadValidationQueryKey(input.batchId, input.uploadId),
-        refetchType: "active",
-      }),
-      invalidateRecoveryBatch(queryClient, input.analysisRunId),
-    ]),
+    onSettled: (_confirmation, error, input) => {
+      failClosedRecoverySubmissionCapability(queryClient, error);
+      return Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: recoveryUploadValidationQueryKey(input.batchId, input.uploadId),
+          refetchType: "active",
+        }),
+        invalidateRecoveryBatch(queryClient, input.analysisRunId),
+      ]);
+    },
   });
 }
 
@@ -341,16 +422,19 @@ export function selectRecoveryUploadMutationOptions(queryClient: QueryClient) {
         `/api/v1/recovery-batches/${encodeURIComponent(batchId)}/uploads/${encodeURIComponent(uploadId)}/select`,
         { method: "POST" },
       );
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw await recoveryApiError(response);
       return response.json();
     },
-    onSettled: (_selection, _error, input) => Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: recoveryUploadValidationQueryKey(input.batchId, input.uploadId),
-        refetchType: "active",
-      }),
-      invalidateRecoveryBatch(queryClient, input.analysisRunId),
-    ]),
+    onSettled: (_selection, error, input) => {
+      failClosedRecoverySubmissionCapability(queryClient, error);
+      return Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: recoveryUploadValidationQueryKey(input.batchId, input.uploadId),
+          refetchType: "active",
+        }),
+        invalidateRecoveryBatch(queryClient, input.analysisRunId),
+      ]);
+    },
   });
 }
 
@@ -390,10 +474,13 @@ export function acceptRecoveryRightsMutationOptions(queryClient: QueryClient) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ rightsDeclarationVersion, accepted: true }),
       });
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw await recoveryApiError(response);
       return (await response.json()) as RecoveryBatch;
     },
-    onSettled: (_batch, _error, input) => invalidateRecoveryBatch(queryClient, input.analysisRunId),
+    onSettled: (_batch, error, input) => {
+      failClosedRecoverySubmissionCapability(queryClient, error);
+      return invalidateRecoveryBatch(queryClient, input.analysisRunId);
+    },
   });
 }
 
@@ -420,10 +507,13 @@ export function stageRecoveryIdentifierAssistanceMutationOptions(queryClient: Qu
           }),
         },
       );
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw await recoveryApiError(response);
       return response.json();
     },
-    onSettled: (_assistance, _error, input) => invalidateRecoveryBatch(queryClient, input.analysisRunId),
+    onSettled: (_assistance, error, input) => {
+      failClosedRecoverySubmissionCapability(queryClient, error);
+      return invalidateRecoveryBatch(queryClient, input.analysisRunId);
+    },
   });
 }
 
@@ -480,10 +570,13 @@ export function submitRecoverySuccessorMutationOptions(queryClient: QueryClient)
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ idempotencyKey, expectedRevision, configuration }),
       });
-      if (!response.ok) throw new Error(await readApiError(response));
+      if (!response.ok) throw await recoveryApiError(response);
       return (await response.json()) as RecoverySuccessorSubmission;
     },
-    onSettled: (_submission, _error, input) => invalidateRecoveryBatch(queryClient, input.analysisRunId),
+    onSettled: (_submission, error, input) => {
+      failClosedRecoverySubmissionCapability(queryClient, error);
+      return invalidateRecoveryBatch(queryClient, input.analysisRunId);
+    },
   });
 }
 
