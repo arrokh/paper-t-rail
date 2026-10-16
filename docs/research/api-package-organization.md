@@ -1,4 +1,4 @@
-# API package organization: audit, research, and safe refactor plan
+# API package organization: audit, proposal, and implementation record
 
 ## Recommendation
 
@@ -6,15 +6,17 @@
 
 The intended business flow is `controller/queue handler → service → repository and/or external client`. Services own orchestration and domain decisions; integration implementations own provider communication. Services consume integration contracts; only replacement implementations implement those contracts. Do not add interfaces, wrappers, or inheritance merely for folder consistency.
 
-**Phase A was organization-only:** split focused files, move existing declarations, and update references without changing implementation behavior. At that time, Phase B (including repository-only SQL enforcement) was planned as a separate follow-up. The maintainer later authorized issue [#82](https://github.com/arrokh/paper-t-rail/issues/82) to be implemented in PR #81 alongside the #79 work. The repository-only relational rule is now documented in `api/AGENTS.md` and technical-design §37; this document's Phase A record remains historical and does not limit the authorized #82 scope.
+**Original Phase A was organization-only:** split focused files, move existing declarations, and update references without changing implementation behavior. Repository-only SQL enforcement was initially planned as a separate follow-up. The maintainer later authorized issue [#82](https://github.com/arrokh/paper-t-rail/issues/82) to be implemented in PR [#81](https://github.com/arrokh/paper-t-rail/pull/81) alongside issue #79; that PR merged both scopes. The #79 plan below remains a historical record and does not describe the separate #82 SQL extraction. Current package and repository-only relational rules are documented in `api/AGENTS.md` and technical-design §37.
 
-The user approved the refined package structure on 2026-10-06 and authorized Phase A implementation tracked in [issue #79](https://github.com/arrokh/paper-t-rail/issues/79). This document records the #79 scope and implementation evidence; issue #82 defines the additional persistence-ownership work. A later navigation review moved the provider-neutral object-storage contract from `document/storage` to `infrastructure/storage`, because analysis, evidence, acquisition, and deletion features all consume it; the S3 adapter remains in `external/s3`. It also aligned the `/analysis-runs/{runId}/report` HTTP adapter and read orchestration under `analysis/report`, while keeping reference/evidence report projections with their owning features.
+The user approved the refined package structure on 2026-10-06 and authorized Phase A implementation tracked in [issue #79](https://github.com/arrokh/paper-t-rail/issues/79). This document preserves the #79 scope and implementation evidence, plus context for the separately authorized #82 persistence-ownership work. A later navigation review moved the provider-neutral object-storage contract from `document/storage` to `infrastructure/storage`, because analysis, evidence, acquisition, and deletion features all consume it; the S3 adapter remains in `external/s3`. It also aligned the `/analysis-runs/{runId}/report` HTTP adapter and read orchestration under `analysis/report`, while keeping reference/evidence report projections with their owning features.
+
+**Current status (2026-10-16):** Issues #79 and #82 are closed, and PR #81 is merged. The original plan is not pending work. The optional context-neutral provider API discussed below remains an undesigned future possibility.
 
 **Behavior preservation is an acceptance criterion, not a zero-risk guarantee.** Package changes can affect discovery and contracts even when bodies are unchanged. Use independently reversible commits and stop at the first unexplained difference.
 
 ### Phase A implementation record
 
-- Implemented the approved A0–A36 organization changes on the feature branch, based on `1f8dbef`; no Phase B extraction or SQL redesign was included. The guidance changes preceded source moves, but A2–A35 were grouped rather than committed and fully tested one step at a time; interim compilation checks ran after move groups, and the complete suite/review/live gates ran on the final diff.
+- Implemented the approved A0–A36 organization changes on the feature branch, based on `1f8dbef`. PR #81 also included the separately authorized #82 repository-only SQL ownership work; that scope moved relational access behind repositories without redesigning the schema or intended query/transaction behavior. No context-neutral provider API extraction was included. The guidance changes preceded source moves, but A2–A35 were grouped rather than committed and fully tested one step at a time; interim compilation checks ran after move groups, and the complete suite/review/live gates ran on the final diff.
 - Aligned `api/AGENTS.md` and technical-design §37 before moving production types. Feature contracts and business policy remain feature-owned; the nine provider families are under `external/<provider>`.
 - Final check: `cd api && mise exec -- ./gradlew clean test bootJar` — **332 tests across 49 suites; 0 failures, 0 errors, 0 skipped**. Main, test, and calibration Kotlin source sets compiled, and the executable JAR was built.
 - Ran the built JAR in both API and worker roles against isolated PostgreSQL/Redis containers using task-only credentials and synthetic data. The API returned `200` for `/api/v1/health` and `/v3/api-docs` (17 paths). The worker consumed a legacy-format fixture envelope and placed it in the dead-letter stream with `UNSUPPORTED_EVENT_TYPE`; no message remained pending. The existing queue integration suite also exercises the valid fixture pipeline through completion with controlled test providers.
@@ -51,7 +53,7 @@ Before A0, local authority in `api/AGENTS.md`, `docs/agents/coding-principles.md
 
 ADRs 0011 (shared OpenAI-compatible transport), 0014 (S3-compatible storage), and 0016 (execution capture) remain applicable. Changing an integration's package does not change their semantic, privacy, configuration, or storage decisions. Do not rewrite accepted ADRs just to rename folders. The convention `external` is the user's choice, not a layout mandated by Spring or Kotlin.
 
-## 2. Findings verified in the code
+## 2. Findings verified at the original audit baseline
 
 Paths below are relative to `api/src/main/kotlin/com/papertrail/api/`.
 
@@ -77,14 +79,14 @@ Paths below are relative to `api/src/main/kotlin/com/papertrail/api/`.
 | Crossref/Unpaywall clients, factories, configuration, caches and operator API types are spread across feature roles. | Provider code is scattered under the now-approved provider-first convention. | Colocate the existing provider families under `external.crossref` / `external.unpaywall`, preserving methods, role-specific operator packages and run lifetimes. |
 | `scholarly/references/report/ReferenceResolutionReportResponse.kt` is an HTTP response envelope. | Transport naming is inconsistent with the existing feature `http` package. | Move the envelope to `scholarly.references.http`; keep the report projections in `report`. |
 
-### Important observations that are NOT part of the refactor
+### Other observations from the original audit (historical)
 
-- `AnalysisRunService` combines upload/run creation, queries, and direct SQL. Processing/stage-completion services and some queue orchestration also contain persistence work. Consistent role ownership is a Phase A goal; enforcing repository-only SQL or extracting orchestration is separate Phase B work. The health controller's direct `SELECT 1` is a small operational check, not a reason to add shallow layers.
+- At the audit baseline (`8182030`), `AnalysisRunService` combined upload/run creation, queries, and direct SQL; processing/stage-completion services and some queue orchestration also contained persistence work. These were outside the original #79 organization-only scope. Repository-only SQL ownership was later authorized as #82 and implemented in PR #81. Treat these locations as baseline findings, not current code findings; the health check also moved behind a repository.
 - There are bidirectional source imports between analysis and citation/evidence/scholarly, and between shared infrastructure and features. For example, the Redis worker knows feature handlers, while features use messaging; the provider catalog knows feature settings. Moving directories does not remove these dependencies or create isolated modules. This was an import-level observation, not a full bytecode dependency analysis.
 - `AnalysisRunQueueIntegrationTest.kt` is 4,462 lines and spans several capabilities. That is a later test-maintainability opportunity. Do not split its fixtures or assertions in the production-file move series.
 - An approximate declaration scan identified 14 multi-type production files. This is a candidate list, **not** 14 automatic violations. Private body-subscriber helpers and small cursor/codec units are legitimate cohesive exceptions.
 
-## 3. Target package structure
+## 3. Approved package structure
 
 Keep source sets, resources, migrations, dependencies, application root, and artifact unchanged:
 
@@ -240,11 +242,11 @@ Moving the projector does not register it as a bean. Preserve its direct constru
 
 For this series, split the other independent declarations but keep the registration/catalog/private-helper unit together. Leave role constants and top-level helpers in the original file. Do not duplicate fingerprint code, invent a generic utility, or widen helper visibility merely to achieve one type per file. The residual coupled pair is an explicit exception, not a hidden blocker.
 
-## 5. Commit-sized implementation sequence
+## 5. Original #79 implementation sequence (historical)
 
-Only Phase A is specified for execution. Apply sequentially; split a row further if the diff is not easy to review. Use one writer per working tree. Initial documentation/test gate commits do not move production code.
+A0–A36 below were the original organization-only plan for #79 and are complete. They are preserved for scope and evidence; do not treat them as pending steps. PR #81 also included the separately authorized #82 repository-only SQL ownership work, which was not part of A0–A36.
 
-Every production step must compile main/test/calibration, pass relevant behavior tests and the full API suite, and leave a working application. Preserve bodies verbatim except for reference updates; a grouping table does not authorize moving business policy or extracting methods.
+The original acceptance contract required every production step to compile main/test/calibration, pass relevant behavior tests and the full API suite, and leave a working application. Bodies were to remain unchanged except for reference updates; the sequence did not authorize moving business policy or extracting methods.
 
 | Step | Small commit | Specific acceptance focus |
 |---|---|---|
@@ -288,11 +290,13 @@ Every production step must compile main/test/calibration, pass relevant behavior
 
 For each provider step, update corresponding tests and calibration references, retaining assertions and resource locations. No new DTO/mapper files are implied by provider diagrams. Leave small cursor/codec units and private transport helpers together. Stop at a signature, visibility, wiring-lifetime, or method-body change and separate it from this series.
 
-### Phase B — separately reviewed, not executable from this issue
+### Follow-up design and current status
 
-Two possible follow-ups are explicitly outside Phase A: (1) a reusable context-neutral API, initially Crossref, once a real consumer and contract are agreed; (2) strict service/repository separation for existing SQL and orchestration. Do not begin either automatically, add scaffolding for it, or mark it complete because files moved. Each needs its own precise behavior seam, coverage assessment, tested extraction steps, and approval. No method signature or interface name has been decided for the future API.
+The original proposal separated two follow-ups from #79: (1) a reusable context-neutral API, initially Crossref, once a real consumer and contract are agreed; and (2) enforcing repository-only relational SQL while retaining existing orchestration and transaction boundaries. The SQL-ownership work was later authorized as #82 and completed in PR #81; it is no longer an open follow-up. The context-neutral provider API remains undesigned and unauthorized. Any future extraction still needs a concrete consumer, agreed contract, explicit ownership of per-run authorization/cache/capture/errors/selection, and tested steps. No method signature or interface name has been decided.
 
-## 6. Verification and no-regression gates
+## 6. Historical verification and no-regression gates
+
+These were the acceptance gates for the original #79 organization plan; parts also informed review of the separately authorized #82 work in PR #81. They are retained as historical criteria, not pending work. Actual verification evidence is summarized above.
 
 ### Existing behavioral coverage to reuse
 
@@ -306,7 +310,7 @@ Two possible follow-ups are explicitly outside Phase A: (1) a reusable context-n
 
 The main Redis integration suite constructs workers/handlers directly. It proves substantial async behavior, but does not prove that the real **worker-role Spring context** discovers and wires every moved bean. The full OpenAPI context test explicitly uses the **API role** and mocks several services.
 
-Before moving scanned production types, obtain repeatable worker-context evidence. Prefer one focused behavior test or disposable packaged-application smoke check: start the real worker role against isolated PostgreSQL/Redis/object-storage and controlled local parser/provider fixtures; feed one fixture envelope and observe the expected terminal state. Pair it with API-role HTTP checks. Keep expected fixture outcomes independent of the implementation.
+The original gate required repeatable worker-context evidence before moving scanned production types. The implementation record above describes the packaged API/worker checks that were run. The expected fixture outcomes were kept independent of the implementation.
 
 Existing issue [#55](https://github.com/arrokh/paper-t-rail/issues/55) already tracks the broader upload-to-report system-test gap. Reuse suitable evidence/fixtures from that work rather than opening a duplicate end-to-end test task. The narrow role-wiring gate is required; completion of unrelated full-web work is not. Existing issue [#56](https://github.com/arrokh/paper-t-rail/issues/56) covers the identified PDF page-limit boundary gap. Use its focused, independent expected outcomes if additional validation coverage is needed before splitting the validator file.
 
@@ -335,9 +339,11 @@ The runtime selector is **`paper-trail.role` / `APP_ROLE`**, not just a Spring p
 
 Passing the present baseline does not guarantee future moves are safe. Acceptance applies to the actual refactored artifact after these gates.
 
-## 7. Explicitly out of scope
+## 7. Original #79 scope exclusions
 
-- Repository extraction from service bodies, splitting use cases/queue orchestration, transaction redesign, or pipeline/state-machine changes.
+These bullets record exclusions from the organization-only #79 plan. They do not imply that related work was never completed under another authorization; repository-only SQL ownership was separately implemented under #82 in PR #81.
+
+- Beyond the separately completed #82 repository-only SQL work, splitting use cases/queue orchestration, transaction redesign, or pipeline/state-machine changes.
 - Creating a context-neutral `CrossrefApi`, removing per-run factories, changing interfaces/method signatures, or making run-bound clients unrestricted singletons.
 - Moving reference matching, upload orchestration, domain policies, final-verification ownership, prompts, or feature-specific interpretation into an external provider.
 - Dependency-cycle elimination, enforced module isolation/visibility, Gradle submodules, Modulith adoption, hexagonal scaffolding, inheritance frameworks, or microservices.
@@ -347,18 +353,18 @@ Passing the present baseline does not guarantee future moves are safe. Acceptanc
 - Moving feature handlers into provider/shared packages, sensitive content into operational logs, or weakening operator authentication.
 - Large integration-fixture reorganization, benchmark/model/calibration changes, resource moves, inference runs, or uncontrolled network calls.
 
-**Phase A stop condition:** listed responsibilities/files are consistently discoverable, provider integration families are colocated, and all preservation gates pass without implementation redesign. Document remaining imports/layering exceptions; do not present them as isolated modules or complete Phase B work.
+**Original Phase A stop condition:** listed responsibilities/files are consistently discoverable, provider integration families are colocated, and preservation gates pass without implementation redesign. Document remaining imports/layering exceptions; do not present them as isolated modules or imply that the optional context-neutral provider API has been extracted.
 
 ## 8. Review and requirements traceability
 
-The organization audit was performed against `main` at `8182030`; implementation started from the feature branch at `1f8dbef`. The 324-test audit result below is historical baseline evidence. Current implementation verification is recorded in the Phase A implementation record above and was completed after the package moves.
+The organization audit was performed against `main` at `8182030`; implementation started from the feature branch at `1f8dbef`. The 324-test result is historical baseline evidence. Current implementation verification for #79 and separately authorized #82 is summarized in the merged PR #81 record above.
 
 | Requirement / acceptance criterion | Plan section or step | Verification | Status / gap |
 |---|---|---|---|
 | Directory/file organization is the first priority | §§3–5; Phase A | Rename-aware diffs; existing names/bodies; no extra abstractions | Covered |
-| Keep business code feature-first with understandable layering | §3 roles; A0, A8–A18 | Existing request/queue/service flows; acknowledge current SQL/orchestration | Covered as ownership convention; strict enforcement deferred |
+| Keep business code feature-first with understandable layering | §3 roles; A0, A8–A18 | Existing request/queue/service flows; acknowledge current SQL/orchestration | Covered as ownership convention; repository-only SQL enforcement was separately implemented under #82 in PR #81 |
 | Group provider functionality under simple `external/<provider>` packages | §3 provider mapping; A19–A33 | Check the enumerated source families and remaining-name ownership exceptions | Covered, including cache/config/operator HTTP families |
-| Other features can use integrations without inheriting service behavior | §3 optional future API; Phase B | Preserve present contracts; consumers compose; contract/substitution need before extraction | Colocation covered; context-neutral API not designed or claimed |
+| Other features can use integrations without inheriting service behavior | §3 optional future API; follow-up design | Preserve present contracts; consumers compose; contract/substitution need before extraction | Colocation covered; context-neutral API not designed or claimed |
 | Do not impose hexagonal/framework/interface boilerplate | §§1,3,7 | No new framework, wrapper, interface, `ports`/`adapters` tree or visibility widening | Covered |
 | HTTP DTOs, persistence models, business VOs and remote types have clear roles | §3 role table; A2, A7–A9, A16–A18, A22/A26/A34/A35 | Independent existing JSON/schema/fixture assertions | Covered; keep `http` naming |
 | No observable behavior changes | §4 invariants; §6 gates | Full suite, OpenAPI comparison, stored JSON/event/config/cache replay, deterministic fixture outcomes | Covered as acceptance; zero risk is not guaranteed |
@@ -382,10 +388,10 @@ The organization audit was performed against `main` at `8182030`; implementation
 
 - Provider-specific bodies still import some feature contracts/policies after Phase A. This is deliberate preservation, not a claim of context-neutrality or acyclic modules.
 - Real API/worker role gates and prior-format cache/event fixtures were exercised with isolated services and synthetic data. The packaged worker smoke intentionally used an unsupported envelope to verify routing to a terminal dead-letter state; valid pipeline completion remains covered by the existing fixture integration suite.
-- A new consumer's exact shared API methods/results and stricter SQL extraction are unresolved **optional Phase B design**, not blockers to the organization sequence.
-- Keep existing generic `infrastructure` and `http` names; there is no need for an additional naming decision to execute Phase A.
+- A new consumer's exact shared API methods/results remain unresolved **optional future design**. The separate repository-only SQL extraction was authorized under #82 and merged in PR #81.
+- Keep existing generic `infrastructure` and `http` names; there is no need for an additional naming decision to understand the completed organization work.
 
-**Recommendation: Phase A complete.** Its package moves and preservation gates passed as recorded above. Phase B is not designed, authorized, or scheduled; do not infer strict module isolation or context-neutral provider clients from this work.
+**Recommendation: Historical work complete.** The #79 package changes and #82 repository-only SQL ownership work were merged in PR #81. The context-neutral provider API remains undesigned and unauthorized; do not infer strict module isolation or context-neutral provider clients from the package moves.
 
 ## Sources
 
