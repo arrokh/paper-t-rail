@@ -5,6 +5,7 @@ import com.papertrail.api.citation.parsing.ParsedBibliographySourceLocation
 import com.papertrail.api.evidence.report.CitedReferenceVerificationOutcome
 import com.papertrail.api.scholarly.acquisition.report.CitedPaperAccessReport
 import com.papertrail.api.scholarly.references.resolver.ScholarlyCandidateEvidence
+import com.papertrail.api.scholarly.references.attempts.domain.ReferenceResolutionChainOutcome
 import io.swagger.v3.oas.annotations.media.Schema
 
 data class BibliographyResolutionReportEntry(
@@ -60,4 +61,12 @@ data class BibliographyResolutionReportEntry(
     val provenanceCaptureStatus: String = "UNAVAILABLE",
     @field:Schema(description = "DOI used to restart successor-run identity resolution from metadata in the exact human-confirmed selected PDF; null when no such assistance was used.")
     val assistedDoi: String? = null,
+    @field:Schema(description = "Persisted provider-chain outcome. UNKNOWN for legacy history without a persisted outcome; never inferred from configuration or matching status.")
+    val resolutionOutcome: ReferenceResolutionChainOutcome = ReferenceResolutionChainOutcome.UNKNOWN,
+    @field:Schema(description = "Provider whose metadata was selected by the conservative matcher. Null when no provider metadata was selected; never inferred from a configured chain.", allowableValues = ["crossref", "datacite"])
+    val metadataOriginProviderId: String? = null,
+    @field:Schema(description = "Bounded, content-free logical provider lookup history; up to two entries.")
+    val providerLookups: List<ReferenceResolutionProviderLookupReport> = emptyList(),
+    @field:Schema(description = "Bounded wire-attempt history; up to three entries. Cache reads do not appear as wire attempts.")
+    val providerAttempts: List<ReferenceResolutionProviderAttemptReport> = emptyList(),
 )

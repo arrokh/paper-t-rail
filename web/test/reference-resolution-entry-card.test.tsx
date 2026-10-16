@@ -142,6 +142,96 @@ describe("Reference Resolution Entry Card", () => {
     expect(evidenceRegion.textContent).not.toContain("candidates, not confirmed identities");
   });
 
+  it("shows persisted provider-chain outcome, actual metadata origin, and bounded wire attempts", () => {
+    const chainEntry = {
+      ...entry,
+      resolutionOutcome: "RESOLVED",
+      metadataOriginProviderId: "datacite",
+      providerLookups: [
+        { providerId: "crossref", lookupOrdinal: 1, source: "WIRE", outcomeCode: "NOT_FOUND" },
+        { providerId: "datacite", lookupOrdinal: 2, source: "WIRE", outcomeCode: "FOUND" },
+      ],
+      providerAttempts: [
+        { providerId: "crossref", attemptOrdinal: 1, state: "COMPLETED", outcomeCode: "NOT_FOUND", reservedAt: "2025-01-01T00:00:00Z", startedAt: "2025-01-01T00:00:00.010Z", completedAt: "2025-01-01T00:00:00.130Z", unknownAt: null, httpStatus: 404, durationMillis: 120, responseBytes: 48, nextAttemptNotBefore: null },
+        { providerId: "datacite", attemptOrdinal: 2, state: "COMPLETED", outcomeCode: "FOUND", reservedAt: "2025-01-01T00:00:01Z", startedAt: "2025-01-01T00:00:01.010Z", completedAt: "2025-01-01T00:00:01.250Z", unknownAt: null, httpStatus: 200, durationMillis: 240, responseBytes: 512, nextAttemptNotBefore: null },
+      ],
+    } satisfies Entry;
+    render(
+      <ol>
+        <ReferenceResolutionEntryCard
+          analysisRunId="run-123"
+          entry={chainEntry}
+          references={[chainEntry]}
+          anchorId="resolution-ref1"
+          parsedEntryHref="#bibliography-ref1"
+          parsedEntryAvailable={false}
+          onViewParsedEntry={vi.fn()}
+        />
+      </ol>,
+    );
+
+    const historyTrigger = screen.getByRole("button", { name: "Provider resolution history" });
+    expect(historyTrigger.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(historyTrigger);
+    expect(historyTrigger.getAttribute("aria-expanded")).toBe("true");
+    const historyText = historyTrigger.parentElement?.textContent ?? "";
+    expect(historyText).toContain("Provider-chain outcomeresolved");
+    expect(historyText).toContain("Metadata selected by the matcherdatacite");
+    expect(historyText).toContain("crossref · lookup 1 · wire · not found");
+    expect(historyText).toContain("datacite · attempt 2 · completed · found · HTTP 200 · 240 ms · 512 response bytes · reserved 2025-01-01T00:00:01Z · started 2025-01-01T00:00:01.010Z · completed 2025-01-01T00:00:01.250Z");
+    expect(historyText).toContain("cached lookups are not wire attempts");
+    expect(historyText).not.toContain(entry.rawText);
+  });
+
+  it("explains an unconfirmed DOI without implying that the DOI or work does not exist", () => {
+    const unconfirmedEntry = {
+      ...entry,
+      status: "UNRESOLVED",
+      reasonCode: "DOI_NOT_FOUND",
+      canonicalPaper: null,
+      resolutionOutcome: "NO_CANDIDATE_OR_DOI_UNCONFIRMED",
+      metadataOriginProviderId: null,
+    } satisfies Entry;
+
+    render(
+      <ol>
+        <ReferenceResolutionEntryCard
+          analysisRunId="run-123"
+          entry={unconfirmedEntry}
+          references={[unconfirmedEntry]}
+          anchorId="resolution-ref1"
+          parsedEntryHref="#bibliography-ref1"
+          parsedEntryAvailable={false}
+          onViewParsedEntry={vi.fn()}
+        />
+      </ol>,
+    );
+
+    expect(screen.getByText("No public metadata confirmation was found. This does not prove the DOI or work does not exist.")).toBeTruthy();
+    expect(screen.queryByText("doi not found")).toBeNull();
+  });
+
+  it("shows UNKNOWN when a rolling-compatible response has no persisted provider-chain outcome", () => {
+    render(
+      <ol>
+        <ReferenceResolutionEntryCard
+          analysisRunId="run-123"
+          entry={entry}
+          references={[entry]}
+          anchorId="resolution-ref1"
+          parsedEntryHref="#bibliography-ref1"
+          parsedEntryAvailable={false}
+          onViewParsedEntry={vi.fn()}
+        />
+      </ol>,
+    );
+
+    const historyTrigger = screen.getByRole("button", { name: "Provider resolution history" });
+    fireEvent.click(historyTrigger);
+    expect(historyTrigger.getAttribute("aria-expanded")).toBe("true");
+    expect(historyTrigger.parentElement?.textContent ?? "").toContain("Provider-chain outcomeUNKNOWN");
+  });
+
   it("displays generated bibliography keys one-based without changing parsed-entry callbacks", () => {
     const onViewParsedEntry = vi.fn();
     render(

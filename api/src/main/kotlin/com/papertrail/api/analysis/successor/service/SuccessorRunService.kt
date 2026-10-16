@@ -133,7 +133,9 @@ class SuccessorRunService(
             if (invalidationReasons.isNotEmpty()) add("CONFIGURATION_CHANGE_REQUIRES_UNSUPPORTED_GLOBAL_REPROCESSING")
             if (!hasMatchingExternalProviderConsents(predecessor.configuration)) add("PREDECESSOR_EXTERNAL_PROVIDER_CONSENT_MISSING_OR_MISMATCHED")
             if (hasUnrepresentedRetainedAccessProvider) add("PREDECESSOR_ACCESS_PROVIDER_PROVENANCE_UNVERIFIABLE")
-            if ((selectedEntryPlans.any { it.assistedDoi != null } || identifierAssistancePlans.isNotEmpty()) && configuration.referenceResolution.provider == null) {
+            if ((selectedEntryPlans.any { it.assistedDoi != null } || identifierAssistancePlans.isNotEmpty()) &&
+                referenceResolutionProviders(configuration).isEmpty()
+            ) {
                 add("REFERENCE_RESOLUTION_PROVIDER_NOT_CONFIGURED")
             }
             selectedEntryPlans.flatMap(SuccessorSelectedEntryPlan::blockers).distinct().forEach(::add)
@@ -169,7 +171,9 @@ class SuccessorRunService(
                 add(configuration.systemOne.toExpectedWork("claim-verification"))
             }
             if (selectedEntryPlans.any { it.assistedDoi != null } || identifierAssistancePlans.isNotEmpty()) {
-                configuration.referenceResolution.provider?.let { add(it.toExpectedWork("reference-resolution")) }
+                referenceResolutionProviders(configuration).forEach { provider ->
+                    add(provider.toExpectedWork("reference-resolution"))
+                }
             }
         }
         val fingerprintInput = SuccessorPlanFingerprintInput(
@@ -318,6 +322,10 @@ class SuccessorRunService(
             reasonCode = if (invalidated) invalidReason else reusableReason,
         )
 
+    private fun referenceResolutionProviders(configuration: AnalysisConfigurationSnapshot): List<ProviderSelection> =
+        configuration.referenceResolution.providerChain?.providers
+            ?: listOfNotNull(configuration.referenceResolution.provider)
+
     private fun hasMatchingExternalProviderConsents(configuration: AnalysisConfigurationSnapshot): Boolean {
         val selections = listOfNotNull(
             configuration.claimExtractor,
@@ -328,7 +336,7 @@ class SuccessorRunService(
             configuration.referenceResolution.provider,
             configuration.openAccess,
             configuration.citedPaperParserSelection(),
-        )
+        ) + configuration.referenceResolution.providerChain?.providers.orEmpty()
         val externalSelections = selections.filter { it.trustBoundary != "LOCAL" }
         if (externalSelections.any { it.trustBoundary != "EXTERNAL" }) return false
         val selectionsByProvider = externalSelections.groupBy(ProviderSelection::provider)

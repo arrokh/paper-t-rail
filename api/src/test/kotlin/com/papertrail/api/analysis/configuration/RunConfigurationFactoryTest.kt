@@ -1,7 +1,9 @@
 package com.papertrail.api.analysis.configuration
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
+import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
 import com.papertrail.api.evidence.verification.domain.EvidenceAggregationThresholds
@@ -97,6 +99,7 @@ class RunConfigurationFactoryTest {
         assertEquals(0, snapshot.externalProviderConsents.size)
         val json = jacksonObjectMapper().readTree(factory.toJson(snapshot))
         assertTrue(json["referenceResolution"].has("confidenceThreshold"))
+        assertFalse(json["referenceResolution"].has("providerChain"))
         assertEquals(0.25, json["referenceResolution"]["confidenceThreshold"].asDouble())
         assertTrue(json["aggregation"]["thresholds"].isNull)
     }
@@ -156,6 +159,24 @@ class RunConfigurationFactoryTest {
         assertEquals(OpenAiCompatibleClaimAnalysisSettings.PROVIDER_ID, default.provider)
         assertEquals("google/gemma-4-e2b", default.model)
         assertEquals("heuristic", heuristic.provider)
+    }
+
+    @Test
+    fun `legacy scalar reference resolution snapshots without a chain keep their selection and serialization`() {
+        val objectMapper = jacksonObjectMapper()
+        val historicalJson = objectMapper.readTree(factory.toJson(factory.from(RunConfigurationRequest()))) as ObjectNode
+        (historicalJson.path("referenceResolution") as ObjectNode).remove("providerChain")
+
+        val historical = objectMapper.treeToValue(historicalJson, AnalysisConfigurationSnapshot::class.java)
+        val reserialized = objectMapper.writeValueAsString(historical)
+
+        assertEquals("recorded-fixtures", historical.referenceResolution.provider?.provider)
+        assertEquals(null, historical.referenceResolution.providerChain)
+        assertFalse(reserialized.contains("\"providerChain\""))
+        assertEquals("recorded-fixtures", factory.from(factory.parseRequest(objectMapper.readTree("{}"))).referenceResolution.provider?.provider)
+        val parsedLegacyRequest = factory.parseRequest(objectMapper.readTree("""{"scholarlyMetadataProvider":"recorded-fixtures"}"""))
+        assertEquals("recorded-fixtures", parsedLegacyRequest.scholarlyMetadataProvider)
+        assertEquals(null, parsedLegacyRequest.providerChainId)
     }
 
     @Test
@@ -525,6 +546,198 @@ class RunConfigurationFactoryTest {
     }
 
     @Test
+    fun `fixed exact DOI provider chain is offered only when enabled with both registrations`() {
+        val defaultCatalog = ProviderCatalog.safeDefaults()
+        assertTrue(defaultCatalog.directory().providerChains.isEmpty())
+
+        val eligibleCatalog = providerChainCatalog()
+        val chainOption = eligibleCatalog.directory().providerChains.single()
+        assertEquals("crossref-datacite-exact-doi-v1", chainOption.chainId)
+        assertEquals(listOf("crossref", "datacite"), chainOption.providers.map { it.providerId })
+        assertFalse(eligibleCatalog.directory().providers.values.flatten().any { it.providerId == "datacite" })
+        assertFalse(chainOption.providers.single { it.providerId == "datacite" }.dataCategories.contains(DataCategory.PROVIDER_CONTACT_EMAIL.id))
+
+        listOf(
+            ProviderCatalog.safeDefaults(providerChainEnabled = true, crossrefEnabled = true, dataCiteEnabled = false),
+            ProviderCatalog.safeDefaults(providerChainEnabled = true, crossrefEnabled = false, dataCiteEnabled = true),
+            ProviderCatalog.safeDefaults(providerChainEnabled = false, crossrefEnabled = true, dataCiteEnabled = true),
+        ).forEach { catalog ->
+            assertTrue(catalog.directory().providerChains.isEmpty())
+            assertThrows(IllegalArgumentException::class.java) {
+                factoryFor(providerCatalog = catalog).from(RunConfigurationRequest(providerChainId = "crossref-datacite-exact-doi-v1"))
+            }
+        }
+    }
+
+    @Test
+    fun `disabling chain selection preserves execution of an already-pinned chain`() {
+        val enabledCatalog = providerChainCatalog()
+        val request = RunConfigurationRequest(
+            providerChainId = "crossref-datacite-exact-doi-v1",
+            externalProviderConsents = providerChainConsents(enabledCatalog),
+        )
+        val pinnedSnapshot = factoryFor(providerCatalog = enabledCatalog).from(request)
+        val disabledCatalog = providerChainCatalog(providerChainEnabled = false)
+
+        assertTrue(disabledCatalog.directory().providerChains.isEmpty())
+        assertThrows(IllegalArgumentException::class.java) {
+            factoryFor(providerCatalog = disabledCatalog).from(request)
+        }
+
+        var outboundCallStarted = false
+        val result = ProviderCallGate(disabledCatalog).callProviderChain(
+            "crossref-datacite-exact-doi-v1",
+            "crossref",
+            providerCallPayload(DataCategory.BIBLIOGRAPHIC_METADATA),
+            pinnedSnapshot,
+        ) {
+            outboundCallStarted = true
+            "crossref"
+        }
+
+        assertEquals("crossref", result)
+        assertTrue(outboundCallStarted)
+
+        val unavailableCatalog = providerChainCatalog(providerChainEnabled = false, crossrefEnabled = false)
+        outboundCallStarted = false
+        assertThrows(ProviderCallRejectedException::class.java) {
+            ProviderCallGate(unavailableCatalog).callProviderChain(
+                "crossref-datacite-exact-doi-v1",
+                "crossref",
+                providerCallPayload(DataCategory.BIBLIOGRAPHIC_METADATA),
+                pinnedSnapshot,
+            ) {
+                outboundCallStarted = true
+                "crossref"
+            }
+        }
+        assertFalse(outboundCallStarted)
+    }
+
+    @Test
+    fun `exact DOI chain request pins ordered provider registrations and fixed limits with independent consents`() {
+        val catalog = providerChainCatalog(crossrefContactEmail = "chain-contact@example.invalid")
+        val request = RunConfigurationRequest(
+            providerChainId = "crossref-datacite-exact-doi-v1",
+            externalProviderConsents = providerChainConsents(catalog),
+        )
+
+        val snapshot = factoryFor(providerCatalog = catalog).from(request)
+        val chain = snapshot.referenceResolution.providerChain!!
+
+        assertEquals(null, snapshot.referenceResolution.provider)
+        assertEquals(listOf("crossref", "datacite"), chain.providers.map { it.provider })
+        assertEquals(listOf("v1", "v1"), chain.providers.map { it.version })
+        assertEquals(listOf("bibliographic_metadata", "provider_contact_email"), chain.providers[0].dataCategories)
+        assertEquals(listOf("bibliographic_metadata"), chain.providers[1].dataCategories)
+        assertTrue(chain.providers[0].configurationFingerprint!!.matches(Regex("[0-9a-f]{64}")))
+        assertEquals(null, chain.providers[1].configurationFingerprint)
+        assertEquals("Crossref chain consent disclosure.", chain.providers[0].retentionDisclosure)
+        assertEquals("DataCite chain consent disclosure.", chain.providers[1].retentionDisclosure)
+        assertEquals(listOf("crossref", "datacite"), snapshot.externalProviderConsents.map { it.providerId })
+        assertEquals(2, chain.limits.maxLogicalLookupsPerReference)
+        assertEquals(3, chain.limits.maxWireAttemptsPerReference)
+        assertEquals(1, chain.limits.maxRetriesPerReference)
+        assertEquals(80_000, chain.limits.deadlineMillis)
+        assertEquals(10, chain.limits.crossrefCandidateLimit)
+        assertEquals(1, chain.limits.dataCiteRecordLimit)
+        assertEquals(1_048_576, chain.limits.maxDecodedJsonBytes)
+        assertEquals(1, chain.limits.requestsPerSecondPerProvider)
+        assertEquals(1, chain.limits.maxConcurrentRequestsPerProvider)
+        assertEquals(250, chain.limits.retryDelayMinMillis)
+        assertEquals(2_000, chain.limits.retryDelayMaxMillis)
+        assertEquals("crossref-datacite-exact-doi-v1", chain.chainId)
+        assertEquals("crossref-datacite-scholarly-metadata-v1", chain.mappingVersion)
+        assertEquals(ScholarlyMetadataMatcher.POLICY_VERSION, chain.policyVersion)
+
+        val serializedJson = factoryFor(providerCatalog = catalog).toJson(snapshot)
+        val serialized = jacksonObjectMapper().readTree(serializedJson)
+        assertTrue(serialized.path("referenceResolution").path("providerChain").isObject)
+        assertTrue(serialized.path("referenceResolution").path("provider").isNull)
+        assertFalse(serializedJson.contains("chain-contact@example.invalid"))
+    }
+
+    @Test
+    fun `parses serialized web chain config with null scalar provider into an immutable chain snapshot`() {
+        val catalog = providerChainCatalog()
+        val configuredFactory = factoryFor(providerCatalog = catalog)
+        val objectMapper = jacksonObjectMapper()
+        val webPayload = objectMapper.createObjectNode().apply {
+            put("providerChainId", "crossref-datacite-exact-doi-v1")
+            putNull("scholarlyMetadataProvider")
+            set<JsonNode>("externalProviderConsents", objectMapper.valueToTree(providerChainConsents(catalog)))
+        }
+
+        val parsed = configuredFactory.parseRequest(webPayload)
+        val snapshot = configuredFactory.from(parsed)
+
+        assertEquals(null, parsed.scholarlyMetadataProvider)
+        assertEquals("crossref-datacite-exact-doi-v1", snapshot.referenceResolution.providerChain?.chainId)
+        assertEquals(null, snapshot.referenceResolution.provider)
+    }
+
+    @Test
+    fun `chain request rejects unknown IDs arbitrary client selection and explicit scalar conflicts`() {
+        val catalog = providerChainCatalog()
+        val configuredFactory = factoryFor(providerCatalog = catalog)
+        val consents = providerChainConsents(catalog)
+        val parsedChainRequest = configuredFactory.parseRequest(jacksonObjectMapper().readTree(
+            """{"providerChainId":"crossref-datacite-exact-doi-v1"}""",
+        ))
+        assertEquals("crossref-datacite-exact-doi-v1", parsedChainRequest.providerChainId)
+        assertEquals(null, parsedChainRequest.scholarlyMetadataProvider)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            configuredFactory.from(RunConfigurationRequest(providerChainId = "client-defined-chain", externalProviderConsents = consents))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            configuredFactory.from(RunConfigurationRequest(
+                providerChainId = "crossref-datacite-exact-doi-v1",
+                scholarlyMetadataProvider = "crossref",
+                externalProviderConsents = consents,
+            ))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            configuredFactory.parseRequest(jacksonObjectMapper().readTree(
+                """{"providerChainId":"crossref-datacite-exact-doi-v1","providerOrder":["datacite","crossref"],"externalProviderConsents":[]}""",
+            ))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            configuredFactory.parseRequest(jacksonObjectMapper().readTree(
+                """{"providerChainId":"crossref-datacite-exact-doi-v1","confidenceThreshold":0.9}""",
+            ))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            configuredFactory.from(RunConfigurationRequest(scholarlyMetadataProvider = "datacite"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            configuredFactory.from(RunConfigurationRequest(openAccessProvider = "datacite"))
+        }
+    }
+
+    @Test
+    fun `exact DOI chain requires separate exact consent and current disclosure fingerprints for both providers`() {
+        val catalog = providerChainCatalog()
+        val configuredFactory = factoryFor(providerCatalog = catalog)
+        val approved = providerChainConsents(catalog)
+        val request = RunConfigurationRequest(providerChainId = "crossref-datacite-exact-doi-v1", externalProviderConsents = approved)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            configuredFactory.from(request.copy(externalProviderConsents = approved.filterNot { it.providerId == "datacite" }))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            configuredFactory.from(request.copy(externalProviderConsents = approved.map { consent ->
+                if (consent.providerId == "datacite") consent.copy(dataCategories = listOf("citation_context")) else consent
+            }))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            configuredFactory.from(request.copy(externalProviderConsents = approved.map { consent ->
+                if (consent.providerId == "datacite") consent.copy(retentionDisclosureFingerprint = "0".repeat(64)) else consent
+            }))
+        }
+    }
+
+    @Test
     fun `parses provider-specific consent categories and rejects unknown category identifiers`() {
         val externalFactory = factoryFor()
         val fingerprint = externalProviderConsent(
@@ -553,6 +766,92 @@ class RunConfigurationFactoryTest {
             ),
         )
         assertThrows(IllegalArgumentException::class.java) { externalFactory.from(unknownCategory) }
+    }
+
+    @Test
+    fun `provider chain gate independently authorizes Crossref and DataCite and rejects the scalar path`() {
+        val catalog = providerChainCatalog(crossrefContactEmail = "original-chain-contact@example.invalid")
+        val snapshot = factoryFor(providerCatalog = catalog).from(
+            RunConfigurationRequest(
+                providerChainId = "crossref-datacite-exact-doi-v1",
+                externalProviderConsents = providerChainConsents(catalog),
+            ),
+        )
+        val gate = ProviderCallGate(catalog)
+        val payload = providerCallPayload(DataCategory.BIBLIOGRAPHIC_METADATA)
+        val crossrefConsent = snapshot.externalProviderConsents.single { it.providerId == "crossref" }
+        val dataCiteConsent = snapshot.externalProviderConsents.single { it.providerId == "datacite" }
+        gate.authorizeProviderChain(
+            "crossref-datacite-exact-doi-v1",
+            "crossref",
+            payload,
+            snapshot.copy(externalProviderConsents = listOf(crossrefConsent)),
+        )
+        assertThrows(ProviderCallRejectedException::class.java) {
+            gate.authorizeProviderChain(
+                "crossref-datacite-exact-doi-v1",
+                "datacite",
+                payload,
+                snapshot.copy(externalProviderConsents = listOf(crossrefConsent)),
+            )
+        }
+        var outboundCallStarted = false
+
+        assertEquals("crossref", gate.callProviderChain(
+            "crossref-datacite-exact-doi-v1", "crossref", payload, snapshot.copy(externalProviderConsents = listOf(crossrefConsent)),
+        ) { outboundCallStarted = true; "crossref" })
+        assertTrue(outboundCallStarted)
+
+        outboundCallStarted = false
+        assertThrows(ProviderCallRejectedException::class.java) {
+            gate.callProviderChain(
+                "crossref-datacite-exact-doi-v1", "datacite", payload, snapshot.copy(externalProviderConsents = listOf(crossrefConsent)),
+            ) { outboundCallStarted = true }
+        }
+        assertFalse(outboundCallStarted)
+        assertThrows(ProviderCallRejectedException::class.java) {
+            gate.callProviderChain(
+                "crossref-datacite-exact-doi-v1", "datacite",
+                providerCallPayload(DataCategory.BIBLIOGRAPHIC_METADATA, DataCategory.PROVIDER_CONTACT_EMAIL),
+                snapshot,
+            ) { outboundCallStarted = true }
+        }
+        assertFalse(outboundCallStarted)
+
+        assertEquals("datacite", gate.callProviderChain(
+            "crossref-datacite-exact-doi-v1", "datacite", payload, snapshot.copy(externalProviderConsents = listOf(dataCiteConsent)),
+        ) { outboundCallStarted = true; "datacite" })
+        assertTrue(outboundCallStarted)
+
+        outboundCallStarted = false
+        assertThrows(ProviderCallRejectedException::class.java) {
+            gate.callProviderChain(
+                "crossref-datacite-exact-doi-v1", "crossref", payload, snapshot.copy(externalProviderConsents = listOf(dataCiteConsent)),
+            ) { outboundCallStarted = true }
+        }
+        assertFalse(outboundCallStarted)
+
+        assertThrows(ProviderCallRejectedException::class.java) {
+            gate.call(
+                "scholarlyMetadata", "crossref", payload, snapshot,
+            ) { outboundCallStarted = true }
+        }
+        assertFalse(outboundCallStarted)
+
+        val changedCatalog = providerChainCatalog(dataCiteDisclosure = "Changed DataCite disclosure.")
+        assertThrows(ProviderCallRejectedException::class.java) {
+            ProviderCallGate(changedCatalog).callProviderChain(
+                "crossref-datacite-exact-doi-v1", "datacite", payload, snapshot,
+            ) { outboundCallStarted = true }
+        }
+        assertFalse(outboundCallStarted)
+        val changedCrossrefConfiguration = providerChainCatalog(crossrefContactEmail = "new-chain-contact@example.invalid")
+        assertThrows(ProviderCallRejectedException::class.java) {
+            ProviderCallGate(changedCrossrefConfiguration).callProviderChain(
+                "crossref-datacite-exact-doi-v1", "crossref", payload, snapshot,
+            ) { outboundCallStarted = true }
+        }
+        assertFalse(outboundCallStarted)
     }
 
     @Test
@@ -662,6 +961,31 @@ class RunConfigurationFactoryTest {
         }
         assertFalse(outboundCallStarted)
     }
+
+    private fun providerChainCatalog(
+        providerChainEnabled: Boolean = true,
+        crossrefEnabled: Boolean = true,
+        dataCiteEnabled: Boolean = true,
+        crossrefContactEmail: String? = null,
+        crossrefDisclosure: String = "Crossref chain consent disclosure.",
+        dataCiteDisclosure: String = "DataCite chain consent disclosure.",
+    ): ProviderCatalog = ProviderCatalog.safeDefaults(
+        providerChainEnabled = providerChainEnabled,
+        crossrefEnabled = crossrefEnabled,
+        crossrefRetentionDisclosure = crossrefDisclosure,
+        crossrefContactEmail = crossrefContactEmail,
+        dataCiteEnabled = dataCiteEnabled,
+        dataCiteRetentionDisclosure = dataCiteDisclosure,
+    )
+
+    private fun providerChainConsents(catalog: ProviderCatalog): List<ExternalProviderConsentRequest> =
+        catalog.directory().providerChains.single().providers.map { provider ->
+            ExternalProviderConsentRequest(
+                providerId = provider.providerId,
+                dataCategories = provider.dataCategories,
+                retentionDisclosureFingerprint = requireNotNull(provider.retentionDisclosureFingerprint),
+            )
+        }
 
     private fun providerCallPayload(vararg categories: DataCategory): ProviderCallPayload = ProviderCallPayload(
         categories.associateWith { jacksonObjectMapper().readTree("\"${it.id} content\"") },

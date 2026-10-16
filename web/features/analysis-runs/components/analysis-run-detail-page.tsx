@@ -30,6 +30,7 @@ import {
   useReferenceResolutionReport,
 } from "@/features/analysis-runs/queries/analysis-run-queries";
 import type { AnalysisRun } from "@/features/analysis-runs/types";
+import { referenceResolutionProviderLabel } from "@/features/analysis-runs/reference-resolution-provider-label";
 import { LocalDateTime } from "@/components/local-date-time";
 import { cn } from "@/lib/utils";
 
@@ -102,7 +103,7 @@ function AnalysisRunProvenance({ run }: { run: AnalysisRun }) {
             <div className="min-w-0 space-y-1 sm:col-span-2">
               <dt className="font-mono text-xs uppercase text-muted-foreground">Pinned providers</dt>
               <dd className="m-0 break-words text-sm leading-relaxed">
-                Claims {run.configuration.claimExtractor.provider} · Embeddings {run.configuration.embedding.provider} · Evidence {run.configuration.systemOne.provider} · Bibliography {run.configuration.referenceResolution?.provider?.provider ?? "not configured"} · Cited full text {run.configuration.openAccess?.provider ?? "not configured"}
+                Claims {run.configuration.claimExtractor.provider} · Embeddings {run.configuration.embedding.provider} · Evidence {run.configuration.systemOne.provider} · Bibliography {referenceResolutionProviderLabel(run.configuration.referenceResolution)} · Cited full text {run.configuration.openAccess?.provider ?? "not configured"}
               </dd>
             </div>
             {run.configuration.externalProviderConsents && run.configuration.externalProviderConsents.length > 0 && (
@@ -482,7 +483,7 @@ export function AnalysisRunDetailPage({ analysisRunId }: { analysisRunId: string
             onSelectDetailSection={selectReviewDetail}
           />
         </TabsContent>
-        {!isPaperReviewActive && <BackToTopFab />}
+        {!isPaperReviewActive && selectedView !== "recovery" && <BackToTopFab />}
       </Tabs>
     </article>
   );

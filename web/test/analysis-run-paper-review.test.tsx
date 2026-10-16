@@ -296,6 +296,7 @@ function renderDetailPage() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   window.history.replaceState(null, "", "/");
   queryHookMocks.useAnalysisRun.mockReset();
@@ -308,6 +309,50 @@ afterEach(() => {
 });
 
 describe("Analysis Run Paper Review", () => {
+  it("keeps the Back to top control from overlapping mobile recovery consent", async () => {
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: run, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(500);
+    routeQueryMock.search = null;
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}`);
+
+    const rendered = renderDetailPage();
+    act(() => fireEvent.scroll(window));
+    expect(await screen.findByRole("button", { name: "Back to top" })).toBeTruthy();
+
+    routeQueryMock.search = "?view=recovery";
+    window.history.replaceState(null, "", `/analysis-runs/${run.id}?view=recovery`);
+    rendered.rerenderDetailPage();
+
+    expect(await screen.findByRole("tab", { name: "Recovery PDFs" })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Back to top" })).toBeNull());
+  });
+
+  it("shows the ordered fixed provider chain in Analysis Run details", async () => {
+    const chainId = "crossref-datacite-exact-doi-v1";
+    const chainRun: AnalysisRun = {
+      ...run,
+      configuration: {
+        ...run.configuration,
+        referenceResolution: {
+          executionStatus: run.configuration.referenceResolution?.executionStatus ?? "PENDING",
+          provider: null,
+          scorePolicyVersion: run.configuration.referenceResolution?.scorePolicyVersion ?? null,
+          confidenceThreshold: run.configuration.referenceResolution?.confidenceThreshold ?? null,
+          providerChain: { chainId, providers: [{ provider: "crossref" }, { provider: "datacite" }] },
+        },
+      },
+    };
+    queryHookMocks.useAnalysisRun.mockReturnValue({ data: chainRun, isPending: false, error: null });
+    queryHookMocks.useParsedDocument.mockReturnValue({ data: parsedDocument, isPending: false, isError: false, error: null });
+    queryHookMocks.useReferenceResolutionReport.mockReturnValue({ data: report, isPending: false, isError: false, error: null });
+
+    renderDetailPage();
+
+    const pinnedProviders = await screen.findByText("Pinned providers");
+    expect(pinnedProviders.nextElementSibling?.textContent).toContain(`Bibliography crossref → datacite (chain: ${chainId})`);
+  });
   it("keeps an unlinked Atomic Claim visible without presenting it as an unresolved verification", () => {
     vi.stubGlobal("ResizeObserver", class {
       observe() {}

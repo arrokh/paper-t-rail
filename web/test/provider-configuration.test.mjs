@@ -9,6 +9,7 @@ import {
   missingConsents,
   providerSelectionsAreAvailable,
   retainRequiredApprovals,
+  selectableProviderChains,
   selectableProviderOptions,
 } from "../features/providers/provider-configuration.ts";
 
@@ -19,6 +20,15 @@ function withDisclosureFingerprints(value) {
       ...option,
       retentionDisclosureFingerprint: option.trustBoundary === "EXTERNAL" ? "a".repeat(64) : null,
     }))])),
+    ...(value.providerChains === undefined ? {} : {
+      providerChains: value.providerChains.map((chain) => ({
+        ...chain,
+        providers: chain.providers.map((option) => ({
+          ...option,
+          retentionDisclosureFingerprint: option.trustBoundary === "EXTERNAL" ? "a".repeat(64) : null,
+        })),
+      })),
+    }),
   };
 }
 
@@ -166,6 +176,37 @@ const directory = withDisclosureFingerprints({
     ],
   },
   dataCategories: [],
+});
+
+const chainDirectory = withDisclosureFingerprints({
+  ...directory,
+  providerChains: [{
+    chainId: "crossref-datacite-exact-doi-v1",
+    displayName: "Crossref, then DataCite (exact DOI only)",
+    description: "Crossref first; query DataCite only for an exact DOI. No DataCite title search.",
+    providers: [
+      {
+        role: "scholarlyMetadata",
+        providerId: "crossref",
+        displayName: "Crossref REST API",
+        version: "v1",
+        model: null,
+        trustBoundary: "EXTERNAL",
+        dataCategories: ["bibliographic_metadata"],
+        retentionDisclosure: "Crossref request logging and retention disclosure.",
+      },
+      {
+        role: "scholarlyMetadata",
+        providerId: "datacite",
+        displayName: "DataCite REST API",
+        version: "v1",
+        model: null,
+        trustBoundary: "EXTERNAL",
+        dataCategories: ["bibliographic_metadata"],
+        retentionDisclosure: "DataCite request and retention disclosure.",
+      },
+    ],
+  }],
 });
 
 const localSelections = {
@@ -507,6 +548,67 @@ test("Crossref requires explicit per-run approval of bibliographic metadata", ()
       retentionDisclosureFingerprint: "a".repeat(64),
     }],
   });
+});
+
+test("the fixed provider chain requires separate Crossref and DataCite consent and never exposes standalone DataCite", () => {
+  const chainId = "crossref-datacite-exact-doi-v1";
+  const consents = {
+    crossref: ["bibliographic_metadata"],
+    datacite: ["bibliographic_metadata"],
+  };
+  const fingerprints = { crossref: "a".repeat(64), datacite: "a".repeat(64) };
+  const requirements = consentRequirements(chainDirectory, localSelections, chainId);
+
+  assert.deepEqual(selectableProviderChains(chainDirectory).map(({ chainId: id }) => id), [chainId]);
+  assert.equal(selectableProviderOptions(chainDirectory, "scholarlyMetadata").some(({ providerId }) => providerId === "datacite"), false);
+  assert.equal(providerSelectionsAreAvailable(chainDirectory, localSelections, chainId), true);
+  assert.deepEqual(requirements.map(({ providerId, displayName, dataCategories, retentionDisclosure }) => ({
+    providerId, displayName, dataCategories, retentionDisclosure,
+  })), [
+    {
+      providerId: "crossref",
+      displayName: "Crossref REST API",
+      dataCategories: ["bibliographic_metadata"],
+      retentionDisclosure: "Crossref request logging and retention disclosure.",
+    },
+    {
+      providerId: "datacite",
+      displayName: "DataCite REST API",
+      dataCategories: ["bibliographic_metadata"],
+      retentionDisclosure: "DataCite request and retention disclosure.",
+    },
+  ]);
+  assert.equal(isRunConfigurationReady(chainDirectory, localSelections, consents, { crossref: fingerprints.crossref }, chainId), false);
+  assert.throws(
+    () => createRunConfiguration(chainDirectory, localSelections, { crossref: consents.crossref }, fingerprints, chainId),
+    /Approve every disclosed data category/,
+  );
+  assert.deepEqual(createRunConfiguration(chainDirectory, localSelections, consents, fingerprints, chainId), {
+    ...localSelections,
+    scholarlyMetadataProvider: null,
+    providerChainId: chainId,
+    externalProviderConsents: [
+      { providerId: "crossref", dataCategories: ["bibliographic_metadata"], retentionDisclosureFingerprint: fingerprints.crossref },
+      { providerId: "datacite", dataCategories: ["bibliographic_metadata"], retentionDisclosureFingerprint: fingerprints.datacite },
+    ],
+  });
+  assert.throws(
+    () => createRunConfiguration(directory, localSelections, consents, fingerprints, chainId),
+    /available fixed provider chain/,
+  );
+});
+
+test("the web rejects a provider chain whose advertised order differs from the fixed contract", () => {
+  const invalidDirectory = withDisclosureFingerprints({
+    ...chainDirectory,
+    providerChains: [{
+      ...chainDirectory.providerChains[0],
+      providers: [...chainDirectory.providerChains[0].providers].reverse(),
+    }],
+  });
+
+  assert.deepEqual(selectableProviderChains(invalidDirectory), []);
+  assert.equal(providerSelectionsAreAvailable(invalidDirectory, localSelections, "crossref-datacite-exact-doi-v1"), false);
 });
 
 test("run configuration rejects provider selections outside the classified directory", () => {

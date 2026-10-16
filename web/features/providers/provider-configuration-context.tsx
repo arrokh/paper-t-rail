@@ -8,6 +8,7 @@ import {
   DEFAULT_PROVIDER_SELECTIONS,
   isRunConfigurationReady,
   retainRequiredApprovals,
+  selectableProviderChains,
   selectableProviderOptions,
   type ProviderDirectory,
   type ProviderRole,
@@ -18,6 +19,7 @@ import type { AnalysisRunConfiguration } from "../analysis-runs/types.ts";
 
 type ProviderConfigurationDraft = {
   selections: ProviderSelections;
+  providerChainId: string | null;
   explicitSelections: Partial<Record<ProviderRole, string>>;
   approvedCategories: Record<string, string[]>;
   approvedDisclosureFingerprints: Record<string, string>;
@@ -28,11 +30,13 @@ type ProviderConfigurationContextValue = {
   directoryLoading: boolean;
   directoryError: string | null;
   selections: ProviderSelections;
+  providerChainId: string | null;
   consentRequirements: ReturnType<typeof consentRequirements>;
   approvedCategories: Record<string, string[]>;
   approvedDisclosureFingerprints: Record<string, string>;
   configurationReady: boolean;
   selectProvider: (role: ProviderRole, providerId: string) => void;
+  selectProviderChain: (chainId: string | null) => void;
   approveCategory: (providerId: string, category: string, approved: boolean) => void;
   resetApprovals: () => void;
   createConfiguration: () => AnalysisRunConfiguration;
@@ -45,6 +49,7 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
   const directory = providerQuery.data ?? null;
   const [draft, setDraft] = useState<ProviderConfigurationDraft>(() => ({
     selections: { ...DEFAULT_PROVIDER_SELECTIONS },
+    providerChainId: null,
     explicitSelections: {},
     approvedCategories: {},
     approvedDisclosureFingerprints: {},
@@ -54,14 +59,15 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
     [directory, draft.selections, draft.explicitSelections],
   );
   const requirements = useMemo(
-    () => directory ? consentRequirements(directory, selections) : [],
-    [directory, selections],
+    () => directory ? consentRequirements(directory, selections, draft.providerChainId) : [],
+    [directory, selections, draft.providerChainId],
   );
   const configurationReady = isRunConfigurationReady(
     directory,
     selections,
     draft.approvedCategories,
     draft.approvedDisclosureFingerprints,
+    draft.providerChainId,
   );
 
   const selectProvider = useCallback((role: ProviderRole, providerId: string) => {
@@ -78,7 +84,8 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
         openAccessProvider: role === "openAccess" ? providerId : currentSelections.openAccessProvider,
       };
       const nextExplicitSelections = { ...current.explicitSelections, [role]: providerId };
-      const nextRequirements = consentRequirements(directory, nextSelections);
+      const nextProviderChainId = role === "scholarlyMetadata" ? null : current.providerChainId;
+      const nextRequirements = consentRequirements(directory, nextSelections, nextProviderChainId);
       const retainedApprovals = retainRequiredApprovals(
         nextRequirements,
         current.approvedCategories,
@@ -87,7 +94,31 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
       const retainedProviderIds = new Set(Object.keys(retainedApprovals));
       return {
         selections: nextSelections,
+        providerChainId: nextProviderChainId,
         explicitSelections: nextExplicitSelections,
+        approvedCategories: retainedApprovals,
+        approvedDisclosureFingerprints: Object.fromEntries(
+          Object.entries(current.approvedDisclosureFingerprints).filter(([providerId]) => retainedProviderIds.has(providerId)),
+        ),
+      };
+    });
+  }, [directory]);
+
+  const selectProviderChain = useCallback((chainId: string | null) => {
+    if (!directory) return;
+    if (chainId !== null && !selectableProviderChains(directory).some((chain) => chain.chainId === chainId)) return;
+
+    setDraft((current) => {
+      const nextRequirements = consentRequirements(directory, current.selections, chainId);
+      const retainedApprovals = retainRequiredApprovals(
+        nextRequirements,
+        current.approvedCategories,
+        current.approvedDisclosureFingerprints,
+      );
+      const retainedProviderIds = new Set(Object.keys(retainedApprovals));
+      return {
+        ...current,
+        providerChainId: chainId,
         approvedCategories: retainedApprovals,
         approvedDisclosureFingerprints: Object.fromEntries(
           Object.entries(current.approvedDisclosureFingerprints).filter(([providerId]) => retainedProviderIds.has(providerId)),
@@ -136,10 +167,11 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
       selections,
       draft.approvedCategories,
       draft.approvedDisclosureFingerprints,
+      draft.providerChainId,
     );
     setDraft((current) => ({ ...current, approvedCategories: {}, approvedDisclosureFingerprints: {} }));
     return configuration;
-  }, [directory, selections, draft.approvedCategories, draft.approvedDisclosureFingerprints]);
+  }, [directory, selections, draft.approvedCategories, draft.approvedDisclosureFingerprints, draft.providerChainId]);
 
   const value = useMemo<ProviderConfigurationContextValue>(() => ({
     directory,
@@ -150,15 +182,17 @@ export function ProviderConfigurationProvider({ children }: { children: ReactNod
         ? "Could not load available providers."
         : null,
     selections,
+    providerChainId: draft.providerChainId,
     consentRequirements: requirements,
     approvedCategories: draft.approvedCategories,
     approvedDisclosureFingerprints: draft.approvedDisclosureFingerprints,
     configurationReady,
     selectProvider,
+    selectProviderChain,
     approveCategory,
     resetApprovals,
     createConfiguration,
-  }), [directory, providerQuery.isPending, providerQuery.error, selections, requirements, draft.approvedCategories, draft.approvedDisclosureFingerprints, configurationReady, selectProvider, approveCategory, resetApprovals, createConfiguration]);
+  }), [directory, providerQuery.isPending, providerQuery.error, selections, draft.providerChainId, requirements, draft.approvedCategories, draft.approvedDisclosureFingerprints, configurationReady, selectProvider, selectProviderChain, approveCategory, resetApprovals, createConfiguration]);
 
   return <ProviderConfigurationContext.Provider value={value}>{children}</ProviderConfigurationContext.Provider>;
 }

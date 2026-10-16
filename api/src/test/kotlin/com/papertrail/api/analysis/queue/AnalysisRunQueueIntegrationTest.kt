@@ -21,10 +21,13 @@ import com.papertrail.api.analysis.execution.domain.ExecutionSpanArtifactSpec
 import com.papertrail.api.analysis.execution.domain.ExecutionSpanSpec
 import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.ProviderSelection
+import com.papertrail.api.analysis.configuration.ProviderChainLimitsSnapshot
+import com.papertrail.api.analysis.configuration.ProviderChainSnapshot
 import com.papertrail.api.analysis.configuration.RunConfigurationFactory
 import com.papertrail.api.analysis.configuration.ValidationLimitsSnapshot
 import com.papertrail.api.analysis.http.CreatedAnalysisRunResponse
 import com.papertrail.api.analysis.http.RunConfigurationRequest
+import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
 import com.papertrail.api.analysis.events.DOCUMENT_ANALYSIS_HANDLER
 import com.papertrail.api.analysis.events.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.events.DocumentAnalysisRequestedPayload
@@ -39,6 +42,9 @@ import com.papertrail.api.citation.claims.domain.CitationContextClaims
 import com.papertrail.api.citation.claims.domain.CitationTargetKey
 import com.papertrail.api.infrastructure.cache.RedisProviderCacheStore
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.infrastructure.messaging.PipelineHandlerDisposition
+import com.papertrail.api.infrastructure.messaging.PipelineHandlerFailureDisposition
+import com.papertrail.api.scholarly.references.queue.ReferenceResolutionQueueHandler
 import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.resolver.ScholarlyMetadataMatcher
@@ -147,6 +153,7 @@ import com.papertrail.api.analysis.recovery.service.RecoveryStagingService
 import com.papertrail.api.analysis.recovery.service.RecoveryStagingSettings
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadCleanupService
 import com.papertrail.api.analysis.recovery.service.RecoveryUploadCorsPolicy
+import com.papertrail.api.document.repository.PostgresSourceDocumentEgressHandoffLock
 import com.papertrail.api.document.repository.SourceDocumentDeletionRepository
 import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.document.validation.DocumentLanguageDetector
@@ -176,17 +183,32 @@ import com.papertrail.api.citation.parsing.ScientificDocumentParser
 import com.papertrail.api.infrastructure.providers.DataCategory
 import com.papertrail.api.infrastructure.providers.ProviderCatalog
 import com.papertrail.api.infrastructure.providers.ProviderCallGate
+import com.papertrail.api.infrastructure.providers.ProviderEgressPermitGate
 import com.papertrail.api.scholarly.references.client.BibliographyReference
+import com.papertrail.api.external.crossref.CrossrefChainLookup
+import com.papertrail.api.external.crossref.CrossrefChainLookupCache
+import com.papertrail.api.external.crossref.CrossrefChainLookupQuery
 import com.papertrail.api.external.crossref.CrossrefLookupCache
 import com.papertrail.api.external.crossref.CrossrefScholarlyMetadataLookup
 import com.papertrail.api.external.crossref.RedisCrossrefLookupCache
+import com.papertrail.api.scholarly.references.client.ProviderChainMetadataLookup
+import com.papertrail.api.scholarly.references.client.ProviderChainMetadataResponse
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookup
 import com.papertrail.api.scholarly.references.client.ScholarlyMetadataLookupFactory
 import com.papertrail.api.scholarly.references.client.ScholarlyWork
 import com.papertrail.api.scholarly.references.service.RecordedFixtureScholarlyMetadataLookupFactory
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRepository
+import com.papertrail.api.scholarly.references.attempts.repository.ReferenceResolutionAttemptRepository
+import com.papertrail.api.scholarly.references.attempts.service.ReferenceResolutionAttemptService
+import com.papertrail.api.scholarly.references.attempts.service.ActiveSourceDocumentReferenceResolutionTerminalCommitGuard
+import com.papertrail.api.scholarly.references.attempts.service.ReferenceResolutionChainService
+import com.papertrail.api.scholarly.references.attempts.domain.ReferenceResolutionChainClaimResult
+import com.papertrail.api.scholarly.references.attempts.domain.ReferenceResolutionChainOutcome
+import com.papertrail.api.scholarly.references.attempts.domain.ReferenceResolutionAttemptOutcomeCode
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
+import com.papertrail.api.scholarly.references.service.ReferenceResolutionProviderChainCoordinator
+import com.papertrail.api.scholarly.references.service.ProviderChainRetryDelaySource
 import com.papertrail.api.infrastructure.providers.externalProviderConsent
 import com.papertrail.api.infrastructure.providers.configuredExternalProviderCatalog
 import com.papertrail.api.infrastructure.providers.configuredExternalSystemOneProviderCatalog
@@ -205,6 +227,7 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -261,6 +284,8 @@ import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -1394,14 +1419,24 @@ class AnalysisRunQueueIntegrationTest {
 
     @Test
     fun `submission creates fresh same-run results and queues only the selected entry`() {
-        val lineageProviderCatalog = configuredExternalSystemOneProviderCatalog()
+        val lineageProviderCatalog = configuredExternalSystemOneProviderCatalog(providerChainEnabled = true)
         val lineageConfigurationFactory = configurationFactory(lineageProviderCatalog)
         val externalSystemOneConsent = externalProviderConsent(
             lineageProviderCatalog,
             "mock",
             listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id),
         )
-        val successorConfigurationRequest = RunConfigurationRequest(externalProviderConsents = listOf(externalSystemOneConsent))
+        val chainConsents = lineageProviderCatalog.requireProviderChain(ProviderChainSnapshot.CHAIN_ID).map { registration ->
+            ExternalProviderConsentRequest(
+                providerId = registration.providerId,
+                dataCategories = registration.dataCategories.map(DataCategory::id).sorted(),
+                retentionDisclosureFingerprint = requireNotNull(registration.consentDisclosureFingerprint()),
+            )
+        }
+        val successorConfigurationRequest = RunConfigurationRequest(
+            providerChainId = ProviderChainSnapshot.CHAIN_ID,
+            externalProviderConsents = listOf(externalSystemOneConsent) + chainConsents,
+        )
         val predecessorConfiguration = lineageConfigurationFactory.from(successorConfigurationRequest)
         val run = createQueuedRun(configurationJson = lineageConfigurationFactory.toJson(predecessorConfiguration))
         val sourceText = "The study reports an outcome and cites [1]."
@@ -1529,8 +1564,67 @@ class AnalysisRunQueueIntegrationTest {
             retainedCanonicalPaperId, "successor-retained-${UUID.randomUUID()}", retainedDoi, retainedTitle,
         )
         jdbc.update(
-            "INSERT INTO bibliography_entry_resolutions (analysis_run_id, bibliography_entry_id, status, reason_code, canonical_paper_id, matched_doi, matched_title, matched_authors, matched_year, confidence_score, match_method, provider_id) VALUES (?, ?, 'RESOLVED', 'DOI_CONFIRMED', ?, ?, ?, '[]'::jsonb, 2024, 1.0, 'DOI', 'recorded-fixtures')",
+            "INSERT INTO bibliography_entry_resolutions (analysis_run_id, bibliography_entry_id, status, reason_code, canonical_paper_id, matched_doi, matched_title, matched_authors, matched_year, confidence_score, match_method, provider_id) VALUES (?, ?, 'RESOLVED', 'DOI_CONFIRMED', ?, ?, ?, '[]'::jsonb, 2024, 1.0, 'DOI', 'provider-chain')",
             run.analysisRunId, retainedEntryId, retainedCanonicalPaperId, retainedDoi, retainedTitle,
+        )
+        val retainedChainOwnerToken = UUID.randomUUID()
+        val chainAttemptId = UUID.randomUUID()
+        val chainCompletedAt = Instant.now()
+        jdbc.update(
+            "INSERT INTO reference_resolution_entry_chain_states (analysis_run_id, bibliography_entry_id, owner_token, owner_fence, lease_expires_at, terminal_outcome, metadata_origin_provider_id) VALUES (?, ?, ?, 1, ?, 'RESOLVED', 'datacite')",
+            run.analysisRunId,
+            retainedEntryId,
+            retainedChainOwnerToken,
+            Timestamp.from(chainCompletedAt),
+        )
+        jdbc.update(
+            "INSERT INTO reference_resolution_provider_lookup_results (analysis_run_id, bibliography_entry_id, lookup_ordinal, provider_id, source, outcome_code) VALUES (?, ?, 1, 'crossref', 'CACHE', 'NOT_FOUND'), (?, ?, 2, 'datacite', 'WIRE', 'FOUND')",
+            run.analysisRunId,
+            retainedEntryId,
+            run.analysisRunId,
+            retainedEntryId,
+        )
+        jdbc.update(
+            """
+                INSERT INTO reference_resolution_provider_attempts (
+                    attempt_id, analysis_run_id, bibliography_entry_id, reservation_ordinal, lookup_ordinal,
+                    provider_id, provider_attempt_ordinal, owner_token, owner_fence, state, outcome_code,
+                    http_status, duration_millis, response_bytes, reserved_at, started_at, completed_at, deadline_at
+                ) VALUES (?, ?, ?, 1, 2, 'datacite', 1, ?, 1, 'COMPLETED', 'FOUND', 200, 32, 128, ?, ?, ?, ?)
+            """.trimIndent(),
+            chainAttemptId,
+            run.analysisRunId,
+            retainedEntryId,
+            retainedChainOwnerToken,
+            Timestamp.from(chainCompletedAt.minusSeconds(2)),
+            Timestamp.from(chainCompletedAt.minusSeconds(1)),
+            Timestamp.from(chainCompletedAt),
+            Timestamp.from(chainCompletedAt.plusSeconds(80)),
+        )
+        val terminalOnlyEntryId = UUID.randomUUID()
+        val terminalOnlyTitle = "Terminal provider failure without a resolution"
+        val terminalOnlyDoi = "10.5555/papertrail.successor.terminal-only"
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, parsed_title, parsed_doi, reference_type) VALUES (?, ?, 3, 'b3', ?, ?, ?, 'JOURNAL_ARTICLE')",
+            terminalOnlyEntryId, run.analysisRunId, "$terminalOnlyTitle. 2025.", terminalOnlyTitle, terminalOnlyDoi,
+        )
+        val terminalOnlyOwnerToken = UUID.randomUUID()
+        val terminalOnlyAttemptId = UUID.randomUUID()
+        val terminalOnlyAt = Instant.now()
+        jdbc.update(
+            "INSERT INTO reference_resolution_entry_chain_states (analysis_run_id, bibliography_entry_id, owner_token, owner_fence, lease_expires_at, terminal_outcome, metadata_origin_provider_id) VALUES (?, ?, ?, 1, ?, 'PROVIDER_UNAVAILABLE', NULL)",
+            run.analysisRunId, terminalOnlyEntryId, terminalOnlyOwnerToken, Timestamp.from(terminalOnlyAt),
+        )
+        jdbc.update(
+            """
+                INSERT INTO reference_resolution_provider_attempts (
+                    attempt_id, analysis_run_id, bibliography_entry_id, reservation_ordinal, lookup_ordinal,
+                    provider_id, provider_attempt_ordinal, owner_token, owner_fence, state, outcome_code,
+                    http_status, duration_millis, response_bytes, reserved_at, started_at, completed_at, deadline_at
+                ) VALUES (?, ?, ?, 1, 1, 'crossref', 1, ?, 1, 'COMPLETED', 'NOT_SENT', NULL, 0, 0, ?, NULL, ?, ?)
+            """.trimIndent(),
+            terminalOnlyAttemptId, run.analysisRunId, terminalOnlyEntryId, terminalOnlyOwnerToken,
+            Timestamp.from(terminalOnlyAt.minusSeconds(1)), Timestamp.from(terminalOnlyAt), Timestamp.from(terminalOnlyAt.plusSeconds(80)),
         )
         val retainedTargetId = UUID.randomUUID()
         jdbc.update(
@@ -1867,7 +1961,7 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(run.analysisRunId, submitted.predecessorAnalysisRunId)
         assertEquals(currentBatch.revision, submitted.revision)
         assertEquals(2, submitted.selectedEntryCount)
-        assertEquals(1, submitted.retainedEntryCount)
+        assertEquals(2, submitted.retainedEntryCount)
         assertEquals(2, submitted.queuedEntryCount)
         assertEquals("PROCESSING", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, successorRunId))
         assertEquals("COMPLETED", jdbc.queryForObject("SELECT status FROM analysis_runs WHERE id = ?", String::class.java, run.analysisRunId))
@@ -2010,13 +2104,107 @@ class AnalysisRunQueueIntegrationTest {
         val lineageConfigurationFingerprint = jdbc.queryForObject("SELECT originating_configuration_fingerprint FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'evidence-judgement' AND originating_artifact_id = ?", String::class.java, successorRunId, retainedJudgementId)
         assertEquals("f".repeat(64), lineageConfigurationFingerprint)
         val firstConsentFingerprint = jdbc.queryForObject("SELECT originating_consent_fingerprint FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'evidence-judgement' AND originating_artifact_id = ?", String::class.java, successorRunId, retainedJudgementId)
-        assertEquals(expectedSha256(objectMapper.writeValueAsBytes(predecessorConfiguration.externalProviderConsents.single())), firstConsentFingerprint)
+        val mockConsent = predecessorConfiguration.externalProviderConsents.single { it.providerId == "mock" }
+        assertEquals(expectedSha256(objectMapper.writeValueAsBytes(mockConsent)), firstConsentFingerprint)
         val firstLineageCategories = objectMapper.readTree(jdbc.queryForObject("SELECT originating_data_categories::text FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'evidence-judgement' AND originating_artifact_id = ?", String::class.java, successorRunId, retainedJudgementId)).map { it.asText() }
         assertEquals(listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id), firstLineageCategories)
         assertEquals(
-            predecessorConfiguration.externalProviderConsents.single().retentionDisclosure,
+            mockConsent.retentionDisclosure,
             jdbc.queryForObject("SELECT originating_retention_disclosure FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'evidence-judgement' AND originating_artifact_id = ?", String::class.java, successorRunId, retainedJudgementId),
         )
+
+        val retainedResolutionReport = analysisRunReportService().report(successorRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "b2" }
+        val terminalOnlyResolutionReport = analysisRunReportService().report(successorRunId)!!.referenceResolution.entries
+            .single { it.localReferenceKey == "b3" }
+        val terminalOnlySuccessorEntryId = jdbc.queryForObject(
+            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? AND local_reference_key = 'b3'",
+            UUID::class.java,
+            successorRunId,
+        )!!
+        assertEquals("PROVIDER_UNAVAILABLE", terminalOnlyResolutionReport.resolutionOutcome.name)
+        assertNull(terminalOnlyResolutionReport.metadataOriginProviderId)
+        assertEquals(listOf("NOT_SENT"), terminalOnlyResolutionReport.providerAttempts.map { it.outcomeCode })
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM reference_resolution_entry_chain_states WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND terminal_outcome = 'PROVIDER_UNAVAILABLE' AND metadata_origin_provider_id IS NULL",
+            Int::class.java,
+            successorRunId,
+            terminalOnlySuccessorEntryId,
+        ))
+        val copiedTerminalOnlyAttemptId = jdbc.queryForObject(
+            "SELECT attempt_id FROM reference_resolution_provider_attempts WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+            UUID::class.java,
+            successorRunId,
+            terminalOnlySuccessorEntryId,
+        )!!
+        assertNotEquals(terminalOnlyAttemptId, copiedTerminalOnlyAttemptId)
+        assertEquals("RESOLVED", retainedResolutionReport.status)
+        assertEquals("RESOLVED", retainedResolutionReport.resolutionOutcome.name)
+        assertEquals("datacite", retainedResolutionReport.metadataOriginProviderId)
+        assertEquals(listOf("crossref", "datacite"), retainedResolutionReport.providerLookups.map { it.providerId })
+        assertEquals(listOf("CACHE", "WIRE"), retainedResolutionReport.providerLookups.map { it.source })
+        assertEquals(listOf("NOT_FOUND", "FOUND"), retainedResolutionReport.providerLookups.map { it.outcomeCode })
+        assertEquals(listOf("datacite"), retainedResolutionReport.providerAttempts.map { it.providerId })
+        assertEquals(listOf("FOUND"), retainedResolutionReport.providerAttempts.map { it.outcomeCode })
+        assertEquals(200, retainedResolutionReport.providerAttempts.single().httpStatus)
+        assertEquals(32L, retainedResolutionReport.providerAttempts.single().durationMillis)
+        assertEquals(128L, retainedResolutionReport.providerAttempts.single().responseBytes)
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM reference_resolution_entry_chain_states WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND terminal_outcome = 'RESOLVED' AND metadata_origin_provider_id = 'datacite'",
+            Int::class.java,
+            successorRunId,
+            retainedSuccessorEntryId,
+        ))
+        assertEquals(2, jdbc.queryForObject(
+            "SELECT count(*) FROM reference_resolution_provider_lookup_results WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+            Int::class.java,
+            successorRunId,
+            retainedSuccessorEntryId,
+        ))
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM reference_resolution_provider_attempts WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+            Int::class.java,
+            successorRunId,
+            retainedSuccessorEntryId,
+        ))
+        val copiedChainAttemptId = jdbc.queryForObject(
+            "SELECT attempt_id FROM reference_resolution_provider_attempts WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+            UUID::class.java,
+            successorRunId,
+            retainedSuccessorEntryId,
+        )!!
+        assertNotEquals(chainAttemptId, copiedChainAttemptId)
+        assertEquals("datacite", jdbc.queryForObject(
+            "SELECT originating_provider_id FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'bibliography-resolution' AND successor_artifact_id = ?",
+            String::class.java,
+            successorRunId,
+            retainedSuccessorEntryId,
+        ))
+        val dataCiteConsent = predecessorConfiguration.externalProviderConsents.single { it.providerId == "datacite" }
+        assertEquals(
+            expectedSha256(objectMapper.writeValueAsBytes(dataCiteConsent)),
+            jdbc.queryForObject(
+                "SELECT originating_consent_fingerprint FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'bibliography-resolution' AND successor_artifact_id = ?",
+                String::class.java,
+                successorRunId,
+                retainedSuccessorEntryId,
+            ),
+        )
+        assertEquals(
+            listOf(DataCategory.BIBLIOGRAPHIC_METADATA.id),
+            objectMapper.readTree(jdbc.queryForObject(
+                "SELECT originating_data_categories::text FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'bibliography-resolution' AND successor_artifact_id = ?",
+                String::class.java,
+                successorRunId,
+                retainedSuccessorEntryId,
+            )).map { it.asText() },
+        )
+        assertEquals(dataCiteConsent.retentionDisclosure, jdbc.queryForObject(
+            "SELECT originating_retention_disclosure FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'bibliography-resolution' AND successor_artifact_id = ?",
+            String::class.java,
+            successorRunId,
+            retainedSuccessorEntryId,
+        ))
         assertEquals("grobid", jdbc.queryForObject("SELECT originating_provider_id FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'source-parse' AND successor_artifact_id = ?", String::class.java, successorRunId, successorRunId))
         val successorEvents = jdbc.query(
             "SELECT event_type, payload::text AS payload FROM outbox_events WHERE analysis_run_id = ?",
@@ -2197,7 +2385,7 @@ class AnalysisRunQueueIntegrationTest {
             secondGenerationJudgementId,
         )).map { it.asText() }
         assertEquals(listOf(DataCategory.ATOMIC_CLAIMS.id, DataCategory.EVIDENCE_PASSAGES.id), secondGenerationCategories)
-        assertEquals(predecessorConfiguration.externalProviderConsents.single().retentionDisclosure, jdbc.queryForObject(
+        assertEquals(mockConsent.retentionDisclosure, jdbc.queryForObject(
             "SELECT originating_retention_disclosure FROM analysis_run_successor_artifact_lineage WHERE successor_analysis_run_id = ? AND artifact_type = 'evidence-judgement' AND successor_artifact_id = ?",
             String::class.java,
             secondSuccessorRunId,
@@ -4068,6 +4256,83 @@ class AnalysisRunQueueIntegrationTest {
             entryIds[1],
         ))
         assertEquals(1, redis.keys("crossref:doi:*").size)
+    }
+
+    @Test
+    fun `Source Document deletion waits for a legacy scalar provider lookup`() {
+        val catalog = configuredExternalProviderCatalog()
+        val configurationJson = objectMapper.writeValueAsString(
+            configurationFactory(catalog).from(
+                RunConfigurationRequest(
+                    scholarlyMetadataProvider = "crossref",
+                    externalProviderConsents = listOf(
+                        externalProviderConsent(catalog, "crossref", listOf(DataCategory.BIBLIOGRAPHIC_METADATA.id)),
+                    ),
+                ),
+            ),
+        )
+        val created = createQueuedRun(configurationJson = configurationJson)
+        val documentEvent = jdbc.queryForObject(
+            "SELECT payload::text FROM outbox_events WHERE analysis_run_id = ? AND event_type = ?",
+            String::class.java,
+            created.analysisRunId,
+            DOCUMENT_ANALYSIS_REQUESTED,
+        )!!
+        eventHandler().handle(documentEvent)
+        val entryId = jdbc.queryForObject(
+            "SELECT id FROM bibliography_entries WHERE analysis_run_id = ? AND local_reference_key = 'ref1'",
+            UUID::class.java,
+            created.analysisRunId,
+        )!!
+        val requestStarted = CountDownLatch(1)
+        val allowRequestToReturn = CountDownLatch(1)
+        val lookupFactory = object : ScholarlyMetadataLookupFactory {
+            override val providerId = "crossref"
+
+            override fun forRun(configuration: AnalysisConfigurationSnapshot): ScholarlyMetadataLookup =
+                object : ScholarlyMetadataLookup {
+                    override fun byDoi(doi: String): ScholarlyWork? {
+                        requestStarted.countDown()
+                        check(allowRequestToReturn.await(10, TimeUnit.SECONDS))
+                        return ScholarlyWork(
+                            doi,
+                            "A fixture study of conservative scholarly reference resolution",
+                            listOf("Riley Example", "Jordan Researcher"),
+                            2024,
+                        )
+                    }
+
+                    override fun search(reference: BibliographyReference): List<ScholarlyWork> = emptyList()
+                }
+        }
+        val resolutionService = referenceResolutionService(listOf(lookupFactory))
+        val executor = Executors.newFixedThreadPool(2)
+        val resolution = executor.submit { resolutionService.resolveEntry(created.analysisRunId, entryId) }
+        var deletion: Future<*>? = null
+        try {
+            assertTrue(requestStarted.await(5, TimeUnit.SECONDS))
+            val deletionStarted = CountDownLatch(1)
+            deletion = executor.submit {
+                deletionStarted.countDown()
+                sourceDocumentDeletionService().delete(created.documentId)
+            }
+            assertTrue(deletionStarted.await(5, TimeUnit.SECONDS))
+            assertTrue(
+                awaitSourceDocumentAdvisoryLockWait(),
+                "Deletion should wait while the legacy provider request holds its Source Document handoff.",
+            )
+            assertFalse(SourceDocumentRepository(jdbc).isDeleted(created.documentId))
+
+            allowRequestToReturn.countDown()
+            resolution.get(10, TimeUnit.SECONDS)
+            deletion.get(10, TimeUnit.SECONDS)
+        } finally {
+            allowRequestToReturn.countDown()
+            runCatching { deletion?.get(10, TimeUnit.SECONDS) }
+            runCatching { resolution.get(10, TimeUnit.SECONDS) }
+            executor.shutdownNow()
+            executor.awaitTermination(10, TimeUnit.SECONDS)
+        }
     }
 
     @Test
@@ -6851,6 +7116,506 @@ class AnalysisRunQueueIntegrationTest {
     }
 
     @Test
+    fun `reference resolution deferrals stay pending and do not consume handler attempts`() {
+        val stream = "ae:test:${UUID.randomUUID()}"
+        val group = "group-${UUID.randomUUID()}"
+        val eventId = UUID.randomUUID()
+        val operations = redis.opsForStream<String, String>()
+        operations.add(stream, mapOf("bootstrap" to "1"))
+        operations.createGroup(stream, ReadOffset.from("$"), group)
+        val event = PipelineEvent(
+            eventId = eventId,
+            eventType = REFERENCE_RESOLUTION_REQUESTED,
+            schemaVersion = 1,
+            analysisRunId = UUID.randomUUID(),
+            correlationId = UUID.randomUUID(),
+            causationId = null,
+            occurredAt = Instant.now(),
+            attempt = 0,
+            payload = ReferenceResolutionRequestedPayload(UUID.randomUUID(), "0".repeat(64), UUID.randomUUID()),
+        )
+        val handlerCalls = AtomicInteger()
+        val failedReasons = mutableListOf<String>()
+        val referenceHandler = object : ReferenceResolutionQueueHandler {
+            override fun isProcessed(eventId: UUID): Boolean = false
+
+            override fun handleWithDisposition(serializedEvent: String): PipelineHandlerDisposition =
+                if (handlerCalls.incrementAndGet() <= 2) {
+                    PipelineHandlerDisposition.Defer(Instant.now().plusSeconds(30))
+                } else {
+                    PipelineHandlerDisposition.TerminalFailure("FIXTURE_TERMINAL_FAILURE")
+                }
+
+            override fun markFailed(
+                event: PipelineEvent<ReferenceResolutionRequestedPayload>,
+                reason: String,
+            ): PipelineHandlerFailureDisposition {
+                failedReasons += reason
+                return PipelineHandlerFailureDisposition.FailureRecorded
+            }
+        }
+        val worker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(),
+            referenceResolutionHandler = referenceHandler,
+            stream = stream,
+            group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
+            consumerName = "reference-defer-worker",
+            reclaimDelayMs = 0,
+            batchSize = 10,
+            maxAttempts = 1,
+            retryBackoffMs = "0",
+        )
+        worker.createConsumerGroup()
+        val messageId = operations.add(stream, mapOf("event" to objectMapper.writeValueAsString(event)))!!.value
+        val attemptKey = "$stream:event-attempt:$eventId"
+
+        try {
+            repeat(2) {
+                worker.poll()
+                assertEquals(1L, operations.pending(stream, group)?.totalPendingMessages)
+                assertNull(redis.opsForValue().get(attemptKey), "A DEFER delivery must not consume a handler attempt")
+                assertTrue(failedReasons.isEmpty())
+                val scheduledAt = redis.opsForHash<String, String>().get("$stream:retry-after", messageId)!!.toLong()
+                assertTrue(scheduledAt > System.currentTimeMillis(), "Recovery must be scheduled from the owner lease")
+                assertTrue(
+                    operations.range("ae:dlq", Range.unbounded<String>()).orEmpty().none { it.value["sourceStream"] == stream },
+                )
+                redis.opsForHash<String, String>().put("$stream:retry-after", messageId, "0")
+            }
+
+            worker.poll()
+
+            assertEquals(0L, operations.pending(stream, group)?.totalPendingMessages)
+            assertEquals("1", redis.opsForValue().get(attemptKey), "Only the non-DEFER terminal handling counts as an attempt")
+            assertEquals(listOf("The handler reported a terminal failure."), failedReasons)
+            val deadLetter = operations.range("ae:dlq", Range.unbounded<String>()).orEmpty()
+                .single { it.value["sourceStream"] == stream }.value
+            assertEquals("FIXTURE_TERMINAL_FAILURE", deadLetter["errorCode"])
+            assertEquals("1", deadLetter["attempts"])
+            assertEquals(1, objectMapper.readTree(deadLetter.getValue("event")).path("attempt").asInt())
+        } finally {
+            worker.shutdownLeaseHeartbeat()
+        }
+    }
+
+    @Test
+    fun `a live provider chain owner defers actual reference work before recording any attempt`() {
+        val providerChain = ProviderChainSnapshot(
+            chainId = ProviderChainSnapshot.CHAIN_ID,
+            providers = listOf(
+                ProviderSelection(provider = "crossref", version = "test"),
+                ProviderSelection(provider = "datacite", version = "test"),
+            ),
+            mappingVersion = ProviderChainSnapshot.MAPPING_VERSION,
+            policyVersion = ScholarlyMetadataMatcher.POLICY_VERSION,
+            limits = ProviderChainLimitsSnapshot.EXACT_DOI_V1,
+        )
+        val runConfiguration = objectMapper.readTree(
+            objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest())),
+        ) as ObjectNode
+        val referenceConfiguration = runConfiguration.path("referenceResolution") as ObjectNode
+        referenceConfiguration.putNull("provider")
+        referenceConfiguration.set<JsonNode>("providerChain", objectMapper.valueToTree(providerChain))
+        val created = createQueuedRun(configurationJson = runConfiguration.toString())
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", created.analysisRunId)
+        val entryId = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'fixture bibliography')",
+            created.analysisRunId,
+            created.hash,
+        )
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, parsed_title, parsed_authors, parsed_year, parsed_doi, reference_type) VALUES (?, ?, 0, 'fixture-reference', 'Fixture cited work', 'Fixture cited work', '[]'::jsonb, 2024, '10.5555/fixture', 'JOURNAL_ARTICLE')",
+            entryId,
+            created.analysisRunId,
+        )
+        val referenceEvent = PipelineEvent(
+            eventId = UUID.randomUUID(),
+            eventType = REFERENCE_RESOLUTION_REQUESTED,
+            schemaVersion = 1,
+            analysisRunId = created.analysisRunId,
+            correlationId = UUID.randomUUID(),
+            causationId = created.eventId,
+            occurredAt = Instant.now(),
+            attempt = 0,
+            payload = ReferenceResolutionRequestedPayload(created.documentId, created.hash, entryId),
+        )
+        val serializedReferenceEvent = objectMapper.writeValueAsString(referenceEvent)
+
+        val claim = referenceResolutionChainService().claim(
+            created.analysisRunId,
+            referenceEvent.payload.bibliographyEntryId,
+        )
+        assertTrue(claim is ReferenceResolutionChainClaimResult.Claimed)
+
+        val stream = "ae:test:${UUID.randomUUID()}"
+        val group = "group-${UUID.randomUUID()}"
+        val operations = redis.opsForStream<String, String>()
+        operations.add(stream, mapOf("bootstrap" to "1"))
+        operations.createGroup(stream, ReadOffset.from("$"), group)
+        val messageId = operations.add(stream, mapOf("event" to serializedReferenceEvent))!!.value
+        val worker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(),
+            referenceResolutionHandler = referenceResolutionEventHandler(
+                resolutionService = referenceResolutionService(),
+                executionCapture = null,
+            ),
+            stream = stream,
+            group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
+            consumerName = "live-chain-owner-worker",
+            reclaimDelayMs = 0,
+            batchSize = 10,
+            maxAttempts = 1,
+            retryBackoffMs = "0",
+        )
+        worker.createConsumerGroup()
+        val attemptKey = "$stream:event-attempt:${referenceEvent.eventId}"
+
+        try {
+            repeat(2) {
+                worker.poll()
+                assertEquals(1L, operations.pending(stream, group)?.totalPendingMessages)
+                assertNull(redis.opsForValue().get(attemptKey))
+                assertEquals(
+                    0,
+                    jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = ?", Int::class.java, referenceEvent.eventId),
+                )
+                assertEquals(
+                    0,
+                    jdbc.queryForObject(
+                        "SELECT count(*) FROM reference_resolution_provider_attempts WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+                        Int::class.java,
+                        created.analysisRunId,
+                        referenceEvent.payload.bibliographyEntryId,
+                    ),
+                )
+                assertEquals(
+                    0,
+                    jdbc.queryForObject(
+                        "SELECT count(*) FROM analysis_run_pipeline_items WHERE analysis_run_id = ? AND stage_id = 'references' AND item_id = ?",
+                        Int::class.java,
+                        created.analysisRunId,
+                        referenceEvent.payload.bibliographyEntryId.toString(),
+                    ),
+                )
+                assertTrue(
+                    operations.range("ae:dlq", Range.unbounded<String>()).orEmpty().none { it.value["sourceStream"] == stream },
+                )
+                val dueAt = redis.opsForHash<String, String>().get("$stream:retry-after", messageId)!!.toLong()
+                val ownerLeaseExpiry = jdbc.queryForObject(
+                    "SELECT lease_expires_at FROM reference_resolution_entry_chain_states WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+                    Timestamp::class.java,
+                    created.analysisRunId,
+                    entryId,
+                )!!.toInstant().toEpochMilli()
+                assertEquals(ownerLeaseExpiry, dueAt, "Deferral recovery should use the PostgreSQL owner lease expiry")
+                redis.opsForHash<String, String>().put("$stream:retry-after", messageId, "0")
+            }
+        } finally {
+            worker.shutdownLeaseHeartbeat()
+        }
+    }
+
+    @Test
+    fun `legacy scalar report defaults absent provider-chain outcome to unknown`() {
+        val created = createQueuedRun()
+        val entryId = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'fixture bibliography')",
+            created.analysisRunId,
+            created.hash,
+        )
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, parsed_title, parsed_authors, parsed_year, parsed_doi, reference_type) VALUES (?, ?, 0, 'legacy-reference', 'Fixture cited work', 'Fixture cited work', '[]'::jsonb, 2024, '10.5555/fixture', 'JOURNAL_ARTICLE')",
+            entryId,
+            created.analysisRunId,
+        )
+
+        val reportEntry = ReferenceResolutionRepository(jdbc).reportEntries(created.analysisRunId).single()
+
+        assertEquals(ReferenceResolutionChainOutcome.UNKNOWN, reportEntry.resolutionOutcome)
+        assertNull(reportEntry.metadataOriginProviderId)
+        assertTrue(reportEntry.providerLookups.isEmpty())
+        assertTrue(reportEntry.providerAttempts.isEmpty())
+    }
+
+    @Test
+    fun `provider-chain queue dispatch atomically persists result lookup verification and inbox`() {
+        val crossrefDisclosure = "Crossref public scholarly metadata retention test disclosure."
+        val dataCiteDisclosure = "DataCite public scholarly metadata retention test disclosure."
+        val catalog = ProviderCatalog.safeDefaults(
+            providerChainEnabled = true,
+            crossrefEnabled = true,
+            crossrefRetentionDisclosure = crossrefDisclosure,
+            dataCiteEnabled = true,
+            dataCiteRetentionDisclosure = dataCiteDisclosure,
+        )
+        val registrationById = catalog.requireProviderChain(ProviderChainSnapshot.CHAIN_ID).associateBy { it.providerId }
+        val configuration = configurationFactory(providerCatalog = catalog).from(
+            RunConfigurationRequest(
+                providerChainId = ProviderChainSnapshot.CHAIN_ID,
+                externalProviderConsents = ProviderChainSnapshot.PROVIDER_IDS.map { providerId ->
+                    val registration = requireNotNull(registrationById[providerId])
+                    ExternalProviderConsentRequest(
+                        providerId = providerId,
+                        dataCategories = registration.dataCategories.map(DataCategory::id).sorted(),
+                        retentionDisclosureFingerprint = requireNotNull(registration.consentDisclosureFingerprint()),
+                    )
+                },
+            ),
+        )
+        val created = createQueuedRun(configurationJson = objectMapper.writeValueAsString(configuration))
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", created.analysisRunId)
+        val entryId = UUID.randomUUID()
+        val doi = "10.5555/fixture"
+        val title = "Fixture cited work"
+        val author = "Ada Researcher"
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'fixture bibliography')",
+            created.analysisRunId,
+            created.hash,
+        )
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, parsed_title, parsed_authors, parsed_year, parsed_doi, reference_type) VALUES (?, ?, 0, 'fixture-reference', ?, ?, ?::jsonb, 2024, ?, 'JOURNAL_ARTICLE')",
+            entryId,
+            created.analysisRunId,
+            title,
+            title,
+            objectMapper.writeValueAsString(listOf(author)),
+            doi,
+        )
+        val work = ScholarlyWork(doi, title, listOf(author), 2024)
+        val wireCalls = AtomicInteger()
+        val lookupFactory = object : ScholarlyMetadataLookupFactory {
+            override val providerId: String = ProviderChainSnapshot.CROSSREF_PROVIDER_ID
+            override fun forRun(configuration: AnalysisConfigurationSnapshot): ScholarlyMetadataLookup =
+                object : ScholarlyMetadataLookup, ProviderChainMetadataLookup {
+                    override fun byDoi(doi: String): ScholarlyWork? = work.takeIf { it.doi == doi }
+                    override fun search(reference: BibliographyReference): List<ScholarlyWork> = emptyList()
+                    override fun byDoiForChain(
+                        doi: String,
+                        beforeWire: () -> Unit,
+                    ): ProviderChainMetadataResponse<ScholarlyWork?> {
+                        assertEquals(DoiNormalizer.normalize(doi), DoiNormalizer.normalize(work.doi))
+                        beforeWire()
+                        wireCalls.incrementAndGet()
+                        return ProviderChainMetadataResponse(work, 200, 64)
+                    }
+                    override fun searchByTitleForChain(
+                        title: String,
+                        candidateLimit: Int,
+                        beforeWire: () -> Unit,
+                    ): ProviderChainMetadataResponse<List<ScholarlyWork>> =
+                        ProviderChainMetadataResponse(emptyList(), 200, 0)
+                }
+        }
+        val cache = object : CrossrefChainLookupCache {
+            override fun find(configuration: AnalysisConfigurationSnapshot, query: CrossrefChainLookupQuery): CrossrefChainLookup? = null
+            override fun store(configuration: AnalysisConfigurationSnapshot, query: CrossrefChainLookupQuery, lookup: CrossrefChainLookup) = Unit
+        }
+        val egress = object : ProviderEgressPermitGate {
+            override fun acquire(providerId: String, deadlineAt: Instant): ProviderEgressPermitGate.AcquireResult =
+                ProviderEgressPermitGate.AcquireResult.Granted(object : ProviderEgressPermitGate.Permit {
+                    override fun release(): ProviderEgressPermitGate.ReleaseResult = ProviderEgressPermitGate.ReleaseResult.RELEASED
+                })
+        }
+        val attemptRepository = ReferenceResolutionAttemptRepository(jdbc)
+        val transactionManager = DataSourceTransactionManager(dataSource)
+        val attemptService = ReferenceResolutionAttemptService(
+            attemptRepository,
+            transactionManager,
+            ActiveSourceDocumentReferenceResolutionTerminalCommitGuard(SourceDocumentRepository(jdbc)),
+        )
+        val chainService = referenceResolutionChainService()
+        val coordinator = ReferenceResolutionProviderChainCoordinator(
+            ProviderCallGate(catalog),
+            egress,
+            cache,
+            attemptService,
+            chainService,
+            listOf(lookupFactory),
+            ProviderChainRetryDelaySource { it.retryDelayMinMillis.toLong() },
+            PostgresSourceDocumentEgressHandoffLock(dataSource),
+        )
+        val resolutionService = referenceResolutionService(
+            lookupFactories = listOf(lookupFactory),
+            providerChainCoordinator = coordinator,
+        )
+        val handler = referenceResolutionEventHandler(resolutionService, executionCapture = null)
+        val event = PipelineEvent(
+            eventId = UUID.randomUUID(),
+            eventType = REFERENCE_RESOLUTION_REQUESTED,
+            schemaVersion = 1,
+            analysisRunId = created.analysisRunId,
+            correlationId = UUID.randomUUID(),
+            causationId = created.eventId,
+            occurredAt = Instant.now(),
+            attempt = 0,
+            payload = ReferenceResolutionRequestedPayload(created.documentId, created.hash, entryId),
+        )
+
+        assertEquals(PipelineHandlerDisposition.Done, handler.handleWithDisposition(objectMapper.writeValueAsString(event)))
+        assertEquals(1, wireCalls.get())
+        assertEquals(1, jdbc.queryForObject(
+            "SELECT count(*) FROM inbox_events WHERE event_id = ?",
+            Int::class.java,
+            event.eventId,
+        ))
+        assertEquals("RESOLVED", jdbc.queryForObject(
+            "SELECT status FROM bibliography_entry_resolutions WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+            String::class.java,
+            created.analysisRunId,
+            entryId,
+        ))
+        assertEquals("crossref", jdbc.queryForObject(
+            "SELECT metadata_origin_provider_id FROM reference_resolution_entry_chain_states WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+            String::class.java,
+            created.analysisRunId,
+            entryId,
+        ))
+        assertEquals(ReferenceResolutionAttemptOutcomeCode.FOUND.name, jdbc.queryForObject(
+            "SELECT outcome_code FROM reference_resolution_provider_attempts WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+            String::class.java,
+            created.analysisRunId,
+            entryId,
+        ))
+        val reportEntry = ReferenceResolutionRepository(jdbc).reportEntries(created.analysisRunId).single()
+        assertEquals(ReferenceResolutionChainOutcome.RESOLVED, reportEntry.resolutionOutcome)
+        assertEquals("crossref", reportEntry.metadataOriginProviderId)
+        assertEquals("WIRE", reportEntry.providerLookups.single().source)
+        assertEquals("FOUND", reportEntry.providerAttempts.single().outcomeCode)
+        assertEquals(1, reportEntry.providerAttempts.single().attemptOrdinal)
+        assertNotNull(reportEntry.providerAttempts.single().reservedAt)
+        assertNotNull(reportEntry.providerAttempts.single().startedAt)
+        assertNotNull(reportEntry.providerAttempts.single().completedAt)
+
+        val processingReport = analysisRunReportService().report(created.analysisRunId)!!
+        assertEquals("PENDING", processingReport.referenceResolution.executionStatus)
+        jdbc.update("UPDATE analysis_runs SET status = 'PARSED' WHERE id = ?", created.analysisRunId)
+        val completedReport = analysisRunReportService().report(created.analysisRunId)!!
+        assertEquals("COMPLETED", completedReport.referenceResolution.executionStatus)
+        assertEquals(ReferenceResolutionChainOutcome.RESOLVED, completedReport.referenceResolution.entries.single().resolutionOutcome)
+        assertEquals("crossref", completedReport.referenceResolution.entries.single().metadataOriginProviderId)
+        assertEquals("WIRE", completedReport.referenceResolution.entries.single().providerLookups.single().source)
+        assertEquals("FOUND", completedReport.referenceResolution.entries.single().providerAttempts.single().outcomeCode)
+    }
+
+    @Test
+    fun `terminal queue failure defers when a provider chain owner appears before failure persistence`() {
+        val providerChain = ProviderChainSnapshot(
+            chainId = ProviderChainSnapshot.CHAIN_ID,
+            providers = listOf(
+                ProviderSelection(provider = "crossref", version = "test"),
+                ProviderSelection(provider = "datacite", version = "test"),
+            ),
+            mappingVersion = ProviderChainSnapshot.MAPPING_VERSION,
+            policyVersion = ScholarlyMetadataMatcher.POLICY_VERSION,
+            limits = ProviderChainLimitsSnapshot.EXACT_DOI_V1,
+        )
+        val runConfiguration = objectMapper.readTree(
+            objectMapper.writeValueAsString(configurationFactory().from(RunConfigurationRequest())),
+        ) as ObjectNode
+        val referenceConfiguration = runConfiguration.path("referenceResolution") as ObjectNode
+        referenceConfiguration.putNull("provider")
+        referenceConfiguration.set<JsonNode>("providerChain", objectMapper.valueToTree(providerChain))
+        val created = createQueuedRun(configurationJson = runConfiguration.toString())
+        jdbc.update("UPDATE analysis_runs SET status = 'PROCESSING' WHERE id = ?", created.analysisRunId)
+        val entryId = UUID.randomUUID()
+        jdbc.update(
+            "INSERT INTO parsed_document_parses (analysis_run_id, source_content_sha256, parser_id, parser_version, normalized_source_text) VALUES (?, ?, 'grobid', '0.9.1-crf', 'fixture bibliography')",
+            created.analysisRunId,
+            created.hash,
+        )
+        jdbc.update(
+            "INSERT INTO bibliography_entries (id, analysis_run_id, entry_order, local_reference_key, raw_text, parsed_title, parsed_authors, parsed_year, parsed_doi, reference_type) VALUES (?, ?, 0, 'fixture-reference', 'Fixture cited work', 'Fixture cited work', '[]'::jsonb, 2024, '10.5555/fixture', 'JOURNAL_ARTICLE')",
+            entryId,
+            created.analysisRunId,
+        )
+        val event = PipelineEvent(
+            eventId = UUID.randomUUID(),
+            eventType = REFERENCE_RESOLUTION_REQUESTED,
+            schemaVersion = 1,
+            analysisRunId = created.analysisRunId,
+            correlationId = UUID.randomUUID(),
+            causationId = created.eventId,
+            occurredAt = Instant.now(),
+            attempt = 0,
+            payload = ReferenceResolutionRequestedPayload(created.documentId, created.hash, entryId),
+        )
+        val serializedEvent = objectMapper.writeValueAsString(event)
+        val resolutionService = referenceResolutionService()
+        val actualHandler = referenceResolutionEventHandler(resolutionService, executionCapture = null)
+        val referenceHandler = object : ReferenceResolutionQueueHandler {
+            override fun isProcessed(eventId: UUID): Boolean = actualHandler.isProcessed(eventId)
+
+            override fun handleWithDisposition(serializedEvent: String): PipelineHandlerDisposition {
+                assertTrue(resolutionService.claimProviderChainEntry(created.analysisRunId, entryId) is ReferenceResolutionChainClaimResult.Claimed)
+                return PipelineHandlerDisposition.TerminalFailure("OWNER_RACE_TERMINAL")
+            }
+
+            override fun markFailed(
+                event: PipelineEvent<ReferenceResolutionRequestedPayload>,
+                reason: String,
+            ): PipelineHandlerFailureDisposition = actualHandler.markFailed(event, reason)
+        }
+        val stream = "ae:test:${UUID.randomUUID()}"
+        val group = "group-${UUID.randomUUID()}"
+        val operations = redis.opsForStream<String, String>()
+        operations.add(stream, mapOf("bootstrap" to "1"))
+        operations.createGroup(stream, ReadOffset.from("$"), group)
+        val messageId = operations.add(stream, mapOf("event" to serializedEvent))!!.value
+        val worker = RedisStreamWorker(
+            redis = redis,
+            handler = eventHandler(),
+            referenceResolutionHandler = referenceHandler,
+            stream = stream,
+            group = group,
+            citedPaperAcquisitionHandler = citedPaperAccessEventHandler(),
+            citedPaperIndexingHandler = citedPaperIndexingEventHandler(),
+            consumerName = "failure-owner-race-worker",
+            reclaimDelayMs = 0,
+            batchSize = 10,
+            maxAttempts = 1,
+            retryBackoffMs = "0",
+        )
+        worker.createConsumerGroup()
+        val attemptKey = "$stream:event-attempt:${event.eventId}"
+
+        try {
+            worker.poll()
+
+            assertEquals(1L, operations.pending(stream, group)?.totalPendingMessages)
+            assertNull(redis.opsForValue().get(attemptKey), "An owner-raced failure must not consume an attempt")
+            assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM inbox_events WHERE event_id = ?", Int::class.java, event.eventId))
+            assertEquals(
+                0,
+                jdbc.queryForObject(
+                    "SELECT count(*) FROM analysis_run_pipeline_items WHERE analysis_run_id = ? AND stage_id = 'references' AND item_id = ?",
+                    Int::class.java,
+                    created.analysisRunId,
+                    entryId.toString(),
+                ),
+            )
+            assertTrue(operations.range("ae:dlq", Range.unbounded<String>()).orEmpty().none { it.value["sourceStream"] == stream })
+            val leaseExpiry = jdbc.queryForObject(
+                "SELECT lease_expires_at FROM reference_resolution_entry_chain_states WHERE analysis_run_id = ? AND bibliography_entry_id = ?",
+                Timestamp::class.java,
+                created.analysisRunId,
+                entryId,
+            )!!.toInstant().toEpochMilli()
+            assertEquals(leaseExpiry, redis.opsForHash<String, String>().get("$stream:retry-after", messageId)!!.toLong())
+        } finally {
+            worker.shutdownLeaseHeartbeat()
+        }
+    }
+
+    @Test
     fun `marks a persistently failing queued run failed and dead-letters it after three deliveries`() {
         val created = createQueuedRun()
         objectStore.delete("source/${created.documentId}/${created.hash}.pdf")
@@ -7220,6 +7985,26 @@ class AnalysisRunQueueIntegrationTest {
         return CreatedRunIds(documentId, runId, eventId, hash)
     }
 
+    private fun awaitSourceDocumentAdvisoryLockWait(): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            val deletionIsWaiting = jdbc.queryForObject(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_stat_activity
+                     WHERE wait_event_type = 'Lock'
+                       AND state = 'active'
+                       AND query LIKE '%pg_advisory_xact_lock%'
+                )
+                """.trimIndent(),
+                Boolean::class.java,
+            ) == true
+            if (deletionIsWaiting) return true
+            Thread.sleep(10)
+        }
+        return false
+    }
+
     private fun sourceDocumentDeletionService() = SourceDocumentDeletionService(
         repository = SourceDocumentDeletionRepository(jdbc),
         recoveryUploadCleanupRepository = RecoveryUploadCleanupRepository(jdbc, recoveryStagingSettings()),
@@ -7369,14 +8154,24 @@ class AnalysisRunQueueIntegrationTest {
         evidenceCoverageReportRepository = evidenceCoverageReportRepository(),
     )
 
+    private fun referenceResolutionChainService() = ReferenceResolutionChainService(
+        repository = ReferenceResolutionAttemptRepository(jdbc),
+        transactionManager = DataSourceTransactionManager(dataSource),
+    )
+
     private fun referenceResolutionService(
         lookupFactories: List<ScholarlyMetadataLookupFactory> = listOf(RecordedFixtureScholarlyMetadataLookupFactory()),
+        providerChainCoordinator: ReferenceResolutionProviderChainCoordinator =
+            org.mockito.Mockito.mock(ReferenceResolutionProviderChainCoordinator::class.java),
     ) = ReferenceResolutionService(
         sourceDocumentRepository = SourceDocumentRepository(jdbc),
+        sourceDocumentEgressHandoffLock = PostgresSourceDocumentEgressHandoffLock(dataSource),
         transactionTemplate = TransactionTemplate(DataSourceTransactionManager(dataSource)),
         claimReferenceVerificationRepository = claimReferenceVerificationRepository(),
         repository = ReferenceResolutionRepository(jdbc),
         lookupFactories = lookupFactories,
+        chainService = referenceResolutionChainService(),
+        providerChainCoordinator = providerChainCoordinator,
     )
 
     private fun stageCompletionService(
@@ -7813,7 +8608,7 @@ class AnalysisRunQueueIntegrationTest {
             jdbc = JdbcTemplate(dataSource)
             val migrationDirectory = listOf(Path.of("db/deploy"), Path.of("api/db/deploy"))
                 .firstOrNull(Files::isDirectory) ?: error("Could not locate Sqitch deployment directory")
-            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql", "conservative_reference_resolution.sql", "cited_paper_access.sql", "traceable_evidence_retrieval.sql").forEach { filename ->
+            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql", "conservative_reference_resolution.sql", "reference_resolution_attempt_ledger.sql", "cited_paper_access.sql", "traceable_evidence_retrieval.sql").forEach { filename ->
                 val migration = migrationDirectory.resolve(filename)
                 dataSource.connection.use { connection ->
                     connection.createStatement().use { statement -> statement.execute(Files.readString(migration)) }

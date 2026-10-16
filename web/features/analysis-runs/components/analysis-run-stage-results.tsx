@@ -11,12 +11,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
+import { ProviderResolutionHistory } from "@/features/reference-resolution/components/provider-resolution-history";
 import { BackLink } from "@/features/workspace/components/back-link";
 import { PIPELINE_STAGES, PIPELINE_STAGE_STATE_LABELS, pipelineStage, pipelineStageState, type PipelineStageId } from "@/features/analysis-runs/pipeline";
 import { PIPELINE_STAGE_SELECTED_CLASSES, PIPELINE_STAGE_STATE_CLASSES } from "@/features/analysis-runs/components/analysis-pipeline-chart";
 import { PipelineResultMetricFilters, type PipelineResultFilterOption } from "@/features/analysis-runs/components/pipeline-result-metric-filters";
 import { usePipelineResultFilter, usePipelineStageFilterReset } from "@/features/analysis-runs/hooks/use-pipeline-result-filter";
 import type { AnalysisRun, ParsedDocument, ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
+import { referenceResolutionProviderLabel } from "@/features/analysis-runs/reference-resolution-provider-label";
 import { displayReferenceKey } from "@/lib/display-reference-key";
 import { cn } from "@/lib/utils";
 
@@ -118,7 +120,7 @@ function PipelineStageQuickNavigation({
   onSelectStage: (stage: PipelineStageId) => void;
 }) {
   return (
-    <nav className="mx-auto w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden px-1 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Analysis pipeline stages">
+    <nav className="mx-auto w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden px-1 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Pipeline results stage navigation">
       <ol className="mx-auto flex w-fit min-w-max items-center justify-center gap-1">
         {PIPELINE_STAGES.map((pipelineStage) => {
           const selected = pipelineStage.id === selectedStage;
@@ -188,7 +190,9 @@ function PipelineConfiguration({
       ]
     : stageId === "references"
       ? [
-          ["Resolver", providerLabel(configuration.referenceResolution?.provider)],
+          ["Resolver", configuration.referenceResolution?.providerChain
+            ? referenceResolutionProviderLabel(configuration.referenceResolution)
+            : providerLabel(configuration.referenceResolution?.provider)],
           ["Execution status", persistedExecutionStatus(report?.referenceResolution.executionStatus, reportLoading, reportError)],
           ["Score policy", configuration.referenceResolution?.scorePolicyVersion ?? "Not configured"],
           ["Match threshold", configuration.referenceResolution?.confidenceThreshold?.toFixed(3) ?? "Not configured"],
@@ -461,6 +465,7 @@ function ReferenceMatchCard({ entry, references, view }: { entry: ReportEntry; r
           <p className="mt-2 break-words text-sm leading-relaxed text-muted-foreground">{entry.rawText}</p>
         </details>
       )}
+      <ProviderResolutionHistory entry={entry} className="mt-3 border-t border-border pt-3" />
     </li>
   );
 }

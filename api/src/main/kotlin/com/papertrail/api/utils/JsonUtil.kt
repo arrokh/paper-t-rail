@@ -61,6 +61,12 @@ object JsonUtil {
         .readTree(json)
 
     @JvmStatic
+    fun parseStrictTree(json: ByteArray): JsonNode? = objectMapper.reader()
+        .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+        .with(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+        .readTree(json)
+
+    @JvmStatic
     fun toTree(value: Any?): JsonNode = objectMapper.valueToTree(value)
 
     @JvmStatic

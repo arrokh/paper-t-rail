@@ -8,7 +8,7 @@ import {
   useUploadAnalysisRun,
 } from "@/features/analysis-runs/queries/analysis-run-queries";
 import { useProviderConfiguration } from "@/features/providers/provider-configuration-context";
-import { selectableProviderOptions } from "@/features/providers/provider-configuration";
+import { selectableProviderChains, selectableProviderOptions } from "@/features/providers/provider-configuration";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -66,11 +66,13 @@ export function ProviderConfigurationCard({
     directoryLoading,
     directoryError,
     selections,
+    providerChainId,
     consentRequirements,
     approvedCategories,
     approvedDisclosureFingerprints,
     configurationReady,
     selectProvider,
+    selectProviderChain,
     approveCategory,
     createConfiguration,
   } = useProviderConfiguration();
@@ -120,12 +122,15 @@ export function ProviderConfigurationCard({
   const activeError = validationError
     ?? (uploadMutation.error ? errorMessage(uploadMutation.error, "The upload could not be processed.") : null)
     ?? directoryError;
+  const availableChainOptions = directory ? selectableProviderChains(directory) : [];
+  const selectedChain = availableChainOptions.find((chain) => chain.chainId === providerChainId) ?? null;
   const selectedProviders = PROVIDER_FIELDS.map(([role, label, selectionField]) => ({
     role,
     label,
     provider: directory
       ? selectableProviderOptions(directory, role).find((provider) => provider.providerId === selections[selectionField]) ?? null
       : null,
+    chain: role === "scholarlyMetadata" ? selectedChain : null,
   }));
   const hasCurrentDisclosureApproval = (providerId: string, fingerprint: string) =>
     approvedDisclosureFingerprints[providerId] === fingerprint;
@@ -209,7 +214,7 @@ export function ProviderConfigurationCard({
                             id={selectId}
                             className="w-full [&_[data-slot=native-select]]:h-11"
                             value={selections[selectionField]}
-                            disabled={busy || !directory}
+                            disabled={busy || !directory || (role === "scholarlyMetadata" && providerChainId !== null)}
                             onChange={(event) => selectProvider(role, event.target.value)}
                           >
                             {directory ? (
@@ -230,6 +235,29 @@ export function ProviderConfigurationCard({
                         </Field>
                       );
                     })}
+                    {(availableChainOptions.length > 0 || providerChainId !== null) && (
+                      <Field className="sm:col-span-2">
+                        <FieldLabel htmlFor="provider-chain" className="text-xs font-medium text-foreground">Bibliography lookup strategy</FieldLabel>
+                        <NativeSelect
+                          id="provider-chain"
+                          className="w-full [&_[data-slot=native-select]]:h-11"
+                          value={providerChainId ?? ""}
+                          disabled={busy}
+                          onChange={(event) => selectProviderChain(event.target.value || null)}
+                        >
+                          {providerChainId && !availableChainOptions.some((chain) => chain.chainId === providerChainId) && (
+                            <NativeSelectOption value={providerChainId} disabled>Selected provider chain unavailable</NativeSelectOption>
+                          )}
+                          <NativeSelectOption value="">Single provider</NativeSelectOption>
+                          {availableChainOptions.map((chain) => (
+                            <NativeSelectOption key={chain.chainId} value={chain.chainId}>{chain.displayName}</NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                        <FieldDescription>
+                          {selectedChain?.description ?? "Choose one provider or a server-defined fixed chain. A chain uses Crossref first and DataCite only for exact-DOI fallback; each provider needs separate consent."}
+                        </FieldDescription>
+                      </Field>
+                    )}
                   </div>
                 </CollapsibleContent>
               </Collapsible>
@@ -240,12 +268,13 @@ export function ProviderConfigurationCard({
                   <span className="shrink-0 text-right text-xs text-muted-foreground">Pinned to this run</span>
                 </div>
                 <ul className="grid min-w-0 gap-2 sm:grid-cols-2">
-                  {selectedProviders.map(({ role, label, provider }) => (
+                  {selectedProviders.map(({ role, label, provider, chain }) => (
                     <li key={role} className="grid min-w-0 grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] items-start gap-3 rounded-md border border-border bg-background px-3 py-2.5 text-xs">
                       <span className="min-w-0 break-words leading-snug text-muted-foreground">{label}</span>
                       <span className="min-w-0 break-words text-right font-medium leading-snug text-foreground">
-                        {provider?.displayName ?? (directory ? "Unavailable" : "Loading…")}
-                        {provider && <span className="mt-0.5 block font-mono text-[0.6rem] font-normal text-muted-foreground">{provider.trustBoundary.toLowerCase()}</span>}
+                        {chain?.displayName ?? provider?.displayName ?? (directory ? "Unavailable" : "Loading…")}
+                        {(chain || provider?.trustBoundary === "EXTERNAL") && <span className="mt-0.5 block font-mono text-[0.6rem] font-normal text-muted-foreground">external</span>}
+                        {provider && !chain && provider.trustBoundary !== "EXTERNAL" && <span className="mt-0.5 block font-mono text-[0.6rem] font-normal text-muted-foreground">{provider.trustBoundary.toLowerCase()}</span>}
                       </span>
                     </li>
                   ))}

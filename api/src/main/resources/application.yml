@@ -83,6 +83,9 @@ paper-trail:
     docling-response-max-bytes: ${PAPER_MAX_DOCLING_RESPONSE_BYTES:67108864}
     docling-request-timeout-millis: ${DOCLING_REQUEST_TIMEOUT_MILLIS:600000}
     reference-resolution-confidence-threshold: ${PAPER_REFERENCE_RESOLUTION_CONFIDENCE_THRESHOLD:0.25}
+    reference-resolution:
+      provider-chain:
+        enabled: ${PAPER_REFERENCE_PROVIDER_CHAIN_ENABLED:false}
     retrieval:
       profile-id: ${PAPER_RETRIEVAL_PROFILE_ID:postgres-hybrid-rrf-v1}
       vector-candidates: ${PAPER_RETRIEVAL_VECTOR_CANDIDATES:3}
@@ -124,6 +127,9 @@ paper-trail:
       cache:
         positive-ttl: ${CROSSREF_CACHE_POSITIVE_TTL:30d}
         negative-ttl: ${CROSSREF_CACHE_NEGATIVE_TTL:1h}
+    datacite:
+      enabled: ${DATACITE_ENABLED:false}
+      retention-disclosure: "${DATACITE_RETENTION_DISCLOSURE:DataCite lookup-request retention and deletion terms have not been verified. Only a normalized DOI and bibliographic metadata are used for this public metadata lookup.}"
     unpaywall:
       enabled: ${UNPAYWALL_ENABLED:true}
       retention-disclosure: "${UNPAYWALL_RETENTION_DISCLOSURE:Unpaywall menerima DOI dan alamat kontak layanan; kebijakannya menyebut data permintaan dapat disimpan hingga enam bulan setelah penggunaan layanan berakhir. Repositori/host konten yang ditemukan memiliki ketentuan retensi tersendiri.}"

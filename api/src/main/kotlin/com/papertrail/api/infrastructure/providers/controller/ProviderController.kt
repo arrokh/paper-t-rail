@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController
 class ProviderController(private val providerCatalog: ProviderCatalog) {
     @Operation(
         summary = "List selectable providers",
-        description = "Returns enabled providers with technically classified boundaries, grouped by role, along with stable data-category disclosures. External providers include the exact retention/deletion disclosure shown before consent (or an explicit unknown-terms notice) and an opaque fingerprint the server validates when a run is created. Provider URLs, credentials, and endpoint configuration fingerprints are not exposed.",
+        description = "Returns enabled providers with technically classified boundaries, grouped by role, along with stable data-category disclosures. External providers include the exact retention/deletion disclosure shown before consent (or an explicit unknown-terms notice) and an opaque fingerprint the server validates when a run is created. Fixed provider-chain options are listed only when chain support and every required provider are enabled; the exact DOI chain fixes Crossref before DataCite and exposes separate disclosures for both providers. Provider URLs, credentials, and endpoint configuration fingerprints are not exposed.",
     )
     @ApiResponses(
         value = [

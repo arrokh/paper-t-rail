@@ -12,6 +12,7 @@ import {
   useReferenceResolutionReport,
 } from "@/features/analysis-runs/queries/analysis-run-queries";
 import type { AnalysisRun, AnalysisRunPage } from "@/features/analysis-runs/types";
+import { referenceResolutionProviderLabel } from "@/features/analysis-runs/reference-resolution-provider-label";
 import {
   ArrowLeft,
   ArrowRight,
@@ -465,7 +466,7 @@ export function AnalysisRunsWorkspace({ initialSelectedRunId }: { initialSelecte
                     <dd className="m-0 break-all font-mono text-xs leading-relaxed text-foreground">{selectedRun.sourceContentSha256}</dd>
                     <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Configuration</dt>
                     <dd className="m-0 break-words text-sm text-foreground">
-                      Claim {selectedRun.configuration.claimExtractor.provider} · Embeddings {selectedRun.configuration.embedding.provider} · Evidence {selectedRun.configuration.systemOne.provider} · Bibliography {selectedRun.configuration.referenceResolution?.provider?.provider ?? "not configured"} · Cited full text {selectedRun.configuration.openAccess?.provider ?? "not configured"}
+                      Claim {selectedRun.configuration.claimExtractor.provider} · Embeddings {selectedRun.configuration.embedding.provider} · Evidence {selectedRun.configuration.systemOne.provider} · Bibliography {referenceResolutionProviderLabel(selectedRun.configuration.referenceResolution)} · Cited full text {selectedRun.configuration.openAccess?.provider ?? "not configured"}
                     </dd>
                     <dt className="font-mono text-xs tracking-wide text-muted-foreground uppercase">Worker stage</dt>
                     <dd className="m-0 text-sm capitalize text-foreground">

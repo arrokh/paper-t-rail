@@ -9,6 +9,9 @@ import com.papertrail.api.scholarly.references.client.ScholarlyWork
 import com.papertrail.api.scholarly.references.model.StoredBibliographyReference
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
 import com.papertrail.api.scholarly.references.report.ReportCanonicalPaper
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionProviderLookupReport
+import com.papertrail.api.scholarly.references.report.ReferenceResolutionProviderAttemptReport
+import com.papertrail.api.scholarly.references.attempts.domain.ReferenceResolutionChainOutcome
 import com.papertrail.api.scholarly.references.resolver.ReferenceResolutionDecision
 import com.papertrail.api.scholarly.references.resolver.ScholarlyCandidateEvidence
 import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
@@ -163,6 +166,10 @@ class ReferenceResolutionRepository(
                r.canonical_paper_id, r.matched_doi, r.matched_title,
                r.matched_authors::text AS matched_authors, r.matched_year, r.confidence_score,
                r.match_method, r.candidate_evidence::text AS candidate_evidence,
+               COALESCE(chain.terminal_outcome, 'UNKNOWN') AS resolution_outcome,
+               chain.metadata_origin_provider_id,
+               provider_lookups.lookup_history::text AS provider_lookup_history,
+               provider_attempts.attempt_history::text AS provider_attempt_history,
                access_progress.status AS access_progress_status,
                access_progress.reason_code AS access_progress_reason,
                b.source_element, b.source_text_content, b.source_local_reference_key, b.local_reference_key_origin,
@@ -189,6 +196,38 @@ class ReferenceResolutionRepository(
                LIMIT 1
           ) task ON true
           LEFT JOIN inbox_events task_inbox ON task_inbox.event_id = task.event_id
+          LEFT JOIN reference_resolution_entry_chain_states chain
+            ON chain.analysis_run_id = b.analysis_run_id AND chain.bibliography_entry_id = b.id
+          LEFT JOIN LATERAL (
+              SELECT jsonb_agg(jsonb_build_object(
+                         'providerId', lookup.provider_id,
+                         'lookupOrdinal', lookup.lookup_ordinal,
+                         'source', lookup.source,
+                         'outcomeCode', lookup.outcome_code
+                     ) ORDER BY lookup.lookup_ordinal) AS lookup_history
+                FROM reference_resolution_provider_lookup_results lookup
+               WHERE lookup.analysis_run_id = b.analysis_run_id
+                 AND lookup.bibliography_entry_id = b.id
+          ) provider_lookups ON true
+          LEFT JOIN LATERAL (
+              SELECT jsonb_agg(jsonb_build_object(
+                         'providerId', attempt.provider_id,
+                         'attemptOrdinal', attempt.reservation_ordinal,
+                         'state', attempt.state,
+                         'outcomeCode', attempt.outcome_code,
+                         'reservedAt', attempt.reserved_at,
+                         'startedAt', attempt.started_at,
+                         'completedAt', attempt.completed_at,
+                         'unknownAt', attempt.unknown_at,
+                         'httpStatus', attempt.http_status,
+                         'durationMillis', attempt.duration_millis,
+                         'responseBytes', attempt.response_bytes,
+                         'nextAttemptNotBefore', attempt.next_attempt_not_before
+                     ) ORDER BY attempt.reservation_ordinal) AS attempt_history
+                FROM reference_resolution_provider_attempts attempt
+               WHERE attempt.analysis_run_id = b.analysis_run_id
+                 AND attempt.bibliography_entry_id = b.id
+          ) provider_attempts ON true
           LEFT JOIN analysis_run_pipeline_items access_progress
             ON access_progress.analysis_run_id = b.analysis_run_id
            AND access_progress.stage_id = 'access'
@@ -298,6 +337,22 @@ class ReferenceResolutionRepository(
             matchMethod = getString("match_method"),
             candidateEvidence = getString("candidate_evidence")?.let {
                 JsonUtil.fromJson<List<ScholarlyCandidateEvidence>>(it, JsonUtil.collectionType(List::class.java, ScholarlyCandidateEvidence::class.java))
+            }.orEmpty(),
+            resolutionOutcome = getString("resolution_outcome")?.let {
+                ReferenceResolutionChainOutcome.valueOf(it)
+            } ?: ReferenceResolutionChainOutcome.UNKNOWN,
+            metadataOriginProviderId = getString("metadata_origin_provider_id"),
+            providerLookups = getString("provider_lookup_history")?.let {
+                JsonUtil.fromJson<List<ReferenceResolutionProviderLookupReport>>(
+                    it,
+                    JsonUtil.collectionType(List::class.java, ReferenceResolutionProviderLookupReport::class.java),
+                )
+            }.orEmpty(),
+            providerAttempts = getString("provider_attempt_history")?.let {
+                JsonUtil.fromJson<List<ReferenceResolutionProviderAttemptReport>>(
+                    it,
+                    JsonUtil.collectionType(List::class.java, ReferenceResolutionProviderAttemptReport::class.java),
+                )
             }.orEmpty(),
             accessProgressStatus = getString("access_progress_status"),
             accessProgressReason = getString("access_progress_reason"),

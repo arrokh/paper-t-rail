@@ -7,6 +7,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ReferenceResolutionBadge } from "@/features/reference-resolution/components/reference-resolution-badge";
 import { CitedPaperAccessSummary } from "@/features/reference-resolution/components/cited-paper-access-summary";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
+import { ProviderResolutionHistory } from "@/features/reference-resolution/components/provider-resolution-history";
 import { displayReferenceKey } from "@/lib/display-reference-key";
 
 type ReferenceResolutionEntry = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number];
@@ -31,6 +32,11 @@ export function ReferenceResolutionEntryCard({
   const sourcePreviewRef = useRef<HTMLParagraphElement>(null);
   const [hasLongSourceReference, setHasLongSourceReference] = useState(false);
   const displayKey = displayReferenceKey(entry, references);
+  const resolutionText = entry.resolutionOutcome === "NO_CANDIDATE_OR_DOI_UNCONFIRMED"
+    ? entry.doi
+      ? "No public metadata confirmation was found. This does not prove the DOI or work does not exist."
+      : "No public metadata confirmation was found. This does not prove the work does not exist."
+    : entry.reasonCode?.replaceAll("_", " ").toLowerCase();
 
   useEffect(() => {
     if (hasLongSourceReference) return;
@@ -76,10 +82,10 @@ export function ReferenceResolutionEntryCard({
 
       <div className="grid gap-4 border-t border-border p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
           <dl className="grid gap-3 sm:grid-cols-2">
-            {entry.reasonCode && (
+            {resolutionText && (
               <div className="min-w-0 space-y-1">
                 <dt className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Resolution</dt>
-                <dd className="m-0 break-words text-sm text-foreground">{entry.reasonCode.replaceAll("_", " ").toLowerCase()}</dd>
+                <dd className="m-0 break-words text-sm text-foreground">{resolutionText}</dd>
               </div>
             )}
             {entry.confidenceScore !== null && entry.matchMethod !== "CONFIRMED_DOI" && (
@@ -150,6 +156,8 @@ export function ReferenceResolutionEntryCard({
             </ol>
           </section>
         )}
+
+        <ProviderResolutionHistory entry={entry} className="border-t border-border px-4 py-3" />
 
         <section className="space-y-2 border-t border-border p-4" aria-label={`Original bibliography entry ${displayKey}`}>
           <h5 className="font-mono text-[0.65rem] tracking-wide text-muted-foreground uppercase">Original bibliography entry</h5>
