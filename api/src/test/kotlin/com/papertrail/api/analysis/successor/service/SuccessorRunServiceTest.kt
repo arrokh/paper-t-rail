@@ -1,6 +1,8 @@
 package com.papertrail.api.analysis.successor.service
 
 import com.papertrail.api.analysis.configuration.AggregationPolicySnapshot
+import com.papertrail.api.analysis.configuration.ProviderChainLimitsSnapshot
+import com.papertrail.api.analysis.configuration.ProviderChainSnapshot
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
 import com.papertrail.api.analysis.configuration.ExternalProviderConsentSnapshot
 import com.papertrail.api.analysis.configuration.ProviderSelection
@@ -200,6 +202,48 @@ class SuccessorRunServiceTest {
         val mismatchedPlan = mismatchFixture.service.preview(mismatchFixture.batch.id, mismatchFixture.request)
         assertFalse(mismatchedPlan.eligible)
         assertTrue(mismatchedPlan.blockers.contains("PREDECESSOR_EXTERNAL_PROVIDER_CONSENT_MISSING_OR_MISMATCHED"))
+    }
+
+    @Test
+    fun `preview accepts a pinned provider chain only with fresh consent for both providers`() {
+        val chainConfiguration = configurationWithProviderChain()
+        val fixture = fixture(
+            successorConfiguration = chainConfiguration,
+            predecessorConfiguration = chainConfiguration,
+        )
+        val assistance = RecoveryIdentifierAssistance(
+            id = UUID.randomUUID(),
+            batchId = fixture.batch.id,
+            analysisRunId = fixture.batch.analysisRunId,
+            bibliographyEntryId = fixture.batch.selectedAssets.single().bibliographyEntryId,
+            localReferenceKey = "ref1",
+            identifierType = "DOI",
+            identifierValue = "10.1234/asserted-for-chain",
+            recordedAt = Instant.parse("2026-10-13T00:05:00Z"),
+        )
+        Mockito.`when`(fixture.batchRepository.activeBatchById(anyUuid(), anyInstant())).thenReturn(
+            fixture.batch.copy(selectedAssets = emptyList(), identifierAssistance = listOf(assistance)),
+        )
+        Mockito.`when`(fixture.previewRepository.selectedEntry(fixture.batch.analysisRunId, assistance.bibliographyEntryId)).thenReturn(
+            SuccessorEntrySnapshot(
+                bibliographyEntryId = assistance.bibliographyEntryId,
+                localReferenceKey = assistance.localReferenceKey,
+                entryOrder = 0,
+                referenceType = "JOURNAL_ARTICLE",
+                resolutionStatus = "UNRESOLVED",
+                canonicalPaperId = null,
+                claimCount = 1,
+            ),
+        )
+
+        val plan = fixture.service.preview(fixture.batch.id, fixture.request)
+
+        assertTrue(plan.eligible, plan.blockers.joinToString())
+        assertEquals(
+            listOf("crossref", "datacite"),
+            plan.expectedProviderWork.filter { it.stage == "reference-resolution" }.map { it.providerId },
+        )
+        assertEquals(setOf("crossref", "datacite"), plan.requiredConsents.map { it.providerId }.toSet())
     }
 
     @Test
@@ -495,6 +539,46 @@ class SuccessorRunServiceTest {
             previewRepository = previewRepository,
             configurationFactory = configurationFactory,
             identityDecisionRepository = identityDecisionRepository,
+        )
+    }
+
+    private fun configurationWithProviderChain(): AnalysisConfigurationSnapshot {
+        val crossref = ProviderSelection(
+            provider = "crossref",
+            version = "v1",
+            trustBoundary = "EXTERNAL",
+            dataCategories = listOf("bibliographic_metadata"),
+            retentionDisclosure = "Crossref public metadata disclosure.",
+        )
+        val dataCite = ProviderSelection(
+            provider = "datacite",
+            version = "v1",
+            trustBoundary = "EXTERNAL",
+            dataCategories = listOf("bibliographic_metadata"),
+            retentionDisclosure = "DataCite public metadata disclosure.",
+        )
+        val chain = ProviderChainSnapshot(
+            chainId = ProviderChainSnapshot.CHAIN_ID,
+            providers = listOf(crossref, dataCite),
+            mappingVersion = ProviderChainSnapshot.MAPPING_VERSION,
+            policyVersion = "policy-v1",
+            limits = ProviderChainLimitsSnapshot.EXACT_DOI_V1,
+        )
+        return configuration().copy(
+            referenceResolution = ReferenceResolutionSnapshot(
+                executionStatus = "COMPLETED",
+                provider = null,
+                scorePolicyVersion = null,
+                confidenceThreshold = null,
+                providerChain = chain,
+            ),
+            externalProviderConsents = listOf(crossref, dataCite).map { selection ->
+                ExternalProviderConsentSnapshot(
+                    providerId = selection.provider,
+                    dataCategories = selection.dataCategories,
+                    retentionDisclosure = requireNotNull(selection.retentionDisclosure),
+                )
+            },
         )
     }
 

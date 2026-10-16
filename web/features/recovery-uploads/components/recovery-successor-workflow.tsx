@@ -45,23 +45,34 @@ type ConsentDraft = {
   fingerprints: Record<string, string>;
 };
 
-function providerSelectionsFromRun(configuration: AnalysisRun["configuration"]): ProviderSelections | null {
-  const scholarlyMetadataProvider = configuration.referenceResolution?.provider?.provider;
+type SuccessorProviderSelection = {
+  selections: ProviderSelections;
+  providerChainId: string | null;
+};
+
+function providerSelectionsFromRun(configuration: AnalysisRun["configuration"]): SuccessorProviderSelection | null {
+  const providerChainId = configuration.referenceResolution?.providerChain?.chainId ?? null;
+  const scholarlyMetadataProvider = configuration.referenceResolution?.provider?.provider
+    ?? configuration.referenceResolution?.providerChain?.providers[0]?.provider;
   const openAccessProvider = configuration.openAccess?.provider;
   if (!scholarlyMetadataProvider || !openAccessProvider) return null;
 
   return {
-    claimExtractorProvider: configuration.claimExtractor.provider,
-    embeddingProvider: configuration.embedding.provider,
-    systemOneProvider: configuration.systemOne.provider,
-    scholarlyMetadataProvider,
-    openAccessProvider,
+    providerChainId,
+    selections: {
+      claimExtractorProvider: configuration.claimExtractor.provider,
+      embeddingProvider: configuration.embedding.provider,
+      systemOneProvider: configuration.systemOne.provider,
+      scholarlyMetadataProvider,
+      openAccessProvider,
+    },
   };
 }
 
 function createSuccessorConfiguration(
   predecessor: AnalysisRun["configuration"],
   selections: ProviderSelections,
+  providerChainId: string | null,
   requirements: ProviderConsentRequirement[],
   consentDraft: ConsentDraft,
 ): RecoverySuccessorRunConfiguration {
@@ -79,6 +90,8 @@ function createSuccessorConfiguration(
   return {
     captureExecution: predecessor.captureExecution ?? true,
     ...selections,
+    scholarlyMetadataProvider: providerChainId ? null : selections.scholarlyMetadataProvider,
+    ...(providerChainId ? { providerChainId } : {}),
     externalProviderConsents,
   };
 }
@@ -100,19 +113,23 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
   const [previewConfigurationKey, setPreviewConfigurationKey] = useState<string | null>(null);
   const submissionKey = useRef<{ batchId: string; revision: number; configurationKey: string; planFingerprint: string; key: string } | null>(null);
 
-  const selections = useMemo(() => providerSelectionsFromRun(predecessorConfiguration), [predecessorConfiguration]);
+  const providerSelection = useMemo(() => providerSelectionsFromRun(predecessorConfiguration), [predecessorConfiguration]);
+  const selections = providerSelection?.selections ?? null;
+  const providerChainId = providerSelection?.providerChainId ?? null;
   const directory = providerQuery.data ?? null;
-  const selectionAvailable = directory && selections ? providerSelectionsAreAvailable(directory, selections) : false;
+  const selectionAvailable = directory && selections
+    ? providerSelectionsAreAvailable(directory, selections, providerChainId)
+    : false;
   const requirements = useMemo(
-    () => directory && selections ? consentRequirements(directory, selections) : [],
-    [directory, selections],
+    () => directory && selections ? consentRequirements(directory, selections, providerChainId) : [],
+    [directory, selections, providerChainId],
   );
   const missingConsents = requirements.filter((provider) =>
     consentDraft.fingerprints[provider.providerId] !== provider.retentionDisclosureFingerprint
       || provider.dataCategories.some((category) => !consentDraft.categories[provider.providerId]?.includes(category)),
   );
   const configuration = directory && selections
-    ? createSuccessorConfiguration(predecessorConfiguration, selections, requirements, consentDraft)
+    ? createSuccessorConfiguration(predecessorConfiguration, selections, providerChainId, requirements, consentDraft)
     : null;
   const configurationKey = configuration ? JSON.stringify(configuration) : null;
   const events = historyQuery.data?.pages.flatMap((page) => page.events) ?? [];
@@ -251,7 +268,7 @@ export function RecoverySuccessorWorkflow({ analysisRunId, predecessorConfigurat
             <section className="space-y-4 rounded-md border border-border bg-background p-4" aria-labelledby="successor-provider-consent-heading">
               <div className="space-y-1">
                 <h3 id="successor-provider-consent-heading" className="m-0 text-sm font-semibold">Explicit consent for this successor</h3>
-                <p className="m-0 text-sm leading-relaxed text-muted-foreground">Provider selections stay the same as the predecessor. Re-approve these disclosures for this new run; previous consent and PDF-rights declarations do not carry over.</p>
+                <p className="m-0 text-sm leading-relaxed text-muted-foreground">Provider selections and any fixed provider chain stay the same as the predecessor. Re-approve these disclosures for this new run; previous consent and PDF-rights declarations do not carry over.</p>
               </div>
               <ul className="m-0 grid list-none gap-4 p-0">
                 {requirements.map((provider) => (

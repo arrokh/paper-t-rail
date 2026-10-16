@@ -236,8 +236,9 @@ export type RecoverySuccessorRunConfiguration = {
   claimExtractorProvider: string;
   embeddingProvider: string;
   systemOneProvider: string;
-  scholarlyMetadataProvider: string;
+  scholarlyMetadataProvider: string | null;
   openAccessProvider: string;
+  providerChainId?: string;
   externalProviderConsents: Array<{
     providerId: string;
     dataCategories: string[];

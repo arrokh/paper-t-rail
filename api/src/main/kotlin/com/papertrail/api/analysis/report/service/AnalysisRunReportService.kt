@@ -36,7 +36,8 @@ class AnalysisRunReportService(
         val summary = ReferenceResolutionSummary.fromEntries(entries)
         val aggregation = context.configuration.aggregation
         val configuration = context.configuration.referenceResolution
-        val policyConfigured = configuration.provider != null && !configuration.scorePolicyVersion.isNullOrBlank() && configuration.confidenceThreshold != null
+        val providerConfigured = configuration.provider != null || configuration.providerChain != null
+        val policyConfigured = providerConfigured && !configuration.scorePolicyVersion.isNullOrBlank() && configuration.confidenceThreshold != null
         return ReferenceResolutionReportResponse(
             analysisRunId = analysisRunId,
             runStatus = context.runStatus,

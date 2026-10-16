@@ -179,6 +179,7 @@ export type AnalysisRun = {
       provider: { provider: string; model?: string; version: string; trustBoundary?: string; dataCategories?: string[] } | null;
       scorePolicyVersion: string | null;
       confidenceThreshold: number | null;
+      providerChain?: { chainId: string; providers: Array<{ provider: string }> } | null;
     };
     validationLimits?: { minimumLanguageConfidence?: number; maxClaimCitationPairs?: number };
     aggregation?: {
@@ -330,6 +331,28 @@ export type ReferenceResolutionReportResponse = {
       canonicalPaper: { id: string; doi: string | null; title: string; authors: string[]; year: number | null } | null;
       confidenceScore: number | null;
       matchMethod: string | null;
+      resolutionOutcome?: "RESOLVED" | "NO_CANDIDATE_OR_DOI_UNCONFIRMED" | "CONFLICT_OR_AMBIGUITY" | "PROVIDER_UNAVAILABLE" | "BUDGET_OR_DEADLINE_EXHAUSTED" | "CONSENT_OR_CONFIG_REJECTED" | "NOT_ATTEMPTED" | "UNKNOWN" | null;
+      metadataOriginProviderId?: "crossref" | "datacite" | null;
+      providerLookups?: Array<{
+        providerId: "crossref" | "datacite";
+        lookupOrdinal: 1 | 2;
+        source: "WIRE" | "CACHE";
+        outcomeCode: "FOUND" | "NOT_FOUND" | "UNUSABLE" | "RETRYABLE_FAILURE" | "PERMANENT_FAILURE";
+      }>;
+      providerAttempts?: Array<{
+        providerId: "crossref" | "datacite";
+        attemptOrdinal: 1 | 2 | 3;
+        state: "RESERVED" | "IN_FLIGHT" | "COMPLETED" | "UNKNOWN";
+        outcomeCode: "FOUND" | "NOT_FOUND" | "UNUSABLE" | "RETRYABLE_FAILURE" | "PERMANENT_FAILURE" | "UNKNOWN" | "NOT_SENT" | null;
+        reservedAt: string;
+        startedAt: string | null;
+        completedAt: string | null;
+        unknownAt: string | null;
+        httpStatus: number | null;
+        durationMillis: number | null;
+        responseBytes: number | null;
+        nextAttemptNotBefore: string | null;
+      }>;
       candidateEvidence?: Array<{
         doi: string | null;
         title: string;
@@ -441,8 +464,9 @@ export type AnalysisRunConfiguration = {
   claimExtractorProvider: string;
   embeddingProvider: string;
   systemOneProvider: string;
-  scholarlyMetadataProvider: string;
+  scholarlyMetadataProvider: string | null;
   openAccessProvider: string;
+  providerChainId?: string;
   captureExecution?: boolean;
   externalProviderConsents: Array<{
     providerId: string;

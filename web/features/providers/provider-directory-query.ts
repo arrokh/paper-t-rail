@@ -1,6 +1,12 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { readApiError } from "../../lib/read-api-error.ts";
-import { PROVIDER_ROLES, selectableProviderOptions, type DataCategoryDisclosure, type ProviderDirectory } from "./provider-configuration.ts";
+import {
+  PROVIDER_ROLES,
+  selectableProviderChains,
+  selectableProviderOptions,
+  type DataCategoryDisclosure,
+  type ProviderDirectory,
+} from "./provider-configuration.ts";
 
 export const PROVIDER_DIRECTORY_QUERY_KEY = ["providers", "directory"] as const;
 
@@ -38,6 +44,7 @@ async function fetchProviderDirectory(signal: AbortSignal): Promise<ProviderDire
   return {
     providers,
     dataCategories: remoteDirectory.dataCategories.filter(isDataCategoryDisclosure),
+    providerChains: selectableProviderChains(remoteDirectory),
   };
 }
 

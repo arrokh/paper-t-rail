@@ -783,15 +783,49 @@ class SuccessorRunSubmissionRepository(
     ) {
         val rows = jdbc.query(
             """
-            SELECT bibliography_entry_id, status, reason_code, canonical_paper_id, matched_doi, matched_title,
-                   matched_authors::text, matched_year, confidence_score, match_method, provider_id, candidate_evidence::text
-              FROM bibliography_entry_resolutions
-             WHERE analysis_run_id = ?
+            SELECT resolution.bibliography_entry_id, resolution.status, resolution.reason_code,
+                   resolution.canonical_paper_id, resolution.matched_doi, resolution.matched_title,
+                   resolution.matched_authors::text, resolution.matched_year, resolution.confidence_score,
+                   resolution.match_method, resolution.provider_id, resolution.candidate_evidence::text,
+                   chain.analysis_run_id AS chain_analysis_run_id,
+                   chain.owner_token AS chain_owner_token, chain.owner_fence AS chain_owner_fence,
+                   chain.lease_expires_at AS chain_lease_expires_at,
+                   chain.terminal_outcome AS chain_terminal_outcome,
+                   chain.metadata_origin_provider_id AS chain_metadata_origin_provider_id
+              FROM bibliography_entry_resolutions resolution
+              LEFT JOIN reference_resolution_entry_chain_states chain
+                ON chain.analysis_run_id = resolution.analysis_run_id
+               AND chain.bibliography_entry_id = resolution.bibliography_entry_id
+             WHERE resolution.analysis_run_id = ?
             """.trimIndent(),
-            { rs, _ -> ResolutionRow(rs.uuid("bibliography_entry_id"), rs.getString("status"), rs.getString("reason_code"), rs.uuidOrNull("canonical_paper_id"), rs.getString("matched_doi"), rs.getString("matched_title"), rs.getString("matched_authors"), rs.getObject("matched_year") as Int?, rs.getObject("confidence_score") as Double?, rs.getString("match_method"), rs.getString("provider_id"), rs.getString("candidate_evidence")) },
+            { rs, _ ->
+                val chainState = if (rs.getObject("chain_analysis_run_id") == null) null else ProviderChainStateRow(
+                    ownerToken = rs.uuid("chain_owner_token"),
+                    ownerFence = rs.getLong("chain_owner_fence"),
+                    leaseExpiresAt = rs.getTimestamp("chain_lease_expires_at").toInstant(),
+                    terminalOutcome = rs.getString("chain_terminal_outcome"),
+                    metadataOriginProviderId = rs.getString("chain_metadata_origin_provider_id"),
+                )
+                ResolutionRow(
+                    entryId = rs.uuid("bibliography_entry_id"),
+                    status = rs.getString("status"),
+                    reasonCode = rs.getString("reason_code"),
+                    canonicalPaperId = rs.uuidOrNull("canonical_paper_id"),
+                    matchedDoi = rs.getString("matched_doi"),
+                    matchedTitle = rs.getString("matched_title"),
+                    matchedAuthors = rs.getString("matched_authors"),
+                    matchedYear = rs.getObject("matched_year") as Int?,
+                    confidence = rs.getObject("confidence_score") as Double?,
+                    matchMethod = rs.getString("match_method"),
+                    providerId = rs.getString("provider_id"),
+                    candidateEvidence = rs.getString("candidate_evidence"),
+                    chainState = chainState,
+                )
+            },
             predecessorRunId,
         ).filterNot { it.entryId in reprocessedEntryIds }
         rows.forEach { row ->
+            val successorEntryId = entries.getValue(row.entryId)
             jdbc.update(
                 """
                 INSERT INTO bibliography_entry_resolutions (
@@ -800,11 +834,181 @@ class SuccessorRunSubmissionRepository(
                     match_method, provider_id, resolved_at, candidate_evidence
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?::jsonb)
                 """.trimIndent(),
-                successorRunId, entries.getValue(row.entryId), row.status, row.reasonCode, row.canonicalPaperId,
+                successorRunId, successorEntryId, row.status, row.reasonCode, row.canonicalPaperId,
                 row.matchedDoi, row.matchedTitle, row.matchedAuthors, row.matchedYear, row.confidence,
                 row.matchMethod, row.providerId, Timestamp.from(now), row.candidateEvidence,
             )
-            recordLineage(successorRunId, predecessorRunId, "bibliography-resolution", entries.getValue(row.entryId), row.entryId, predecessorRunId, row.entryId, row.providerId, null, null, "IDENTITY_OUTPUT_REUSED", now)
+            row.chainState?.takeIf { it.terminalOutcome != null }?.let { chainState ->
+                cloneProviderChainHistory(predecessorRunId, successorRunId, row.entryId, successorEntryId, chainState)
+            }
+            val originatingProviderId = if (row.chainState == null) row.providerId else row.chainState.metadataOriginProviderId
+            recordLineage(
+                successorRunId, predecessorRunId, "bibliography-resolution", successorEntryId, row.entryId,
+                predecessorRunId, row.entryId, originatingProviderId, null, null, "IDENTITY_OUTPUT_REUSED", now,
+            )
+        }
+
+        val terminalChainStatesWithoutResolution = jdbc.query(
+            """
+                SELECT chain.bibliography_entry_id, chain.owner_token, chain.owner_fence,
+                       chain.lease_expires_at, chain.terminal_outcome, chain.metadata_origin_provider_id
+                  FROM reference_resolution_entry_chain_states chain
+                  LEFT JOIN bibliography_entry_resolutions resolution
+                    ON resolution.analysis_run_id = chain.analysis_run_id
+                   AND resolution.bibliography_entry_id = chain.bibliography_entry_id
+                 WHERE chain.analysis_run_id = ?
+                   AND chain.terminal_outcome IS NOT NULL
+                   AND resolution.bibliography_entry_id IS NULL
+            """.trimIndent(),
+            { rs, _ ->
+                ChainHistoryRow(
+                    entryId = rs.uuid("bibliography_entry_id"),
+                    chainState = ProviderChainStateRow(
+                        ownerToken = rs.uuid("owner_token"),
+                        ownerFence = rs.getLong("owner_fence"),
+                        leaseExpiresAt = rs.getTimestamp("lease_expires_at").toInstant(),
+                        terminalOutcome = rs.getString("terminal_outcome"),
+                        metadataOriginProviderId = rs.getString("metadata_origin_provider_id"),
+                    ),
+                )
+            },
+            predecessorRunId,
+        ).filterNot { it.entryId in reprocessedEntryIds }
+
+        terminalChainStatesWithoutResolution.forEach { row ->
+            val successorEntryId = entries.getValue(row.entryId)
+            cloneProviderChainHistory(
+                predecessorRunId,
+                successorRunId,
+                row.entryId,
+                successorEntryId,
+                row.chainState,
+            )
+        }
+    }
+
+    private fun cloneProviderChainHistory(
+        predecessorRunId: UUID,
+        successorRunId: UUID,
+        predecessorEntryId: UUID,
+        successorEntryId: UUID,
+        chainState: ProviderChainStateRow,
+    ) {
+        val terminalOutcome = requireNotNull(chainState.terminalOutcome)
+        jdbc.update(
+            """
+                INSERT INTO reference_resolution_entry_chain_states (
+                    analysis_run_id, bibliography_entry_id, owner_token, owner_fence,
+                    lease_expires_at, terminal_outcome, metadata_origin_provider_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent(),
+            successorRunId,
+            successorEntryId,
+            chainState.ownerToken,
+            chainState.ownerFence,
+            Timestamp.from(chainState.leaseExpiresAt),
+            terminalOutcome,
+            chainState.metadataOriginProviderId,
+        )
+
+        val lookups = jdbc.query(
+            """
+                SELECT lookup_ordinal, provider_id, source, outcome_code, recorded_at
+                  FROM reference_resolution_provider_lookup_results
+                 WHERE analysis_run_id = ? AND bibliography_entry_id = ?
+                 ORDER BY lookup_ordinal
+            """.trimIndent(),
+            { rs, _ -> ProviderLookupRow(
+                lookupOrdinal = rs.getInt("lookup_ordinal"),
+                providerId = rs.getString("provider_id"),
+                source = rs.getString("source"),
+                outcomeCode = rs.getString("outcome_code"),
+                recordedAt = rs.getTimestamp("recorded_at").toInstant(),
+            ) },
+            predecessorRunId,
+            predecessorEntryId,
+        )
+        lookups.forEach { lookup ->
+            jdbc.update(
+                """
+                    INSERT INTO reference_resolution_provider_lookup_results (
+                        analysis_run_id, bibliography_entry_id, lookup_ordinal, provider_id,
+                        source, outcome_code, recorded_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+                successorRunId,
+                successorEntryId,
+                lookup.lookupOrdinal,
+                lookup.providerId,
+                lookup.source,
+                lookup.outcomeCode,
+                Timestamp.from(lookup.recordedAt),
+            )
+        }
+
+        val attempts = jdbc.query(
+            """
+                SELECT reservation_ordinal, lookup_ordinal, provider_id, provider_attempt_ordinal,
+                       owner_token, owner_fence, state, outcome_code, next_attempt_not_before,
+                       http_status, duration_millis, response_bytes, reserved_at, started_at,
+                       completed_at, unknown_at, deadline_at
+                  FROM reference_resolution_provider_attempts
+                 WHERE analysis_run_id = ? AND bibliography_entry_id = ?
+                 ORDER BY reservation_ordinal
+            """.trimIndent(),
+            { rs, _ -> ProviderAttemptRow(
+                reservationOrdinal = rs.getInt("reservation_ordinal"),
+                lookupOrdinal = rs.getInt("lookup_ordinal"),
+                providerId = rs.getString("provider_id"),
+                providerAttemptOrdinal = rs.getInt("provider_attempt_ordinal"),
+                ownerToken = rs.uuid("owner_token"),
+                ownerFence = rs.getLong("owner_fence"),
+                state = rs.getString("state"),
+                outcomeCode = rs.getString("outcome_code"),
+                nextAttemptNotBefore = rs.getTimestamp("next_attempt_not_before")?.toInstant(),
+                httpStatus = rs.intOrNull("http_status"),
+                durationMillis = rs.longOrNull("duration_millis"),
+                responseBytes = rs.longOrNull("response_bytes"),
+                reservedAt = rs.getTimestamp("reserved_at").toInstant(),
+                startedAt = rs.getTimestamp("started_at")?.toInstant(),
+                completedAt = rs.getTimestamp("completed_at")?.toInstant(),
+                unknownAt = rs.getTimestamp("unknown_at")?.toInstant(),
+                deadlineAt = rs.getTimestamp("deadline_at").toInstant(),
+            ) },
+            predecessorRunId,
+            predecessorEntryId,
+        )
+        attempts.forEach { attempt ->
+            jdbc.update(
+                """
+                    INSERT INTO reference_resolution_provider_attempts (
+                        attempt_id, analysis_run_id, bibliography_entry_id, reservation_ordinal,
+                        lookup_ordinal, provider_id, provider_attempt_ordinal, owner_token, owner_fence,
+                        state, outcome_code, next_attempt_not_before, http_status, duration_millis,
+                        response_bytes, reserved_at, started_at, completed_at, unknown_at, deadline_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+                UUID.randomUUID(),
+                successorRunId,
+                successorEntryId,
+                attempt.reservationOrdinal,
+                attempt.lookupOrdinal,
+                attempt.providerId,
+                attempt.providerAttemptOrdinal,
+                attempt.ownerToken,
+                attempt.ownerFence,
+                attempt.state,
+                attempt.outcomeCode,
+                attempt.nextAttemptNotBefore?.let(Timestamp::from),
+                attempt.httpStatus,
+                attempt.durationMillis,
+                attempt.responseBytes,
+                Timestamp.from(attempt.reservedAt),
+                attempt.startedAt?.let(Timestamp::from),
+                attempt.completedAt?.let(Timestamp::from),
+                attempt.unknownAt?.let(Timestamp::from),
+                Timestamp.from(attempt.deadlineAt),
+            )
         }
     }
 
@@ -1383,7 +1587,7 @@ class SuccessorRunSubmissionRepository(
 
         val originConfiguration = if (userSuppliedAccess) null else configurationSnapshot(actualOriginRunId, "Origin")
         val predecessorConfiguration = if (userSuppliedAccess) null else configurationSnapshot(predecessorRunId, "Predecessor")
-        val originStageSelection = originConfiguration?.lineageProviderSelection(artifactType)
+        val originStageSelection = originConfiguration?.lineageProviderSelection(artifactType, inherited?.providerId ?: providerId)
         val inferProviderFromStage = !(artifactType == "cited-paper-access" && providerId == null && inherited?.providerId == null)
         val actualProviderId = if (userSuppliedAccess) null else inherited?.providerId ?: providerId ?: if (inferProviderFromStage) originStageSelection?.provider else null
         if (artifactType == "cited-paper-access" && actualProviderId != null && originStageSelection?.provider != actualProviderId) {
@@ -1417,7 +1621,7 @@ class SuccessorRunSubmissionRepository(
             }
             val consentHash = com.papertrail.api.infrastructure.crypto.sha256Hex(com.papertrail.api.utils.JsonUtil.toJson(originConsent).toByteArray())
             val predecessorSelections = predecessorSnapshot.providerSelections()
-            val predecessorStageSelection = predecessorSnapshot.lineageProviderSelection(artifactType)
+            val predecessorStageSelection = predecessorSnapshot.lineageProviderSelection(artifactType, actualProviderId)
             val predecessorExternalSelections = predecessorSelections.filter {
                 it.provider == actualProviderId && it.trustBoundary == "EXTERNAL"
             }
@@ -1483,12 +1687,16 @@ class SuccessorRunSubmissionRepository(
         referenceResolution.provider,
         openAccess,
         citedPaperParserSelection(),
-    )
+    ) + referenceResolution.providerChain?.providers.orEmpty()
 
-    private fun AnalysisConfigurationSnapshot.lineageProviderSelection(artifactType: String): ProviderSelection? = when (artifactType) {
+    private fun AnalysisConfigurationSnapshot.lineageProviderSelection(
+        artifactType: String,
+        providerId: String? = null,
+    ): ProviderSelection? = when (artifactType) {
         "source-parse", "source-section", "citation-context", "bibliography-entry", "citation-occurrence", "citation-target" -> sourceParser
         "atomic-claim", "claim-citation-target" -> claimExtractor
-        "bibliography-resolution" -> referenceResolution.provider
+        "bibliography-resolution" -> referenceResolution.providerChain?.providers?.firstOrNull { it.provider == providerId }
+            ?: referenceResolution.provider
         "cited-paper-access" -> openAccess
         "claim-paper-verification", "evidence-judgement", "evidence-passage-span" -> systemOne
         "cited-paper-parse", "paper-chunk" -> citedPaperParserSelection()
@@ -1509,6 +1717,10 @@ class SuccessorRunSubmissionRepository(
 
     private fun ResultSet.uuidOrNull(column: String): UUID? = getObject(column, UUID::class.java)
 
+    private fun ResultSet.intOrNull(column: String): Int? = getObject(column)?.let { (it as Number).toInt() }
+
+    private fun ResultSet.longOrNull(column: String): Long? = getObject(column)?.let { (it as Number).toLong() }
+
     private fun ResultSet.toPersistedSubmission() = PersistedSuccessorSubmission(
         id = uuid("id"), batchId = uuid("batch_id"), predecessorAnalysisRunId = uuid("predecessor_analysis_run_id"),
         successorAnalysisRunId = uuid("successor_analysis_run_id"), idempotencyKey = uuid("idempotency_key"),
@@ -1524,7 +1736,11 @@ class SuccessorRunSubmissionRepository(
     private data class TargetRow(val id: UUID, val occurrenceId: UUID, val contextId: UUID, val entryId: UUID, val order: Int)
     private data class ClaimRow(val id: UUID, val contextId: UUID, val text: String, val start: Int, val end: Int)
     private data class ClaimTargetRow(val id: UUID, val contextId: UUID, val claimId: UUID, val targetId: UUID, val kind: String)
-    private data class ResolutionRow(val entryId: UUID, val status: String, val reasonCode: String, val canonicalPaperId: UUID?, val matchedDoi: String?, val matchedTitle: String?, val matchedAuthors: String, val matchedYear: Int?, val confidence: Double?, val matchMethod: String?, val providerId: String, val candidateEvidence: String)
+    private data class ResolutionRow(val entryId: UUID, val status: String, val reasonCode: String, val canonicalPaperId: UUID?, val matchedDoi: String?, val matchedTitle: String?, val matchedAuthors: String, val matchedYear: Int?, val confidence: Double?, val matchMethod: String?, val providerId: String, val candidateEvidence: String, val chainState: ProviderChainStateRow?)
+    private data class ProviderChainStateRow(val ownerToken: UUID, val ownerFence: Long, val leaseExpiresAt: Instant, val terminalOutcome: String?, val metadataOriginProviderId: String?)
+    private data class ChainHistoryRow(val entryId: UUID, val chainState: ProviderChainStateRow)
+    private data class ProviderLookupRow(val lookupOrdinal: Int, val providerId: String, val source: String, val outcomeCode: String, val recordedAt: Instant)
+    private data class ProviderAttemptRow(val reservationOrdinal: Int, val lookupOrdinal: Int, val providerId: String, val providerAttemptOrdinal: Int, val ownerToken: UUID, val ownerFence: Long, val state: String, val outcomeCode: String?, val nextAttemptNotBefore: Instant?, val httpStatus: Int?, val durationMillis: Long?, val responseBytes: Long?, val reservedAt: Instant, val startedAt: Instant?, val completedAt: Instant?, val unknownAt: Instant?, val deadlineAt: Instant)
     private data class AccessRow(val entryId: UUID, val canonicalPaperId: UUID, val accessStatus: String, val accessReason: String?, val accessReasons: String, val candidateOutcomes: String, val candidateOutcomesOmittedCount: Int, val providerId: String?, val metadata: Boolean, val abstract: Boolean, val sourceUrl: String?, val license: String?, val locationVersion: String?, val hostType: String?, val discoveredAt: Instant, val objectKey: String?, val hash: String?, val mediaType: String?, val language: String?, val detectorVersion: String?, val origin: String, val rightsVersion: String?, val rightsText: String?, val rightsAt: Instant?, val originRun: UUID?, val originBatch: UUID?, val originUpload: UUID?, val assetId: UUID)
     private data class VerificationRow(val id: UUID, val claimId: UUID, val entryId: UUID, val canonicalPaperId: UUID?, val status: String, val scope: String, val terminalReason: String?, val finalStatus: String?, val evidenceConflict: Boolean, val failureReason: String?, val aggregatorVersion: String?)
     private data class IndexingRow(val entryId: UUID, val status: String, val failureReason: String?, val parseId: UUID?, val profileId: String, val vectorLimit: Int, val lexicalLimit: Int, val finalLimit: Int, val fusionConstant: Int, val embeddingProvider: String, val embeddingModel: String, val embeddingVersion: String, val embeddingDimension: Int, val embeddingProfileHash: String, val candidateCount: Int)

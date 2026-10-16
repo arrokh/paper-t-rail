@@ -1,6 +1,7 @@
 package com.papertrail.api.infrastructure.providers
 
 import com.papertrail.api.analysis.configuration.AnalysisConfigurationSnapshot
+import com.papertrail.api.analysis.configuration.ProviderChainSnapshot
 
 class ProviderCallGate(private val catalog: ProviderCatalog) {
     fun <T> call(
@@ -24,6 +25,36 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
         return sendRequest(payload)
     }
 
+    /** Authorizes one provider in a pinned chain without consulting the legacy scalar selection. */
+    fun <T> callProviderChain(
+        chainId: String,
+        providerId: String,
+        payload: ProviderCallPayload,
+        configuration: AnalysisConfigurationSnapshot,
+        sendRequest: (ProviderCallPayload) -> T,
+    ): T {
+        authorizeProviderChain(chainId, providerId, payload, configuration)
+        return sendRequest(payload)
+    }
+
+    /** Checks chain selection, request categories, and matching consent without invoking a provider. */
+    fun authorizeProviderChain(
+        chainId: String,
+        providerId: String,
+        payload: ProviderCallPayload,
+        configuration: AnalysisConfigurationSnapshot,
+    ) {
+        val registration = requireMatchingProviderChainSelection(chainId, providerId, configuration)
+        val actualPayloadCategories = payload.dataCategories
+        if (actualPayloadCategories.any { it !in registration.dataCategories }) {
+            throw ProviderCallRejectedException("Provider '$providerId' request contains an unclassified data category.")
+        }
+        if (actualPayloadCategories.isEmpty()) {
+            throw ProviderCallRejectedException("External provider '$providerId' request has no classified payload categories.")
+        }
+        requireProviderChainConsent(registration, configuration)
+    }
+
     /** Authorizes a content-free availability probe while preserving run selection and external consent checks. */
     fun <T> callAvailabilityCheck(
         role: String,
@@ -38,11 +69,68 @@ class ProviderCallGate(private val catalog: ProviderCatalog) {
         return checkAvailability()
     }
 
+    private fun requireMatchingProviderChainSelection(
+        chainId: String,
+        providerId: String,
+        configuration: AnalysisConfigurationSnapshot,
+    ): ProviderRegistration {
+        val referenceResolution = configuration.referenceResolution
+        val chain = referenceResolution.providerChain
+            ?: throw ProviderCallRejectedException("No provider chain was configured for this Analysis Run.")
+        if (referenceResolution.provider != null || chainId != ProviderChainSnapshot.CHAIN_ID || chain.chainId != chainId) {
+            throw ProviderCallRejectedException("Provider chain '$chainId' was not pinned for this Analysis Run.")
+        }
+        if (chain.mappingVersion != ProviderChainSnapshot.MAPPING_VERSION || chain.policyVersion != referenceResolution.scorePolicyVersion) {
+            throw ProviderCallRejectedException("Provider chain '$chainId' policy or mapping changed after this Analysis Run was created.")
+        }
+        if (chain.providers.map { it.provider } != ProviderChainSnapshot.PROVIDER_IDS) {
+            throw ProviderCallRejectedException("Provider chain '$chainId' does not contain the fixed provider order.")
+        }
+        val registrations = try {
+            catalog.requirePinnedProviderChain(chainId)
+        } catch (exception: ProviderNotSelectableException) {
+            throw ProviderCallRejectedException(exception.message ?: "Provider chain configuration is unavailable.")
+        }
+        val registration = registrations.singleOrNull { it.providerId == providerId }
+            ?: throw ProviderCallRejectedException("Provider '$providerId' is not part of provider chain '$chainId'.")
+        val selected = chain.providers.single { it.provider == providerId }
+        if (selected.version != registration.version || selected.model != registration.model ||
+            selected.trustBoundary != registration.trustBoundary.id ||
+            selected.dataCategories != registration.dataCategories.map(DataCategory::id).sorted() ||
+            selected.configurationFingerprint != registration.payloadConfigurationFingerprint ||
+            selected.retentionDisclosure != registration.consentDisclosure() ||
+            selected.retentionDisclosureFingerprint != registration.consentDisclosureFingerprint()
+        ) {
+            throw ProviderCallRejectedException("Provider '$providerId' configuration or disclosure changed after this Analysis Run was created.")
+        }
+        return registration
+    }
+
+    private fun requireProviderChainConsent(
+        registration: ProviderRegistration,
+        configuration: AnalysisConfigurationSnapshot,
+    ) {
+        val providerId = registration.providerId
+        val consents = configuration.externalProviderConsents.filter { it.providerId == providerId }
+        val consent = consents.singleOrNull()
+            ?: throw ProviderCallRejectedException("Provider '$providerId' lacks unique per-run consent.")
+        val requiredCategories = registration.dataCategories.map(DataCategory::id).sorted()
+        if (consent.dataCategories.distinct().size != consent.dataCategories.size || consent.dataCategories.toSet() != requiredCategories.toSet()) {
+            throw ProviderCallRejectedException("Provider '$providerId' consent must exactly match its declared payload categories.")
+        }
+        if (consent.retentionDisclosure != registration.consentDisclosure()) {
+            throw ProviderCallRejectedException("Provider '$providerId' retention disclosure changed after this Analysis Run was created.")
+        }
+    }
+
     private fun requireMatchingSelection(
         role: String,
         providerId: String,
         configuration: AnalysisConfigurationSnapshot,
     ): ProviderRegistration {
+        if (role == SCHOLARLY_METADATA_ROLE && configuration.referenceResolution.providerChain != null) {
+            throw ProviderCallRejectedException("A provider chain cannot be executed through the legacy scalar authorization path.")
+        }
         val registration = try {
             catalog.requireSelectable(role, providerId)
         } catch (exception: ProviderNotSelectableException) {

@@ -8,4 +8,6 @@ data class ProviderDirectoryResponse(
     val providers: Map<String, List<ProviderOption>>,
     @field:Schema(description = "Stable data-category identifiers and descriptions.")
     val dataCategories: List<DataCategoryDisclosure>,
+    @field:Schema(description = "Fixed server-defined provider chains available for selection. Empty when chain support is disabled or a required provider registration is unavailable.")
+    val providerChains: List<ProviderChainOption> = emptyList(),
 )

@@ -1,5 +1,6 @@
 package com.papertrail.api.infrastructure.providers
 
+import com.papertrail.api.analysis.configuration.ProviderChainSnapshot
 import com.papertrail.api.analysis.http.ExternalProviderConsentRequest
 
 fun configuredExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
@@ -89,7 +90,7 @@ fun configuredExternalProviderCatalog(): ProviderCatalog = ProviderCatalog(
     ),
 )
 
-fun configuredExternalSystemOneProviderCatalog(): ProviderCatalog = ProviderCatalog(
+fun configuredExternalSystemOneProviderCatalog(providerChainEnabled: Boolean = false): ProviderCatalog = ProviderCatalog(
     listOf(
         ProviderRegistration(
             role = OPEN_ACCESS_ROLE,
@@ -144,7 +145,30 @@ fun configuredExternalSystemOneProviderCatalog(): ProviderCatalog = ProviderCata
             retentionDisclosure = "Synthetic integration fixture; submitted data is deleted after 30 days.",
             configurationFingerprint = "f".repeat(64),
         ),
+        ProviderRegistration(
+            role = SCHOLARLY_METADATA_ROLE,
+            providerId = ProviderChainSnapshot.CROSSREF_PROVIDER_ID,
+            displayName = "Crossref REST API",
+            version = "v1",
+            model = null,
+            trustBoundary = ProviderTrustBoundary.EXTERNAL,
+            enabled = providerChainEnabled,
+            dataCategories = setOf(DataCategory.BIBLIOGRAPHIC_METADATA),
+            retentionDisclosure = "Synthetic Crossref retention disclosure for successor lineage tests.",
+        ),
+        ProviderRegistration(
+            role = SCHOLARLY_METADATA_ROLE,
+            providerId = ProviderChainSnapshot.DATACITE_PROVIDER_ID,
+            displayName = "DataCite REST API",
+            version = "v1",
+            model = null,
+            trustBoundary = ProviderTrustBoundary.EXTERNAL,
+            enabled = providerChainEnabled,
+            dataCategories = setOf(DataCategory.BIBLIOGRAPHIC_METADATA),
+            retentionDisclosure = "Synthetic DataCite retention disclosure for successor lineage tests.",
+        ),
     ),
+    providerChainEnabled = providerChainEnabled,
 )
 
 fun externalProviderConsent(

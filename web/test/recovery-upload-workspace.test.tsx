@@ -551,17 +551,41 @@ describe("Recovery Upload workspace", () => {
   it("requires successor-specific provider consent, previews DOI-only work, and navigates by stable run IDs", async () => {
     const requests: Array<{ url: string; options: RequestInit | undefined }> = [];
     const disclosureFingerprint = "d".repeat(64);
+    const crossrefFingerprint = "c".repeat(64);
+    const dataCiteFingerprint = "e".repeat(64);
     const externalDirectory = {
       providers: {
         ...localProviderDirectory.providers,
         systemOne: [{ role: "systemOne", providerId: "evidence-cloud", displayName: "Evidence Cloud", version: "2", model: null, trustBoundary: "EXTERNAL", dataCategories: ["claim-text"], retentionDisclosure: "Provider retains request content for 14 days.", retentionDisclosureFingerprint: disclosureFingerprint }],
       },
-      dataCategories: [{ id: "claim-text", label: "Claim text", description: "Claim and citation-context content used for evidence review." }],
+      providerChains: [{
+        chainId: "crossref-datacite-exact-doi-v1",
+        displayName: "Crossref, then DataCite (exact DOI only)",
+        description: "Bounded fallback for the same DOI.",
+        providers: [
+          { role: "scholarlyMetadata", providerId: "crossref", displayName: "Crossref", version: "v1", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: "Crossref metadata disclosure.", retentionDisclosureFingerprint: crossrefFingerprint },
+          { role: "scholarlyMetadata", providerId: "datacite", displayName: "DataCite", version: "v1", model: null, trustBoundary: "EXTERNAL", dataCategories: ["bibliographic_metadata"], retentionDisclosure: "DataCite metadata disclosure.", retentionDisclosureFingerprint: dataCiteFingerprint },
+        ],
+      }],
+      dataCategories: [
+        { id: "claim-text", label: "Claim text", description: "Claim and citation-context content used for evidence review." },
+        { id: "bibliographic_metadata", label: "Bibliographic metadata", description: "Citation fields used for exact DOI lookup." },
+      ],
     };
     const externalPredecessorConfiguration = {
       ...predecessorConfiguration,
       captureExecution: false,
       systemOne: { provider: "evidence-cloud", version: "2" },
+      referenceResolution: {
+        executionStatus: "COMPLETED",
+        provider: null,
+        providerChain: {
+          chainId: "crossref-datacite-exact-doi-v1",
+          providers: [{ provider: "crossref" }, { provider: "datacite" }],
+        },
+        scorePolicyVersion: null,
+        confidenceThreshold: null,
+      },
     } as AnalysisRun["configuration"];
     const activeAssistance = { bibliographyEntryId: "entry-1", localReferenceKey: "b0", identifierType: "DOI" as const, identifierValue: "10.1234/private-doi", recordedAt: "2026-10-09T00:00:00Z" };
     let activeBatch = makeBatch([], { revision: 5, identifierAssistance: [activeAssistance] });
@@ -621,6 +645,9 @@ describe("Recovery Upload workspace", () => {
     expect(within(history).queryByText("10.1234/private-doi")).toBeNull();
     expect(screen.getByRole("button", { name: "Preview successor plan" }).hasAttribute("disabled")).toBe(true);
     fireEvent.click(await screen.findByRole("checkbox", { name: "Claim text" }));
+    for (const categoryConsent of screen.getAllByRole("checkbox", { name: "Bibliographic metadata" })) {
+      fireEvent.click(categoryConsent);
+    }
     fireEvent.click(screen.getByRole("button", { name: "Preview successor plan" }));
 
     expect(await screen.findByText("Successor plan preview")).toBeTruthy();
@@ -632,9 +659,14 @@ describe("Recovery Upload workspace", () => {
         claimExtractorProvider: "heuristic",
         embeddingProvider: "local",
         systemOneProvider: "evidence-cloud",
-        scholarlyMetadataProvider: "recorded-fixtures",
+        scholarlyMetadataProvider: null,
         openAccessProvider: "recorded-fixtures",
-        externalProviderConsents: [{ providerId: "evidence-cloud", dataCategories: ["claim-text"], retentionDisclosureFingerprint: disclosureFingerprint }],
+        providerChainId: "crossref-datacite-exact-doi-v1",
+        externalProviderConsents: [
+          { providerId: "crossref", dataCategories: ["bibliographic_metadata"], retentionDisclosureFingerprint: crossrefFingerprint },
+          { providerId: "datacite", dataCategories: ["bibliographic_metadata"], retentionDisclosureFingerprint: dataCiteFingerprint },
+          { providerId: "evidence-cloud", dataCategories: ["claim-text"], retentionDisclosureFingerprint: disclosureFingerprint },
+        ],
       },
     });
     fireEvent.click(screen.getByRole("button", { name: "Submit one immutable successor Analysis Run" }));

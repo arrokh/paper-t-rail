@@ -288,6 +288,29 @@ def wait_for_browser_text(session: str, engine: str, expected: str, timeout_seco
     raise SystemTestFailure(f"The workspace did not display the expected state within {timeout_seconds} seconds.")
 
 
+def wait_for_browser_select_option(
+    session: str,
+    engine: str,
+    selector: str,
+    value: str,
+    timeout_seconds: int = 90,
+) -> None:
+    expression = (
+        f"Array.from(document.querySelector({json.dumps(selector)})?.options ?? []).some((option) => "
+        f"option.value === {json.dumps(value)})"
+    )
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            found = browser_command(session, engine, "eval", expression).strip().lower().strip('"') == "true"
+            if found:
+                return
+        except SystemTestFailure:
+            pass
+        time.sleep(1)
+    raise SystemTestFailure(f"The workspace did not load the configured provider choice for {selector} within {timeout_seconds} seconds.")
+
+
 def wait_for_browser_link(session: str, engine: str, accessible_name: str, timeout_seconds: int = 180) -> None:
     expression = (
         "Array.from(document.querySelectorAll('a')).some((link) => "
@@ -547,7 +570,9 @@ def run_browser_upload(source_pdf: Path, web_origin: str, session: str, engine: 
     browser_command(session, engine, "find", "role", "button", "click", "--name", "New Analysis Run", "--exact")
     wait_for_browser_text(session, engine, "Choose your services")
     for role, provider_id in LOCAL_TEST_PROVIDER_SELECTIONS.items():
-        browser_command(session, engine, "select", f"#provider-{role}", provider_id)
+        selector = f"#provider-{role}"
+        wait_for_browser_select_option(session, engine, selector, provider_id)
+        browser_command(session, engine, "select", selector, provider_id)
     browser_command(session, engine, "find", "role", "button", "click", "--name", "Continue", "--exact")
     wait_for_browser_text(session, engine, "No external providers selected")
     browser_command(session, engine, "find", "role", "button", "click", "--name", "Continue", "--exact")

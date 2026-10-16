@@ -12,6 +12,8 @@ import com.papertrail.api.document.repository.SourceDocumentRepository
 import com.papertrail.api.scholarly.acquisition.events.CITED_PAPER_ACQUISITION_REQUESTED
 import com.papertrail.api.scholarly.acquisition.events.CitedPaperAcquisitionRequestedPayload
 import com.papertrail.api.infrastructure.messaging.events.PipelineEvent
+import com.papertrail.api.infrastructure.messaging.PipelineHandlerDisposition
+import com.papertrail.api.infrastructure.messaging.PipelineHandlerFailureDisposition
 import com.papertrail.api.infrastructure.messaging.events.W3CTraceContext
 import com.papertrail.api.infrastructure.messaging.repository.InboxRepository
 import com.papertrail.api.infrastructure.messaging.repository.OutboxRepository
@@ -19,7 +21,10 @@ import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_HANDL
 import com.papertrail.api.scholarly.references.events.REFERENCE_RESOLUTION_REQUESTED
 import com.papertrail.api.scholarly.references.events.ReferenceResolutionRequestedPayload
 import com.papertrail.api.scholarly.references.repository.ReferenceResolutionRepository
+import com.papertrail.api.scholarly.references.attempts.domain.ReferenceResolutionChainClaimResult
+import com.papertrail.api.scholarly.references.attempts.domain.ReferenceResolutionQueueFailureArbitration
 import com.papertrail.api.scholarly.references.service.ReferenceResolutionService
+import com.papertrail.api.scholarly.references.service.ProviderChainResolutionDisposition
 import com.papertrail.api.analysis.successor.service.SuccessorSelectedAssetService
 import com.papertrail.api.analysis.recovery.domain.RecoveryWorkEventType
 import com.papertrail.api.analysis.recovery.service.RecoveryHistoryService
@@ -42,12 +47,36 @@ class ReferenceResolutionRequestedHandler(
     private val successorSelectedAssetService: SuccessorSelectedAssetService,
     private val executionService: AnalysisRunExecutionService? = null,
     private val recoveryHistoryService: RecoveryHistoryService? = null,
-) {
-    fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
+) : ReferenceResolutionQueueHandler {
+    override fun isProcessed(eventId: UUID): Boolean = inboxRepository.isProcessed(eventId)
 
     fun handle(serializedEvent: String): UUID {
         val event: PipelineEvent<ReferenceResolutionRequestedPayload> = JsonUtil.fromJson(serializedEvent)
+        check(handleWithDisposition(serializedEvent) == PipelineHandlerDisposition.Done) {
+            "A queue disposition must be consumed by the Redis Stream worker."
+        }
+        return event.eventId
+    }
+
+    override fun handleWithDisposition(serializedEvent: String): PipelineHandlerDisposition {
+        val event: PipelineEvent<ReferenceResolutionRequestedPayload> = JsonUtil.fromJson(serializedEvent)
         require(event.eventType == REFERENCE_RESOLUTION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
+        if (sourceDocumentRepository.isDeleted(event.payload.documentId) || isProcessed(event.eventId)) {
+            return PipelineHandlerDisposition.Done
+        }
+        val run = processingRepository.queueRun(event.analysisRunId)
+            ?: throw IllegalStateException("Queued Analysis Run is missing.")
+        validateRunProvenance(event, run)
+        val chainClaim = when (val claim = referenceResolutionService.claimProviderChainEntry(
+            event.analysisRunId,
+            event.payload.bibliographyEntryId,
+        )) {
+            is ReferenceResolutionChainClaimResult.Deferred -> return PipelineHandlerDisposition.Defer(claim.until)
+            ReferenceResolutionChainClaimResult.MissingEntry ->
+                throw IllegalStateException("Reference-resolution event bibliography entry is missing.")
+            else -> claim
+        }
+
         executionService?.recordQueueIntervals(
             event.analysisRunId, event.eventId, event.attempt, "references", event.queueWaitStartedAt,
             event.retryScheduledAt, event.retryDueAt, event.causationId,
@@ -64,7 +93,7 @@ class ReferenceResolutionRequestedHandler(
         var activeStage = "reference-resolution"
         val operation = {
             try {
-                handleEvent(event) { stage -> activeStage = stage }
+                handleEvent(event, run, chainClaim) { stage -> activeStage = stage }
             } catch (exception: Exception) {
                 recoveryHistoryService?.recordSuccessorWorkEvent(
                     successorAnalysisRunId = event.analysisRunId,
@@ -78,33 +107,47 @@ class ReferenceResolutionRequestedHandler(
                 throw exception
             }
         }
-        return executionService?.record(
-            event.analysisRunId,
-            ExecutionSpanSpec("references", "QUEUE", "Reference resolution attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId, causationEventId = event.causationId),
-            operation,
-        ) ?: operation()
+        return if (executionService == null) {
+            operation()
+        } else {
+            executionService.recordWithStatus(
+                event.analysisRunId,
+                ExecutionSpanSpec("references", "QUEUE", "Reference resolution attempt", event.attempt + 1, event.eventId, attributes = mapOf("eventAttempt" to event.attempt), operationId = event.eventId, causationEventId = event.causationId),
+                operation,
+            ) { disposition -> if (disposition == PipelineHandlerDisposition.Done) "SUCCEEDED" else "DEFERRED" }
+        }
     }
 
     private fun handleEvent(
         event: PipelineEvent<ReferenceResolutionRequestedPayload>,
+        run: AnalysisRunProcessingRepository.QueueRun,
+        chainClaim: ReferenceResolutionChainClaimResult?,
         setActiveStage: (String) -> Unit,
-    ): UUID {
-        if (sourceDocumentRepository.isDeleted(event.payload.documentId)) return event.eventId
-        if (isProcessed(event.eventId)) return event.eventId
-
-        val run = processingRepository.queueRun(event.analysisRunId)
-            ?: throw IllegalStateException("Queued Analysis Run is missing.")
-
-        if (run.documentId != event.payload.documentId || run.sourceHash != event.payload.sourceContentSha256) {
-            throw IllegalStateException("Reference-resolution event provenance does not match its Analysis Run.")
+    ): PipelineHandlerDisposition {
+        if (sourceDocumentRepository.isDeleted(event.payload.documentId) || isProcessed(event.eventId)) {
+            return PipelineHandlerDisposition.Done
         }
-        if (run.status != "PROCESSING") {
-            throw IllegalStateException("Analysis Run is not accepting reference-resolution work.")
+        validateRunProvenance(event, run)
+        if (chainClaim is ReferenceResolutionChainClaimResult.AlreadyFinalized) {
+            if (!referenceResolutionService.isEntryResolved(event.analysisRunId, event.payload.bibliographyEntryId)) {
+                throw IllegalStateException("Terminal provider-chain state has no persisted bibliography resolution.")
+            }
+            recordProcessed(event, setActiveStage = setActiveStage)
+            return PipelineHandlerDisposition.Done
         }
 
         pipelineProgressRepository.markBibliographyItem(event.analysisRunId, "references", "resolve-entry", event.payload.bibliographyEntryId, "IN_PROGRESS")
-        if (executionService == null) {
-            referenceResolutionService.resolveEntry(event.analysisRunId, event.payload.bibliographyEntryId)
+        val claimedChain = chainClaim as? ReferenceResolutionChainClaimResult.Claimed
+        val resolve = {
+            referenceResolutionService.resolveEntry(
+                analysisRunId = event.analysisRunId,
+                bibliographyEntryId = event.payload.bibliographyEntryId,
+                chainClaim = claimedChain,
+                onChainFinalized = claimedChain?.let { { recordProcessed(event, setActiveStage = setActiveStage) } },
+            )
+        }
+        val resolutionDisposition = if (executionService == null) {
+            resolve()
         } else {
             executionService.record(
                 event.analysisRunId,
@@ -113,22 +156,62 @@ class ReferenceResolutionRequestedHandler(
                 executionService.captureCurrent(
                     ExecutionSpanArtifactSpec("INPUT", "run-stage-input-v1", mapOf("itemCount" to 1)),
                 )
-                referenceResolutionService.resolveEntry(event.analysisRunId, event.payload.bibliographyEntryId).also {
+                resolve().also { result ->
                     executionService.captureCurrent(
-                        ExecutionSpanArtifactSpec("RESULT", "run-stage-result-v1", mapOf("status" to "SUCCEEDED", "itemCount" to 1)),
+                        ExecutionSpanArtifactSpec(
+                            "RESULT",
+                            "run-stage-result-v1",
+                            mapOf("status" to if (result is ProviderChainResolutionDisposition.Deferred) "DEFERRED" else "SUCCEEDED", "itemCount" to 1),
+                        ),
                     )
                 }
             }
         }
-        recordProcessed(event, setActiveStage = setActiveStage)
-        return event.eventId
+        if (resolutionDisposition is ProviderChainResolutionDisposition.Deferred) {
+            return PipelineHandlerDisposition.Defer(resolutionDisposition.until)
+        }
+        if (resolutionDisposition == null) recordProcessed(event, setActiveStage = setActiveStage)
+        return PipelineHandlerDisposition.Done
     }
 
-    fun markFailed(event: PipelineEvent<ReferenceResolutionRequestedPayload>, reason: String) {
+    private fun validateRunProvenance(
+        event: PipelineEvent<ReferenceResolutionRequestedPayload>,
+        run: AnalysisRunProcessingRepository.QueueRun,
+    ) {
+        if (run.documentId != event.payload.documentId || run.sourceHash != event.payload.sourceContentSha256) {
+            throw IllegalStateException("Reference-resolution event provenance does not match its Analysis Run.")
+        }
+        if (run.status != "PROCESSING") {
+            throw IllegalStateException("Analysis Run is not accepting reference-resolution work.")
+        }
+    }
+
+    override fun markFailed(
+        event: PipelineEvent<ReferenceResolutionRequestedPayload>,
+        reason: String,
+    ): PipelineHandlerFailureDisposition {
         require(event.eventType == REFERENCE_RESOLUTION_REQUESTED) { "Unsupported event type '${event.eventType}'." }
-        if (sourceDocumentRepository.isDeleted(event.payload.documentId)) return
-        recordProcessed(event, reason)
-        executionService?.finishIfTerminal(event.analysisRunId)
+        if (sourceDocumentRepository.isDeleted(event.payload.documentId) || isProcessed(event.eventId)) {
+            return PipelineHandlerFailureDisposition.AlreadyCompleted
+        }
+        val arbitration = referenceResolutionService.arbitrateQueueFailure(
+            analysisRunId = event.analysisRunId,
+            bibliographyEntryId = event.payload.bibliographyEntryId,
+            persistFailure = { recordProcessed(event, reason) },
+            persistResolved = { recordProcessed(event) },
+        )
+        return when (arbitration) {
+            ReferenceResolutionQueueFailureArbitration.FailureRecorded -> {
+                executionService?.finishIfTerminal(event.analysisRunId)
+                PipelineHandlerFailureDisposition.FailureRecorded
+            }
+            ReferenceResolutionQueueFailureArbitration.ResolutionAlreadySaved -> {
+                executionService?.finishIfTerminal(event.analysisRunId)
+                PipelineHandlerFailureDisposition.AlreadyCompleted
+            }
+            is ReferenceResolutionQueueFailureArbitration.Defer ->
+                PipelineHandlerFailureDisposition.Defer(arbitration.until)
+        }
     }
 
     private fun recordProcessed(
