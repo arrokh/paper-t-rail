@@ -3,6 +3,7 @@ package com.papertrail.api.analysis.report.http
 import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.http.AnalysisRunPipelineProgress
 import com.papertrail.api.review.domain.HumanReview
+import io.swagger.v3.oas.annotations.media.ArraySchema
 import io.swagger.v3.oas.annotations.media.Schema
 import java.time.Instant
 import java.util.UUID
@@ -61,8 +62,15 @@ data class AnalysisRunComparisonResponse(
         val changeKind: String,
         @field:Schema(description = "ALIGNED for a matched pair, UNPAIRED for a definite addition or removal, and UNMATCHED when identity is unavailable or alignment is ambiguous.", allowableValues = ["ALIGNED", "UNPAIRED", "UNMATCHED"])
         val alignmentStatus: String,
+        @field:Schema(
+            description = "Reason an item stays unmatched; null for aligned, added, or removed items.",
+            allowableValues = ["AMBIGUOUS_CANDIDATES", "NO_COMPATIBLE_REFERENCE_IDENTITY", "COUNTERPART_REFERENCE_IDENTITY_UNAVAILABLE"],
+        )
         val unmatchedReason: String?,
-        @field:Schema(description = "Changed machine-result categories. Review changes are deliberately excluded.")
+        @field:ArraySchema(
+            arraySchema = Schema(description = "Changed machine-result categories. Review changes are deliberately excluded."),
+            schema = Schema(allowableValues = ["sourceClaimAndContext", "citationTargets", "referenceResolution", "citedPaperAccess", "evidencePassages", "machineOutcome"]),
+        )
         val changedFields: List<String>,
         val outcomeChanged: Boolean,
         val left: PairResult?,
@@ -141,6 +149,8 @@ data class AnalysisRunComparisonResponse(
         val paragraphStart: Int,
         val paragraphEnd: Int,
         val pageNumber: Int?,
+        @field:Schema(description = "Reliable one-based physical PDF pages for this Evidence Passage in its exact stored Cited Paper Asset. Empty when parser provenance is unavailable or ambiguous.")
+        val pageNumbers: List<Int>,
         val vectorRank: Int?,
         val lexicalRank: Int?,
         val fusedRank: Int,

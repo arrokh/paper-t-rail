@@ -12,4 +12,5 @@ data class ParsedScientificDocument(
     val bibliographicMetadataCandidates: List<ParsedBibliographicMetadataCandidate> = emptyList(),
     val bibliographicMetadataExtractionPolicyVersion: String? = null,
     val bibliographicMetadataExtractionOptions: Map<String, String> = emptyMap(),
+    val pageSpans: List<ParsedPageSpan> = emptyList(),
 )

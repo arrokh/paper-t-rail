@@ -25,7 +25,7 @@ class AnalysisRunComparisonController(
 ) {
     @Operation(
         summary = "Compare two immutable Analysis Run reports",
-        description = "Returns a read-only, versioned comparison of persisted Atomic Claim × Cited Reference results. Same-content runs align only by unique source span and compatible reference identity; changed-content runs align only unique exact claim-text and DOI/Canonical Paper identity matches. Ambiguous or identity-incompatible candidates remain separate and unmatched. Processing incompleteness is separate from final machine statuses. Human Reviews remain attached to their originating Verification and are excluded from machine-result alignment and change counts. No Analysis Run is modified, rerun, or sent to a provider.",
+        description = "Returns a read-only, versioned comparison of persisted Atomic Claim × Cited Reference results. When Source Document bytes and normalized parser text match, runs align only by unique source spans and compatible reference identity. If parser text differs but bytes match, alignment requires unique exact normalized claim text and a compatible identity, preferring source-local bibliography identity to preserve resolution changes. If source bytes differ, alignment requires unique exact normalized claim text and one consistent DOI or Canonical Paper identity. Ambiguous or identity-incompatible candidates remain separate and unmatched. Processing incompleteness is separate from final machine statuses. Human Reviews remain attached to their originating Verification and are excluded from machine-result alignment and change counts. No Analysis Run is modified, rerun, or sent to a provider.",
     )
     @ApiResponses(
         value = [

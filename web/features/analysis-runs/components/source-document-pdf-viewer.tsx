@@ -8,7 +8,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { sourceDocumentPdfAccessQueryOptions } from "@/features/analysis-runs/queries/analysis-run-queries";
+import { citedPaperPdfAccessQueryOptions, sourceDocumentPdfAccessQueryOptions } from "@/features/analysis-runs/queries/analysis-run-queries";
 import { scrollToPaperReviewCard } from "@/features/analysis-runs/scroll-to-paper-review-card";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -27,14 +27,30 @@ export function SourceDocumentPdfViewer({
   highlightText,
   highlightContextText = null,
   highlightRequestId = 0,
+  citedPaperAssetId = null,
+  initialPageNumber = 1,
+  heading = "Original uploaded paper",
+  idPrefix = "source-document",
 }: {
   analysisRunId: string;
   filename: string;
   highlightText: string | null | string[];
   highlightContextText?: string | null;
   highlightRequestId?: number;
+  citedPaperAssetId?: string | null;
+  initialPageNumber?: number;
+  heading?: string;
+  idPrefix?: string;
 }) {
-  const pdfQuery = useQuery(sourceDocumentPdfAccessQueryOptions(analysisRunId));
+  const sourcePdfQuery = useQuery({
+    ...sourceDocumentPdfAccessQueryOptions(analysisRunId),
+    enabled: !citedPaperAssetId,
+  });
+  const citedPaperPdfQuery = useQuery({
+    ...citedPaperPdfAccessQueryOptions(analysisRunId, citedPaperAssetId ?? ""),
+    enabled: Boolean(citedPaperAssetId),
+  });
+  const pdfQuery = citedPaperAssetId ? citedPaperPdfQuery : sourcePdfQuery;
   const [loadedPdf, setLoadedPdf] = useState<LoadedPdf | null>(null);
   const [pageState, setPageState] = useState<{ url: string; pageNumber: number; pageInput: string } | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -51,8 +67,11 @@ export function SourceDocumentPdfViewer({
   const pdfjs = activePdf?.library ?? null;
   const pdfDocument = activePdf?.document ?? null;
   const pageCount = pdfDocument?.numPages ?? 0;
-  const pageNumber = pageState?.url === pdfDocumentUrl ? pageState.pageNumber : 1;
-  const pageInput = pageState?.url === pdfDocumentUrl ? pageState.pageInput : "1";
+  const safeInitialPage = Number.isInteger(initialPageNumber) && initialPageNumber > 0 ? initialPageNumber : 1;
+  const pageNumber = pageState?.url === pdfDocumentUrl
+    ? pageState.pageNumber
+    : Math.min(safeInitialPage, pageCount || safeInitialPage);
+  const pageInput = pageState?.url === pdfDocumentUrl ? pageState.pageInput : String(pageNumber);
   const documentError = documentErrorState?.url === pdfDocumentUrl ? documentErrorState.message : null;
   const searchKey = JSON.stringify([pdfDocumentUrl, searchCandidates, highlightContextText, highlightRequestId]);
   const activeSearch = searchState?.key === searchKey ? searchState : null;
@@ -84,7 +103,7 @@ export function SourceDocumentPdfViewer({
 
         setLoadedPdf({ url: pdfDocumentUrl, library, document });
       } catch {
-        if (active) setDocumentErrorState({ url: pdfDocumentUrl, message: "The original uploaded PDF could not be loaded. Refresh the PDF link and try again." });
+        if (active) setDocumentErrorState({ url: pdfDocumentUrl, message: "The selected PDF could not be loaded. Refresh the PDF link and try again." });
       }
     })();
 
@@ -133,10 +152,10 @@ export function SourceDocumentPdfViewer({
   }
 
   return (
-    <section aria-labelledby="original-paper-heading" className="flex min-w-0 flex-col gap-3 md:h-full md:min-h-0">
+    <section aria-labelledby={`${idPrefix}-paper-heading`} className="flex min-w-0 flex-col gap-3 md:h-full md:min-h-0">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 id="original-paper-heading" className="m-0 truncate text-sm font-semibold">Original uploaded paper</h3>
+          <h3 id={`${idPrefix}-paper-heading`} className="m-0 truncate text-sm font-semibold">{heading}</h3>
           <p className="m-0 truncate text-xs text-muted-foreground">{filename}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -177,17 +196,17 @@ export function SourceDocumentPdfViewer({
       </div>
 
       {pdfQuery.isPending && (
-        <div role="status" aria-label="Loading original paper" className="space-y-2">
-          <span className="sr-only">Loading original paper…</span>
+        <div role="status" aria-label="Loading PDF" className="space-y-2">
+          <span className="sr-only">Loading PDF…</span>
           <Skeleton className="source-document-pdf-size w-full rounded-lg md:min-h-0 md:flex-1" />
         </div>
       )}
 
       {pdfQuery.isError && (
         <Alert variant="destructive">
-          <AlertTitle>Original PDF unavailable</AlertTitle>
+          <AlertTitle>PDF unavailable</AlertTitle>
           <AlertDescription className="space-y-3">
-            <p>{pdfQuery.error instanceof Error ? pdfQuery.error.message : "The original uploaded PDF could not be loaded."}</p>
+            <p>{pdfQuery.error instanceof Error ? pdfQuery.error.message : "The selected PDF could not be loaded."}</p>
             <Button type="button" variant="outline" size="sm" onClick={() => void pdfQuery.refetch()} disabled={pdfQuery.isFetching}>
               <RotateCcw aria-hidden="true" />
               {pdfQuery.isFetching ? "Retrying…" : "Retry"}
@@ -202,9 +221,9 @@ export function SourceDocumentPdfViewer({
             <Button type="button" variant="ghost" size="icon-sm" aria-label="Previous PDF page" title="Previous PDF page" disabled={!pdfDocument || pageNumber <= 1} onClick={() => goToPage(pageNumber - 1)} className="text-background hover:bg-background/15 hover:text-background">
               <ChevronLeft aria-hidden="true" />
             </Button>
-            <label className="sr-only" htmlFor="source-pdf-page">PDF page number</label>
+            <label className="sr-only" htmlFor={`${idPrefix}-pdf-page`}>PDF page number</label>
             <Input
-              id="source-pdf-page"
+              id={`${idPrefix}-pdf-page`}
               type="number"
               min={1}
               max={pageCount || undefined}
@@ -258,7 +277,7 @@ export function SourceDocumentPdfViewer({
           )}
 
           {!pdfDocument && (
-            <div role="status" aria-label="Loading original PDF" className="source-document-pdf-size flex items-center justify-center gap-2 bg-background/80 text-sm text-muted-foreground md:min-h-0 md:flex-1">
+            <div role="status" aria-label="Loading PDF" className="source-document-pdf-size flex items-center justify-center gap-2 bg-background/80 text-sm text-muted-foreground md:min-h-0 md:flex-1">
               <Spinner aria-hidden="true" />
               Loading PDF…
             </div>
@@ -268,7 +287,7 @@ export function SourceDocumentPdfViewer({
 
       {(documentError || pageError) && (
         <Alert variant="destructive">
-          <AlertTitle>Original PDF unavailable</AlertTitle>
+          <AlertTitle>PDF unavailable</AlertTitle>
           <AlertDescription className="space-y-3">
             <p>{documentError ?? "The selected PDF page could not be rendered."}</p>
             <Button type="button" variant="outline" size="sm" onClick={() => void pdfQuery.refetch()} disabled={pdfQuery.isFetching}>

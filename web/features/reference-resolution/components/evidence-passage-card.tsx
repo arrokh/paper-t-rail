@@ -1,9 +1,12 @@
-import type { ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ChevronDown, FileSearch } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { ClaimReferenceVerificationOutcome } from "@/features/analysis-runs/types";
 import { EvidencePassageSpanDiagnostics } from "@/features/reference-resolution/components/evidence-passage-span-diagnostics";
+import { SourceDocumentPdfViewer } from "@/features/analysis-runs/components/source-document-pdf-viewer";
 
 type EvidencePassage = ClaimReferenceVerificationOutcome["evidencePassages"][number];
 export type EvidencePresentation = "pipeline" | "paper-review";
@@ -14,12 +17,14 @@ function excerpt(text: string, maximumLength = 220): string {
   return `${normalized.slice(0, maximumLength).trimEnd()}…`;
 }
 
-function sourceLocation(passage: EvidencePassage): string {
+function sourceLocation(passage: EvidencePassage, showUnavailable: boolean): string {
   const section = `Section ${passage.sectionOrder + 1} · ${passage.sectionHeading ?? "No heading recorded"}`;
   const paragraphs = passage.paragraphStart === passage.paragraphEnd
     ? `paragraph ${passage.paragraphStart}`
     : `paragraphs ${passage.paragraphStart}–${passage.paragraphEnd}`;
-  return `${section} · ${paragraphs}${passage.pageNumber ? ` · page ${passage.pageNumber}` : ""}`;
+  const pages = passage.pageNumbers ?? [];
+  const pageLocation = pages.length > 0 ? ` · physical PDF pages ${pages.join(", ")}` : showUnavailable ? " · PDF page location unavailable" : "";
+  return `${section} · ${paragraphs}${pageLocation}`;
 }
 
 type TextRange = { start: number; end: number; text: string };
@@ -100,13 +105,17 @@ function PassageAuditDetails({ passage }: { passage: EvidencePassage }) {
 }
 
 export function EvidencePassageCard({
+  analysisRunId,
   passage,
   presentation,
 }: {
+  analysisRunId: string;
   passage: EvidencePassage;
   presentation: EvidencePresentation;
 }) {
   const judgement = passage.evidenceJudgement;
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const pageNumbers = passage.pageNumbers ?? [];
 
   return (
     <li className="rounded-lg border border-border/80 bg-muted/10">
@@ -125,7 +134,7 @@ export function EvidencePassageCard({
             <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground transition-transform group-data-[open]/passage:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
           </span>
           <span className="block break-words text-sm leading-relaxed text-foreground">{excerpt(passage.text)}</span>
-          <span className="block break-words text-xs text-muted-foreground">{sourceLocation(passage)}</span>
+          <span className="block break-words text-xs text-muted-foreground">{sourceLocation(passage, presentation === "paper-review")}</span>
         </CollapsibleTrigger>
         <CollapsibleContent className="space-y-3 border-t border-border/70 p-3">
           {passage.diagnosticSpans.length > 0 && (
@@ -137,6 +146,31 @@ export function EvidencePassageCard({
             <PassageText passage={passage} />
           </blockquote>
           {presentation === "paper-review" && <PassageAuditDetails passage={passage} />}
+          {presentation === "paper-review" && pageNumbers.length > 0 && (
+            <Dialog open={pdfOpen} onOpenChange={setPdfOpen}>
+              <Button type="button" variant="outline" size="sm" onClick={() => setPdfOpen(true)}>
+                <FileSearch aria-hidden="true" />
+                Open exact Cited Paper PDF · page {pageNumbers[0]}
+              </Button>
+              <DialogContent className="grid h-[90dvh] min-w-0 max-h-[90dvh] max-w-[calc(100%-2rem)] grid-rows-[auto_minmax(0,1fr)] gap-4 overflow-hidden sm:max-w-[calc(100%-2rem)] lg:max-w-5xl">
+                <DialogHeader className="min-w-0 pr-10">
+                  <DialogTitle>Exact stored Cited Paper asset</DialogTitle>
+                  <DialogDescription>Asset {passage.sourceAssetId} · SHA-256 {passage.contentSha256}. Navigating to recorded physical PDF pages; no text highlight is inferred.</DialogDescription>
+                </DialogHeader>
+                <div className="min-h-0 overflow-hidden">
+                  <SourceDocumentPdfViewer
+                    analysisRunId={analysisRunId}
+                    filename={`Cited Paper asset ${passage.sourceAssetId}`}
+                    citedPaperAssetId={passage.sourceAssetId}
+                    initialPageNumber={pageNumbers[0]}
+                    heading="Exact stored Cited Paper PDF"
+                    idPrefix={`cited-paper-${passage.id}`}
+                    highlightText={null}
+                  />
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
           <EvidencePassageSpanDiagnostics
             passageId={passage.id}
             spans={passage.diagnosticSpans}

@@ -65,8 +65,9 @@ class S3CompatibleSourceDocumentObjectStore(
                             CORSRule.builder()
                                 .id("paper-trail-recovery-pdf-upload")
                                 .allowedOrigins(origins)
-                                .allowedMethods("PUT")
-                                .allowedHeaders("Content-Type", "x-amz-checksum-sha256")
+                                .allowedMethods("PUT", "GET")
+                                .allowedHeaders("Content-Type", "x-amz-checksum-sha256", "Range")
+                                .exposeHeaders("Accept-Ranges", "Content-Range", "Content-Length", "ETag")
                                 .maxAgeSeconds(CORS_PREFLIGHT_MAX_AGE_SECONDS)
                                 .build(),
                         )

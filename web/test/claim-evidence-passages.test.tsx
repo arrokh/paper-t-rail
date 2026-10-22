@@ -1,8 +1,18 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ClaimEvidencePassages } from "@/features/reference-resolution/components/claim-evidence-passages";
 import type { ReferenceResolutionReportResponse } from "@/features/analysis-runs/types";
+
+const citedPdfViewerProps = vi.hoisted(() => ({ analysisRunId: "", assetId: "", pageNumber: 0 }));
+vi.mock("@/features/analysis-runs/components/source-document-pdf-viewer", () => ({
+  SourceDocumentPdfViewer: (props: { analysisRunId: string; citedPaperAssetId?: string | null; initialPageNumber?: number }) => {
+    citedPdfViewerProps.analysisRunId = props.analysisRunId;
+    citedPdfViewerProps.assetId = props.citedPaperAssetId ?? "";
+    citedPdfViewerProps.pageNumber = props.initialPageNumber ?? 0;
+    return null;
+  },
+}));
 
 type Verification = ReferenceResolutionReportResponse["referenceResolution"]["entries"][number]["verificationOutcomes"][number];
 type Passage = Verification["evidencePassages"][number];
@@ -15,6 +25,7 @@ const passage: Passage = {
   paragraphStart: 3,
   paragraphEnd: 4,
   pageNumber: null,
+  pageNumbers: [],
   vectorRank: 2,
   lexicalRank: 1,
   fusedRank: 1,
@@ -114,6 +125,31 @@ describe("Claim Evidence Passages", () => {
     fireEvent.click(passageTrigger);
     expect(screen.getByText(longText)).toBeTruthy();
     expect(screen.getByText("Section 1 · Results · paragraphs 3–4")).toBeTruthy();
+  });
+
+  it("opens the exact stored Cited Paper asset at its first physical page", () => {
+    const multiPagePassage = { ...passage, pageNumber: 2, pageNumbers: [2, 5] };
+    renderPassages({ ...outcome, evidencePassages: [multiPagePassage] }, "paper-review");
+
+    fireEvent.click(screen.getByRole("button", { name: /Evidence Passage · fused rank 1/ }));
+    expect(screen.getByText(/physical PDF pages 2, 5/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open exact Cited Paper PDF · page 2" }));
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.getByText(/SHA-256 a{64}/)).toBeTruthy();
+    expect(citedPdfViewerProps).toEqual({ analysisRunId: "run-123", assetId: "asset-1234", pageNumber: 2 });
+  });
+
+  it("keeps historical passages without new page provenance explicitly unavailable", () => {
+    renderPassages({
+      ...outcome,
+      evidencePassages: [{ ...passage, pageNumber: 1, pageNumbers: [] }],
+    }, "paper-review");
+
+    fireEvent.click(screen.getByRole("button", { name: /Evidence Passage · fused rank 1/ }));
+
+    expect(screen.getByText(/PDF page location unavailable/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Open exact Cited Paper PDF/ })).toBeNull();
   });
 
   it("keeps Paper Review provenance available once while leaving per-passage scores out", () => {

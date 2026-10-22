@@ -34,7 +34,7 @@ function statusBadgeClass(status: string): string {
 }
 
 function runOptionLabel(run: RunOption): string {
-  return `${run.filename} · ${analysisRunStatusLabel(run.status)} · ${run.createdAt.slice(0, 10)}`;
+  return `${run.filename} · ${analysisRunStatusLabel(run.status)} · ${run.createdAt.slice(0, 10)} · ${run.id.slice(0, 8)}`;
 }
 
 function runOptionFromComparison(run: ComparisonRun): RunOption {
@@ -60,6 +60,7 @@ function itemLabel(kind: ComparisonItem["changeKind"]): string {
 function unmatchedReasonLabel(reason: string | null): string | null {
   if (reason === "AMBIGUOUS_CANDIDATES") return "Multiple compatible candidates were found. Items are kept separate rather than guessed together.";
   if (reason === "NO_COMPATIBLE_REFERENCE_IDENTITY") return "No compatible reference identity is available to align this item safely.";
+  if (reason === "COUNTERPART_REFERENCE_IDENTITY_UNAVAILABLE") return "A possible counterpart has no recorded reference identity, so this item is kept separate rather than guessed together.";
   return reason;
 }
 
@@ -68,8 +69,8 @@ const CHANGED_FIELD_LABELS: Record<string, string> = {
   citationTargets: "Citation Targets",
   referenceResolution: "Bibliography Entry or Canonical Paper resolution",
   citedPaperAccess: "Cited Paper access or asset provenance",
-  evidencePassages: "Evidence Passage set or ranks",
-  machineOutcome: "Machine processing or verification result",
+  evidencePassages: "Evidence Passage set, location, ranks, or parser provenance",
+  machineOutcome: "Machine processing, Evidence Judgement, verification result, or policy version",
 };
 
 function PinnedConfiguration({ run }: { run: ComparisonRun }) {
@@ -279,7 +280,7 @@ function PairSide({ pair, label }: { pair: ComparisonPair; label: string }) {
                 <p className="m-0 text-xs font-medium">Fused rank {passage.fusedRank} · vector {passage.vectorRank ?? "—"} · lexical {passage.lexicalRank ?? "—"}</p>
                 <p className="m-0 break-words text-sm leading-relaxed">{passage.text}</p>
                 <p className="m-0 break-words text-xs text-muted-foreground">
-                  Section {passage.sectionOrder}{passage.sectionHeading ? ` · ${passage.sectionHeading}` : ""} · paragraphs {passage.paragraphStart}–{passage.paragraphEnd}{passage.pageNumber ? ` · page ${passage.pageNumber}` : ""}
+                  Section {passage.sectionOrder}{passage.sectionHeading ? ` · ${passage.sectionHeading}` : ""} · paragraphs {passage.paragraphStart}–{passage.paragraphEnd}{passage.pageNumbers.length ? ` · physical PDF pages ${passage.pageNumbers.join(", ")}` : " · physical PDF page location unavailable"}
                   {passage.judgement ? ` · machine judgement ${passage.judgement}` : ""}{passage.evidenceRole ? ` · ${passage.evidenceRole}` : ""}
                 </p>
                 <p className="m-0 break-all font-mono text-[0.7rem] text-muted-foreground">Asset {passage.sourceAssetId} · SHA-256 {passage.contentSha256}</p>
@@ -301,6 +302,8 @@ function PairSide({ pair, label }: { pair: ComparisonPair; label: string }) {
           <p className="m-0 text-sm">Final Claim–Paper Verification status: <strong>{pair.finalStatus.replaceAll("_", " ")}</strong></p>
         ) : <p className="m-0 text-sm text-muted-foreground">No final domain status is persisted yet.</p>}
         {pair.verificationScope && <p className="m-0 text-xs text-muted-foreground">Verification scope: {pair.verificationScope}{pair.terminalReason ? ` · ${pair.terminalReason}` : ""}</p>}
+        <p className="m-0 text-xs text-muted-foreground">Persisted evidence-conflict flag: {pair.evidenceConflict === null ? "Not recorded" : String(pair.evidenceConflict)}</p>
+        <p className="m-0 text-xs text-muted-foreground">Aggregation policy version: {pair.aggregatorVersion ?? "Not recorded"}</p>
       </section>
 
       <section className="min-w-0 space-y-2 border-t border-border pt-3" aria-label={`${label} Human Reviews`}>
@@ -338,7 +341,7 @@ function ComparisonItemView({ item, index }: { item: ComparisonItem; index: numb
       {item.changedFields.length > 0 && (
         <p className="mt-3 text-sm"><strong>Changed:</strong> {item.changedFields.map((field) => CHANGED_FIELD_LABELS[field] ?? field).join("; ")}</p>
       )}
-      {item.outcomeChanged && <p className="mt-2 text-sm font-medium">Machine processing state or final outcome changed.</p>}
+      {item.outcomeChanged && <p className="mt-2 text-sm font-medium">Machine processing, Evidence Judgement, or final verification outcome changed.</p>}
       <div className="mt-4 grid min-w-0 gap-3 xl:grid-cols-2">
         {item.left
           ? <PairSide pair={item.left} label="Left run" />
@@ -452,11 +455,14 @@ export function AnalysisRunComparisonPage() {
   const compareError = comparisonQuery.isError ? errorMessage(comparisonQuery.error) : null;
 
   function selectRun(side: "left" | "right", runId: string) {
-    const option = runs.find((run) => run.id === runId);
+    const option = options.find((run) => run.id === runId);
     if (option) setSelectedOptions((current) => ({ ...current, [runId]: option }));
     if (side === "left") setLeftRunId(runId);
     else setRightRunId(runId);
     setComparisonSelection(null);
+    if (searchParams.has("leftRunId") || searchParams.has("rightRunId")) {
+      router.replace("/analysis-runs/compare", { scroll: false });
+    }
   }
 
   function submitComparison() {

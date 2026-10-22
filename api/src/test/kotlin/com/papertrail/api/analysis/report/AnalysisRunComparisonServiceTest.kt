@@ -9,7 +9,12 @@ import com.papertrail.api.analysis.http.ParsedClaimCitationTargetView
 import com.papertrail.api.analysis.http.ParsedDocumentView
 import com.papertrail.api.analysis.http.ParsedParserProvenance
 import com.papertrail.api.analysis.report.http.AnalysisRunComparisonResponse
+import com.papertrail.api.analysis.report.http.AnalysisRunComparisonResponse.EvidencePassage
+import com.papertrail.api.analysis.report.http.AnalysisRunComparisonResponse.PairResult
+import com.papertrail.api.analysis.report.service.AnalysisRunComparisonAlignment
 import com.papertrail.api.analysis.report.service.AnalysisRunComparisonService
+import com.papertrail.api.analysis.report.service.ComparisonCandidate
+import com.papertrail.api.citation.parsing.ParsedBibliographyIdentifier
 import com.papertrail.api.analysis.report.service.AnalysisRunReportService
 import com.papertrail.api.analysis.service.AnalysisRunService
 import com.papertrail.api.citation.parsing.BibliographyNormalizationPolicySelection
@@ -82,6 +87,56 @@ class AnalysisRunComparisonServiceTest {
     }
 
     @Test
+    fun `pending verification work in a terminal run is reported as incomplete`() {
+        val claim = ClaimSpec("The finding is reported.", 10, 33, "reference-a", "The finding is reported [1].")
+        val reference = ReferenceSpec("reference-a", "Example study", "10.1234/example")
+        val pending = testRun(
+            hash = "a".repeat(64),
+            configVersion = "same",
+            claims = listOf(claim),
+            references = listOf(reference),
+            outcomes = listOf(OutcomeSpec(0, "PENDING", null)),
+        )
+        val completed = testRun(
+            hash = "a".repeat(64),
+            configVersion = "same",
+            claims = listOf(claim),
+            references = listOf(reference),
+            outcomes = listOf(OutcomeSpec(0, "COMPLETED", "SUPPORTED")),
+        )
+
+        val item = compare(pending, completed).items.single()
+
+        assertEquals("INCOMPLETE", item.left?.processingStatus)
+        assertNull(item.left?.finalStatus)
+        assertEquals("COMPLETED", item.right?.processingStatus)
+    }
+
+    @Test
+    fun `same-source citation stays aligned when reference resolution changes`() {
+        val claim = ClaimSpec("The finding is reported.", 10, 33, "reference-a", "The finding is reported [1].")
+        val left = testRun(
+            hash = "a".repeat(64),
+            configVersion = "reference-v1",
+            claims = listOf(claim),
+            references = listOf(ReferenceSpec("reference-a", "Example study", null, resolutionStatus = "UNRESOLVED")),
+        )
+        val right = testRun(
+            hash = "a".repeat(64),
+            configVersion = "reference-v2",
+            claims = listOf(claim.copy(referenceKey = "reference-b")),
+            references = listOf(ReferenceSpec("reference-b", "Example study", "10.1234/example")),
+        )
+
+        val comparison = compare(left, right)
+
+        assertEquals(1, comparison.counts.changed)
+        assertEquals(0, comparison.counts.added)
+        assertEquals(0, comparison.counts.removed)
+        assertEquals(listOf("referenceResolution"), comparison.items.single().changedFields)
+    }
+
+    @Test
     fun `a Human Review difference alone leaves equal machine results unchanged`() {
         val leftRunId = UUID.randomUUID()
         val review = HumanReview(
@@ -118,6 +173,213 @@ class AnalysisRunComparisonServiceTest {
         assertFalse(item.outcomeChanged)
         assertEquals("Review only; machine output is unchanged.", item.left?.humanReviews?.single()?.note)
         assertTrue(item.right?.humanReviews.isNullOrEmpty())
+    }
+
+    @Test
+    fun `changed evidence judgements are reported as machine outcome changes rather than passage changes`() {
+        val left = comparisonCandidate(judgement = "DIRECT_SUPPORT", role = "PRIMARY_FINDING")
+        val right = comparisonCandidate(judgement = "PARTIAL_SUPPORT", role = "AUTHOR_SYNTHESIS")
+
+        val item = AnalysisRunComparisonAlignment().align(listOf(left), listOf(right), sourceOffsetsComparable = true).single()
+
+        assertEquals("CHANGED", item.changeKind)
+        assertEquals(listOf("machineOutcome"), item.changedFields)
+        assertTrue(item.outcomeChanged)
+    }
+
+    @Test
+    fun `does not align equal offsets when identical PDF bytes produced different normalized parser text`() {
+        val reference = ReferenceSpec("reference", "Study", "10.1234/study")
+        val left = testRun(
+            hash = "a".repeat(64),
+            configVersion = "parser-v1",
+            sourceText = "A result was observed.",
+            claims = listOf(ClaimSpec("A result", 0, 8, "reference", "A result [1].")),
+            references = listOf(reference),
+        )
+        val right = testRun(
+            hash = "a".repeat(64),
+            configVersion = "parser-v2",
+            sourceText = "B result was observed.",
+            claims = listOf(ClaimSpec("B result", 0, 8, "reference", "B result [1].")),
+            references = listOf(reference),
+        )
+
+        val comparison = compare(left, right)
+
+        assertFalse(comparison.sourceContentDiffers)
+        assertEquals(0, comparison.counts.changed)
+        assertEquals(1, comparison.counts.removed)
+        assertEquals(1, comparison.counts.added)
+    }
+
+    @Test
+    fun `conflicting reference identifiers do not create a changed-source alignment`() {
+        val left = testRun(
+            hash = "a".repeat(64),
+            configVersion = "same",
+            claims = listOf(ClaimSpec("Same finding", 0, 12, "reference-a", "Same finding [1].")),
+            references = listOf(
+                ReferenceSpec(
+                    key = "reference-a",
+                    title = "Study",
+                    doi = "10.1234/study",
+                    reasonCode = "CONFLICTING_DOI_IDENTIFIERS",
+                    identifiers = listOf(
+                        ParsedBibliographyIdentifier("idno", "DOI", "10.1234/study", "10.1234/study"),
+                        ParsedBibliographyIdentifier("ptr", "DOI", "https://doi.org/10.1234/other", "10.1234/other"),
+                    ),
+                ),
+            ),
+        )
+        val right = testRun(
+            hash = "b".repeat(64),
+            configVersion = "same",
+            claims = listOf(ClaimSpec("Same finding", 5, 17, "reference-b", "Same finding [1].")),
+            references = listOf(ReferenceSpec("reference-b", "Study", "10.1234/study")),
+        )
+
+        val comparison = compare(left, right)
+
+        assertEquals(2, comparison.counts.unmatched)
+        assertEquals(0, comparison.counts.changed)
+        assertTrue(comparison.items.all { it.changeKind == "UNMATCHED" })
+    }
+
+    @Test
+    fun `does not align a syntactically valid DOI that the run marked as conflicting`() {
+        val left = testRun(
+            hash = "a".repeat(64),
+            configVersion = "same",
+            claims = listOf(ClaimSpec("Same finding", 0, 12, "reference-a", "Same finding [1].")),
+            references = listOf(ReferenceSpec("reference-a", "Study", "10.1234/study", reasonCode = "DOI_TITLE_CONFLICT", resolutionStatus = "UNRESOLVED")),
+        )
+        val right = testRun(
+            hash = "b".repeat(64),
+            configVersion = "same",
+            claims = listOf(ClaimSpec("Same finding", 5, 17, "reference-b", "Same finding [1].")),
+            references = listOf(ReferenceSpec("reference-b", "Study", "10.1234/study")),
+        )
+
+        val comparison = compare(left, right)
+
+        assertEquals(2, comparison.counts.unmatched)
+        assertEquals(0, comparison.counts.changed)
+        assertTrue(comparison.items.all { it.changeKind == "UNMATCHED" })
+    }
+
+    @Test
+    fun `compares judgements for duplicate passage text at their distinct fused ranks`() {
+        val candidate = comparisonCandidate(judgement = "DIRECT_SUPPORT", role = "PRIMARY_FINDING")
+        val passage = candidate.result.evidencePassages.single()
+        val left = candidate.copy(
+            result = candidate.result.copy(
+                evidencePassages = listOf(
+                    passage.copy(fusedRank = 1, judgement = "DIRECT_SUPPORT"),
+                    passage.copy(fusedRank = 2, judgement = "PARTIAL_SUPPORT"),
+                ),
+            ),
+        )
+        val right = candidate.copy(
+            result = candidate.result.copy(
+                evidencePassages = listOf(
+                    passage.copy(fusedRank = 1, judgement = "CONTRADICTS"),
+                    passage.copy(fusedRank = 2, judgement = "PARTIAL_SUPPORT"),
+                ),
+            ),
+        )
+
+        val item = AnalysisRunComparisonAlignment().align(listOf(left), listOf(right), sourceOffsetsComparable = true).single()
+
+        assertTrue(item.outcomeChanged)
+        assertEquals(listOf("machineOutcome"), item.changedFields)
+    }
+
+    @Test
+    fun `compares a unique passage judgement when its fused rank changes`() {
+        val candidate = comparisonCandidate(judgement = "DIRECT_SUPPORT", role = "PRIMARY_FINDING")
+        val passage = candidate.result.evidencePassages.single()
+        val left = candidate.copy(
+            result = candidate.result.copy(evidencePassages = listOf(passage.copy(fusedRank = 1, judgement = "DIRECT_SUPPORT"))),
+        )
+        val right = candidate.copy(
+            result = candidate.result.copy(evidencePassages = listOf(passage.copy(fusedRank = 4, judgement = "PARTIAL_SUPPORT"))),
+        )
+
+        val item = AnalysisRunComparisonAlignment().align(listOf(left), listOf(right), sourceOffsetsComparable = true).single()
+
+        assertTrue(item.outcomeChanged)
+        assertEquals(listOf("evidencePassages", "machineOutcome"), item.changedFields)
+    }
+
+    @Test
+    fun `compares judgements when identical asset bytes have different run-scoped asset ids`() {
+        val candidate = comparisonCandidate(judgement = "DIRECT_SUPPORT", role = "PRIMARY_FINDING")
+        val passage = candidate.result.evidencePassages.single()
+        val left = candidate.copy(
+            result = candidate.result.copy(
+                evidencePassages = listOf(passage.copy(judgement = "DIRECT_SUPPORT")),
+            ),
+        )
+        val right = candidate.copy(
+            result = candidate.result.copy(
+                evidencePassages = listOf(
+                    passage.copy(
+                        sourceAssetId = UUID.fromString("00000000-0000-0000-0000-000000000002"),
+                        judgement = "PARTIAL_SUPPORT",
+                    ),
+                ),
+            ),
+        )
+
+        val item = AnalysisRunComparisonAlignment().align(listOf(left), listOf(right), sourceOffsetsComparable = true).single()
+
+        assertTrue(item.outcomeChanged)
+        assertEquals(listOf("evidencePassages", "machineOutcome"), item.changedFields)
+    }
+
+    @Test
+    fun `malformed DOI text does not create a cross-source alignment identity`() {
+        val left = testRun(
+            hash = "a".repeat(64),
+            configVersion = "same",
+            claims = listOf(ClaimSpec("Same finding", 0, 12, "reference-a", "Same finding [1].")),
+            references = listOf(ReferenceSpec("reference-a", "Study", "10.not-valid/example")),
+        )
+        val right = testRun(
+            hash = "b".repeat(64),
+            configVersion = "same",
+            claims = listOf(ClaimSpec("Same finding", 4, 16, "reference-b", "Same finding [1].")),
+            references = listOf(ReferenceSpec("reference-b", "Study", "10.not-valid/example")),
+        )
+
+        val comparison = compare(left, right)
+
+        assertEquals(2, comparison.counts.unmatched)
+        assertEquals(0, comparison.counts.changed)
+        assertTrue(comparison.items.all { it.changeKind == "UNMATCHED" })
+    }
+
+    @Test
+    fun `claim and DOI delimiters cannot collide into a false changed-source alignment`() {
+        val left = testRun(
+            hash = "a".repeat(64),
+            configVersion = "same",
+            claims = listOf(ClaimSpec("An observation claim:doi:10.1234/fake", 0, 39, "reference-a", "An observation claim:doi:10.1234/fake [1].")),
+            references = listOf(ReferenceSpec("reference-a", "Study A", "10.1234/real")),
+        )
+        val right = testRun(
+            hash = "b".repeat(64),
+            configVersion = "same",
+            claims = listOf(ClaimSpec("An observation claim", 50, 70, "reference-b", "An observation claim [1].")),
+            references = listOf(ReferenceSpec("reference-b", "Study B", "10.1234/fake:doi:10.1234/real")),
+        )
+
+        val comparison = compare(left, right)
+
+        assertEquals(0, comparison.counts.changed)
+        assertEquals(1, comparison.counts.added)
+        assertEquals(1, comparison.counts.removed)
     }
 
     @Test
@@ -171,7 +433,8 @@ class AnalysisRunComparisonServiceTest {
         val ambiguous = comparison.items.filter { it.unmatchedReason == "AMBIGUOUS_CANDIDATES" }
         assertEquals(3, ambiguous.size)
         assertTrue(ambiguous.all { it.left == null || it.right == null })
-        assertEquals(4, comparison.items.count { it.unmatchedReason == "NO_COMPATIBLE_REFERENCE_IDENTITY" })
+        assertEquals(3, comparison.items.count { it.unmatchedReason == "NO_COMPATIBLE_REFERENCE_IDENTITY" })
+        assertEquals(1, comparison.items.count { it.unmatchedReason == "COUNTERPART_REFERENCE_IDENTITY_UNAVAILABLE" })
         assertTrue(comparison.items.filter { it.left?.claimText == "Known result" || it.right?.claimText == "Known result" }.all { it.changeKind == "UNMATCHED" })
         assertEquals("sourceClaimAndContext", comparison.items.single { it.changeKind == "CHANGED" }.changedFields.single())
         assertTrue(comparison.items.any { it.changeKind == "ADDED" && it.alignmentStatus == "UNPAIRED" && it.right?.claimText == "Added result" })
@@ -206,6 +469,65 @@ class AnalysisRunComparisonServiceTest {
         assertTrue(ambiguous.all { it.left != null && it.right == null })
     }
 
+    private fun comparisonCandidate(judgement: String, role: String): ComparisonCandidate {
+        val sourceAssetId = UUID.fromString("00000000-0000-0000-0000-000000000001")
+        return ComparisonCandidate(
+            result = PairResult(
+                atomicClaimId = UUID.randomUUID(),
+                claimText = "The finding is reported.",
+                sourceStartOffset = 10,
+                sourceEndOffset = 33,
+                citationContextText = "The finding is reported [1].",
+                citationTargets = listOf(AnalysisRunComparisonResponse.CitationTarget("[1]", "INFERRED_PROVISIONAL")),
+                reference = AnalysisRunComparisonResponse.Reference(
+                    localReferenceKey = "reference-a",
+                    title = "Example study",
+                    rawText = "Example study, 2024",
+                    authors = listOf("A. Researcher"),
+                    year = 2024,
+                    doi = "10.1234/example",
+                    referenceType = "JOURNAL_ARTICLE",
+                    resolutionStatus = "RESOLVED",
+                    resolutionReasonCode = null,
+                    matchMethod = "DOI",
+                    canonicalPaper = null,
+                ),
+                citedPaperAccess = null,
+                evidencePassages = listOf(
+                    EvidencePassage(
+                        text = "A retrieved passage.",
+                        sectionOrder = 1,
+                        sectionHeading = "Results",
+                        paragraphStart = 2,
+                        paragraphEnd = 2,
+                        pageNumber = 4,
+                        pageNumbers = listOf(4, 5),
+                        vectorRank = 1,
+                        lexicalRank = 1,
+                        fusedRank = 1,
+                        sourceAssetId = sourceAssetId,
+                        contentSha256 = "c".repeat(64),
+                        parserProvider = "docling",
+                        parserVersion = "1.30.0",
+                        language = "en",
+                        languageDetectorVersion = "test-v1",
+                        judgement = judgement,
+                        evidenceRole = role,
+                    ),
+                ),
+                processingStatus = "COMPLETED",
+                processingFailureReason = null,
+                finalStatus = "SUPPORTED",
+                verificationScope = "FULL_TEXT",
+                terminalReason = null,
+                evidenceConflict = false,
+                aggregatorVersion = "test-aggregation-v1",
+                humanReviews = emptyList(),
+            ),
+            referenceIdentity = "doi:10.1234/example",
+        )
+    }
+
     private fun compare(left: TestRun, right: TestRun): AnalysisRunComparisonResponse {
         val analysisRuns = Mockito.mock(AnalysisRunService::class.java)
         val reports = Mockito.mock(AnalysisRunReportService::class.java)
@@ -224,6 +546,7 @@ class AnalysisRunComparisonServiceTest {
         references: List<ReferenceSpec>,
         outcomes: List<OutcomeSpec> = emptyList(),
         runId: UUID = UUID.randomUUID(),
+        sourceText: String = "test source text",
     ): TestRun {
         val documentId = UUID.randomUUID()
         val createdAt = Instant.parse("2026-10-01T00:00:00Z")
@@ -249,7 +572,8 @@ class AnalysisRunComparisonServiceTest {
                 year = 2024,
                 doi = reference.doi,
                 referenceType = "JOURNAL_ARTICLE",
-                resolutionStatus = "RESOLVED",
+                resolutionStatus = reference.resolutionStatus,
+                identifiers = reference.identifiers,
             )
         }
         val contexts = claims.map { claim ->
@@ -278,7 +602,7 @@ class AnalysisRunComparisonServiceTest {
         val document = ParsedDocumentView(
             parser = ParsedParserProvenance("grobid", "test-v1"),
             sourceContentSha256 = hash,
-            normalizedSourceText = "test source text",
+            normalizedSourceText = sourceText,
             sections = emptyList(),
             citationContexts = contexts,
             bibliographyEntries = parsedReferences,
@@ -319,8 +643,9 @@ class AnalysisRunComparisonServiceTest {
                 year = 2024,
                 doi = reference.doi,
                 referenceType = "JOURNAL_ARTICLE",
-                status = "RESOLVED",
-                reasonCode = null,
+                status = reference.resolutionStatus,
+                reasonCode = reference.reasonCode,
+                identifiers = reference.identifiers,
                 canonicalPaper = null,
                 confidenceScore = null,
                 matchMethod = "DOI",
@@ -356,7 +681,14 @@ class AnalysisRunComparisonServiceTest {
         val context: String,
     )
 
-    private data class ReferenceSpec(val key: String, val title: String, val doi: String?)
+    private data class ReferenceSpec(
+        val key: String,
+        val title: String,
+        val doi: String?,
+        val reasonCode: String? = null,
+        val identifiers: List<ParsedBibliographyIdentifier> = emptyList(),
+        val resolutionStatus: String = "RESOLVED",
+    )
 
     private data class OutcomeSpec(
         val claimIndex: Int,

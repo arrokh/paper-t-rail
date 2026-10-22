@@ -247,8 +247,8 @@ class EvidenceRetrievalRepository(
                 """
                 INSERT INTO paper_chunks (
                     id, cited_paper_parse_id, analysis_run_id, bibliography_entry_id, chunk_order,
-                    section_order, section_heading, paragraph_start, paragraph_end, text
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    section_order, section_heading, paragraph_start, paragraph_end, page_number, text
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (cited_paper_parse_id, chunk_order) DO NOTHING
                 """.trimIndent(),
                 UUID.randomUUID(),
@@ -260,17 +260,40 @@ class EvidenceRetrievalRepository(
                 embedded.chunk.sectionHeading,
                 embedded.chunk.paragraphStart,
                 embedded.chunk.paragraphEnd,
+                embedded.chunk.pageNumbers.firstOrNull(),
                 embedded.chunk.text,
             )
         }
         val persistedChunks = jdbc.query(
-            "SELECT id, chunk_order, text FROM paper_chunks WHERE cited_paper_parse_id = ? ORDER BY chunk_order",
-            { rs, _ -> PersistedChunk(rs.getObject("id", UUID::class.java), rs.getInt("chunk_order"), rs.getString("text")) },
+            "SELECT id, chunk_order, page_number, text FROM paper_chunks WHERE cited_paper_parse_id = ? ORDER BY chunk_order",
+            { rs, _ -> PersistedChunk(rs.getObject("id", UUID::class.java), rs.getInt("chunk_order"), rs.getObject("page_number", Integer::class.java)?.toInt(), rs.getString("text")) },
             parseId,
         )
         require(persistedChunks.size == chunks.size && persistedChunks.zip(chunks).all { (stored, proposed) ->
-            stored.chunkOrder == proposed.chunk.chunkOrder && stored.text == proposed.chunk.text
+            stored.chunkOrder == proposed.chunk.chunkOrder && stored.text == proposed.chunk.text &&
+                stored.pageNumber == proposed.chunk.pageNumbers.firstOrNull()
         }) { "Persisted Evidence Passage chunks do not match the pinned parse." }
+        val persistedIdsByOrder = persistedChunks.associate { it.chunkOrder to it.id }
+        chunks.forEach { embedded ->
+            val paperChunkId = persistedIdsByOrder.getValue(embedded.chunk.chunkOrder)
+            embedded.chunk.pageNumbers.forEach { pageNumber ->
+                jdbc.update(
+                    "INSERT INTO paper_chunk_page_numbers (paper_chunk_id, analysis_run_id, bibliography_entry_id, page_number) VALUES (?, ?, ?, ?) ON CONFLICT (paper_chunk_id, page_number) DO NOTHING",
+                    paperChunkId,
+                    context.analysisRunId,
+                    context.bibliographyEntryId,
+                    pageNumber,
+                )
+            }
+        }
+        val storedPageNumbers = jdbc.query(
+            "SELECT page.paper_chunk_id, page.page_number FROM paper_chunk_page_numbers page JOIN paper_chunks chunk ON chunk.id = page.paper_chunk_id WHERE chunk.cited_paper_parse_id = ? ORDER BY page.paper_chunk_id, page.page_number",
+            { rs, _ -> rs.getObject("paper_chunk_id", UUID::class.java) to rs.getInt("page_number") },
+            parseId,
+        ).groupBy({ it.first }, { it.second })
+        require(persistedChunks.zip(chunks).all { (stored, proposed) ->
+            storedPageNumbers[stored.id].orEmpty() == proposed.chunk.pageNumbers
+        }) { "Persisted Evidence Passage page provenance does not match the pinned parse." }
         val vectorsByOrder = chunks.associateBy { it.chunk.chunkOrder }
         persistedChunks.forEach { chunk ->
             val vector = vectorsByOrder.getValue(chunk.chunkOrder).vector
@@ -363,5 +386,5 @@ class EvidenceRetrievalRepository(
         val languageDetectorVersion: String,
         val normalizedText: String,
     )
-    private data class PersistedChunk(val id: UUID, val chunkOrder: Int, val text: String)
+    private data class PersistedChunk(val id: UUID, val chunkOrder: Int, val pageNumber: Int?, val text: String)
 }

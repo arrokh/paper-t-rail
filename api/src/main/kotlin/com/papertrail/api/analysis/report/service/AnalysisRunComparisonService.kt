@@ -14,9 +14,12 @@ import com.papertrail.api.analysis.report.http.AnalysisRunComparisonResponse.Evi
 import com.papertrail.api.analysis.report.http.AnalysisRunComparisonResponse.PairResult
 import com.papertrail.api.analysis.report.http.AnalysisRunComparisonResponse.Reference
 import com.papertrail.api.analysis.report.http.AnalysisRunComparisonResponse.Run
+import com.papertrail.api.scholarly.references.normalization.DoiNormalizer
 import com.papertrail.api.scholarly.references.report.BibliographyResolutionReportEntry
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Isolation
+import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.server.ResponseStatusException
 import java.util.UUID
 
@@ -27,6 +30,7 @@ class AnalysisRunComparisonService(
 ) {
     private val alignment = AnalysisRunComparisonAlignment()
 
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     fun compare(leftRunId: UUID, rightRunId: UUID): AnalysisRunComparisonResponse {
         val leftRun = requireRun(leftRunId)
         val rightRun = requireRun(rightRunId)
@@ -37,9 +41,11 @@ class AnalysisRunComparisonService(
         val rightReport = analysisRunReportService.report(rightRunId)
             ?: throw ResponseStatusException(HttpStatus.CONFLICT, "A persisted report is not available for the right Analysis Run.")
         val sameSourceContent = leftRun.sourceContentSha256 == rightRun.sourceContentSha256
+        val sourceOffsetsComparable = sameSourceContent &&
+            leftDocument.normalizedSourceText == rightDocument.normalizedSourceText
         val leftPairs = buildPairs(leftRun, leftDocument, leftReport.referenceResolution.entries, sameSourceContent)
         val rightPairs = buildPairs(rightRun, rightDocument, rightReport.referenceResolution.entries, sameSourceContent)
-        val items = alignment.align(leftPairs, rightPairs, sameSourceContent)
+        val items = alignment.align(leftPairs, rightPairs, sourceOffsetsComparable)
         val counts = AnalysisRunComparisonResponse.Counts(
             unchanged = items.count { it.changeKind == "UNCHANGED" },
             changed = items.count { it.changeKind == "CHANGED" },
@@ -133,7 +139,7 @@ class AnalysisRunComparisonService(
         val normalizedProcessingStatus = when (outcome?.processingStatus) {
             "COMPLETED" -> "COMPLETED"
             "INCOMPLETE", "FAILED" -> "INCOMPLETE"
-            "PENDING" -> "PENDING"
+            "PENDING" -> if (runStatus in INCOMPLETE_RUN_STATUSES) "INCOMPLETE" else "PENDING"
             else -> if (runStatus in INCOMPLETE_RUN_STATUSES) "INCOMPLETE" else "PENDING"
         }
         val reference = Reference(
@@ -185,6 +191,7 @@ class AnalysisRunComparisonService(
                     paragraphStart = passage.paragraphStart,
                     paragraphEnd = passage.paragraphEnd,
                     pageNumber = passage.pageNumber,
+                    pageNumbers = passage.pageNumbers,
                     vectorRank = passage.vectorRank,
                     lexicalRank = passage.lexicalRank,
                     fusedRank = passage.fusedRank,
@@ -213,40 +220,51 @@ class AnalysisRunComparisonService(
         parsedReference: ParsedBibliographyEntryView?,
         reportReference: BibliographyResolutionReportEntry?,
         sameSourceContent: Boolean,
-    ): String? = strongReferenceIdentity(parsedReference, reportReference)
-        ?: if (sameSourceContent) {
-            parsedReference?.sourceLocalReferenceKey?.takeIf(String::isNotBlank)?.let { "source-key:$it" }
-                ?: parsedReference?.localReferenceKey?.takeIf { parsedReference.localReferenceKeyOrigin == "GROBID_XML_ID" }?.let { "source-key:$it" }
-                ?: parsedReference?.rawText?.let(::normalizeReferenceText)?.takeIf(String::isNotBlank)?.let { "source-text:$it" }
-        } else null
+    ): String? {
+        if (sameSourceContent) {
+            sourceLocalReferenceIdentity(parsedReference, reportReference)?.let { return it }
+        }
+        return strongReferenceIdentity(parsedReference, reportReference)
+    }
+
+    private fun sourceLocalReferenceIdentity(
+        parsedReference: ParsedBibliographyEntryView?,
+        reportReference: BibliographyResolutionReportEntry?,
+    ): String? = parsedReference?.sourceLocalReferenceKey?.takeIf(String::isNotBlank)?.let { "source-key:$it" }
+        ?: parsedReference?.localReferenceKey?.takeIf { parsedReference.localReferenceKeyOrigin == "GROBID_XML_ID" }?.let { "source-key:$it" }
+        ?: parsedReference?.rawText?.let(::normalizeReferenceText)?.takeIf(String::isNotBlank)?.let { "source-text:$it" }
+        ?: reportReference?.rawText?.let(::normalizeReferenceText)?.takeIf(String::isNotBlank)?.let { "source-text:$it" }
 
     private fun strongReferenceIdentity(
         parsedReference: ParsedBibliographyEntryView?,
         reportReference: BibliographyResolutionReportEntry?,
     ): String? {
-        val doi = listOf(reportReference?.doi, reportReference?.canonicalPaper?.doi, parsedReference?.doi)
-            .firstNotNullOfOrNull(::normalizeDoi)
-        if (doi != null) return "doi:$doi"
+        if (reportReference?.reasonCode in IDENTITY_CONFLICT_REASON_CODES) return null
+        val doiValues = buildList {
+            add(reportReference?.doi)
+            add(reportReference?.canonicalPaper?.doi)
+            add(reportReference?.assistedDoi)
+            add(parsedReference?.doi)
+            addAll(parsedReference?.identifiers.orEmpty().filter { it.type.equals("doi", ignoreCase = true) }.map { it.normalizedValue ?: it.rawValue })
+            addAll(reportReference?.identifiers.orEmpty().filter { it.type.equals("doi", ignoreCase = true) }.map { it.normalizedValue ?: it.rawValue })
+        }.mapNotNull(::normalizeDoi).distinct()
+        if (doiValues.size > 1) return null
+        doiValues.singleOrNull()?.let { return "doi:$it" }
         val canonicalPaperId = reportReference?.canonicalPaper?.id ?: return null
-        return "canonical:${canonicalPaperId}"
+        return "canonical:$canonicalPaperId"
     }
 
-    private fun normalizeDoi(value: String?): String? = value
-        ?.trim()
-        ?.lowercase()
-        ?.replace(DOI_PREFIX, "")
-        ?.removePrefix("doi:")
-        ?.trim()
-        ?.trimEnd('.')
-        ?.takeIf(String::isNotBlank)
+    private fun normalizeDoi(value: String?): String? = DoiNormalizer.normalize(value)
 
     private fun normalizeReferenceText(value: String): String = value.trim().replace(WHITESPACE, " ").lowercase()
 
     private companion object {
         const val ALIGNMENT_POLICY_ID = "conservative-source-span-reference-identity"
-        const val ALIGNMENT_POLICY_VERSION = "1"
-        const val ALIGNMENT_POLICY_DESCRIPTION = "For identical Source Document content, align only unique Atomic Claim source-span and compatible Cited Reference identity pairs. For changed content, align only unique exact normalized Atomic Claim text and DOI or Canonical Paper identity pairs. Ambiguous candidates and pairs without a compatible reference identity remain separate and unmatched; no fuzzy claim matching is performed."
-        val DOI_PREFIX = Regex("^https?://(?:dx\\.)?doi\\.org/", RegexOption.IGNORE_CASE)
+        const val ALIGNMENT_POLICY_VERSION = "3"
+        const val ALIGNMENT_POLICY_DESCRIPTION = "When Source Document bytes and normalized parser text match, align only unique Atomic Claim source spans and compatible Cited Reference identities. When parser text differs but bytes match, require unique exact normalized claim text and a compatible identity, preferring source-local bibliography identity to preserve resolution changes. When source bytes differ, require unique exact normalized claim text and one consistent DOI or Canonical Paper identity. Identity-unknown or ambiguous candidates remain separate; no fuzzy claim matching is performed."
+        val IDENTITY_CONFLICT_REASON_CODES = setOf(
+            "CONFLICTING_DOI_IDENTIFIERS", "DOI_CONFLICT", "DOI_TITLE_CONFLICT", "DOI_AUTHOR_CONFLICT", "DOI_YEAR_CONFLICT",
+        )
         val WHITESPACE = Regex("\\s+")
         val INCOMPLETE_RUN_STATUSES = setOf("FAILED", "COMPLETED_WITH_WARNINGS", "COMPLETED")
     }

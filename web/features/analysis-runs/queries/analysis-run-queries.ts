@@ -14,6 +14,7 @@ import type {
   AnalysisRunConfiguration,
   AnalysisRunPage,
   CreatedRun,
+  CitedPaperPdfAccess,
   ParsedDocument,
   ReferenceResolutionReportResponse,
   SourceDocumentPdfAccess,
@@ -280,6 +281,28 @@ export function sourceDocumentPdfAccessQueryOptions(analysisRunId: string) {
     staleTime: Infinity,
     gcTime: 0,
     refetchInterval: false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
+export function citedPaperPdfAccessQueryKey(analysisRunId: string, assetId: string) {
+  return ["analysis-runs", "cited-paper-pdf-access", analysisRunId, assetId] as const;
+}
+
+export function citedPaperPdfAccessQueryOptions(analysisRunId: string, assetId: string) {
+  return queryOptions({
+    queryKey: citedPaperPdfAccessQueryKey(analysisRunId, assetId),
+    queryFn: async ({ signal }): Promise<CitedPaperPdfAccess> => {
+      const response = await fetch(
+        `/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/cited-paper-assets/${encodeURIComponent(assetId)}/pdf-access`,
+        { cache: "no-store", signal },
+      );
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as CitedPaperPdfAccess;
+    },
+    staleTime: 0,
+    gcTime: 0,
     refetchOnWindowFocus: false,
     retry: false,
   });

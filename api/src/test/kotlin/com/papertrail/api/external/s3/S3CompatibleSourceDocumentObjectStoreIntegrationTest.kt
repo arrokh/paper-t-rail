@@ -134,6 +134,71 @@ class S3CompatibleSourceDocumentObjectStoreIntegrationTest {
     }
 
     @Test
+    fun `configured browser origins can read byte ranges from presigned PDFs`() {
+        val endpoint = System.getenv(STORAGE_TEST_ENDPOINT_ENV)
+            ?: objectStorage?.let { "http://${it.host}:${it.getMappedPort(S3_PORT)}" }
+            ?: error("The external object-storage test endpoint is missing.")
+        val publicEndpoint = System.getenv(STORAGE_TEST_PUBLIC_ENDPOINT_ENV) ?: endpoint
+        val objectKey = "source/document-${System.nanoTime()}/fixture.pdf"
+        val content = FIXTURE_CONTENT.toByteArray(Charsets.UTF_8)
+        val origin = "http://web.test"
+        S3CompatibleSourceDocumentObjectStore(
+            endpoint = endpoint,
+            region = REGION,
+            accessKey = TEST_ACCESS_KEY,
+            secretKey = TEST_SECRET_KEY,
+            publicEndpoint = publicEndpoint,
+            pathStyleAccess = true,
+            bucket = BUCKET,
+        ).use { store ->
+            store.configureBrowserUploadCors(listOf(origin))
+            store.put(objectKey, content)
+            try {
+                val url = store.presignGet(objectKey, "inline; filename=\"paper.pdf\"", EXPIRY_SECONDS)
+                val preflight = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create(url))
+                        .header("Origin", origin)
+                        .header("Access-Control-Request-Method", "GET")
+                        .header("Access-Control-Request-Headers", "range")
+                        .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                        .build(),
+                    HttpResponse.BodyHandlers.ofByteArray(),
+                )
+                assertEquals(200, preflight.statusCode())
+                assertEquals(origin, preflight.headers().firstValue("Access-Control-Allow-Origin").orElse(null))
+                assertTrue(preflight.headers().firstValue("Access-Control-Allow-Methods").orElse("").contains("GET"))
+                assertTrue(preflight.headers().firstValue("Access-Control-Allow-Headers").orElse("").lowercase().contains("range"))
+
+                val rangeResponse = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create(url))
+                        .header("Origin", origin)
+                        .header("Range", "bytes=0-7")
+                        .GET()
+                        .build(),
+                    HttpResponse.BodyHandlers.ofByteArray(),
+                )
+                assertEquals(206, rangeResponse.statusCode())
+                assertArrayEquals(content.copyOfRange(0, 8), rangeResponse.body())
+                assertEquals(origin, rangeResponse.headers().firstValue("Access-Control-Allow-Origin").orElse(null))
+                val exposedHeaders = rangeResponse.headers().firstValue("Access-Control-Expose-Headers").orElse("").lowercase()
+                assertTrue("accept-ranges" in exposedHeaders)
+                assertTrue("content-range" in exposedHeaders)
+
+                val untrustedResponse = HttpClient.newHttpClient().send(
+                    HttpRequest.newBuilder(URI.create(url))
+                        .header("Origin", "http://untrusted.test")
+                        .GET()
+                        .build(),
+                    HttpResponse.BodyHandlers.ofByteArray(),
+                )
+                assertFalse(untrustedResponse.headers().firstValue("Access-Control-Allow-Origin").orElse(null) == "http://untrusted.test")
+            } finally {
+                store.delete(objectKey)
+            }
+        }
+    }
+
+    @Test
     fun `configured object storage supports source document upload download metadata deletion and presigned response overrides`() {
         val endpoint = System.getenv(STORAGE_TEST_ENDPOINT_ENV)
             ?: objectStorage?.let { "http://${it.host}:${it.getMappedPort(S3_PORT)}" }

@@ -51,8 +51,8 @@ const review = {
 const comparison = {
   alignmentPolicy: {
     id: "conservative-source-span-reference-identity",
-    version: "1",
-    description: "Same-content unique spans; changed-content unique exact claim text and DOI identity.",
+    version: "3",
+    description: "Same bytes and parser text: source spans; same bytes with changed parser text: exact claims and compatible identity; changed bytes: exact claims and DOI/Canonical Paper identity.",
   },
   sourceContentDiffers: false,
   sourceDocumentDiffers: false,
@@ -144,6 +144,7 @@ const comparison = {
         paragraphStart: 5,
         paragraphEnd: 5,
         pageNumber: 4,
+        pageNumbers: [4, 5],
         vectorRank: 3,
         lexicalRank: 1,
         fusedRank: 1,
@@ -217,9 +218,34 @@ const comparison = {
 afterEach(() => {
   vi.unstubAllGlobals();
   navigation.replace.mockReset();
+  window.history.replaceState({}, "", "/");
 });
 
 describe("Analysis Run comparison flow", () => {
+  it("clears restored comparison query parameters when the selected pair is edited", async () => {
+    window.history.replaceState({}, "", "/analysis-runs/compare?leftRunId=left-run&rightRunId=right-run");
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.startsWith("/api/v1/analysis-runs?")) {
+        return jsonResponse({ items: [
+          run("left-run", "left.pdf", "a".repeat(64)),
+          run("alt-left-run", "left.pdf", "a".repeat(64)),
+          run("right-run", "right.pdf", "a".repeat(64)),
+        ], nextCursor: null, previousCursor: null });
+      }
+      if (url.startsWith("/api/v1/analysis-runs/comparison?")) return jsonResponse(comparison);
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><AnalysisRunComparisonPage /></QueryClientProvider>);
+    expect(await screen.findByText("Comparison overview")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Left Analysis Run"), { target: { value: "alt-left-run" } });
+
+    expect(navigation.replace).toHaveBeenCalledWith("/analysis-runs/compare", { scroll: false });
+    expect(screen.queryByText("Comparison overview")).toBeNull();
+  });
+
   it("selects two saved runs and displays provenance, machine changes, incomplete processing, and run-scoped Human Reviews", async () => {
     const requestedUrls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
@@ -227,6 +253,7 @@ describe("Analysis Run comparison flow", () => {
       if (url.startsWith("/api/v1/analysis-runs?")) {
         return jsonResponse({ items: [
           run("left-run", "left.pdf", "a".repeat(64)),
+          run("alt-left-run", "left.pdf", "a".repeat(64)),
           run("right-run", "right.pdf", "a".repeat(64)),
         ], nextCursor: null, previousCursor: null });
       }
@@ -239,6 +266,8 @@ describe("Analysis Run comparison flow", () => {
 
     const leftSelect = await screen.findByLabelText("Left Analysis Run");
     const rightSelect = screen.getByLabelText("Right Analysis Run");
+    expect(within(leftSelect).getByRole("option", { name: /left\.pdf.*left-run$/ })).toBeTruthy();
+    expect(within(leftSelect).getByRole("option", { name: /left\.pdf.*alt-left/ })).toBeTruthy();
     fireEvent.change(leftSelect, { target: { value: "left-run" } });
     fireEvent.change(rightSelect, { target: { value: "right-run" } });
     fireEvent.click(screen.getByRole("button", { name: "Compare selected runs" }));
@@ -256,6 +285,9 @@ describe("Analysis Run comparison flow", () => {
     expect(screen.getByText(/Processing is incomplete; no final domain status is shown\./)).toBeTruthy();
     expect(screen.queryByText("INSUFFICIENT EVIDENCE")).toBeNull();
     expect(screen.getByText("A retrieved Evidence Passage.")).toBeTruthy();
+    expect(screen.getByText(/physical PDF pages 4, 5/)).toBeTruthy();
+    expect(screen.getAllByText(/Persisted evidence-conflict flag:/)).toHaveLength(2);
+    expect(screen.getAllByText(/Aggregation policy version:/)).toHaveLength(2);
     expect(screen.getByText("Asset asset-left · SHA-256 " + "c".repeat(64))).toBeTruthy();
     expect(screen.getByText("A reviewer added a note on the left run.")).toBeTruthy();
     expect(screen.getAllByText(/Human Reviews — Left run only/)).toHaveLength(1);

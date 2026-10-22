@@ -32,6 +32,7 @@ class DoclingCitedPaperPdfParser(
     }
 
     override val parserId: String = PARSER_ID
+    private val pageProvenanceMapper = DoclingPageProvenanceMapper()
 
     override fun parse(pdf: ByteArray): ParsedScientificDocument {
         require(pdf.isNotEmpty()) { "A non-empty Cited Paper PDF is required for parsing." }
@@ -70,12 +71,13 @@ class DoclingCitedPaperPdfParser(
         if (!markdown.isTextual || markdown.asText().isBlank()) {
             throw IllegalStateException("Docling returned no Markdown content for the Cited Paper PDF.")
         }
-        return parseMarkdown(markdown.asText()).copy(
-            bibliographicMetadataCandidates = parseBibliographicMetadataCandidates(
-                response.path("document").path("json_content"),
-            ),
+        val parsed = parseMarkdown(markdown.asText())
+        val jsonContent = response.path("document").path("json_content")
+        return parsed.copy(
+            bibliographicMetadataCandidates = parseBibliographicMetadataCandidates(jsonContent),
             bibliographicMetadataExtractionPolicyVersion = METADATA_EXTRACTION_POLICY_VERSION,
             bibliographicMetadataExtractionOptions = BIBLIOGRAPHIC_METADATA_EXTRACTION_OPTIONS,
+            pageSpans = pageProvenanceMapper.map(parsed.normalizedSourceText, jsonContent),
         )
     }
 

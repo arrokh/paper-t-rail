@@ -104,7 +104,7 @@ class EvidenceRetrievalService(
                 "Cited Paper parser identity does not match the Analysis Run's pinned parser."
             }
         }
-        val chunk = { chunker.chunk(parsed.sections) }
+        val chunk = { chunker.chunk(parsed) }
         val chunks = executionService?.record(
             analysisRunId,
             ExecutionSpanSpec("evidence", "TRANSFORMATION", "Chunk cited-paper sections"),

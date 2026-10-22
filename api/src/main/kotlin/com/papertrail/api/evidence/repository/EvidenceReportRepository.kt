@@ -1,5 +1,6 @@
 package com.papertrail.api.evidence.repository
 
+import com.papertrail.api.utils.JsonUtil
 import com.papertrail.api.evidence.report.EvidenceIndexingReport
 import com.papertrail.api.evidence.report.EvidenceJudgementReport
 import com.papertrail.api.evidence.report.EvidencePassageReport
@@ -74,6 +75,13 @@ class EvidenceReportRepository(
                chunk.paragraph_start,
                chunk.paragraph_end,
                chunk.page_number,
+               COALESCE((
+                   SELECT json_agg(page.page_number ORDER BY page.page_number)::text
+                     FROM paper_chunk_page_numbers page
+                    WHERE page.paper_chunk_id = chunk.id
+                      AND page.analysis_run_id = chunk.analysis_run_id
+                      AND page.bibliography_entry_id = chunk.bibliography_entry_id
+               ), '[]') AS page_numbers,
                candidate.vector_rank,
                candidate.lexical_rank,
                candidate.fused_rank,
@@ -137,6 +145,10 @@ class EvidenceReportRepository(
                 paragraphStart = rs.getInt("paragraph_start"),
                 paragraphEnd = rs.getInt("paragraph_end"),
                 pageNumber = rs.getObject("page_number", Integer::class.java)?.toInt(),
+                pageNumbers = JsonUtil.fromJson(
+                    rs.getString("page_numbers"),
+                    JsonUtil.collectionType(List::class.java, Int::class.javaObjectType),
+                ),
                 vectorRank = rs.getObject("vector_rank", Integer::class.java)?.toInt(),
                 lexicalRank = rs.getObject("lexical_rank", Integer::class.java)?.toInt(),
                 fusedRank = rs.getInt("fused_rank"),

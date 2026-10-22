@@ -89,6 +89,7 @@ export type ClaimReferenceVerificationOutcome = {
     paragraphStart: number;
     paragraphEnd: number;
     pageNumber: number | null;
+    pageNumbers?: number[];
     vectorRank: number | null;
     lexicalRank: number | null;
     fusedRank: number;
@@ -201,6 +202,11 @@ export type SourceDocumentPdfAccess = {
   viewUrl: string;
   downloadUrl: string;
   expiresAt: string;
+};
+
+export type CitedPaperPdfAccess = SourceDocumentPdfAccess & {
+  assetId: string;
+  contentSha256: string;
 };
 
 export type AnalysisRunPage = {
@@ -364,6 +370,7 @@ export type ComparisonPair = {
     paragraphStart: number;
     paragraphEnd: number;
     pageNumber: number | null;
+    pageNumbers: number[];
     vectorRank: number | null;
     lexicalRank: number | null;
     fusedRank: number;

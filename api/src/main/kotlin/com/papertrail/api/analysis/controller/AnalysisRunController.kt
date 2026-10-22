@@ -2,12 +2,14 @@ package com.papertrail.api.analysis.controller
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.papertrail.api.analysis.http.AnalysisRunPage
+import com.papertrail.api.analysis.http.AnalysisRunCitedPaperPdfAccess
 import com.papertrail.api.analysis.http.AnalysisRunSourcePdfAccess
 import com.papertrail.api.analysis.http.AnalysisRunSummary
 import com.papertrail.api.analysis.http.CreatedAnalysisRunResponse
 import com.papertrail.api.analysis.http.RunConfigurationRequest
 import com.papertrail.api.analysis.http.UploadAnalysisRunRequest
 import com.papertrail.api.analysis.service.AnalysisRunService
+import com.papertrail.api.analysis.service.CitedPaperAssetPdfAccessService
 import com.papertrail.api.analysis.http.ParsedDocumentView
 import com.papertrail.api.document.validation.DocumentValidationException
 import com.papertrail.api.http.ApiError
@@ -41,6 +43,7 @@ import java.util.UUID
 @Tag(name = "Analysis Runs", description = "Upload Source Documents and inspect immutable Analysis Runs.")
 class AnalysisRunController(
     private val analysisRunService: AnalysisRunService,
+    private val citedPaperAssetPdfAccessService: CitedPaperAssetPdfAccessService,
 ) {
     @Operation(
         summary = "Upload a PDF and create an Analysis Run",
@@ -171,6 +174,34 @@ class AnalysisRunController(
             .cacheControl(CacheControl.noStore())
             .body(analysisRunService.getSourcePdfAccess(runId))
     }
+
+    @Operation(
+        summary = "Get short-lived access to the exact stored Cited Paper PDF asset",
+        description = "Returns short-lived, read-only URLs for the exact PDF asset identified by this Analysis Run and asset ID. Stored checksum metadata is compared with the recorded asset SHA-256; when that metadata is absent, the stored bytes are hashed before access. URLs are bearer credentials, expire after fifteen minutes, and are never cached by this API.",
+    )
+    @ApiResponses(
+        value = [
+            ApiResponse(
+                responseCode = "200",
+                description = "Short-lived URLs for the exact Cited Paper PDF asset",
+                content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = AnalysisRunCitedPaperPdfAccess::class))],
+                headers = [Header(name = "Cache-Control", description = "Always no-store because the response contains bearer URLs.", schema = Schema(type = "string"))],
+            ),
+            ApiResponse(responseCode = "400", description = "Analysis Run or asset identifier is not a UUID", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "404", description = "Analysis Run, asset, or active source document not found", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "409", description = "Stored Cited Paper bytes do not match the exact asset hash", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+            ApiResponse(responseCode = "503", description = "Stored Cited Paper PDF is temporarily unavailable", content = [Content(mediaType = MediaType.APPLICATION_JSON_VALUE, schema = Schema(implementation = ApiError::class))]),
+        ],
+    )
+    @GetMapping("/analysis-runs/{runId}/cited-paper-assets/{assetId}/pdf-access", produces = [MediaType.APPLICATION_JSON_VALUE])
+    fun getCitedPaperPdfAccess(
+        @Parameter(description = "Analysis Run identifier.", required = true, schema = Schema(type = "string", format = "uuid"))
+        @PathVariable runId: UUID,
+        @Parameter(description = "Exact immutable Cited Paper Asset identifier.", required = true, schema = Schema(type = "string", format = "uuid"))
+        @PathVariable assetId: UUID,
+    ): ResponseEntity<AnalysisRunCitedPaperPdfAccess> = ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(citedPaperAssetPdfAccessService.access(runId, assetId))
 
     @Operation(
         summary = "Get parsed document structure, Atomic Claims, resolution status, and inferred links",

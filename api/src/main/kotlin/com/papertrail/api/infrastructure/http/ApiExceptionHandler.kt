@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.web.bind.MethodArgumentNotValidException
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import org.springframework.web.multipart.support.MissingServletRequestPartException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
@@ -62,6 +63,11 @@ class ApiExceptionHandler {
         }
         return ResponseEntity.status(status).body(ApiError(code, exception.reason ?: "The request could not be completed."))
     }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException::class)
+    fun invalidParameterType(): ResponseEntity<ApiError> = ResponseEntity
+        .badRequest()
+        .body(ApiError("INVALID_REQUEST", "The request contains invalid fields."))
 
     @ExceptionHandler(IllegalArgumentException::class)
     fun badRequest(exception: IllegalArgumentException): ResponseEntity<ApiError> = ResponseEntity

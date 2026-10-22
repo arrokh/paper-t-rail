@@ -24,6 +24,8 @@ import java.util.UUID
 class CitedPaperAccessRepository(
     private val jdbc: JdbcTemplate,
 ) {
+    data class StoredCitedPaperPdfAsset(val objectKey: String, val contentSha256: String)
+
     fun loadRun(analysisRunId: UUID): AccessRunContext? = jdbc.query(
         "SELECT document_id, status, configuration_snapshot::text AS configuration FROM analysis_runs WHERE id = ?",
         { rs, _ ->
@@ -35,6 +37,23 @@ class CitedPaperAccessRepository(
         },
         analysisRunId,
     ).firstOrNull()
+
+    fun storedPdfAsset(analysisRunId: UUID, assetId: UUID): StoredCitedPaperPdfAsset? = jdbc.query(
+        """
+        SELECT access.object_key, access.content_sha256
+          FROM cited_paper_access access
+          JOIN analysis_runs run ON run.id = access.analysis_run_id
+          JOIN source_documents document ON document.id = run.document_id AND document.deleted_at IS NULL
+         WHERE access.analysis_run_id = ? AND access.asset_id = ?
+           AND access.access_status = 'FULL_TEXT_AVAILABLE'
+           AND access.content_media_type = 'application/pdf'
+           AND access.object_key IS NOT NULL AND access.object_key <> ''
+           AND access.content_sha256 ~ '^[0-9a-f]{64}$'
+        """.trimIndent(),
+        { rs, _ -> StoredCitedPaperPdfAsset(rs.getString("object_key"), rs.getString("content_sha256")) },
+        analysisRunId,
+        assetId,
+    ).singleOrNull()
 
     fun accessExists(analysisRunId: UUID, bibliographyEntryId: UUID): Boolean = jdbc.queryForObject(
         "SELECT EXISTS (SELECT 1 FROM cited_paper_access WHERE analysis_run_id = ? AND bibliography_entry_id = ?)",
