@@ -249,7 +249,7 @@ export function ClaimEvidencePassages({
         {outcome.evidencePassages.length > 0 ? (
           <ol className="m-0 list-none space-y-2 p-0" aria-label={`Evidence Passages for Atomic Claim ${outcome.atomicClaimId}`}>
             {outcome.evidencePassages.map((passage: EvidencePassage) => (
-              <EvidencePassageCard key={passage.id} passage={passage} presentation={presentation} />
+              <EvidencePassageCard key={passage.id} analysisRunId={analysisRunId} passage={passage} presentation={presentation} />
             ))}
           </ol>
         ) : (

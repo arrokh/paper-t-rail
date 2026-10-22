@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUpRight, FileText, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, ArrowRight, ArrowUpRight, FileText, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -263,9 +263,18 @@ export function AnalysisRunsTable({
               </Button>
             </div>
           </div>
-          <Button type="button" className="min-h-11 w-full sm:w-auto sm:shrink-0" onClick={onAddRun}>
-            <Plus aria-hidden="true" /> New Analysis Run
-          </Button>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            <PageTransitionLink
+              direction="forward"
+              href="/analysis-runs/compare"
+              className={buttonVariants({ variant: "outline", className: "min-h-11 w-full sm:w-auto" })}
+            >
+              <ArrowLeftRight aria-hidden="true" /> Compare Analysis Runs
+            </PageTransitionLink>
+            <Button type="button" className="min-h-11 w-full sm:w-auto sm:shrink-0" onClick={onAddRun}>
+              <Plus aria-hidden="true" /> New Analysis Run
+            </Button>
+          </div>
         </div>
 
         {listError && (

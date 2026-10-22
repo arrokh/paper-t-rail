@@ -1,5 +1,7 @@
 package com.papertrail.api.evidence.chunking
 
+import com.papertrail.api.citation.parsing.ParsedPageSpan
+import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -32,6 +34,44 @@ class SectionAwareEvidenceChunkerTest {
 
         assertEquals(listOf("alpha beta gamma", "delta epsilon zeta", "eta"), chunks.map { it.text })
         assertEquals(listOf(1 to 1, 1 to 1, 1 to 1), chunks.map { it.paragraphStart to it.paragraphEnd })
+    }
+
+    @Test
+    fun `keeps existing whitespace normalization for oversized passages`() {
+        val section = ParsedSection(0, "Results", "alpha  beta\tgamma delta", 0, 23)
+
+        val chunks = SectionAwareEvidenceChunker(targetWords = 2, maximumWords = 2).chunk(listOf(section))
+
+        assertEquals(listOf("alpha beta", "gamma delta"), chunks.map { it.text })
+    }
+
+    @Test
+    fun `retains every physical page touched by a passage only when provenance covers its text`() {
+        val first = "The finding begins here."
+        val second = "The finding continues there."
+        val source = "$first\n$second"
+        val section = ParsedSection(0, "Results", source, 0, source.length)
+        val document = ParsedScientificDocument(
+            parserId = "docling",
+            parserVersion = "1.30.0",
+            normalizedSourceText = source,
+            sections = listOf(section),
+            citationContexts = emptyList(),
+            bibliographyEntries = emptyList(),
+            pageSpans = listOf(
+                ParsedPageSpan(0, first.length, 2),
+                ParsedPageSpan(first.length + 1, source.length, 3),
+            ),
+        )
+
+        val chunks = SectionAwareEvidenceChunker(targetWords = 50, maximumWords = 100).chunk(document)
+
+        assertEquals(listOf("$first\n$second"), chunks.map { it.text })
+        assertEquals(listOf(listOf(2, 3)), chunks.map { it.pageNumbers })
+
+        val incompleteDocument = document.copy(pageSpans = listOf(ParsedPageSpan(0, 3, 2)))
+        val incompleteChunks = SectionAwareEvidenceChunker(targetWords = 50, maximumWords = 100).chunk(incompleteDocument)
+        assertEquals(listOf(emptyList()), incompleteChunks.map { it.pageNumbers })
     }
 
     private data class ExpectedChunk(

@@ -3148,6 +3148,8 @@ Do not build a sophisticated experiment framework initially.
 
 The immutable Analysis Run model is sufficient.
 
+The user-facing, read-only Analysis Run comparison is implemented as a conservative versioned inventory of persisted claim-to-reference changes and provenance. It keeps Human Reviews under their original runs and does not mutate, rerun, or send either run to a provider. It is not a provider benchmark and does not calculate quality, accuracy, or calibration metrics.
+
 ---
 
 # 48. Comparison Metrics
@@ -3787,7 +3789,7 @@ human reviews
 
 When an implemented external provider is configured, disclose known or unknown data-retention/deletion terms and require per-run consent for its declared payload categories; do not require terms verification or an approval rubric as an enablement gate.
 
-The first implemented model-provider extension is the Pipeline 01 OpenAI-compatible document-level claim analyzer described in the [implementation plan](./openai-compatible-provider-plan.md); it is not a Stage 05 implementation. Local defaults select `google/gemma-4-e2b` with a 131072-token context window, and heuristic remains explicitly selectable. A configured external endpoint may be offered once its technical boundary/payload are classified; disclose known or unknown retention and require exact per-run consent, including before availability preflight. Hosted Jev is now an implemented external System One alternative and remains an explicit per-run choice. Future work includes OpenAI-compatible adapters for other domain roles, Google embeddings, and user-facing Analysis Run comparison/metrics; each needs its own port contract, payload mapping, provenance, and tests.
+The first implemented model-provider extension is the Pipeline 01 OpenAI-compatible document-level claim analyzer described in the [implementation plan](./openai-compatible-provider-plan.md); it is not a Stage 05 implementation. Local defaults select `google/gemma-4-e2b` with a 131072-token context window, and heuristic remains explicitly selectable. A configured external endpoint may be offered once its technical boundary/payload are classified; disclose known or unknown retention and require exact per-run consent, including before availability preflight. Hosted Jev is now an implemented external System One alternative and remains an explicit per-run choice. The read-only Analysis Run comparison is implemented as a versioned change inventory over persisted results; it does not calculate provider benchmarks, accuracy, calibration, or quality metrics. Future work includes OpenAI-compatible adapters for other domain roles, Google embeddings, and any measured evaluation metrics; each needs its own port contract, payload mapping, provenance, and tests.
 
 ---
 

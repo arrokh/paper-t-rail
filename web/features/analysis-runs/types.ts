@@ -89,6 +89,7 @@ export type ClaimReferenceVerificationOutcome = {
     paragraphStart: number;
     paragraphEnd: number;
     pageNumber: number | null;
+    pageNumbers?: number[];
     vectorRank: number | null;
     lexicalRank: number | null;
     fusedRank: number;
@@ -203,6 +204,11 @@ export type SourceDocumentPdfAccess = {
   expiresAt: string;
 };
 
+export type CitedPaperPdfAccess = SourceDocumentPdfAccess & {
+  assetId: string;
+  contentSha256: string;
+};
+
 export type AnalysisRunPage = {
   items: AnalysisRun[];
   nextCursor: string | null;
@@ -276,6 +282,115 @@ export type ParsedDocument = {
     provenanceCaptureStatus: "CAPTURED" | "UNAVAILABLE";
   }>;
   bibliographyNormalizationPolicy: { policyId: string; version: string } | null;
+};
+
+export type AnalysisRunComparison = {
+  alignmentPolicy: { id: string; version: string; description: string };
+  sourceContentDiffers: boolean;
+  sourceDocumentDiffers: boolean;
+  analysisConfigurationDiffers: boolean;
+  leftRun: ComparisonRun;
+  rightRun: ComparisonRun;
+  counts: {
+    unchanged: number;
+    changed: number;
+    added: number;
+    removed: number;
+    unmatched: number;
+    outcomeChanges: number;
+  };
+  items: ComparisonItem[];
+  disclaimer: string;
+};
+
+export type ComparisonRun = {
+  analysisRunId: string;
+  sourceDocumentId: string;
+  filename: string;
+  sourceContentSha256: string;
+  status: AnalysisRun["status"];
+  createdAt: string;
+  startedAt: string | null;
+  failureReason: string | null;
+  pipeline: AnalysisRun["pipeline"];
+  referenceResolutionExecutionStatus: string;
+  evidenceCoverageExecutionStatus: string;
+  configuration: AnalysisRun["configuration"];
+};
+
+export type ComparisonItem = {
+  changeKind: "UNCHANGED" | "CHANGED" | "ADDED" | "REMOVED" | "UNMATCHED";
+  alignmentStatus: "ALIGNED" | "UNPAIRED" | "UNMATCHED";
+  unmatchedReason: string | null;
+  changedFields: string[];
+  outcomeChanged: boolean;
+  left: ComparisonPair | null;
+  right: ComparisonPair | null;
+};
+
+export type ComparisonPair = {
+  atomicClaimId: string;
+  claimText: string;
+  sourceStartOffset: number;
+  sourceEndOffset: number;
+  citationContextText: string;
+  citationTargets: Array<{ markerText: string; associationKind: string }>;
+  reference: {
+    localReferenceKey: string;
+    title: string | null;
+    rawText: string;
+    authors: string[];
+    year: number | null;
+    doi: string | null;
+    referenceType: string;
+    resolutionStatus: string;
+    resolutionReasonCode: string | null;
+    matchMethod: string | null;
+    canonicalPaper: { id: string; doi: string | null; title: string; authors: string[]; year: number | null } | null;
+  };
+  citedPaperAccess: {
+    accessStatus: string;
+    accessOrigin: string;
+    accessReason: string | null;
+    accessReasons: string[];
+    accessProgressStatus: string | null;
+    accessProgressReason: string | null;
+    indexingStatus: string | null;
+    sourceAssetId: string | null;
+    contentSha256: string | null;
+    parserProvider: string | null;
+    parserVersion: string | null;
+    language: string | null;
+    languageDetectorVersion: string | null;
+  } | null;
+  evidencePassages: Array<{
+    text: string;
+    sectionOrder: number;
+    sectionHeading: string | null;
+    paragraphStart: number;
+    paragraphEnd: number;
+    pageNumber: number | null;
+    pageNumbers: number[];
+    vectorRank: number | null;
+    lexicalRank: number | null;
+    fusedRank: number;
+    sourceAssetId: string;
+    contentSha256: string;
+    parserProvider: string;
+    parserVersion: string;
+    language: string;
+    languageDetectorVersion: string;
+    judgement: string | null;
+    evidenceRole: string | null;
+  }>;
+  processingStatus: "PENDING" | "COMPLETED" | "INCOMPLETE";
+  processingFailureReason: string | null;
+  finalStatus: string | null;
+  verificationScope: string | null;
+  terminalReason: string | null;
+  evidenceConflict: boolean | null;
+  aggregatorVersion: string | null;
+  humanReviews: HumanReview[];
 };
 
 export type EvidenceCoverageSummary = {

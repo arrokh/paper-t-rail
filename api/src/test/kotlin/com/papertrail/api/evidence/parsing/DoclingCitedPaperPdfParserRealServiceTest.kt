@@ -46,6 +46,22 @@ class DoclingCitedPaperPdfParserRealServiceTest {
         assertTrue(candidates.all { it.pageNumber == 1 })
         assertTrue(candidates.all { it.sourceElementId != null && it.sourceCharSpanStart != null && it.sourceCharSpanEnd != null })
         assertFalse(candidates.any { it.value.contains("papertrail.unrelated.reference") })
+        val bodyText = "Synthetic body text for a local Docling contract test."
+        val bodyStart = parsed.normalizedSourceText.indexOf(bodyText)
+        assertTrue(bodyStart >= 0, "The synthetic body text was not present in normalized parser output.")
+        assertTrue(
+            parsed.pageSpans.any { it.pageNumber == 1 && it.startOffset <= bodyStart && it.endOffset >= bodyStart + bodyText.length },
+            "Pinned Docling page provenance did not map the known first-page body text.",
+        )
+        val secondPageText = "Unrelated cited work DOI: 10.5555/papertrail.unrelated.reference.2024"
+        val secondPageStart = parsed.normalizedSourceText.indexOf(secondPageText)
+        assertTrue(secondPageStart >= 0, "The synthetic second-page text was not present in normalized parser output.")
+        assertTrue(
+            parsed.pageSpans.any {
+                it.pageNumber == 2 && it.startOffset <= secondPageStart && it.endOffset >= secondPageStart + secondPageText.length
+            },
+            "Pinned Docling page provenance did not map the known second-page body text to physical PDF page 2.",
+        )
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataCandidate
 import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataExtractionMethod
 import com.papertrail.api.citation.parsing.ParsedBibliographicMetadataField
+import com.papertrail.api.citation.parsing.ParsedPageSpan
 import com.papertrail.api.external.docling.DoclingCitedPaperPdfParser
 import org.hamcrest.Matchers.containsString
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -313,6 +314,125 @@ class DoclingCitedPaperPdfParserContractTest {
         val parsed = parser.parse("pdf-bytes".toByteArray())
 
         assertEquals(emptyList<ParsedBibliographicMetadataCandidate>(), parsed.bibliographicMetadataCandidates)
+        server.verify()
+    }
+
+    @Test
+    fun `maps unique Docling text items to physical PDF page indices`() {
+        val firstPageText = "The first page reports a measured improvement."
+        val secondPageText = "The next page reports that the effect persisted."
+        val sourceText = "$firstPageText\n$secondPageText"
+        val builder = RestClient.builder().baseUrl("http://docling.test")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("http://docling.test/v1/convert/file"))
+            .andRespond(
+                withSuccess(
+                    """{"status":"success","document":{"md_content":"# Study\n\n$firstPageText\n\n$secondPageText","json_content":{"texts":[{"label":"text","text":"$firstPageText","prov":[{"page_no":1}]},{"label":"text","text":"$secondPageText","prov":[{"page_no":2}]}]}}}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+        val parser = DoclingCitedPaperPdfParser(
+            client = builder.build(),
+            parserVersion = "1.30.0",
+            maximumResponseBytes = 64 * 1024,
+            maximumCharacters = 5_000,
+        )
+
+        val parsed = parser.parse("pdf-bytes".toByteArray())
+
+        assertEquals(sourceText, parsed.normalizedSourceText)
+        assertEquals(
+            listOf(
+                ParsedPageSpan(0, firstPageText.length, 1),
+                ParsedPageSpan(firstPageText.length + 1, sourceText.length, 2),
+            ),
+            parsed.pageSpans,
+        )
+        server.verify()
+    }
+
+    @Test
+    fun `maps a multi-page Docling text item using Unicode code-point charspans`() {
+        val bodyText = "A measurable effect 😀 persisted across the clinical review."
+        val pageTwoStartCodePoint = bodyText.codePointCount(0, bodyText.indexOf("persisted"))
+        val pageTwoStartOffset = bodyText.offsetByCodePoints(0, pageTwoStartCodePoint)
+        val codePointCount = bodyText.codePointCount(0, bodyText.length)
+        val builder = RestClient.builder().baseUrl("http://docling.test")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("http://docling.test/v1/convert/file"))
+            .andRespond(
+                withSuccess(
+                    """{"status":"success","document":{"md_content":"# Study\n\n$bodyText","json_content":{"texts":[{"label":"text","text":"$bodyText","prov":[{"page_no":1,"charspan":[0,$pageTwoStartCodePoint]},{"page_no":2,"charspan":[$pageTwoStartCodePoint,$codePointCount]}]}]}}}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+        val parser = DoclingCitedPaperPdfParser(
+            client = builder.build(),
+            parserVersion = "1.30.0",
+            maximumResponseBytes = 64 * 1024,
+            maximumCharacters = 5_000,
+        )
+
+        val parsed = parser.parse("pdf-bytes".toByteArray())
+
+        assertEquals(bodyText, parsed.normalizedSourceText)
+        assertEquals(
+            listOf(
+                ParsedPageSpan(0, pageTwoStartOffset, 1),
+                ParsedPageSpan(pageTwoStartOffset, bodyText.length, 2),
+            ),
+            parsed.pageSpans,
+        )
+        server.verify()
+    }
+
+    @Test
+    fun `leaves missing and ambiguous Docling page mappings unavailable`() {
+        val repeatedText = "This repeated paragraph has no unique location."
+        val missingPageText = "This paragraph has no parser provenance."
+        val builder = RestClient.builder().baseUrl("http://docling.test")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("http://docling.test/v1/convert/file"))
+            .andRespond(
+                withSuccess(
+                    """{"status":"success","document":{"md_content":"# Study\n\n$repeatedText\n\n$repeatedText\n\n$missingPageText","json_content":{"texts":[{"label":"text","text":"$repeatedText","prov":[{"page_no":4}]},{"label":"text","text":"$missingPageText","prov":[]}]}}}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+        val parser = DoclingCitedPaperPdfParser(
+            client = builder.build(),
+            parserVersion = "1.30.0",
+            maximumResponseBytes = 64 * 1024,
+            maximumCharacters = 5_000,
+        )
+
+        val parsed = parser.parse("pdf-bytes".toByteArray())
+
+        assertEquals(emptyList<ParsedPageSpan>(), parsed.pageSpans)
+        server.verify()
+    }
+
+    @Test
+    fun `does not map a short title item to a coincidental body-text occurrence`() {
+        val builder = RestClient.builder().baseUrl("http://docling.test")
+        val server = MockRestServiceServer.bindTo(builder).build()
+        server.expect(requestTo("http://docling.test/v1/convert/file"))
+            .andRespond(
+                withSuccess(
+                    """{"status":"success","document":{"md_content":"# Study\n\nA Study showed a substantial change in the measured outcome.","json_content":{"texts":[{"label":"title","text":"Study","prov":[{"page_no":1}]}]}}}""",
+                    MediaType.APPLICATION_JSON,
+                ),
+            )
+        val parser = DoclingCitedPaperPdfParser(
+            client = builder.build(),
+            parserVersion = "1.30.0",
+            maximumResponseBytes = 64 * 1024,
+            maximumCharacters = 5_000,
+        )
+
+        val parsed = parser.parse("pdf-bytes".toByteArray())
+
+        assertEquals(emptyList<ParsedPageSpan>(), parsed.pageSpans)
         server.verify()
     }
 

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
+  ANALYSIS_RUN_COMPARISON_QUERY_KEY,
   RECENT_ANALYSIS_RUNS_QUERY_KEY,
+  analysisRunComparisonQueryKey,
+  analysisRunComparisonQueryOptions,
   deleteSourceDocumentMutationOptions,
   executionArtifactQueryKey,
   executionArtifactQueryOptions,
@@ -11,6 +14,8 @@ import {
   referenceResolutionReportQueryOptions,
   sourceDocumentPdfAccessQueryKey,
   sourceDocumentPdfAccessQueryOptions,
+  citedPaperPdfAccessQueryKey,
+  citedPaperPdfAccessQueryOptions,
   recordHumanReviewMutationOptions,
   uploadAnalysisRunMutationOptions,
 } from "../features/analysis-runs/queries/analysis-run-queries.ts";
@@ -23,6 +28,26 @@ import { recoveryBatchQueryKey } from "../features/recovery-uploads/queries/reco
 function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
+
+test("comparison query reads only the selected run IDs through the same-origin API proxy", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  globalThis.fetch = async (url) => {
+    requestedUrl = String(url);
+    return jsonResponse({ alignmentPolicy: { id: "conservative", version: "1" }, items: [] });
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const comparison = await client.fetchQuery(analysisRunComparisonQueryOptions("left run", "right/run"));
+
+  assert.equal(requestedUrl, "/api/v1/analysis-runs/comparison?leftRunId=left+run&rightRunId=right%2Frun");
+  assert.deepEqual(client.getQueryData(analysisRunComparisonQueryKey("left run", "right/run")), comparison);
+  assert.deepEqual(analysisRunComparisonQueryKey("left", "right").slice(0, 2), ANALYSIS_RUN_COMPARISON_QUERY_KEY);
+});
 
 test("provider-directory query exposes loading, successful data, and the safe API error message", async (context) => {
   const client = new QueryClient();
@@ -282,6 +307,41 @@ test("source PDF access query loads short-lived view and download URLs and repor
     client.fetchQuery({ ...sourceDocumentPdfAccessQueryOptions("run-2"), retry: false }),
     { message: "The stored Source Document is temporarily unavailable." },
   );
+});
+
+test("cited-paper PDF access is scoped to the exact run and asset and is not retained", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  const assetId = "asset/one";
+  const access = {
+    assetId,
+    contentSha256: "a".repeat(64),
+    filename: "cited-paper.pdf",
+    viewUrl: "https://objects.test/signed-view",
+    downloadUrl: "https://objects.test/signed-download",
+    expiresAt: "2026-10-01T00:15:00Z",
+  };
+  let request;
+  globalThis.fetch = async (url, options) => {
+    request = { url, options };
+    return new Response(JSON.stringify(access), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const options = citedPaperPdfAccessQueryOptions("run/one", assetId);
+  const result = await client.fetchQuery(options);
+
+  assert.equal(request.url, "/api/v1/analysis-runs/run%2Fone/cited-paper-assets/asset%2Fone/pdf-access");
+  assert.equal(request.options.cache, "no-store");
+  assert.deepEqual(result, access);
+  assert.deepEqual(options.queryKey, citedPaperPdfAccessQueryKey("run/one", assetId));
+  assert.equal(options.staleTime, 0);
+  assert.equal(options.gcTime, 0);
+  assert.equal(options.refetchOnWindowFocus, false);
+  assert.equal(options.retry, false);
 });
 
 test("artifact reads request the selected run-span-role association", async (context) => {

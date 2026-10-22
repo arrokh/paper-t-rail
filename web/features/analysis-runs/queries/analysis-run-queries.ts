@@ -10,9 +10,11 @@ import {
 import { readApiError } from "../../../lib/read-api-error.ts";
 import type {
   AnalysisRun,
+  AnalysisRunComparison,
   AnalysisRunConfiguration,
   AnalysisRunPage,
   CreatedRun,
+  CitedPaperPdfAccess,
   ParsedDocument,
   ReferenceResolutionReportResponse,
   SourceDocumentPdfAccess,
@@ -38,6 +40,7 @@ export const REANALYZE_ANALYSIS_RUN_MUTATION_KEY = ["analysis-runs", "reanalyze"
 export const DELETE_SOURCE_DOCUMENT_MUTATION_KEY = ["analysis-runs", "delete-document"] as const;
 export const HUMAN_REVIEW_MUTATION_KEY = ["analysis-runs", "human-review"] as const;
 export const EXECUTION_QUERY_KEY = ["analysis-runs", "execution"] as const;
+export const ANALYSIS_RUN_COMPARISON_QUERY_KEY = ["analysis-runs", "comparison"] as const;
 
 function isTerminalRunStatus(status: string): boolean {
   return status === "PARSED"
@@ -192,6 +195,10 @@ export function deleteSourceDocumentMutationOptions(queryClient: QueryClient) {
         queryClient.removeQueries({ queryKey: recoveryBatchQueryKey(runId), exact: true });
         queryClient.removeQueries({ queryKey: [...EXECUTION_QUERY_KEY, runId] });
       });
+      queryClient.removeQueries({
+        queryKey: ANALYSIS_RUN_COMPARISON_QUERY_KEY,
+        predicate: (query) => deletedRunIds.some((runId) => query.queryKey.includes(runId)),
+      });
       await refreshRecentAnalysisRuns(queryClient);
     },
   });
@@ -231,6 +238,31 @@ export function referenceResolutionReportQueryKey(analysisRunId: string) {
   return ["analysis-runs", "report", analysisRunId] as const;
 }
 
+export function analysisRunComparisonQueryKey(leftRunId: string, rightRunId: string) {
+  return [...ANALYSIS_RUN_COMPARISON_QUERY_KEY, leftRunId, rightRunId] as const;
+}
+
+export function analysisRunComparisonQueryOptions(leftRunId: string, rightRunId: string) {
+  return queryOptions({
+    queryKey: analysisRunComparisonQueryKey(leftRunId, rightRunId),
+    queryFn: async ({ signal }): Promise<AnalysisRunComparison> => {
+      const params = new URLSearchParams({ leftRunId, rightRunId });
+      const response = await fetch(`/api/v1/analysis-runs/comparison?${params.toString()}`, {
+        cache: "no-store",
+        signal,
+      });
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as AnalysisRunComparison;
+    },
+    enabled: Boolean(leftRunId && rightRunId),
+    retry: false,
+  });
+}
+
+export function useAnalysisRunComparison(leftRunId: string | null, rightRunId: string | null) {
+  return useQuery(analysisRunComparisonQueryOptions(leftRunId ?? "", rightRunId ?? ""));
+}
+
 export function sourceDocumentPdfAccessQueryKey(analysisRunId: string) {
   return ["analysis-runs", "source-pdf-access", analysisRunId] as const;
 }
@@ -249,6 +281,28 @@ export function sourceDocumentPdfAccessQueryOptions(analysisRunId: string) {
     staleTime: Infinity,
     gcTime: 0,
     refetchInterval: false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
+export function citedPaperPdfAccessQueryKey(analysisRunId: string, assetId: string) {
+  return ["analysis-runs", "cited-paper-pdf-access", analysisRunId, assetId] as const;
+}
+
+export function citedPaperPdfAccessQueryOptions(analysisRunId: string, assetId: string) {
+  return queryOptions({
+    queryKey: citedPaperPdfAccessQueryKey(analysisRunId, assetId),
+    queryFn: async ({ signal }): Promise<CitedPaperPdfAccess> => {
+      const response = await fetch(
+        `/api/v1/analysis-runs/${encodeURIComponent(analysisRunId)}/cited-paper-assets/${encodeURIComponent(assetId)}/pdf-access`,
+        { cache: "no-store", signal },
+      );
+      if (!response.ok) throw new Error(await readApiError(response));
+      return (await response.json()) as CitedPaperPdfAccess;
+    },
+    staleTime: 0,
+    gcTime: 0,
     refetchOnWindowFocus: false,
     retry: false,
   });
@@ -298,10 +352,16 @@ export function recordHumanReviewMutationOptions(queryClient: QueryClient, analy
       if (!response.ok) throw new Error(await readApiError(response));
       return (await response.json()) as HumanReview;
     },
-    onSuccess: () => queryClient.invalidateQueries({
-      queryKey: referenceResolutionReportQueryKey(analysisRunId),
-      refetchType: "active",
-    }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: referenceResolutionReportQueryKey(analysisRunId),
+        refetchType: "active",
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ANALYSIS_RUN_COMPARISON_QUERY_KEY,
+        refetchType: "active",
+      });
+    },
   });
 }
 

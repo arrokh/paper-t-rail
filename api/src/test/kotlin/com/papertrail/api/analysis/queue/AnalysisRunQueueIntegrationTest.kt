@@ -33,6 +33,7 @@ import com.papertrail.api.analysis.events.DOCUMENT_ANALYSIS_REQUESTED
 import com.papertrail.api.analysis.events.DocumentAnalysisRequestedPayload
 import com.papertrail.api.analysis.service.AnalysisRunProcessingService
 import com.papertrail.api.analysis.service.AnalysisRunService
+import com.papertrail.api.analysis.service.CitedPaperAssetPdfAccessService
 import com.papertrail.api.analysis.service.AnalysisRunStageCompletionService
 import com.papertrail.api.citation.claims.domain.AnalyzedAtomicClaim
 import com.papertrail.api.citation.claims.domain.AtomicClaimCandidate
@@ -179,6 +180,7 @@ import com.papertrail.api.citation.parsing.ParsedBibliographySourceLocation
 import com.papertrail.api.citation.parsing.ParsedCitationContext
 import com.papertrail.api.citation.parsing.ParsedCitationOccurrence
 import com.papertrail.api.citation.repository.ParsedDocumentRepository
+import com.papertrail.api.citation.parsing.ParsedPageSpan
 import com.papertrail.api.citation.parsing.ParsedScientificDocument
 import com.papertrail.api.citation.parsing.ParsedSection
 import com.papertrail.api.citation.parsing.ScientificDocumentParser
@@ -1656,8 +1658,12 @@ class AnalysisRunQueueIntegrationTest {
         )
         val retainedChunkId = UUID.randomUUID()
         jdbc.update(
-            "INSERT INTO paper_chunks (id, cited_paper_parse_id, analysis_run_id, bibliography_entry_id, chunk_order, section_order, section_heading, paragraph_start, paragraph_end, text) VALUES (?, ?, ?, ?, 0, 0, 'Results', 1, 1, 'The unaffected paper reports this result.')",
+            "INSERT INTO paper_chunks (id, cited_paper_parse_id, analysis_run_id, bibliography_entry_id, chunk_order, section_order, section_heading, paragraph_start, paragraph_end, page_number, text) VALUES (?, ?, ?, ?, 0, 0, 'Results', 1, 1, 4, 'The unaffected paper reports this result.')",
             retainedChunkId, retainedParseId, run.analysisRunId, retainedEntryId,
+        )
+        jdbc.update(
+            "INSERT INTO paper_chunk_page_numbers (paper_chunk_id, analysis_run_id, bibliography_entry_id, page_number) VALUES (?, ?, ?, 4)",
+            retainedChunkId, run.analysisRunId, retainedEntryId,
         )
         val retainedProfileHash = "c".repeat(64)
         jdbc.update(
@@ -2115,6 +2121,15 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM cited_paper_indexing indexing JOIN bibliography_entries entry ON entry.analysis_run_id = indexing.analysis_run_id AND entry.id = indexing.bibliography_entry_id WHERE indexing.analysis_run_id = ? AND entry.local_reference_key = 'b2' AND indexing.status = 'COMPLETED'", Int::class.java, successorRunId))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM cited_paper_parses WHERE analysis_run_id = ? AND bibliography_entry_id = ?", Int::class.java, successorRunId, retainedSuccessorEntryId))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM paper_chunks WHERE analysis_run_id = ? AND bibliography_entry_id = ?", Int::class.java, successorRunId, retainedSuccessorEntryId))
+        assertEquals(
+            1,
+            jdbc.queryForObject(
+                "SELECT count(*) FROM paper_chunk_page_numbers WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND page_number = 4",
+                Int::class.java,
+                successorRunId,
+                retainedSuccessorEntryId,
+            ),
+        )
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM paper_chunk_embeddings WHERE analysis_run_id = ? AND bibliography_entry_id = ?", Int::class.java, successorRunId, retainedSuccessorEntryId))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM evidence_candidates WHERE analysis_run_id = ? AND bibliography_entry_id = ? AND verification_id = ? AND paper_chunk_id IN (SELECT id FROM paper_chunks WHERE analysis_run_id = ?)", Int::class.java, successorRunId, retainedSuccessorEntryId, retainedSuccessorVerificationId, successorRunId))
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM evidence_judgements judgement JOIN evidence_candidates candidate ON candidate.id = judgement.evidence_candidate_id WHERE judgement.analysis_run_id = ? AND judgement.bibliography_entry_id = ? AND judgement.verification_id = ?", Int::class.java, successorRunId, retainedSuccessorEntryId, retainedSuccessorVerificationId))
@@ -2141,6 +2156,7 @@ class AnalysisRunQueueIntegrationTest {
 
         val retainedResolutionReport = analysisRunReportService().report(successorRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "b2" }
+        assertEquals(listOf(4), retainedResolutionReport.verificationOutcomes.single().evidencePassages.single().pageNumbers)
         val terminalOnlyResolutionReport = analysisRunReportService().report(successorRunId)!!.referenceResolution.entries
             .single { it.localReferenceKey == "b3" }
         val terminalOnlySuccessorEntryId = jdbc.queryForObject(
@@ -6395,6 +6411,7 @@ class AnalysisRunQueueIntegrationTest {
             "fixture://cited/alpha" to "The first intervention improves response in the alpha cohort. Alpha-only marker: 4c2a.",
             "fixture://cited/beta" to "The second reagent increases yield in the beta cohort. Beta-only marker: 9d7f.",
         )
+        val paperPdfs = paperTexts.mapValues { (_, text) -> englishPdf(text) }
         val openAccessFactory = object : OpenAccessProviderFactory {
             override val providerId = "recorded-fixtures"
             override fun forRun(configuration: AnalysisConfigurationSnapshot) = object : OpenAccessProvider {
@@ -6405,15 +6422,19 @@ class AnalysisRunQueueIntegrationTest {
                 }
 
                 override fun fetch(location: OpenAccessLocation) = AcquiredFullText(
-                    bytes = requireNotNull(paperTexts[location.url]).toByteArray(Charsets.UTF_8),
-                    mediaType = "text/plain",
+                    bytes = requireNotNull(paperPdfs[location.url]),
+                    mediaType = "application/pdf",
                     location = location,
                 )
             }
         }
         val citedPaperParser = object : CitedPaperParser {
             override fun parse(content: ByteArray, mediaType: String, parserSelection: ProviderSelection): ParsedScientificDocument {
-                val text = content.toString(Charsets.UTF_8)
+                val text = when {
+                    content.contentEquals(paperPdfs.getValue("fixture://cited/alpha")) -> paperTexts.getValue("fixture://cited/alpha")
+                    content.contentEquals(paperPdfs.getValue("fixture://cited/beta")) -> paperTexts.getValue("fixture://cited/beta")
+                    else -> error("The fixture parser received an unexpected Cited Paper asset.")
+                }
                 return ParsedScientificDocument(
                     parserId = "fixture-cited-paper-parser",
                     parserVersion = "v7",
@@ -6421,6 +6442,7 @@ class AnalysisRunQueueIntegrationTest {
                     sections = listOf(ParsedSection(0, "Results", text, 0, text.length)),
                     citationContexts = emptyList(),
                     bibliographyEntries = emptyList(),
+                    pageSpans = listOf(ParsedPageSpan(0, text.length, 1)),
                 )
             }
         }
@@ -6454,8 +6476,22 @@ class AnalysisRunQueueIntegrationTest {
         assertFalse(betaPassage.text.contains("Alpha-only marker: 4c2a"))
         assertEquals(alpha.citedPaperAccess?.evidenceIndexing?.assetId, alphaPassage.sourceAssetId)
         assertEquals(beta.citedPaperAccess?.evidenceIndexing?.assetId, betaPassage.sourceAssetId)
-        assertEquals(expectedSha256(paperTexts.getValue("fixture://cited/alpha").toByteArray(Charsets.UTF_8)), alphaPassage.contentSha256)
-        assertEquals(expectedSha256(paperTexts.getValue("fixture://cited/beta").toByteArray(Charsets.UTF_8)), betaPassage.contentSha256)
+        assertEquals(expectedSha256(paperPdfs.getValue("fixture://cited/alpha")), alphaPassage.contentSha256)
+        assertEquals(expectedSha256(paperPdfs.getValue("fixture://cited/beta")), betaPassage.contentSha256)
+        val alphaObjectKey = requireNotNull(
+            jdbc.queryForObject(
+                "SELECT object_key FROM cited_paper_access WHERE analysis_run_id = ? AND asset_id = ?",
+                String::class.java,
+                created.analysisRunId,
+                alphaPassage.sourceAssetId,
+            ),
+        )
+        val alphaPdfAccess = CitedPaperAssetPdfAccessService(CitedPaperAccessRepository(jdbc), objectStore)
+            .access(created.analysisRunId, alphaPassage.sourceAssetId)
+        assertEquals(alphaPassage.sourceAssetId, alphaPdfAccess.assetId)
+        assertEquals(alphaPassage.contentSha256, alphaPdfAccess.contentSha256)
+        assertTrue(alphaPdfAccess.viewUrl.contains(alphaObjectKey))
+        assertTrue(alphaPdfAccess.downloadUrl.contains(alphaObjectKey))
         assertEquals("fixture-cited-paper-parser", alphaPassage.parserProvider)
         assertEquals("v7", betaPassage.parserVersion)
         assertEquals("en", alphaPassage.language)
@@ -6467,6 +6503,15 @@ class AnalysisRunQueueIntegrationTest {
         assertEquals(1, alphaPassage.vectorRank)
         assertEquals(1, alphaPassage.lexicalRank)
         assertEquals(1, alphaPassage.fusedRank)
+        assertEquals(listOf(1), alphaPassage.pageNumbers)
+        assertEquals(listOf(1), betaPassage.pageNumbers)
+        assertTrue(
+            (jdbc.queryForObject(
+                "SELECT count(*) FROM paper_chunk_page_numbers WHERE analysis_run_id = ? AND page_number = 1",
+                Long::class.java,
+                created.analysisRunId,
+            ) ?: 0L) > 0L,
+        )
         assertEquals(1, betaPassage.vectorRank)
         assertEquals(1, betaPassage.lexicalRank)
         assertEquals(1, betaPassage.fusedRank)
@@ -8707,7 +8752,7 @@ class AnalysisRunQueueIntegrationTest {
             jdbc = JdbcTemplate(dataSource)
             val migrationDirectory = listOf(Path.of("db/deploy"), Path.of("api/db/deploy"))
                 .firstOrNull(Files::isDirectory) ?: error("Could not locate Sqitch deployment directory")
-            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql", "conservative_reference_resolution.sql", "reference_resolution_attempt_ledger.sql", "cited_paper_access.sql", "traceable_evidence_retrieval.sql").forEach { filename ->
+            listOf("extensions.sql", "core_documents.sql", "parsed_citation_structure.sql", "grobid_raw_output.sql", "analysis_run_listing_cursor.sql", "atomic_claims.sql", "conservative_reference_resolution.sql", "reference_resolution_attempt_ledger.sql", "cited_paper_access.sql", "traceable_evidence_retrieval.sql", "cited_paper_page_provenance.sql").forEach { filename ->
                 val migration = migrationDirectory.resolve(filename)
                 dataSource.connection.use { connection ->
                     connection.createStatement().use { statement -> statement.execute(Files.readString(migration)) }
@@ -8728,6 +8773,10 @@ class AnalysisRunQueueIntegrationTest {
             val evidenceRetrievalMigrationVerification = migrationDirectory.resolveSibling("verify").resolve("traceable_evidence_retrieval.sql")
             dataSource.connection.use { connection ->
                 connection.createStatement().use { statement -> statement.execute(Files.readString(evidenceRetrievalMigrationVerification)) }
+            }
+            val citedPaperPageProvenanceVerification = migrationDirectory.resolveSibling("verify").resolve("cited_paper_page_provenance.sql")
+            dataSource.connection.use { connection ->
+                connection.createStatement().use { statement -> statement.execute(Files.readString(citedPaperPageProvenanceVerification)) }
             }
             val evidenceCoverageMigration = migrationDirectory.resolve("conflict_aware_evidence_coverage.sql")
             dataSource.connection.use { connection ->

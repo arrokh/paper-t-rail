@@ -7,4 +7,5 @@ data class EvidenceChunk(
     val paragraphStart: Int,
     val paragraphEnd: Int,
     val text: String,
+    val pageNumbers: List<Int> = emptyList(),
 )

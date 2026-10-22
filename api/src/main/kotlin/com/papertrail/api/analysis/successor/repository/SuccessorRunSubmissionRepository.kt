@@ -1385,6 +1385,12 @@ class SuccessorRunSubmissionRepository(
                     { rs, _ -> PaperChunkRow(rs.uuid("id"), rs.getInt("chunk_order"), rs.getInt("section_order"), rs.getString("section_heading"), rs.getInt("paragraph_start"), rs.getInt("paragraph_end"), rs.getObject("page_number", Integer::class.java)?.toInt(), rs.getString("text")) },
                     oldParseId, predecessorRunId, indexing.entryId,
                 )
+                val pageNumbersByChunk = jdbc.query(
+                    "SELECT paper_chunk_id, page_number FROM paper_chunk_page_numbers WHERE analysis_run_id = ? AND bibliography_entry_id = ? ORDER BY paper_chunk_id, page_number",
+                    { rs, _ -> rs.uuid("paper_chunk_id") to rs.getInt("page_number") },
+                    predecessorRunId,
+                    indexing.entryId,
+                ).groupBy({ it.first }, { it.second })
                 chunks.forEach { chunk ->
                     val newChunkId = UUID.randomUUID()
                     successorChunks[chunk.id] = newChunkId
@@ -1393,6 +1399,12 @@ class SuccessorRunSubmissionRepository(
                         newChunkId, newParseId, successorRunId, successorEntryId, chunk.order, chunk.sectionOrder,
                         chunk.sectionHeading, chunk.paragraphStart, chunk.paragraphEnd, chunk.pageNumber, chunk.text, Timestamp.from(now),
                     )
+                    pageNumbersByChunk[chunk.id].orEmpty().forEach { pageNumber ->
+                        jdbc.update(
+                            "INSERT INTO paper_chunk_page_numbers (paper_chunk_id, analysis_run_id, bibliography_entry_id, page_number) VALUES (?, ?, ?, ?)",
+                            newChunkId, successorRunId, successorEntryId, pageNumber,
+                        )
+                    }
                     recordLineage(successorRunId, predecessorRunId, "paper-chunk", newChunkId, chunk.id, predecessorRunId, chunk.id, null, null, null, "UNSELECTED_EVIDENCE_RETAINED", now)
                 }
                 cloneEmbeddings(predecessorRunId, successorRunId, indexing.entryId, successorEntryId, successorChunks, now)

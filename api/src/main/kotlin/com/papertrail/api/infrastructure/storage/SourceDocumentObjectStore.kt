@@ -6,6 +6,7 @@ interface SourceDocumentObjectStore {
     fun stat(objectKey: String): SourceObjectMetadata
     fun presignGet(objectKey: String, responseContentDisposition: String, expirySeconds: Int): String
     fun presignPutPdf(objectKey: String, expectedSize: Long, expectedSha256: String, expirySeconds: Int): PresignedObjectUpload
+    /** Configures exact browser origins for Recovery PDF uploads and presigned PDF reads. */
     fun configureBrowserUploadCors(allowedOrigins: Collection<String>)
     fun delete(objectKey: String)
 }
