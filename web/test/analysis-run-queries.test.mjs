@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import {
+  ANALYSIS_RUN_COMPARISON_QUERY_KEY,
   RECENT_ANALYSIS_RUNS_QUERY_KEY,
+  analysisRunComparisonQueryKey,
+  analysisRunComparisonQueryOptions,
   deleteSourceDocumentMutationOptions,
   executionArtifactQueryKey,
   executionArtifactQueryOptions,
@@ -23,6 +26,26 @@ import { recoveryBatchQueryKey } from "../features/recovery-uploads/queries/reco
 function jsonResponse(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
+
+test("comparison query reads only the selected run IDs through the same-origin API proxy", async (context) => {
+  const client = new QueryClient();
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  globalThis.fetch = async (url) => {
+    requestedUrl = String(url);
+    return jsonResponse({ alignmentPolicy: { id: "conservative", version: "1" }, items: [] });
+  };
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    client.clear();
+  });
+
+  const comparison = await client.fetchQuery(analysisRunComparisonQueryOptions("left run", "right/run"));
+
+  assert.equal(requestedUrl, "/api/v1/analysis-runs/comparison?leftRunId=left+run&rightRunId=right%2Frun");
+  assert.deepEqual(client.getQueryData(analysisRunComparisonQueryKey("left run", "right/run")), comparison);
+  assert.deepEqual(analysisRunComparisonQueryKey("left", "right").slice(0, 2), ANALYSIS_RUN_COMPARISON_QUERY_KEY);
+});
 
 test("provider-directory query exposes loading, successful data, and the safe API error message", async (context) => {
   const client = new QueryClient();

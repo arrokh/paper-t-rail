@@ -12,7 +12,9 @@ import com.papertrail.api.analysis.http.ParsedClaimCitationTargetView
 import com.papertrail.api.analysis.http.ParsedCitationContextView
 import com.papertrail.api.analysis.http.ParsedCitationOccurrenceView
 import com.papertrail.api.analysis.http.ParsedParserProvenance
+import com.papertrail.api.analysis.report.http.AnalysisRunComparisonResponse
 import com.papertrail.api.analysis.report.http.ReferenceResolutionReportResponse
+import com.papertrail.api.analysis.report.service.AnalysisRunComparisonService
 import com.papertrail.api.analysis.report.service.AnalysisRunReportService
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionReport
 import com.papertrail.api.scholarly.references.report.ReferenceResolutionSummary
@@ -181,6 +183,9 @@ class OpenApiDocumentationTest {
 
     @MockitoBean
     private lateinit var analysisRunReportService: AnalysisRunReportService
+
+    @MockitoBean
+    private lateinit var analysisRunComparisonService: AnalysisRunComparisonService
 
     @MockitoBean
     private lateinit var humanReviewService: HumanReviewService
@@ -979,6 +984,62 @@ class OpenApiDocumentationTest {
         val report = paths.path("/api/v1/analysis-runs/{runId}/report").path("get")
         assertTrue(report.path("responses").path("200").path("content").has("application/json"))
         assertTrue(report.path("responses").has("404"))
+        val comparison = paths.path("/api/v1/analysis-runs/comparison").path("get")
+        assertEquals("Compare two immutable Analysis Run reports", comparison.path("summary").asText())
+        assertTrue(comparison.path("description").asText().contains("versioned comparison"))
+        assertTrue(comparison.path("description").asText().contains("Human Reviews"))
+        assertTrue(comparison.path("description").asText().contains("No Analysis Run is modified"))
+        assertTrue(comparison.path("parameters").any { it.path("name").asText() == "leftRunId" && it.path("in").asText() == "query" })
+        assertTrue(comparison.path("parameters").any { it.path("name").asText() == "rightRunId" && it.path("in").asText() == "query" })
+        assertTrue(comparison.path("responses").path("200").path("content").has("application/json"))
+        assertTrue(comparison.path("responses").has("400"))
+        assertTrue(comparison.path("responses").has("404"))
+        assertTrue(comparison.path("responses").has("409"))
+        val comparisonSchemaName = comparison.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
+        val comparisonProperties = document.path("components").path("schemas").path(comparisonSchemaName).path("properties")
+        assertTrue(comparisonProperties.has("sourceContentDiffers"))
+        assertTrue(comparisonProperties.has("analysisConfigurationDiffers"))
+        val comparisonRunSchemaName = comparisonProperties.path("leftRun").path("${'$'}ref").asText().substringAfterLast('/')
+        val comparisonRunProperties = document.path("components").path("schemas").path(comparisonRunSchemaName).path("properties")
+        assertTrue(comparisonRunProperties.has("analysisRunId"))
+        assertTrue(comparisonRunProperties.has("sourceContentSha256"))
+        assertTrue(comparisonRunProperties.has("createdAt"))
+        assertTrue(comparisonRunProperties.has("configuration"))
+        assertTrue(comparisonRunProperties.has("pipeline"))
+        assertTrue(comparisonRunProperties.path("failureReason").path("description").asText().contains("failure or warning"))
+        val pipelineReference = comparisonRunProperties.path("pipeline").path("oneOf").firstOrNull { it.has("${'$'}ref") }?.path("${'$'}ref")?.asText()
+            ?: comparisonRunProperties.path("pipeline").path("${'$'}ref").asText()
+        val pipelineSchemaName = pipelineReference.substringAfterLast('/')
+        val pipelineSchema = document.path("components").path("schemas").path(pipelineSchemaName)
+        assertTrue(pipelineSchema.path("description").asText().contains("worker pipeline"))
+        val pipelineStageSchemaName = pipelineSchema.path("properties").path("stages").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val pipelineStageProperties = document.path("components").path("schemas").path(pipelineStageSchemaName).path("properties")
+        assertTrue(pipelineStageProperties.path("status").path("enum").any { it.asText() == "COMPLETED_WITH_WARNINGS" })
+        assertTrue(comparisonProperties.has("counts"))
+        assertTrue(comparisonProperties.path("disclaimer").path("description").asText().contains("triage aid"))
+        val comparisonItemSchemaName = comparisonProperties.path("items").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val comparisonItemProperties = document.path("components").path("schemas").path(comparisonItemSchemaName).path("properties")
+        assertEquals(setOf("UNCHANGED", "CHANGED", "ADDED", "REMOVED", "UNMATCHED"), comparisonItemProperties.path("changeKind").path("enum").map { it.asText() }.toSet())
+        assertEquals(setOf("ALIGNED", "UNPAIRED", "UNMATCHED"), comparisonItemProperties.path("alignmentStatus").path("enum").map { it.asText() }.toSet())
+        val comparisonPairRef = comparisonItemProperties.path("left").path("oneOf").firstOrNull { it.has("${'$'}ref") }?.path("${'$'}ref")?.asText().orEmpty()
+        val comparisonPairSchemaName = comparisonPairRef.substringAfterLast('/')
+        val comparisonPairProperties = document.path("components").path("schemas").path(comparisonPairSchemaName).path("properties")
+        assertTrue(comparisonPairProperties.path("processingStatus").path("description").asText().contains("separate from finalStatus"))
+        assertTrue(comparisonPairProperties.has("finalStatus"))
+        assertTrue(comparisonPairProperties.has("citationTargets"))
+        assertTrue(comparisonPairProperties.has("reference"))
+        val comparisonReferenceSchemaName = comparisonPairProperties.path("reference").path("${'$'}ref").asText().substringAfterLast('/')
+        val comparisonReferenceProperties = document.path("components").path("schemas").path(comparisonReferenceSchemaName).path("properties")
+        assertTrue(comparisonReferenceProperties.has("resolutionReasonCode"))
+        assertTrue(comparisonReferenceProperties.has("matchMethod"))
+        assertTrue(comparisonPairProperties.has("citedPaperAccess"))
+        assertTrue(comparisonPairProperties.has("evidencePassages"))
+        assertTrue(comparisonPairProperties.path("humanReviews").path("description").asText().contains("do not participate"))
+        val comparisonPassageSchemaName = comparisonPairProperties.path("evidencePassages").path("items").path("${'$'}ref").asText().substringAfterLast('/')
+        val comparisonPassageProperties = document.path("components").path("schemas").path(comparisonPassageSchemaName).path("properties")
+        assertTrue(comparisonPassageProperties.has("fusedRank"))
+        assertTrue(comparisonPassageProperties.has("sourceAssetId"))
+        assertTrue(comparisonPassageProperties.has("contentSha256"))
         val reportSchemaName = report.path("responses").path("200").path("content").path("application/json").path("schema").path("${'$'}ref").asText().substringAfterLast('/')
         val reportProperties = document.path("components").path("schemas").path(reportSchemaName).path("properties")
         val resolutionSchemaName = reportProperties.path("referenceResolution").path("${'$'}ref").asText().substringAfterLast('/')
@@ -1589,6 +1650,48 @@ class OpenApiDocumentationTest {
         )
         mockMvc.perform(get("/api/v1/analysis-runs/$missingRunId/parsed-document"))
             .andExpect(status().isNotFound)
+    }
+
+    @Test
+    fun `comparison endpoint returns the versioned read-only comparison contract`() {
+        val leftRunId = UUID.randomUUID()
+        val rightRunId = UUID.randomUUID()
+        val now = Instant.parse("2026-10-01T00:00:00Z")
+        val result = AnalysisRunComparisonResponse(
+            alignmentPolicy = AnalysisRunComparisonResponse.AlignmentPolicy(
+                "conservative-source-span-reference-identity",
+                "1",
+                "Unique source spans and compatible reference identities only.",
+            ),
+            sourceContentDiffers = true,
+            sourceDocumentDiffers = true,
+            analysisConfigurationDiffers = true,
+            leftRun = AnalysisRunComparisonResponse.Run(
+                leftRunId, UUID.randomUUID(), "left.pdf", "a".repeat(64), "COMPLETED", now, now, null, null,
+                "COMPLETED", "COMPLETED", objectMapper.readTree("{}"),
+            ),
+            rightRun = AnalysisRunComparisonResponse.Run(
+                rightRunId, UUID.randomUUID(), "right.pdf", "b".repeat(64), "COMPLETED_WITH_WARNINGS", now, now, "WARNINGS", null,
+                "COMPLETED_WITH_WARNINGS", "COMPLETED_WITH_WARNINGS", objectMapper.readTree("{}"),
+            ),
+            counts = AnalysisRunComparisonResponse.Counts(0, 1, 1, 1, 2, 1),
+            items = emptyList(),
+        )
+        Mockito.`when`(analysisRunComparisonService.compare(leftRunId, rightRunId)).thenReturn(result)
+
+        mockMvc.perform(
+            get("/api/v1/analysis-runs/comparison")
+                .param("leftRunId", leftRunId.toString())
+                .param("rightRunId", rightRunId.toString()),
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.alignmentPolicy.version").value("1"))
+            .andExpect(jsonPath("$.sourceContentDiffers").value(true))
+            .andExpect(jsonPath("$.counts.unmatched").value(2))
+            .andExpect(jsonPath("$.rightRun.status").value("COMPLETED_WITH_WARNINGS"))
+            .andExpect(jsonPath("$.rightRun.failureReason").value("WARNINGS"))
+            .andExpect(jsonPath("$.disclaimer").value(AnalysisRunComparisonResponse.TRIAGE_DISCLAIMER))
+        Mockito.verify(analysisRunComparisonService).compare(leftRunId, rightRunId)
     }
 
     @Test
